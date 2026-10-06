@@ -1183,6 +1183,78 @@ test("a dependsOn that is not a list is refused by name and proposes nothing", a
   assert.equal(unordered.isError, false, unordered.text);
 });
 
+// A workflow card holds a label only by inheriting it from the run card it
+// replaced, and approving it saves a graph — so an edge onto it was accepted
+// here and refused at the click, by the operator, on a card the model never
+// heard about again.
+test("propose_run refuses a dependsOn on a label a workflow card inherited, and proposes nothing", async () => {
+  const { token, proposals } = proposingChat();
+  const run = await callTool(token, "propose_run", {
+    mountId: MOUNT,
+    folder: "RepoOne",
+    id: "wf",
+    title: "First as a run",
+    task: "Do the first thing.",
+  });
+  assert.equal(run.isError, false, run.text);
+  const workflow = await callTool(token, "propose_workflow", {
+    name: `First as a workflow ${randomUUID()}`,
+    supersedes: "wf",
+    blocks: [{ id: "a", name: "A", mountId: MOUNT, folder: "RepoOne", task: "Step a." }],
+  });
+  assert.equal(workflow.isError, false, workflow.text);
+  const before = proposals();
+
+  const after = await callTool(token, "propose_run", {
+    mountId: MOUNT,
+    folder: "RepoOne",
+    title: "Second",
+    task: "Do the second thing after the first.",
+    dependsOn: [{ id: "wf", edge: "on-success" }],
+  });
+  assert.equal(after.isError, true, `propose_run took an edge onto a workflow card: ${after.text}`);
+  assert.match(after.text, /"wf" is a workflow proposal: approving it saves a graph/);
+  assert.equal(proposals(), before, "no card was written");
+});
+
+// The same state reached from the other end: the edge was wireable when it was
+// written, and the supersede is what strands it. Told in the reply rather than
+// refused — see `strandedDependents`.
+test("propose_workflow replacing a run card a sibling waits for says so in its reply", async () => {
+  const { token } = proposingChat();
+  const base = { mountId: MOUNT, folder: "RepoOne" };
+  const first = await callTool(token, "propose_run", { ...base, id: "a", title: "First", task: "Do a." });
+  assert.equal(first.isError, false, first.text);
+  const second = await callTool(token, "propose_run", {
+    ...base,
+    id: "b",
+    title: "Second",
+    task: "Do b after a.",
+    dependsOn: [{ id: "a", edge: "on-success" }],
+  });
+  assert.equal(second.isError, false, second.text);
+
+  const workflow = await callTool(token, "propose_workflow", {
+    name: `First as a workflow ${randomUUID()}`,
+    supersedes: "a",
+    blocks: [{ id: "x", name: "X", mountId: MOUNT, folder: "RepoOne", task: "Step x." }],
+  });
+  assert.equal(workflow.isError, false, workflow.text);
+  assert.match(workflow.text, /“Second” \(id [0-9a-f-]{36}\) is set to start after "a", which this replaces/);
+  assert.match(workflow.text, /the operator's click will refuse it/);
+
+  // A replacement with no sibling behind it says nothing of the kind.
+  const lone = await callTool(token, "propose_run", { ...base, id: "c", title: "Lone", task: "Do c." });
+  assert.equal(lone.isError, false, lone.text);
+  const quiet = await callTool(token, "propose_workflow", {
+    name: `Lone as a workflow ${randomUUID()}`,
+    supersedes: "c",
+    blocks: [{ id: "y", name: "Y", mountId: MOUNT, folder: "RepoOne", task: "Step y." }],
+  });
+  assert.equal(quiet.isError, false, quiet.text);
+  assert.doesNotMatch(quiet.text, /set to start after/);
+});
+
 test("propose_run refuses a mount with no folder, and a folder with no mount", async () => {
   const { token, proposals } = proposingChat();
 

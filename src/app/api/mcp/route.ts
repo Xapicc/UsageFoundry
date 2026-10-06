@@ -2869,6 +2869,42 @@ function workflowReport() {
 }
 
 /**
+ * What replacing `superseded` with a card that saves something does to the
+ * cards still waiting to start after it, as a sentence to append to the tool's
+ * reply — or "" when none is.
+ *
+ * Told rather than refused. Turning a run card into a workflow or a schedule is
+ * the correction `supersedes` exists for, and a refusal would only make the
+ * model re-point every sibling before it may make it — while nothing about a
+ * sibling left pointing here is unsafe, since the click refuses it by name
+ * rather than starting it unchained, which is the direction that fails safe.
+ * What the reply has to stop is the model learning nothing: this call is the
+ * one moment it can act on that, and the click is the operator's.
+ */
+function strandedDependents(
+  chatId: string,
+  superseded: ChatProposalRow | null,
+  kind: "workflow" | "schedule",
+): string {
+  const label = superseded?.spec_id;
+  if (!label) return "";
+  const waiting = pendingProposals(chatId).filter((p) =>
+    proposalDeps(p).some((d) => d.specId === label),
+  );
+  if (waiting.length === 0) return "";
+  const named = waiting.map((p) => `“${p.title}” (id ${p.id})`).join(", ");
+  const saves = kind === "workflow" ? "a graph" : "a schedule";
+  return (
+    ` ${named} ${waiting.length === 1 ? "is" : "are"} set to start after ` +
+    `"${label}", which this replaces: approving this saves ${saves} rather ` +
+    "than starting a run, so the operator's click will refuse " +
+    `${waiting.length === 1 ? "it" : "them"}. Re-propose ` +
+    `${waiting.length === 1 ? "it" : "each"} with supersedes and a dependsOn ` +
+    "that names a run proposal, or none."
+  );
+}
+
+/**
  * Record one workflow proposal, refusing anything that could not be saved.
  *
  * The graph goes through the *same* `normalizeWorkflowInput` and the same
@@ -3026,7 +3062,8 @@ function proposeWorkflow(args: Record<string, unknown>, chatId: string) {
           "them with no approval, which the card says."
         : "") +
       " It is saved with no workflow-wide budget, so it can be run by hand and " +
-      "cannot be scheduled until the operator sets one.",
+      "cannot be scheduled until the operator sets one." +
+      strandedDependents(chatId, superseded, "workflow"),
   );
 }
 
@@ -3175,7 +3212,8 @@ function proposeSchedule(args: Record<string, unknown>, chatId: string) {
         : "") +
       (superseded
         ? ` It replaces “${superseded.title}”, which is no longer waiting.`
-        : ""),
+        : "") +
+      strandedDependents(chatId, superseded, "schedule"),
   );
 }
 
@@ -5276,6 +5314,21 @@ function proposeRun(args: Record<string, unknown>, chatId: string, decision: Mod
       return text(
         `This replaces "${on}", so it cannot also start after it. Drop it from ` +
           "dependsOn, or propose the two separately.",
+        true,
+      );
+    }
+    // A workflow or schedule card holds a label only by inheriting it from a
+    // run card it replaced, and approving one saves something rather than
+    // starting a run — so the click would refuse this card by name, in
+    // `unresolvedDependency`'s words. Asked before the status checks, for that
+    // function's reason: what the card is decides whether it could ever be a
+    // run at all.
+    if (target.kind !== "run") {
+      const saves = target.kind === "workflow" ? "a graph" : "a schedule";
+      return text(
+        `"${on}" is a ${target.kind} proposal: approving it saves ${saves} ` +
+          "rather than starting a run, so nothing can start after it. Name a " +
+          "run proposal, or drop it from dependsOn.",
         true,
       );
     }
