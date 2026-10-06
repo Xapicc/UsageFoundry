@@ -2282,7 +2282,7 @@ export async function unwind(
   if (strategy !== "squash") {
     const abort = await git(folder, ["merge", "--abort"], NO_CLOCK);
     if (abort.ok) return "restored";
-    if (wrote) return "mid-merge";
+    if (wrote) return (await resetDespiteRef(folder)) ? "restored" : "mid-merge";
     // Usually there was nothing to abort: a merge git refused up front writes
     // no MERGE_HEAD. One that is not a fast-forward and could not take
     // `index.lock` writes MERGE_HEAD and nothing else, and the abort needs the
@@ -2294,7 +2294,28 @@ export async function unwind(
     return (await undoFastForward(folder)) ? "restored" : "changed";
   }
   if (!wrote) return "restored";
-  return (await git(folder, ["reset", "--merge"], NO_CLOCK)).ok ? "restored" : "changed";
+  if ((await git(folder, ["reset", "--merge"], NO_CLOCK)).ok) return "restored";
+  return (await resetDespiteRef(folder)) ? "restored" : "changed";
+}
+
+/**
+ * Whether a `reset --merge` that exited nonzero — `merge --abort` runs one —
+ * put the checkout back all the same.
+ *
+ * It restores the index and the tree, clears MERGE_HEAD and moves HEAD last, so
+ * a commit refused because another process holds the target's ref lock leaves
+ * an undo that does everything but that and exits 1, and `unwind` said the
+ * land was still staged over an empty status. A reset that refused before
+ * writing leaves what the land staged, conflicted or MERGE_HEAD where it was,
+ * so the index matching HEAD with no MERGE_HEAD is the test. Not a clean
+ * status: the commit runs the operator's hooks, and an unstaged edit made
+ * meanwhile is theirs and `reset --merge` keeps it. Measured with git 2.39.5.
+ */
+async function resetDespiteRef(folder: string): Promise<boolean> {
+  const merging = await git(folder, ["rev-parse", "-q", "--verify", "MERGE_HEAD"], NO_CLOCK);
+  if (merging.code !== 1) return false;
+  // Exits 1 for an unmerged path as for a staged one, and 128 when unreadable.
+  return (await git(folder, ["diff", "--cached", "--quiet", "HEAD"], NO_CLOCK)).code === 0;
 }
 
 /**
