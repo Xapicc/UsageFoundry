@@ -58,6 +58,8 @@ import {
  *   - **A merge into a dirty tree can lose work.** The operator's checkout must
  *     be clean, and "could not tell" counts as dirty — the same rule
  *     `emitHandoff` uses to decide whether to print a merge command at all.
+ *     An ignored file is work too, and no status lists one, so the merge
+ *     itself refuses to overwrite it (`--no-overwrite-ignore`, `untrackedAt`).
  *   - **The tool must not write into the operator's checkout by surprise.**
  *     Nothing here touches it until the operator presses land. Finding out
  *     *whether* a merge would work touches nothing at all: `merge-tree` does a
@@ -1643,26 +1645,41 @@ export async function landRun(
     // One begun before it is waited on.
     if (isShuttingDown()) return { ok: false, reason: LAND_SHUTDOWN_REFUSAL };
 
+    // `read-tree -u` overwrites an ignored file and has no flag that stops it,
+    // so the land past a squash asks the disk itself — synchronously, so that
+    // nothing awaits between the answer and the write.
+    const inTheWay = pastSquash ? untrackedAt(folder, pastSquash.added) : [];
+    if (inTheWay.length > 0) return { ok: false, reason: overwriteRefusal(branch, inTheWay) };
+
     // No clock on the merge itself, which is the whole of `NO_CLOCK`'s reason:
     // a merge killed part-way through reads here exactly like git refusing one,
     // so a repository large enough to take a while was told its work could not
     // be merged and had it rolled back.
+    //
+    // `--no-overwrite-ignore` because git's default replaces a file the checkout
+    // ignores wherever the branch tracks that path — an `.env` an agent
+    // committed with `git add -f` — and `git status` never lists one, so the
+    // checkout read clean and the operator's own file was gone, never having
+    // been in git, under a card that said it landed.
     const merge = pastSquash
       ? await applyMergedTree(folder, strategy, branch, pastSquash)
       : strategy === "squash"
-        ? await git(folder, ["merge", "--squash", branch], NO_CLOCK)
-        : await git(folder, ["merge", "--no-edit", branch], NO_CLOCK);
+        ? await git(folder, ["merge", "--squash", "--no-overwrite-ignore", branch], NO_CLOCK)
+        : await git(folder, ["merge", "--no-edit", "--no-overwrite-ignore", branch], NO_CLOCK);
 
     if (!merge.ok) {
       const conflicts = await conflictedFiles(folder);
       const restored = await unwind(folder, strategy, conflicts.length > 0);
+      const inTheWay = untrackedInTheWay(merge.stderr);
       return {
         ok: false,
         reason: !restored
           ? `The merge conflicted and could not be rolled back, so your checkout is part-way through it — look at git status there before anything else. Conflicting: ${conflicts.join(", ")}`
           : conflicts.length > 0
             ? `The merge conflicted and was rolled back — your checkout is untouched. Conflicting: ${conflicts.join(", ")}`
-            : `git refused the merge, and your checkout is as it was: ${merge.stderr.split("\n")[0] || "unknown error"}`,
+            : inTheWay.length > 0
+              ? overwriteRefusal(branch, inTheWay)
+              : `git refused the merge, and your checkout is as it was: ${merge.stderr.split("\n")[0] || "unknown error"}`,
         conflicts,
       };
     }
@@ -1732,11 +1749,15 @@ export async function landRun(
   }
 }
 
-/** A merge `mergePastSquash` worked out: the target it read, and the tree it came to. */
+/**
+ * A merge `mergePastSquash` worked out: the target it read, the tree it came
+ * to, and the paths that tree has which the target does not.
+ */
 interface MergedTree {
   ok: true;
   ours: string;
   tree: string;
+  added: string[];
 }
 
 /**
@@ -1782,7 +1803,25 @@ async function mergePastSquash(
           : `git could not merge ${branch} from where it was last squashed into ${target}, so nothing was merged.`,
     };
   }
-  return { ok: true, ours: ours.stdout, tree: merged.tree };
+  // Plumbing, so no diff driver and no rename detection: a renamed file's new
+  // path is a path the checkout may already hold a file at.
+  const added = await git(
+    folder,
+    ["diff-tree", "-r", "-z", "--name-only", "--no-renames", "--diff-filter=A", ours.stdout, merged.tree],
+    { ...NO_CLOCK, trim: false },
+  );
+  if (!added.ok) {
+    return {
+      ok: false,
+      reason: `Could not read which files landing ${branch} adds to ${target}, so nothing was merged: ${gitFailureLine(added.stderr) || "unknown error"}`,
+    };
+  }
+  return {
+    ok: true,
+    ours: ours.stdout,
+    tree: merged.tree,
+    added: added.stdout.split("\0").filter((p) => p !== ""),
+  };
 }
 
 /**
@@ -1815,6 +1854,69 @@ async function applyMergedTree(
   }
   await git(folder, ["update-index", "-q", "--refresh"], NO_CLOCK);
   return git(folder, ["read-tree", "-m", "-u", merged.ours, merged.tree], NO_CLOCK);
+}
+
+/**
+ * The paths git names when it refuses a merge over files it does not track,
+ * which under `--no-overwrite-ignore` include the ones it ignores. Empty for
+ * any other refusal. The first line of git's message names none of them.
+ */
+function untrackedInTheWay(stderr: string): string[] {
+  const lines = stderr.split("\n");
+  const at = lines.findIndex((line) =>
+    /untracked working tree files would be (overwritten|removed) by/.test(line),
+  );
+  if (at < 0) return [];
+  const paths: string[] = [];
+  for (const line of lines.slice(at + 1)) {
+    if (!line.startsWith("\t")) break;
+    paths.push(line.slice(1));
+  }
+  return paths;
+}
+
+/**
+ * Which of `added` the checkout already holds something git does not track at,
+ * or a file where one of their directories would go — read off the disk,
+ * because what is at risk is exactly what git is not tracking. A path that
+ * could not be read is counted as in the way, `checkoutStateOf`'s rule.
+ */
+function untrackedAt(folder: string, added: readonly string[]): string[] {
+  const found = new Set<string>();
+  for (const file of added) {
+    const parts = file.split("/");
+    for (let depth = 1; depth <= parts.length; depth++) {
+      const at = parts.slice(0, depth).join("/");
+      let stat: fs.Stats;
+      try {
+        stat = fs.lstatSync(path.join(folder, at));
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") found.add(at);
+        break;
+      }
+      if (depth === parts.length || !stat.isDirectory()) {
+        found.add(at);
+        break;
+      }
+    }
+  }
+  return [...found];
+}
+
+/**
+ * Why a land over files the operator's checkout holds but git does not track is
+ * refused. Such a file was never in git, so nothing could have restored it.
+ */
+function overwriteRefusal(branch: string, paths: readonly string[]): string {
+  const one = paths.length === 1;
+  const them = one ? "it" : "them";
+  const rest = paths.length - DIRT_NAMED;
+  return (
+    `${branch} tracks ${paths.slice(0, DIRT_NAMED).join(", ")}${rest > 0 ? ` and ${rest} more` : ""}, ` +
+    `which your checkout holds as ${one ? "a file" : "files"} git does not track — ignored, most likely ` +
+    `— so landing would have overwritten ${them} with no copy kept anywhere, and nothing was merged. ` +
+    `Move ${them} aside and land again if the branch is meant to carry ${them}.`
+  );
 }
 
 /**

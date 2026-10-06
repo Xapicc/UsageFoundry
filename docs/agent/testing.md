@@ -309,6 +309,7 @@ Units that are about no test file in the tree:
 | `src/app/api/runs/live/stream/route.test.ts` | [harnesses] |
 | `src/app/api/settings/route.test.ts` | [harnesses] |
 | `src/app/api/status/route.test.ts` |  |
+| `src/middleware.test.ts` |  |
 
 ## [Container, compose and backups](testing/container-and-deployment.md)
 
