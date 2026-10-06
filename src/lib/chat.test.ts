@@ -142,6 +142,8 @@ process.env.UF_GITHUB_TOKEN = "ghp_" + "x".repeat(36);
 const {
   CHAT_IDLE_TIMEOUT_MS,
   MAX_CHAT_MESSAGE_BYTES,
+  MAX_OPEN_QUESTIONS,
+  MAX_QUESTION_CHARS,
   MAX_QUESTION_CHOICES,
   STALE_TURN_MARGIN_MS,
   answerChatQuestions,
@@ -1901,6 +1903,21 @@ describe("answerMessage", () => {
       { question: "Should it push?", answer: null },
     ]);
     assert.match(text, /Q: Should it push\?\nA: \(not answered\)/);
+  });
+
+  it("leaves half the message limit for the answers when every open question is at the cap", () => {
+    // Three constants apart, and what joins them is the refusal in
+    // `sendChatMessage`: raise either question bound alone and Answer is
+    // refused again on questions the operator did not write, with a sentence
+    // telling them to shorten it. Three-byte characters, because the cap counts
+    // code units.
+    const text = answerMessage(
+      Array.from({ length: MAX_OPEN_QUESTIONS }, () => ({
+        question: "€".repeat(MAX_QUESTION_CHARS),
+        answer: null,
+      })),
+    );
+    assert.ok(Buffer.byteLength(text, "utf8") <= MAX_CHAT_MESSAGE_BYTES / 2);
   });
 });
 

@@ -459,6 +459,20 @@ export const MAX_OPEN_QUESTIONS = 5;
 export const MAX_QUESTION_CHOICES = 8;
 
 /**
+ * How long one question may be, in UTF-16 code units (`String.length`).
+ *
+ * Not a style limit: `answerMessage` quotes every open question in full, and
+ * `sendChatMessage` refuses that message past `MAX_CHAT_MESSAGE_BYTES` with a
+ * sentence telling the operator to shorten it. One pasted log therefore made
+ * Answer refuse on every question in the thread, the short ones included, over
+ * text the operator never wrote — and the only way out was an ordinary message,
+ * which supersedes them all unanswered. A code unit is at most three bytes, so
+ * `MAX_OPEN_QUESTIONS` of these is under half the message limit and the rest is
+ * left for the answers, the one part of it that refusal is right about.
+ */
+export const MAX_QUESTION_CHARS = 2_000;
+
+/**
  * How many undecided proposals one chat may hold.
  *
  * The failure this bounds is specific and cheap to reach: "open a run for every
