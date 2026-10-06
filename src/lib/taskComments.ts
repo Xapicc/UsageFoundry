@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { db } from "./db";
-import { getTask, notTextRefusal, type TaskActor } from "./tasks";
+import { notStringRefusal } from "./http";
+import { getTask, type TaskActor } from "./tasks";
 import type { TaskCommentAuthorDTO, TaskCommentDTO } from "./apiTypes";
 
 /**
@@ -201,8 +202,8 @@ export function normalizeTaskCommentInput(
     return { ok: false, error: refusedField(field) };
   }
 
-  const notText = notTextRefusal("body", o.body);
-  if (notText) return { ok: false, error: `A comment ${notText}` };
+  const notText = notStringRefusal("body", o.body);
+  if (notText) return { ok: false, error: notText };
   const body = (typeof o.body === "string" ? o.body : "").trim();
   if (!body) {
     return {

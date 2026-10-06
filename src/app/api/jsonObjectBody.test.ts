@@ -269,6 +269,22 @@ test("PATCH /api/tasks/[id] refuses a body that does not parse rather than readi
   assert.match(String(reply.error), /has to be a JSON object; this one did not parse/);
 });
 
+// `String()` retitled the task "[object Object]" on a 200.
+test("PATCH /api/tasks/[id] refuses a title that is not a string and leaves the task as it was", async () => {
+  const { PATCH } = await import("./tasks/[id]/route");
+  const tasks = await import("../../lib/tasks");
+  const before = tasks.getTask(taskId);
+  assert.ok(before);
+
+  for (const patch of [{ title: {} }, { body: ["x"] }, { parentTaskId: [taskId] }, { folder: { a: 1 } }]) {
+    const reply = await send(PATCH, "PATCH", `/api/tasks/${taskId}`, taskId, JSON.stringify(patch));
+    const field = Object.keys(patch)[0];
+    assert.equal(reply.status, 400, `${JSON.stringify(patch)}: ${String(reply.error)}`);
+    assert.match(String(reply.error), new RegExp(`"${field}" has to be a string when it is given`));
+  }
+  assert.deepEqual(tasks.getTask(taskId), before, "no refused patch reached the row");
+});
+
 /** A start request every check in `POST /api/runs` passes. */
 const START = {
   mountId: "main",
