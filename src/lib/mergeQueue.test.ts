@@ -91,6 +91,25 @@ describe("planItem", () => {
     assert.match(plan.action === "fail" ? plan.reason : "", /conflicts in 1 file/);
   });
 
+  it("fails a conflicting chain link its owner lands rather than paying to resolve it", () => {
+    // `landRefusal` names the owner before it asks about the conflict, so a
+    // resolution bought here is followed by the same refusal at the land.
+    const ownerRefusal =
+      "Run r2 carries this branch on from here and is the one that lands it (it is completed).";
+    const plan = planItem(
+      {
+        ...conflict,
+        chain: [
+          { runId: "r1", status: "completed", iterations: 1 },
+          { runId: "r2", status: "completed", iterations: 1 },
+        ],
+        blocked: ownerRefusal,
+      },
+      open,
+    );
+    assert.deepEqual(plan, { action: "fail", reason: ownerRefusal });
+  });
+
   it("stops trying to resolve once one refusal applies to all of them", () => {
     // A window at its ceiling refuses every later resolution identically, and
     // each attempt costs a full transcript scan to find that out again.

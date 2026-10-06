@@ -50,6 +50,8 @@ let root: string;
 let repo: string;
 /** A second repository, so a second worker can be mid-land beside the first. */
 let otherRepo: string;
+/** One line per `claude` the app spawned, naming the directory it ran in. */
+let spawned: string;
 /**
  * Where a case holds the app's own git at one subcommand. A file named `merge`
  * or `status` here makes that call write `<name>.started` and wait for
@@ -83,10 +85,27 @@ before(async () => {
   root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-merge-drain-")));
   process.env.DATA_DIR = path.join(root, "data");
   process.env.CLAUDE_HOME = path.join(root, "claude");
-  // Nothing here resolves a conflict, so nothing here should reach a spawn. A
-  // `claude` that does not exist makes a regression that gets that far a failed
-  // test rather than a billed one.
-  process.env.CLAUDE_BIN = path.join(root, "no-such-claude");
+  // `planUsage` looks for an OAuth token here, and a unit test must not send a
+  // request on the operator's own credential — which one that reaches a
+  // resolution's door would, with this unset.
+  process.env.CLAUDE_CONFIG_DIR = path.join(root, "claude");
+  fs.mkdirSync(path.join(root, "claude", "projects"), { recursive: true });
+  // Nothing here should be resolved, so nothing here should reach a spawn. A
+  // stand-in rather than a missing binary, so that a regression which gets that
+  // far is a line in `spawned` a case can assert on — and is still not billed.
+  // It reports what a resolution costs and resolves nothing, so a resolution
+  // that does start is rolled back by its own `after`.
+  spawned = path.join(root, "claude-spawned");
+  const stub = path.join(root, "claude-stub.js");
+  fs.writeFileSync(
+    stub,
+    `#!/usr/bin/env node
+require("node:fs").appendFileSync(${JSON.stringify(spawned)}, process.cwd() + "\\n");
+process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "left it", total_cost_usd: 0.37 }) + "\\n");
+`,
+    { mode: 0o755 },
+  );
+  process.env.CLAUDE_BIN = stub;
   process.env.WORKSPACE_ROOTS = path.join(root, "ws");
   fs.mkdirSync(path.join(root, "ws"), { recursive: true });
 
@@ -443,6 +462,48 @@ describe("the merge worker", () => {
     assert.ok(queued.ok, JSON.stringify(queued));
     const rows = await settle(queued.batchId);
     assert.equal(rows[0].status, "already-landed", rows[0].message ?? "");
+  });
+
+  // A first link queued without its owner, as a merge block wired to that link
+  // queues it, and conflicting with its target, in a batch with auto-resolve
+  // on. `landRefusal` names the owner before it asks about the conflict, so the
+  // land is refused whatever a resolution does — and the queue paid for one
+  // anyway, waited for it, and then failed the row with the owner refusal and
+  // the resolution's cost beside it.
+  it("pays for no resolution on a chain link its owner lands, and fails it with the owner refusal", async () => {
+    const first = "chain7a0";
+    const owner = "chain7b0";
+    makeRun(first, "chain7-a.txt");
+    continueRun(owner, first, "chain7-b.txt");
+    // Added on both sides with different contents, so the branch conflicts.
+    fs.writeFileSync(path.join(repo, "chain7-a.txt"), "main's own\n");
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "main adds chain7-a.txt");
+
+    const state = await land.landState(first);
+    assert.equal(state?.preview.outcome, "conflict", "the fixture branch does not conflict");
+    assert.match(state?.blocked ?? "", /carries this branch on from here/);
+
+    const queued = mergeQueue.enqueue([first], { strategy: "merge", autoResolve: true });
+    assert.ok(queued.ok, JSON.stringify(queued));
+    const rows = await settle(queued.batchId);
+
+    assert.equal(rows[0].status, "failed", rows[0].message ?? "");
+    assert.match(rows[0].message ?? "", /chain7b0 carries this branch on from here/);
+    assert.equal(rows[0].resolve_cost, 0, "the row was charged for a resolution");
+    assert.deepEqual(
+      dbMod
+        .db()
+        .prepare("SELECT run_id FROM run_reviews WHERE kind = 'resolve' AND run_id IN (?, ?)")
+        .all(first, owner),
+      [],
+      "a resolution was started for a row whose land is refused regardless",
+    );
+    assert.equal(
+      fs.existsSync(spawned) ? fs.readFileSync(spawned, "utf8") : "",
+      "",
+      "a billed resolution was spawned",
+    );
   });
 });
 
