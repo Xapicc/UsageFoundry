@@ -2285,7 +2285,7 @@ export async function unwind(
  * not touch and refuses where one is tangled with what it would put back —
  * without the ref update. `reset --merge` moves HEAD, so it needs the very lock
  * that refused the merge, and exits 1 having already put the tree back, which
- * reads exactly like a reset that refused. Measured with git 2.39.5.
+ * `git()`'s `ok` cannot tell from a reset that refused. Measured with git 2.39.5.
  */
 async function undoFastForward(folder: string): Promise<boolean> {
   if (!(await checkoutStateOf(folder)).dirty) return true;

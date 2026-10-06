@@ -193,6 +193,20 @@
   what held the lock in the operator's checkout was never caught; the Land
   cards' `status` polls are the likely holder, inferred rather than seen.
 
+- **A fast-forward land refused at the target's ref lock is taken back out,
+  2026-10-06**, git 2.39.5 against temporary repositories, `1f92089`. With
+  `.git/refs/heads/main.lock` present a fast-forward merge exits 128 with
+  `fatal: update_ref failed for ref 'HEAD'` having staged the whole branch,
+  no `MERGE_HEAD`, which `unwind` reported as restored. `reset --merge`
+  there exits 1 with the tree already restored, failing on the same lock;
+  `read-tree -m -u HEAD` exits 0 and restores it, and refuses with exit 128
+  over an unstaged edit to a path it would put back. The new case in
+  `landAfterVerify.test.ts` failed before the change and passes after.
+  Caveat: a squash under the same lock was measured to stage cleanly, fail
+  at its commit, and have `reset --merge` exit 1 over a restored tree, so
+  `landRun` should still say it "could not be rolled back" — read from the
+  code, not driven through `landRun`, and filed rather than fixed.
+
 ## Not yet verified by hand
 
 - **The `chat_proposals` rebuild on a real upgraded volume**, in a running
