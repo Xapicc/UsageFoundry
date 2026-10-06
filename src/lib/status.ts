@@ -95,11 +95,13 @@ export interface StatusReport {
   sweeper: {
     lastTickAgeSeconds: number | null;
     failures: number;
+    /** The last swallowed failure's class (`errorClassOf`), never its message. */
     lastError: string | null;
   };
   liveGuard: {
     lastTickAgeSeconds: number | null;
     failures: number;
+    /** The last swallowed failure's class (`errorClassOf`), never its message. */
     lastError: string | null;
   };
   /**
