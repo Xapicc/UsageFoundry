@@ -894,6 +894,8 @@ function RunsView() {
   const [historyError, setHistoryError] = useState<string | null>(null);
   /** Which history request is allowed to write; see `loadHistory`. */
   const historyRequest = useRef(0);
+  /** Which bands request is allowed to write; see `loadRuns`. */
+  const runsRequest = useRef(0);
 
   /**
    * The instant that divides "finished in the last 24 hours" from "older".
@@ -936,6 +938,10 @@ function RunsView() {
     // fold is then handed.
     const cut = bucketBoundary(Date.now());
     const narrowing = readNarrowing(askedStatus);
+    // Only the newest request may write, for `loadHistory`'s reason: `reload`
+    // asks beside the poll's own request, so an answer read before a press can
+    // land after the one read since it and put the run back as it was.
+    const ticket = ++runsRequest.current;
     // Each band in its own query, per `EXECUTING`: narrowed by the route over
     // every row, never cut here out of a page that was capped before it arrived.
     try {
@@ -947,6 +953,7 @@ function RunsView() {
         }),
         narrowing.kind === "all" ? unasked() : runningCount(),
       ]);
+      if (ticket !== runsRequest.current) return;
       // Dropped whole rather than in part: the request carrying the new
       // offset is already out, and it reads the other two bands as well.
       if (recentOffset !== recentAsked.current) return;
