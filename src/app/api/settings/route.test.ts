@@ -805,3 +805,60 @@ describe("PUT /api/settings and the cached provider usage reading", () => {
     assert.equal(usageRequests, 3, "the cache was not dropped, so nothing was requested");
   });
 });
+
+/**
+ * A model list cleared to "no list" is still cleared after the server restarts.
+ *
+ * An empty `modelCatalogue` means no catalogue and nothing is refused, which is
+ * what the settings page tells an operator to do to switch the check off. The
+ * defect was in `migrate()`, not the route: the PUT stored `[]` and answered
+ * 200, and the next boot's seed merge read "every seeded id is absent" and wrote
+ * the whole seed back — so a model the operator relied on the empty list to
+ * allow was refused at every door, with nothing connecting it to a restart.
+ * Only a reopened connection runs `migrate()` again, so the test closes one.
+ */
+describe("PUT /api/settings and a model list that a restart merges the seed into", () => {
+  function restart() {
+    const g = globalThis as { __ufDb?: { close(): void } };
+    g.__ufDb?.close();
+    delete g.__ufDb;
+  }
+
+  after(async () => {
+    const { SEEDED_MODEL_CATALOGUE } = await import("../../../lib/modelCatalogue");
+    await write("modelCatalogue", SEEDED_MODEL_CATALOGUE);
+  });
+
+  test("a list cleared to empty stays empty across a restart", async () => {
+    const answered = await write("modelCatalogue", []);
+    assert.deepEqual(answered.modelCatalogue, []);
+
+    restart();
+
+    const after = await read();
+    assert.deepEqual(
+      after.modelCatalogue,
+      [],
+      `the cleared list came back with ${after.modelCatalogue.length} entries after ` +
+        `a restart — an empty list is the operator's answer that nothing is refused, ` +
+        `and filling it turns the model check back on`,
+    );
+  });
+
+  test("a stored list still gains a model this release shipped", async () => {
+    const { SEEDED_MODEL_CATALOGUE } = await import("../../../lib/modelCatalogue");
+    // An enabled one: the route refuses a non-empty list with nothing switched on.
+    const kept = SEEDED_MODEL_CATALOGUE.find((entry) => entry.enabled);
+    assert.ok(kept);
+    await write("modelCatalogue", [kept]);
+
+    restart();
+
+    const merged = (await read()).modelCatalogue;
+    assert.equal(
+      merged.length,
+      SEEDED_MODEL_CATALOGUE.length,
+      "a non-empty stored list stopped receiving seeded additions at boot",
+    );
+  });
+});

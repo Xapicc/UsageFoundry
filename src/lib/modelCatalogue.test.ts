@@ -324,12 +324,25 @@ describe("the model catalogue", () => {
       // templates would switch a model back on the morning after the operator
       // switched it off. This one cannot: a seeded id has no Remove button, so
       // "absent" can only ever mean "shipped since", never "taken off".
-      const once = mergeSeededModels([], SEED);
+      const once = mergeSeededModels(
+        [{ id: "old-opus", label: "Old Opus", enabled: true }],
+        SEED,
+      );
       assert.deepEqual(mergeSeededModels(once, SEED), once);
       assert.deepEqual(
         mergeSeededModels(SEEDED_MODEL_CATALOGUE),
         SEEDED_MODEL_CATALOGUE.map((entry) => ({ ...entry })),
       );
+    });
+
+    it("leaves an empty list empty, because empty is the operator's answer", () => {
+      // An empty catalogue means no catalogue — nothing is refused — and the
+      // settings page tells the operator to clear the list for exactly that.
+      // "Absent from a stored list means shipped since" does not hold for a list
+      // with nothing in it: every id is absent, and filling it would turn the
+      // model check back on at the next boot with nothing saying why.
+      assert.deepEqual(mergeSeededModels([], SEED), []);
+      assert.deepEqual(mergeSeededModels([]), []);
     });
 
     it("carries Claude Opus 5.5 onto a list written before it shipped", () => {

@@ -335,6 +335,14 @@ export function adoptModelIds(
  * a stored list" means "shipped after that list was written", which is exactly
  * the case this exists for.
  *
+ * **Except for a list with nothing in it.** That argument needs an entry to be
+ * absent *from*; an empty list is the operator's answer that there is no list
+ * — nothing is refused, and `normalizeModelCatalogue` tells them to clear the
+ * whole list to get exactly that — and every seeded id is "absent" from it
+ * without having been shipped since anything. Filling it would turn the model
+ * check back on at the next boot, behind their back, which is the rule
+ * `mergeDiscoveredModels` already keeps under "Empty stays empty".
+ *
  * Order is the seed's, because declaration order is display order and a model
  * inserted at the end of the list would read as older than everything above it.
  * Entries the seed does not name — the operator's own, and whatever
@@ -352,6 +360,8 @@ export function mergeSeededModels(
   stored: readonly ModelCatalogueEntry[],
   seed: readonly ModelCatalogueEntry[] = SEEDED_MODEL_CATALOGUE,
 ): ModelCatalogueEntry[] {
+  if (stored.length === 0) return [];
+
   const byId = new Map(stored.map((entry) => [entry.id, entry]));
   const seedIds = new Set(seed.map((entry) => entry.id));
 
