@@ -267,3 +267,27 @@ export function git(
     }
   });
 }
+
+/**
+ * The branch a checkout has out, and whether git could say.
+ *
+ * `branch` is null both for a detached HEAD and for a read that failed, and
+ * `readable` is what tells those two apart. It is the one place the question
+ * "does this slot still hold the run's branch" is asked, because slots are
+ * reused: the directory a finished run worked in is usually a later run's
+ * checkout of an unrelated branch, and everything git says about it — status,
+ * files, a context to read from — is then about that run. A caller that
+ * compares `branch` against `runs.worktree_branch` must also refuse a null on
+ * both sides, since a run with no branch and a detached slot would otherwise
+ * match.
+ */
+export async function headBranchOf(
+  dir: string,
+  opts: { timeoutMs?: number } = {},
+): Promise<{ readable: boolean; branch: string | null }> {
+  const head = await git(dir, ["rev-parse", "--abbrev-ref", "HEAD"], opts);
+  return {
+    readable: head.ok,
+    branch: head.ok && head.stdout !== "HEAD" ? head.stdout : null,
+  };
+}

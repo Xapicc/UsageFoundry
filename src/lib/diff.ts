@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { git } from "./git";
+import { git, headBranchOf } from "./git";
 import {
   describeFolder,
   getRun,
@@ -716,10 +716,28 @@ async function worktreeDiff(run: RunRow): Promise<RunDiff> {
   };
 }
 
-/** Uncommitted work left in an isolated run's checkout, if it still exists. */
+/**
+ * Uncommitted work left in an isolated run's checkout, if it still holds the
+ * run's branch.
+ *
+ * Slots are reused, so under any other branch the directory is a later run's
+ * checkout and its status is that run's work in progress — which this card, the
+ * review prompt and the Files tab would all present as this run's leftovers.
+ * `slotState` in `land.ts` proves the same thing before it reads status.
+ *
+ * It answers empty rather than unknown, and that is a decision rather than a
+ * shortcut: `ensureWorktree` hands a slot to another branch only once its status
+ * is clean, so a run whose slot has moved on left nothing behind to hide, which
+ * is also what a slot that is gone already reads as. The unknown a missing
+ * branch diff earns (`changedKnown`) is for labels that claim something about a
+ * diff nobody has; here the diff is whole, and "named, and not changed" over a
+ * file the run never left dirty is true.
+ */
 async function uncommittedIn(run: RunRow): Promise<string[]> {
   const slot = run.worktree_path;
   if (!slot || !fs.existsSync(slot)) return [];
+  const { branch } = await headBranchOf(slot);
+  if (branch === null || branch !== run.worktree_branch) return [];
   // `trim: false` for the reason `worktreeDiff` states: these lines reach the
   // page as they are, and the leading status column is part of what they say.
   const st = await git(slot, ["status", "--porcelain"], { trim: false });
