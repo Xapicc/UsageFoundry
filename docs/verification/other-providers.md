@@ -10,6 +10,15 @@
   credential on start; `--with-api-key` exits 0 on empty stdin. The key
   reached no log, only `$CODEX_HOME/auth.json` (0600).
 
+- **A Codex device start deletes `auth.json` before it prints its code,
+  2026-10-06**, `codex-cli 0.153.4`, scratch `CODEX_HOME` holding a fake key
+  stored by `--with-api-key`, the file polled every millisecond: gone 16–20 ms
+  after spawn, link and code in one stdout chunk at 275–350 ms. SIGKILL at 1 ms
+  left `Logged in using an API key`; at 120 ms and on the first stdout chunk,
+  `Not logged in` and no file. With the code request refused (proxy on a closed
+  port) it deleted the file and exited 1 at 22 ms. The gap is one round trip to
+  `auth.openai.com` from this sandbox, and will be longer on a slow link.
+
 - **`runs.provider` and its admission refusals, 2026-09-05**, `npm start`:
   `provider TEXT`, nullable, cid 47, with `createRun`'s `INSERT` run for
   `'codex'` and `null`; four refused `POST /api/runs` each got their own 400

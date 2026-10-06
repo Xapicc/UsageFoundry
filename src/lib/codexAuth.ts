@@ -512,6 +512,11 @@ export function pendingLogin(): {
   return p ? { url: p.url, code: p.code, startedAt: p.startedAt } : null;
 }
 
+/** Is a device login still waiting for its link and code right now? */
+export function loginStarting(): boolean {
+  return Boolean(startSlot.__ufCodexLoginStarting);
+}
+
 /**
  * Why the last device login ended without signing in, if one did.
  *
@@ -549,10 +554,20 @@ export function cancelLogin(): void {
 /**
  * `claudeAuth.ts`'s `StartOutcome`, with the code beside the link. A key or a
  * sign-out taking the start over is as much a supersession as a newer start.
+ *
+ * `mayHaveClearedCredential` is whether the CLI ran at all, because from here
+ * that is all that can be told: the pinned CLI deletes `auth.json` ~20 ms after
+ * spawn and asks OpenAI for its code only afterwards (measured), so a failure
+ * seen here is usually, but not provably, one that has already signed out.
  */
 export type StartOutcome =
   | { ok: true; value: { url: string; code: string } }
-  | { ok: false; error: string; superseded: boolean };
+  | {
+      ok: false;
+      error: string;
+      superseded: boolean;
+      mayHaveClearedCredential: boolean;
+    };
 
 /**
  * Start a device login and return the link and the code to type into it.
@@ -575,7 +590,14 @@ export async function beginLogin(): Promise<StartOutcome> {
   store.__ufCodexLoginFailure = null;
 
   const home = ensureCodexHome();
-  if (!home.ok) return { ok: false, error: home.error, superseded: false };
+  if (!home.ok) {
+    return {
+      ok: false,
+      error: home.error,
+      superseded: false,
+      mayHaveClearedCredential: false,
+    };
+  }
 
   let child: ChildProcess;
   try {
@@ -586,6 +608,7 @@ export async function beginLogin(): Promise<StartOutcome> {
       ok: false,
       error: `Could not run \`${CODEX_BIN}\`: ${err instanceof Error ? err.message : String(err)}`,
       superseded: false,
+      mayHaveClearedCredential: false,
     };
   }
   // Claimed before the wait, for `claudeAuth.ts`'s reason: two starts that both
@@ -616,6 +639,10 @@ export async function beginLogin(): Promise<StartOutcome> {
   );
 
   const found = await waitForDeviceLogin(() => output, exited);
+  // Node leaves `pid` unset only when the spawn itself failed — a missing or
+  // unexecutable binary, a uid it could not switch to — so a child with one
+  // reached the CLI, which may have deleted `auth.json` before anything else.
+  const ran = child.pid !== undefined;
   if (startSlot.__ufCodexLoginStarting !== child) {
     // A newer start, a cancel, a key or a sign-out took the slot during the
     // wait, and killed this child as it did. A code it printed would approve
@@ -624,12 +651,18 @@ export async function beginLogin(): Promise<StartOutcome> {
       ok: false,
       error: "This sign-in was replaced by a newer one, or cancelled, before its link and code arrived.",
       superseded: true,
+      mayHaveClearedCredential: ran,
     };
   }
   startSlot.__ufCodexLoginStarting = null;
   if (!found.ok) {
     child.kill("SIGKILL");
-    return { ok: false, error: found.error, superseded: false };
+    return {
+      ok: false,
+      error: found.error,
+      superseded: false,
+      mayHaveClearedCredential: ran,
+    };
   }
 
   // Expires only the login it was armed for. One that cancelled blind wrote

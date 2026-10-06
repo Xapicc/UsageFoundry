@@ -42,7 +42,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Isolation and landing | [isolation-and-landing.md](verification/isolation-and-landing.md) | 15 | 11 |
 | Git and review | [git-and-review.md](verification/git-and-review.md) | 11 | 9 |
 | Agents, templates and models | [agents-templates-and-models.md](verification/agents-templates-and-models.md) | 21 | 9 |
-| Other providers | [other-providers.md](verification/other-providers.md) — Codex, and the local provider | 14 | 8 |
+| Other providers | [other-providers.md](verification/other-providers.md) — Codex, and the local provider | 15 | 8 |
 | Knowledge and plugins | [knowledge-and-plugins.md](verification/knowledge-and-plugins.md) | 16 | 11 |
 | Dreaming | [dreaming.md](verification/dreaming.md) | 2 | 1 |
 | Retention | [retention.md](verification/retention.md) | 2 | 2 |
@@ -63,4 +63,4 @@ measurement under *Verified* and cut the item down to what is still open.
 | Interface | [interface-narrow-viewports.md](verification/interface-narrow-viewports.md) — pages at 390px, layout sweeps and smoke-pages | 15 | 9 |
 | Interface | [interface-canvases.md](verification/interface-canvases.md) — the graph canvases, touched map and replay | 5 | 2 |
 | Interface | [interface-pages-and-api.md](verification/interface-pages-and-api.md) — pages, panels and API payloads | 20 | 12 |
-| **Total** | | **433** | **271** |
+| **Total** | | **434** | **271** |
