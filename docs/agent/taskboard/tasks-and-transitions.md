@@ -207,7 +207,11 @@ create that could set a terminal status would be a route around
 are refused *by name* rather than dropped, on `normalizeAgentInput`'s grounds: a
 caller whose field was silently ignored believes it took effect. A create's
 title, brief or `parentTaskId` that is not a string is refused by name for the
-same reason (`notTextRefusal`), and so is a note's body in `taskComments.ts`:
+same reason (`notStringRefusal`, `http.ts`'s one sentence for a text field of the
+wrong type), and so is a note's body in `taskComments.ts` and a patch's `title`,
+`body`, `parentTaskId`, `mountId`, `folder` and `claimRunId` in
+`normalizeTaskPatch` — where `null` stays a real value on the last four and
+`PATCH /api/tasks/[id]` answers the refusal with a 400:
 `String()` filed an object title as `[object Object]` and an array as its items
 joined by commas, and wrote the same into a note, which cannot be removed.
 

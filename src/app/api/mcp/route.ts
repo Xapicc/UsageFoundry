@@ -68,7 +68,6 @@ import {
   getTask,
   listTasks,
   normalizeTaskInput,
-  notTextRefusal,
   readTaskLinks,
   resolveTaskFolder,
   runLinksForTasks,
@@ -139,7 +138,7 @@ import {
 } from "../../../lib/workspace";
 import { mountById } from "../../../lib/config";
 import { fmtUSD } from "../../../lib/format";
-import { isJsonObject } from "../../../lib/http";
+import { isJsonObject, notStringRefusal } from "../../../lib/http";
 import { readReceipts } from "../../../lib/stacks";
 import {
   checkStackDraft,
@@ -3193,6 +3192,8 @@ const PAST_PROPOSAL_STATUSES: readonly ProposalStatus[] = [
  * gone rather than dropped, for the reason a deleted task is.
  */
 function pastProposalsTool(args: Record<string, unknown>, chatId: string) {
+  const notString = nonStringArg(args, "mountId", "folder", "query");
+  if (notString) return notString;
   const status = args.status === undefined ? null : String(args.status);
   if (status !== null && !PAST_PROPOSAL_STATUSES.includes(status as ProposalStatus)) {
     return text(`status must be one of ${PAST_PROPOSAL_STATUSES.join(", ")}.`, true);
@@ -3279,6 +3280,8 @@ function pastProposalsTool(args: Record<string, unknown>, chatId: string) {
  * path is not evidence about the filesystem it is read back into.
  */
 async function recurringFailuresTool(args: Record<string, unknown>) {
+  const notString = nonStringArg(args, "query");
+  if (notString) return notString;
   const settings = getSettings();
   const limit = Math.min(Math.max(Math.trunc(Number(args.limit)) || 15, 1), MAX_FAILURES_LISTED);
   const query = String(args.query ?? "").trim().toLowerCase();
@@ -3423,6 +3426,8 @@ function listTasksTool(args: Record<string, unknown>) {
     }
   }
 
+  const notString = nonStringArg(args, "mountId", "folder");
+  if (notString) return notString;
   const mountId = String(args.mountId ?? "").trim() || null;
   const folder = String(args.folder ?? "").trim() || null;
   // Said rather than silently ignored: `listTasks` narrows on the pair, so a
@@ -3817,13 +3822,13 @@ function toolComment(comment: TaskComment) {
  * Asked before the `String(…)` that reads each one, which would otherwise turn
  * `["<id>"]` into the id inside it and `{…}` into the text "[object Object]":
  * a run acting on a task it named by mistake, or searching for words it never
- * sent, with nothing saying its argument was rewritten. `notTextRefusal` is the
- * one wording, shared with the board's own door for a title, a brief and a
- * note.
+ * sent, with nothing saying its argument was rewritten. `notStringRefusal` is
+ * the one wording, shared with the board's own door for a title, a brief and a
+ * note and with every request body's `optionalStringField`.
  */
 function nonStringArg(args: Record<string, unknown>, ...fields: string[]) {
   for (const field of fields) {
-    const problem = notTextRefusal(field, args[field]);
+    const problem = notStringRefusal(field, args[field]);
     if (problem) return text(problem, true);
   }
   return null;
@@ -4902,6 +4907,8 @@ function pendingLimitMessage(count: number): string {
  * template weeks later and wondering when it changed.
  */
 function saveTemplate(args: Record<string, unknown>, chatId: string) {
+  const notString = nonStringArg(args, "prompt");
+  if (notString) return notString;
   const prompt = String(args.prompt ?? "").trim();
   if (!prompt) return text("A template needs a prompt.", true);
 
@@ -5358,6 +5365,8 @@ function proposeRun(args: Record<string, unknown>, chatId: string, decision: Mod
     }
   }
 
+  const notPrompt = nonStringArg(args, "promptOverride");
+  if (notPrompt) return notPrompt;
   const promptOverride = String(args.promptOverride ?? "").trim() || null;
 
   // Checked against a list of models, unlike every version of this route before

@@ -399,7 +399,7 @@ test("a title, body or parent that is not a string is refused by name, never coe
     const parsed = normalizeTaskInput({ title: "t", body: "b", [field]: value }, CREATION);
     assert.equal(parsed.ok, false, `${field}: ${JSON.stringify(value)} was read as text`);
     const error = !parsed.ok ? parsed.error : "";
-    assert.match(error, new RegExp(`\\b${field}\\b.*must be a string`));
+    assert.match(error, new RegExp(`"${field}" has to be a string when it is given`));
     assert.doesNotMatch(error, /\[object Object\]/);
   }
 });
@@ -522,6 +522,40 @@ test("a patch narrows its closed sets and leaves absent keys alone", () => {
   assert.equal(good.ok && "title" in good.value, false);
 
   assert.equal(normalizeTaskPatch({ origin: "chat" }).ok, false);
+});
+
+// `PATCH /api/tasks/[id]` answers this refusal as a 400. Coerced, `{ "title": {} }`
+// retitled the task "[object Object]" and `{ "parentTaskId": ["<id>"] }` filed
+// it under the id inside the array, each with a 200.
+test("a patch refuses a text field that is not a string by name, and a null stays a value", () => {
+  for (const [field, value] of [
+    ["title", {}],
+    ["title", ["Fix", "it"]],
+    ["body", { why: 1 }],
+    ["body", 42],
+    ["parentTaskId", [randomUUID()]],
+    ["mountId", { id: "work" }],
+    ["folder", ["RepoOne"]],
+    ["claimRunId", { id: HOLDER }],
+    ["claimRunId", false],
+  ] as const) {
+    const parsed = normalizeTaskPatch({ status: "claimed", [field]: value });
+    assert.equal(parsed.ok, false, `${field}: ${JSON.stringify(value)} was read as text`);
+    const error = !parsed.ok ? parsed.error : "";
+    assert.match(error, new RegExp(`"${field}" has to be a string when it is given`));
+    assert.doesNotMatch(error, /\[object Object\]/);
+  }
+
+  const unlinked = normalizeTaskPatch({ parentTaskId: null, mountId: null, folder: null, claimRunId: null });
+  assert.equal(unlinked.ok, true);
+  assert.deepEqual(unlinked.ok && unlinked.value, {
+    parentTaskId: null,
+    mountId: null,
+    folder: null,
+    claimRunId: null,
+  });
+  const texts = normalizeTaskPatch({ title: "New title", body: "New brief", parentTaskId: "x" });
+  assert.deepEqual(texts.ok && texts.value, { title: "New title", body: "New brief", parentTaskId: "x" });
 });
 
 /* ------------------------------------------------------------------ */

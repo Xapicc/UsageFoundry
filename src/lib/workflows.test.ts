@@ -472,6 +472,26 @@ describe("normalizeWorkflowInput — name and blocks", () => {
     assert.equal(v.graph.nodes[1].promptOverride, null);
   });
 
+  it("refuses a prompt override that is not a string, naming the block and the field", () => {
+    // `String()` read `{}` as "[object Object]" and a block was saved whose
+    // every run was started under exactly that as its standing instructions.
+    for (const promptOverride of [{ text: "Be brief." }, ["Be", "brief."], 42, true]) {
+      for (const make of [node, decider]) {
+        const refusal = error(graph([make("a", { promptOverride })]));
+        assert.match(refusal, /“A”/, JSON.stringify(promptOverride));
+        assert.match(refusal, /"promptOverride" has to be a string when it is given/);
+        assert.doesNotMatch(refusal, /\[object Object\]/);
+      }
+    }
+    // Absent and null keep their meaning, and a merge block, which starts no
+    // run and drops the field unread, is not refused for a value it never reads.
+    assert.equal(value(graph([node("a", { promptOverride: undefined })])).graph.nodes[0].promptOverride, null);
+    const merged = value(
+      graph([node("a"), merger("m", { promptOverride: { text: "x" } })], [edge("a", "m")]),
+    );
+    assert.equal(merged.graph.nodes[1].promptOverride, null);
+  });
+
   it("carries the workflow-wide limits, and reads a blank field as off", () => {
     // The one guard a workflow itself holds, and the only value on this form
     // that is not about *what work to do*. It earns its place here rather than

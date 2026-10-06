@@ -36,6 +36,21 @@ export function jsonKind(value: unknown): string {
 }
 
 /**
+ * Why a value that has to be text when it is given is not, or null when it is
+ * text or absent (`null` counts as absent).
+ *
+ * The one sentence for it, asked by `optionalStringField` for a request body
+ * and by the board's and the chat's doors for a value that never was a body
+ * field — a tool argument, a note — so a wrong type reads the same whichever
+ * door it came through. It describes the value rather than echoing it, since
+ * the object a model sent as a prompt can be a brief's length.
+ */
+export function notStringRefusal(key: string, value: unknown): string | null {
+  if (value === undefined || value === null || typeof value === "string") return null;
+  return `"${key}" has to be a string when it is given; got ${jsonKind(value)}.`;
+}
+
+/**
  * A text field that may be absent, or the sentence refusing it. Absent and
  * `null` both read as not given.
  *
@@ -48,11 +63,9 @@ export function optionalStringField(
   key: string,
 ): { ok: true; value: string | undefined } | { ok: false; error: string } {
   const value = body[key];
-  if (value === undefined || value === null) return { ok: true, value: undefined };
-  if (typeof value !== "string") {
-    return { ok: false, error: `"${key}" has to be a string when it is given; got ${jsonKind(value)}.` };
-  }
-  return { ok: true, value };
+  const refusal = notStringRefusal(key, value);
+  if (refusal) return { ok: false, error: refusal };
+  return { ok: true, value: typeof value === "string" ? value : undefined };
 }
 
 /**
