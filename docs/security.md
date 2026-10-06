@@ -169,6 +169,39 @@ read — reaches something that is not this run's business.
   run's config is deliberately **not** strict, so your own MCP servers stay
   available to your agents — which also means those servers are what actually
   bounds an agent, not this switch.
+- **Your own git, in any repository a run worked in.** A work cycle commits
+  into your real `<repo>/.git`, which every worktree of it shares, and writes
+  it as the bind mount's owner. So it can set `core.fsmonitor` in
+  `.git/config`, leave an executable in `.git/hooks/`, or name a filter driver
+  from `.git/info/attributes`. None of that is in a branch, a diff or anything
+  Land shows you. Measured in the container, each one ran its command on an
+  ordinary command. `core.fsmonitor` ran on `git status`, `diff` and `blame`.
+  `post-checkout` and `reference-transaction` ran on `git checkout -b`. A
+  clean filter ran on `status` and `diff`. So the next `git status` you run in
+  that checkout on your host runs the command **as you, outside the
+  container** and outside everything else on this page. That last step is
+  inferred and not yet measured on a host; `docs/verification/git-and-review.md`
+  carries the probe. This app's own git and the chat's ignore `core.fsmonitor`
+  and hooks, but yours does not. Here is what protects you and what does not,
+  measured with git 2.39.5:
+  - `git config --global core.fsmonitor false` does **not** protect you,
+    because the repository's own value wins. A global `core.hooksPath` stops
+    `.git/hooks` only until the repository sets a `core.hooksPath` of its own.
+  - A command-line `-c` or a `GIT_CONFIG_COUNT` block in your environment does
+    outrank the repository: `git -c core.fsmonitor=false -c
+    core.hooksPath=/dev/null status`. Kept in a profile, that also switches off
+    your own hooks in every repository. It does nothing about a filter or diff
+    driver, because the repository picks the driver's name.
+  - So the step that holds is to look before you run git in a checkout a run
+    has worked in. Run
+    `git config --list --show-scope --show-origin | grep -E '^(local|worktree)'`,
+    `ls .git/hooks` and `cat .git/info/attributes`. None of them runs anything
+    it lists, and the first shows every key the repository set, including
+    one pulled in from another file by `include.path`. Anything you did not put
+    there is the run's: a `core.fsmonitor` or `core.hooksPath`, a `filter.*`,
+    `diff.*` or `merge.*` driver, or a hook without `.sample`.
+  - `safe.directory` does not help. Git's documentation says it refuses only a
+    repository owned by another user, and the run writes as you.
 
 There is one thing the split *does* close that reads similarly and is worth not
 confusing with the above: an agent can no longer read the **server's**

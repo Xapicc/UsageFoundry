@@ -40,7 +40,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Workflows and schedules | [workflows-and-schedules-general.md](verification/workflows-and-schedules-general.md) — the canvas, instances, schedules, and a loop's region, link and board stop, review blocks | 13 | 12 |
 | Concurrency and ownership | [concurrency-and-ownership.md](verification/concurrency-and-ownership.md) | 21 | 9 |
 | Isolation and landing | [isolation-and-landing.md](verification/isolation-and-landing.md) | 15 | 11 |
-| Git and review | [git-and-review.md](verification/git-and-review.md) | 11 | 9 |
+| Git and review | [git-and-review.md](verification/git-and-review.md) | 13 | 10 |
 | Agents, templates and models | [agents-templates-and-models.md](verification/agents-templates-and-models.md) | 21 | 9 |
 | Other providers | [other-providers.md](verification/other-providers.md) — Codex, and the local provider | 14 | 8 |
 | Knowledge and plugins | [knowledge-and-plugins.md](verification/knowledge-and-plugins.md) | 16 | 11 |
@@ -63,4 +63,4 @@ measurement under *Verified* and cut the item down to what is still open.
 | Interface | [interface-narrow-viewports.md](verification/interface-narrow-viewports.md) — pages at 390px, layout sweeps and smoke-pages | 15 | 9 |
 | Interface | [interface-canvases.md](verification/interface-canvases.md) — the graph canvases, touched map and replay | 5 | 2 |
 | Interface | [interface-pages-and-api.md](verification/interface-pages-and-api.md) — pages, panels and API payloads | 20 | 12 |
-| **Total** | | **438** | **271** |
+| **Total** | | **440** | **272** |
