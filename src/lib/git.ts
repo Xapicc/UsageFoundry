@@ -48,9 +48,27 @@ export interface GitResult {
  * dead weight here even though git ignores it: the hooks, `textconv` drivers
  * and `core.fsmonitor` this child can be made to run are repository-controlled
  * and one of them may well be a Node program.
+ *
+ * `GIT_OPTIONAL_LOCKS=0` because `git status` refreshes the index as a side
+ * effect and takes `index.lock` to write it back, and this app runs `status` in
+ * the operator's own checkout from the poll behind every Land card. A merge
+ * into that checkout that starts while one of those holds the lock is refused
+ * by git, and the land with it. With it off a `status` reads the same and
+ * writes nothing; the cost is that a stat-dirty file is re-hashed on every read
+ * until something else refreshes the index. It covers `status` and not
+ * `git diff` against the working tree, which on 2.39 still writes a refreshed
+ * index — measured — so it holds only while every diff this app runs is between
+ * commits, as each one is but `conflictedFiles`, which runs inside the land it
+ * would otherwise race. It is not in
+ * `agentEnvironment()`, which this copies, so an agent's own git behaves as it
+ * would at the operator's terminal.
  */
 export function gitEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...agentEnvironment(), GIT_TERMINAL_PROMPT: "0" };
+  const env: NodeJS.ProcessEnv = {
+    ...agentEnvironment(),
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_OPTIONAL_LOCKS: "0",
+  };
   for (const k of Object.keys(env)) {
     if (
       k.startsWith("ANTHROPIC_") ||

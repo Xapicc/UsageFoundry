@@ -29,13 +29,26 @@ process.env.DATA_DIR = DATA_DIR;
 
 after(() => fs.rmSync(DATA_DIR, { recursive: true, force: true }));
 
+/**
+ * A real ENOENT, whose message names the folder it was asked to read — the
+ * shape of every filesystem failure the sweeper and `open()` can throw.
+ */
+function folderNamingFailure(): unknown {
+  try {
+    fs.readdirSync(path.join(DATA_DIR, "secret-project", ".uf-worktrees", "secret-project-3"));
+  } catch (err) {
+    return err;
+  }
+  throw new Error("expected the made-up folder to be missing");
+}
+
 interface HealthBody {
   ok: boolean;
   status: string;
   problems: string[];
   checks: { database: string; dataDirOwned: boolean; databaseError?: string };
   runs: { running: number; queued: number; waiting: number; paused: number };
-  sweeper: { lastTickAgeSeconds: number | null; failures: number };
+  sweeper: { lastTickAgeSeconds: number | null; failures: number; lastError: string | null };
   eventLoopLagMs: number;
   uptimeSeconds: number;
 }
@@ -52,6 +65,12 @@ test("answers 200 with counts, and nothing but counts", async () => {
   const { db } = await import("../../../lib/db");
   db(); // force the schema, so the counts below are a real query
 
+  // The one field here whose content a thrower wrote. The live tick's is not
+  // served on this route, and is recorded so that it stays that way.
+  const { noteLiveTickFailure, noteSweepFailure } = await import("../../../lib/ops");
+  noteSweepFailure(folderNamingFailure());
+  noteLiveTickFailure(folderNamingFailure());
+
   const { status, body } = await probe();
 
   assert.equal(status, 200);
@@ -60,19 +79,29 @@ test("answers 200 with counts, and nothing but counts", async () => {
   assert.deepEqual(body.runs, { running: 0, queued: 0, waiting: 0, paused: 0 });
   assert.equal(typeof body.eventLoopLagMs, "number");
   assert.equal(typeof body.uptimeSeconds, "number");
-  assert.equal(body.sweeper.failures, 0);
+  assert.equal(body.sweeper.failures, 1);
 
   // The exemption in `middleware.ts` is justified by this and only this: the
   // payload carries counts. A prompt, a folder path, a setting or a token
   // appearing here makes an unauthenticated route into a data leak, and it
   // would arrive by someone adding a "useful" field rather than by a rewrite.
-  const serialised = JSON.stringify(body);
-  for (const forbidden of ["prompt", "folder", "token", "path", "model", "usd"]) {
+  const serialised = JSON.stringify(body).toLowerCase();
+  for (const forbidden of [
+    "prompt",
+    "folder",
+    "token",
+    "path",
+    "model",
+    "usd",
+    "secret-project", // the folder the swallowed failure's message names
+    DATA_DIR,
+  ]) {
     assert.ok(
-      !serialised.toLowerCase().includes(forbidden),
+      !serialised.includes(forbidden.toLowerCase()),
       `the health payload must not carry "${forbidden}": ${serialised}`,
     );
   }
+  assert.equal(body.sweeper.lastError, "ENOENT");
 });
 
 test("counts the runs it finds, by status", async () => {
@@ -101,8 +130,10 @@ test("answers 503 when the database handle throws", async () => {
   const slot = globalThis as unknown as DbSlot;
   const real = slot.__ufDb;
   slot.__ufDb = {
+    // What `open()` throws when it cannot create `DATA_DIR` is the
+    // filesystem's own error, and its message names the directory.
     prepare() {
-      throw new Error("SQLITE_IOERR: disk I/O error");
+      throw folderNamingFailure();
     },
   } as unknown as Database.Database;
 
@@ -114,11 +145,13 @@ test("answers 503 when the database handle throws", async () => {
     assert.equal(body.status, "unhealthy");
     assert.equal(body.checks.database, "error");
     assert.ok(body.problems.includes("database"));
-    // The message is worth carrying — it is what tells an operator reading a
-    // failed probe apart from a container that never started — but it is the
-    // message and not a stack.
-    assert.match(String(body.checks.databaseError), /disk I\/O error/);
-    assert.ok(!String(body.checks.databaseError).includes("\n"));
+    // The class is worth carrying — it is what tells an operator reading a
+    // failed probe apart from a container that never started — and the
+    // message is not, because this route is open and the message is a path.
+    assert.match(String(body.checks.databaseError), /ENOENT/);
+    const serialised = JSON.stringify(body);
+    assert.ok(!serialised.includes("secret-project"), serialised);
+    assert.ok(!serialised.includes(DATA_DIR), serialised);
   } finally {
     slot.__ufDb = real;
   }

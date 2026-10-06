@@ -57,7 +57,7 @@ Twenty are renderings rather than functions — every `*.test.tsx` in the tree, 
 |---|---|
 | `dataDirClaim.test.ts` |  |
 | `retention.test.ts` | [stacks], [harnesses] |
-| `retentionSweep.test.ts` |  |
+| `retentionSweep.test.ts` | [status] |
 | `schemaMigration.test.ts` |  |
 
 ## [Budgets, spend guards and the run form's limits](testing/budgets-and-spend.md)
@@ -196,6 +196,12 @@ Units that are about no test file in the tree:
 | `validation.test.ts` |  |
 | `validationSettle.test.ts` |  |
 
+## [The git this app runs](testing/git-children.md)
+
+| Test file | Also in |
+|---|---|
+| `git.test.ts` | [landing] |
+
 ## [Landing, delivery and the land gate](testing/landing-and-delivery.md)
 
 | Test file | Also in |
@@ -204,7 +210,6 @@ Units that are about no test file in the tree:
 | `deliverRun.test.ts` |  |
 | `delivery.test.ts` |  |
 | `diffSlotReuse.test.ts` |  |
-| `git.test.ts` |  |
 | `landGate.test.ts` |  |
 | `landAfterSquash.test.ts` |  |
 | `landAfterVerify.test.ts` |  |
@@ -293,7 +298,7 @@ Units that are about no test file in the tree:
 | `reviewBlock.test.ts` |  |
 | `reviewBlockRun.test.ts` | [workflows], [harnesses] |
 
-## [Auth, credentials, config and the status routes](testing/auth-config-and-status-routes.md)
+## [Auth, credentials, config, settings and the run streams](testing/auth-config-and-status-routes.md)
 
 | Test file | Also in |
 |---|---|
@@ -305,19 +310,24 @@ Units that are about no test file in the tree:
 | `credential-audit.test.ts` |  |
 | `http.test.ts` | [harnesses] |
 | `otlp.test.ts` |  |
-| `readOnlyBanner.test.ts` |  |
 | `requestLog.test.ts` |  |
 | `sessionToken.test.ts` |  |
 | `settings.test.ts` |  |
 | `src/app/api/jsonObjectBody.test.ts` |  |
-| `src/app/api/health/route.test.ts` |  |
 | `src/app/api/login/route.test.ts` | [sign-in] |
 | `src/app/api/otlp/v1/logs/route.test.ts` |  |
 | `src/app/api/runs/[id]/stream/route.test.ts` |  |
 | `src/app/api/runs/live/stream/route.test.ts` | [harnesses] |
 | `src/app/api/settings/route.test.ts` | [harnesses] |
-| `src/app/api/status/route.test.ts` | [sign-in] |
 | `src/middleware.test.ts` | [sign-in] |
+
+## [The health and status routes](testing/health-and-status-routes.md)
+
+| Test file | Also in |
+|---|---|
+| `readOnlyBanner.test.ts` |  |
+| `src/app/api/health/route.test.ts` |  |
+| `src/app/api/status/route.test.ts` | [sign-in] |
 
 ## [Sign-in limits](testing/sign-in-limits.md)
 
@@ -444,6 +454,7 @@ It prints nothing as this is written. Whoever owns a file it names owes that fil
 [sandbox]: testing/sandbox-and-read-guard.md
 [parsers]: testing/stream-parsers-and-webhook.md
 [auth]: testing/auth-config-and-status-routes.md
+[status]: testing/health-and-status-routes.md
 [sign-in]: testing/sign-in-limits.md
 [container]: testing/container-and-deployment.md
 [knowledge]: testing/knowledge-vault-and-graph.md

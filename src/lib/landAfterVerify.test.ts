@@ -23,8 +23,9 @@ import { after, before, beforeEach, describe, it } from "node:test";
  * `land.test.ts` pins it; this file pins that `landRun` asks it at the moment
  * that matters — which no test of the pure function can.
  *
- * Its last describe is the one thing about the checkout no status read can
- * see: a file it ignores, which git's merge replaced by default.
+ * Its last two describes are what no status read of the checkout can see: a
+ * file it ignores, which git's merge replaced by default, and another git
+ * process holding its index lock.
  *
  * Its own file, with `DATA_DIR` named before the first import, for
  * `loopMergeOwnership.test.ts`' reason: `config.ts` is read at module load.
@@ -451,5 +452,63 @@ describe("landRun never overwrites a file the operator's checkout ignores", () =
 
     assert.equal(landed.ok, true, landed.ok ? "" : landed.reason);
     assert.equal(fs.readFileSync(path.join(s.repo, ".env"), "utf8"), "API_KEY=placeholder\n");
+  });
+});
+
+/**
+ * Another git process in the operator's checkout at the moment of the merge:
+ * an editor's background `git status`, a terminal, a CLI session. Held for the
+ * whole land here, where in life it is held for milliseconds, because what is
+ * pinned is what the land says and leaves, not how likely the collision is.
+ */
+describe("landRun into a checkout another git process holds the index lock of", () => {
+  for (const strategy of ["merge", "squash"] as const) {
+    it(`refuses a fast-forward ${strategy} with nothing written, then lands once the lock is gone`, async () => {
+      const s = scene(`index-lock-${strategy}`);
+      const lock = path.join(s.repo, ".git", "index.lock");
+      fs.writeFileSync(lock, "");
+
+      const landed = await land.landRun(s.runId, strategy);
+
+      assert.equal(landed.ok, false, "landed through a held index.lock");
+      const reason = landed.ok ? "" : landed.reason;
+      // The generic "git refused the merge" with git's own first line, before.
+      assert.match(reason, /^Another git process was using your checkout/);
+      assert.ok(reason.includes(`${lock} was left behind`), reason);
+      assert.equal(git(s.repo, "rev-parse", "main").trim(), s.base);
+      assert.equal(fs.existsSync(path.join(s.repo, ".git", "MERGE_HEAD")), false);
+      assert.equal(fs.existsSync(path.join(s.repo, "shared.txt")), true);
+      assert.equal(fs.readFileSync(path.join(s.repo, "shared.txt"), "utf8"), "base\n");
+      assert.equal(landedAt(s.runId), null);
+
+      // "Land again and it should go through" is a claim, so it is checked.
+      fs.rmSync(lock);
+      const again = await land.landRun(s.runId, strategy);
+      assert.equal(again.ok, true, again.ok ? "" : again.reason);
+      assert.equal(fs.readFileSync(path.join(s.repo, "shared.txt"), "utf8"), "branch\n");
+    });
+  }
+
+  it("says a merge left part-way is part-way, rather than that the checkout is as it was", async () => {
+    // Not a fast-forward, so git writes MERGE_HEAD before it finds the lock
+    // taken, and the abort needs the same lock. Before `unwind` asked, the card
+    // said the checkout was as it was over a MERGE_HEAD that the operator's
+    // next commit would have recorded as a merge of work the tree lacks.
+    const s = scene("index-lock-true-merge");
+    fs.writeFileSync(path.join(s.repo, "other.txt"), "main moved\n");
+    git(s.repo, "commit", "-qam", "main moved");
+    const moved = git(s.repo, "rev-parse", "main").trim();
+    fs.writeFileSync(path.join(s.repo, ".git", "index.lock"), "");
+
+    const landed = await land.landRun(s.runId, "merge");
+
+    assert.equal(landed.ok, false);
+    assert.match(
+      landed.ok ? "" : landed.reason,
+      /could not be rolled back, so your checkout may still be mid-merge — run git merge --abort there/,
+    );
+    assert.equal(fs.existsSync(path.join(s.repo, ".git", "MERGE_HEAD")), true);
+    assert.equal(git(s.repo, "rev-parse", "main").trim(), moved);
+    assert.equal(landedAt(s.runId), null);
   });
 });

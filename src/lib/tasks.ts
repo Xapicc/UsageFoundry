@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { db } from "./db";
+import { notStringRefusal } from "./http";
 import { describeFolder, resolveWorkspaceFolder } from "./orchestrator";
 import type {
   RunTaskDTO,
@@ -1060,8 +1061,8 @@ function readText(
   field: "title" | "body",
   raw: unknown,
 ): { ok: true; value: string } | { ok: false; error: string } {
-  const notText = notTextRefusal(field, raw);
-  if (notText) return { ok: false, error: `A task ${notText}` };
+  const notText = notStringRefusal(field, raw);
+  if (notText) return { ok: false, error: notText };
   const value = (typeof raw === "string" ? raw : "").trim();
   const max = field === "title" ? MAX_TASK_TITLE : MAX_TASK_BODY;
 
@@ -1203,7 +1204,7 @@ export function normalizeTaskInput(
   const folder = resolveTaskFolder(o.mountId, o.folder);
   if (!folder.ok) return { ok: false, error: folder.error };
 
-  const notTextParent = notTextRefusal("parentTaskId", o.parentTaskId);
+  const notTextParent = notStringRefusal("parentTaskId", o.parentTaskId);
   if (notTextParent) return { ok: false, error: notTextParent };
   const parentTaskId = typeof o.parentTaskId === "string" ? o.parentTaskId.trim() || null : null;
 
@@ -1230,26 +1231,6 @@ export function normalizeTaskInput(
       operatorOnly,
     },
   };
-}
-
-/**
- * Why a field that has to be text is not, or null when it is text or absent.
- *
- * Refused rather than coerced, `notAFlag`'s rule for a string: `String()` reads
- * an object as "[object Object]" and an array as its items joined by commas, so
- * the board filed a task under that title, signed a permanent note reading it,
- * and looked up `["<id>"]` as the id inside it — and a caller whose argument
- * was rewritten believes it took effect. The value is described rather than
- * echoed, since the object a model sent as a title can be a brief's length.
- */
-export function notTextRefusal(field: string, raw: unknown): string | null {
-  if (raw === undefined || raw === null || typeof raw === "string") return null;
-  const seen = Array.isArray(raw)
-    ? "an array"
-    : typeof raw === "object"
-      ? "an object"
-      : `the ${typeof raw} ${String(raw)}`;
-  return `${field} must be a string; got ${seen}.`;
 }
 
 /**
@@ -1319,8 +1300,24 @@ export function normalizeTaskPatch(
     return { ok: false, error: refusedField(field) };
   }
 
-  if (o.title !== undefined) patch.title = String(o.title ?? "");
-  if (o.body !== undefined) patch.body = String(o.body ?? "");
+  // Asked ahead of every read below: `String()` filed `{}` as the title
+  // "[object Object]" and `["<id>"]` as the id inside it, and the 200 said the
+  // edit had landed. `null` passes — it is a real value on four of these — and
+  // on a title or a brief it is read as the empty text `updateTask` refuses.
+  for (const field of [
+    "title",
+    "body",
+    "claimRunId",
+    "mountId",
+    "folder",
+    "parentTaskId",
+  ] as const) {
+    const refusal = notStringRefusal(field, o[field]);
+    if (refusal) return { ok: false, error: refusal };
+  }
+
+  if (o.title !== undefined) patch.title = typeof o.title === "string" ? o.title : "";
+  if (o.body !== undefined) patch.body = typeof o.body === "string" ? o.body : "";
 
   if (o.priority !== undefined) {
     if (!isTaskPriority(o.priority)) {
@@ -1337,16 +1334,16 @@ export function normalizeTaskPatch(
   }
 
   if (o.claimRunId !== undefined) {
-    patch.claimRunId = o.claimRunId === null ? null : String(o.claimRunId);
+    patch.claimRunId = typeof o.claimRunId === "string" ? o.claimRunId : null;
   }
 
   // The pair moves together: naming either one asks for both to be re-proved,
   // which is what stops an edit leaving a folder behind under a new mount.
-  if (o.mountId !== undefined) patch.mountId = o.mountId === null ? null : String(o.mountId);
-  if (o.folder !== undefined) patch.folder = o.folder === null ? null : String(o.folder);
+  if (o.mountId !== undefined) patch.mountId = typeof o.mountId === "string" ? o.mountId : null;
+  if (o.folder !== undefined) patch.folder = typeof o.folder === "string" ? o.folder : null;
 
   if (o.parentTaskId !== undefined) {
-    patch.parentTaskId = o.parentTaskId === null ? null : String(o.parentTaskId);
+    patch.parentTaskId = typeof o.parentTaskId === "string" ? o.parentTaskId : null;
   }
 
   if (o.operatorOnly !== undefined) {

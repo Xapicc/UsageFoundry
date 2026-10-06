@@ -16,6 +16,7 @@ import {
   currentAgentKnowledge,
   type AgentKnowledge,
 } from "./agents";
+import { notStringRefusal } from "./http";
 import { chatGuards } from "./settings";
 import { listTemplates } from "./templates";
 import { WORKSPACE_MOUNTS } from "./config";
@@ -1255,6 +1256,10 @@ function normalizeNode(
       }
     }
 
+    // Only on a block that starts a run: on the two kinds that start none the
+    // field is dropped unread, so there is no prompt for a wrong type to become.
+    const notPrompt = startsNoRun ? null : notStringRefusal("promptOverride", n.promptOverride);
+    if (notPrompt) return { ok: false, error: `“${nodeName}”: ${notPrompt}` };
     const promptOverride = startsNoRun
       ? ""
       : String(n.promptOverride ?? "").trim();

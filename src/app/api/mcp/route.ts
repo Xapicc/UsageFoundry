@@ -68,7 +68,6 @@ import {
   getTask,
   listTasks,
   normalizeTaskInput,
-  notTextRefusal,
   readTaskLinks,
   resolveTaskFolder,
   runLinksForTasks,
@@ -139,7 +138,7 @@ import {
 } from "../../../lib/workspace";
 import { mountById } from "../../../lib/config";
 import { fmtUSD } from "../../../lib/format";
-import { isJsonObject } from "../../../lib/http";
+import { isJsonObject, notStringRefusal } from "../../../lib/http";
 import { readReceipts } from "../../../lib/stacks";
 import {
   checkStackDraft,
@@ -3193,6 +3192,8 @@ const PAST_PROPOSAL_STATUSES: readonly ProposalStatus[] = [
  * gone rather than dropped, for the reason a deleted task is.
  */
 function pastProposalsTool(args: Record<string, unknown>, chatId: string) {
+  const notString = nonStringArg(args, "mountId", "folder", "query");
+  if (notString) return notString;
   const status = args.status === undefined ? null : String(args.status);
   if (status !== null && !PAST_PROPOSAL_STATUSES.includes(status as ProposalStatus)) {
     return text(`status must be one of ${PAST_PROPOSAL_STATUSES.join(", ")}.`, true);
@@ -3279,6 +3280,8 @@ function pastProposalsTool(args: Record<string, unknown>, chatId: string) {
  * path is not evidence about the filesystem it is read back into.
  */
 async function recurringFailuresTool(args: Record<string, unknown>) {
+  const notString = nonStringArg(args, "query");
+  if (notString) return notString;
   const settings = getSettings();
   const limit = Math.min(Math.max(Math.trunc(Number(args.limit)) || 15, 1), MAX_FAILURES_LISTED);
   const query = String(args.query ?? "").trim().toLowerCase();
@@ -3423,6 +3426,8 @@ function listTasksTool(args: Record<string, unknown>) {
     }
   }
 
+  const notString = nonStringArg(args, "mountId", "folder");
+  if (notString) return notString;
   const mountId = String(args.mountId ?? "").trim() || null;
   const folder = String(args.folder ?? "").trim() || null;
   // Said rather than silently ignored: `listTasks` narrows on the pair, so a
@@ -3817,13 +3822,13 @@ function toolComment(comment: TaskComment) {
  * Asked before the `String(…)` that reads each one, which would otherwise turn
  * `["<id>"]` into the id inside it and `{…}` into the text "[object Object]":
  * a run acting on a task it named by mistake, or searching for words it never
- * sent, with nothing saying its argument was rewritten. `notTextRefusal` is the
- * one wording, shared with the board's own door for a title, a brief and a
- * note.
+ * sent, with nothing saying its argument was rewritten. `notStringRefusal` is
+ * the one wording, shared with the board's own door for a title, a brief and a
+ * note and with every request body's `optionalStringField`.
  */
 function nonStringArg(args: Record<string, unknown>, ...fields: string[]) {
   for (const field of fields) {
-    const problem = notTextRefusal(field, args[field]);
+    const problem = notStringRefusal(field, args[field]);
     if (problem) return text(problem, true);
   }
   return null;
@@ -4439,6 +4444,22 @@ async function completeTaskForRun(args: Record<string, unknown>, runId: string) 
   const notHeld = notHeldByRun("complete_task", taskId, runId);
   if (notHeld) return notHeld;
 
+  // Answered from the row, because the close below restates `done` as
+  // `taskTransitionRefusal`'s allowed no-op and would then report a close this
+  // call never made. Past `notHeldByRun` the run holds the task, but the
+  // operator may have closed it from the board — which leaves the run column
+  // set — and the run repeats what it is told here to them.
+  const before = getTask(taskId);
+  if (before?.status === "done") {
+    return text(
+      before.completedByRunId === runId
+        ? `“${before.title}” is already done, and it is recorded as completed by ` +
+            "this run. Nothing was changed."
+        : `“${before.title}” is already done: the operator closed it, not this ` +
+            "run. Nothing was changed.",
+    );
+  }
+
   const outcome = await completeTaskWithValidation(taskId, runId);
 
   if (outcome.kind === "refused") {
@@ -4886,6 +4907,8 @@ function pendingLimitMessage(count: number): string {
  * template weeks later and wondering when it changed.
  */
 function saveTemplate(args: Record<string, unknown>, chatId: string) {
+  const notString = nonStringArg(args, "prompt");
+  if (notString) return notString;
   const prompt = String(args.prompt ?? "").trim();
   if (!prompt) return text("A template needs a prompt.", true);
 
@@ -5315,10 +5338,13 @@ function proposeRun(args: Record<string, unknown>, chatId: string, decision: Mod
     // at the click is two run ids for two cards, and — since a proposal that
     // fails to start is terminal — one of the cards is gone. Asked here after
     // the guard check above, because with no branch at either end there is
-    // nothing for a rival to be claiming.
+    // nothing for a rival to be claiming. The card being replaced is no rival,
+    // for the reason it does not count against the pending limit: it is
+    // decided in the same transaction that writes this one, and counted it
+    // refuses the correction of any card that carries a branch on.
     const rival = rivalContinuation(
       continuing[0].specId,
-      proposals.map((p) => ({
+      proposals.filter((p) => p.id !== superseded?.id).map((p) => ({
         specId: p.spec_id,
         title: p.title,
         status: p.status,
@@ -5339,6 +5365,8 @@ function proposeRun(args: Record<string, unknown>, chatId: string, decision: Mod
     }
   }
 
+  const notPrompt = nonStringArg(args, "promptOverride");
+  if (notPrompt) return notPrompt;
   const promptOverride = String(args.promptOverride ?? "").trim() || null;
 
   // Checked against a list of models, unlike every version of this route before

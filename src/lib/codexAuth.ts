@@ -127,6 +127,11 @@ const store = globalThis as typeof globalThis & {
   __ufCodexAuthRead?: Promise<CodexAuthResult<CodexAuthStatus>> | null;
 };
 
+/** `claudeAuth.ts`'s `startSlot`: the child of a start still waiting for its link and code. */
+const startSlot = globalThis as typeof globalThis & {
+  __ufCodexLoginStarting?: ChildProcess | null;
+};
+
 /**
  * Terminal escapes, removed before anything is read out of CLI output.
  *
@@ -522,12 +527,18 @@ export function lastLoginFailure(): string | null {
 }
 
 /**
- * Drop the pending login, killing the child that is polling for approval.
+ * Drop the pending login, killing the child that is polling for approval — or
+ * the child of one still starting, which is the same login a few seconds early.
  *
  * Called on cancel, on timeout, and at the start of every new login. Safe to
  * call when there is none.
  */
 export function cancelLogin(): void {
+  const starting = startSlot.__ufCodexLoginStarting;
+  if (starting) {
+    startSlot.__ufCodexLoginStarting = null;
+    starting.kill("SIGKILL");
+  }
   const p = store.__ufCodexLogin;
   if (!p) return;
   store.__ufCodexLogin = null;
@@ -570,6 +581,10 @@ export async function beginLogin(): Promise<
       error: `Could not run \`${CODEX_BIN}\`: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
+  // Claimed before the wait, for `claudeAuth.ts`'s reason: two starts that both
+  // waited first both stored, the second over the first without killing it,
+  // and the orphan went on polling OpenAI where no cancel could reach it.
+  startSlot.__ufCodexLoginStarting = child;
 
   let output = "";
   const take = (chunk: Buffer) => {
@@ -594,12 +609,25 @@ export async function beginLogin(): Promise<
   );
 
   const found = await waitForDeviceLogin(() => output, exited);
+  if (startSlot.__ufCodexLoginStarting !== child) {
+    // A newer start, a cancel, a key or a sign-out took the slot during the
+    // wait, and killed this child as it did. A code it printed would approve
+    // nothing, so it is not handed out.
+    return {
+      ok: false,
+      error: "This sign-in was replaced by a newer one, or cancelled, before its link and code arrived.",
+    };
+  }
+  startSlot.__ufCodexLoginStarting = null;
   if (!found.ok) {
     child.kill("SIGKILL");
     return found;
   }
 
+  // Expires only the login it was armed for. One that cancelled blind wrote
+  // "not approved in time" over, and killed, whatever was pending when it fired.
   const timer = setTimeout(() => {
+    if (store.__ufCodexLogin !== pending) return;
     store.__ufCodexLoginFailure =
       "The sign-in was not approved in time. Start it again.";
     cancelLogin();

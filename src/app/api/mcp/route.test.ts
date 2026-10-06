@@ -694,6 +694,28 @@ test("complete_task refuses a task another run closed rather than saying this ru
   assert.equal(again.isError, false, again.text);
 });
 
+test("complete_task on a held task the operator closed does not say this run completed it", async () => {
+  const run = seedRun(HERE);
+  const held = file(HERE);
+  move(held, "claimed", run.runId);
+  const closed = tasks.updateTask(held.id, { status: "done" }, { kind: "operator" });
+  assert.ok(closed.ok, "the operator closes it from the board");
+
+  const completed = await callTool(run.token, "complete_task", { taskId: held.id });
+  assert.equal(completed.isError, false, completed.text);
+  assert.doesNotMatch(completed.text, /completed by this run|Marked/);
+  assert.match(completed.text, /the operator closed it/);
+  assert.equal(tasks.getTask(held.id)?.completedByRunId, null, "the operator's close stands");
+
+  // The run's own repeat is still answered as its own.
+  const own = file(HERE);
+  move(own, "claimed", run.runId);
+  move(own, "done", run.runId);
+  const again = await callTool(run.token, "complete_task", { taskId: own.id });
+  assert.equal(again.isError, false, again.text);
+  assert.match(again.text, /already done, and it is recorded as completed by this run/);
+});
+
 test("board tools refuse non-string text and ids rather than coercing them", async () => {
   const run = seedRun(HERE);
   const held = file(HERE);
@@ -947,6 +969,74 @@ test("list_tasks refuses a folder within a mount it has no root for", async () =
   assert.match(refused.text, /list_folders/);
 });
 
+// `String()` read an object `folder` as "[object Object]", which is on no row, so
+// the board answered an empty backlog — the one answer that stops a loop and
+// tells a chat the work is done — where it now says the argument was refused.
+test("the chat's read tools refuse a non-string filter by name rather than searching for it", async () => {
+  const chatToken = chat.mintCapability({ kind: "chat", chatId: randomUUID() });
+  file(HERE, { title: "Present, so an empty answer would be wrong" });
+
+  const refusals: [string, Record<string, unknown>, string][] = [
+    ["list_tasks", { mountId: MOUNT, folder: { path: "RepoOne" } }, "folder"],
+    ["list_tasks", { mountId: [MOUNT], folder: "RepoOne" }, "mountId"],
+    ["list_past_proposals", { mountId: { id: MOUNT } }, "mountId"],
+    ["list_past_proposals", { mountId: MOUNT, folder: ["RepoOne"] }, "folder"],
+    ["list_past_proposals", { query: { words: "flake" } }, "query"],
+    ["list_recurring_failures", { query: ["flake"] }, "query"],
+  ];
+  for (const [name, args, field] of refusals) {
+    const result = await callTool(chatToken, name, args);
+    assert.equal(result.isError, true, `${name} ${JSON.stringify(args)} was acted on: ${result.text.slice(0, 80)}`);
+    assert.match(result.text, new RegExp(`"${field}" has to be a string`), name);
+    assert.doesNotMatch(result.text, /\[object Object\]/, name);
+  }
+
+  // Absent and null still mean "not given", which is the whole board.
+  const all = await callTool(chatToken, "list_tasks", { mountId: null, folder: null });
+  assert.equal(all.isError, false, all.text);
+});
+
+test("save_template and propose_run refuse a prompt that is not a string and write nothing", async () => {
+  const { token, proposals } = proposingChat();
+  const templates = () =>
+    (db().prepare("SELECT COUNT(*) AS n FROM run_templates").get() as { n: number }).n;
+  const before = templates();
+
+  for (const prompt of [{ text: "Review the diff." }, ["Review", "the diff."], 42]) {
+    const saved = await callTool(token, "save_template", { name: "Reviewer", prompt });
+    assert.equal(saved.isError, true, `save_template took ${JSON.stringify(prompt)}: ${saved.text}`);
+    assert.match(saved.text, /"prompt" has to be a string/);
+    assert.doesNotMatch(saved.text, /\[object Object\]/);
+  }
+  assert.equal(templates(), before, "no template was saved");
+
+  for (const promptOverride of [{ text: "Be brief." }, ["Be", "brief."], true]) {
+    const proposed = await callTool(token, "propose_run", {
+      mountId: MOUNT,
+      folder: "RepoOne",
+      title: "Overridden",
+      task: "Do a thing.",
+      promptOverride,
+    });
+    assert.equal(proposed.isError, true, `propose_run took ${JSON.stringify(promptOverride)}: ${proposed.text}`);
+    assert.match(proposed.text, /"promptOverride" has to be a string/);
+  }
+  assert.equal(proposals(), 0, "no card was written");
+
+  // A string still saves and still proposes: the refusal is the type, not the field.
+  const saved = await callTool(token, "save_template", { name: "Reviewer", prompt: "Review the diff." });
+  assert.equal(saved.isError, false, saved.text);
+  assert.equal(templates(), before + 1);
+  const ok = await callTool(token, "propose_run", {
+    mountId: MOUNT,
+    folder: "RepoOne",
+    title: "Overridden",
+    task: "Do a thing.",
+    promptOverride: "Be brief.",
+  });
+  assert.equal(ok.isError, false, ok.text);
+});
+
 /**
  * A chat to propose into, and a count of the rows it holds, because what the
  * proposal refusals below pin is that nothing reached the operator's panel:
@@ -1073,6 +1163,80 @@ test("propose_run refuses a mount with no folder, and a folder with no mount", a
     assert.equal(ok.isError, false, ok.text);
   }
   assert.equal(proposals(), 2);
+});
+
+/**
+ * A template whose runs work in a checkout of their own, because carrying a
+ * branch on is refused outright when either end works in the folder.
+ */
+function isolatingTemplate(): string {
+  const templateId = randomUUID();
+  db()
+    .prepare(
+      `INSERT INTO run_templates (id, name, prompt, mount_id, folder, permission_mode,
+         isolate, budget, created_at, updated_at)
+       VALUES (?, ?, 'p', ?, 'RepoOne', 'plan', 1, '{}', 0, 0)`,
+    )
+    .run(templateId, `Isolating ${templateId}`, MOUNT);
+  return templateId;
+}
+
+test("propose_run corrects a pending card that carries a branch on, in one call", async () => {
+  const { token } = proposingChat();
+  const templateId = isolatingTemplate();
+  const continuesA = [{ id: "a", edge: "on-success", continueBranch: true }];
+  for (const [id, dependsOn] of [["a", undefined], ["b", continuesA]] as const) {
+    const proposed = await callTool(token, "propose_run", {
+      templateId,
+      id,
+      title: id.toUpperCase(),
+      task: `Do ${id}.`,
+      dependsOn,
+    });
+    assert.equal(proposed.isError, false, proposed.text);
+  }
+
+  // The card being replaced still reads as pending until the replacement is
+  // written, and it was counted as its own rival for a's branch.
+  const corrected = await callTool(token, "propose_run", {
+    templateId,
+    supersedes: "b",
+    title: "B, corrected",
+    task: "Do b properly.",
+    dependsOn: continuesA,
+  });
+  assert.equal(corrected.isError, false, corrected.text);
+});
+
+test("propose_run still refuses a replacement for a branch another pending card carries on", async () => {
+  const { chatId, token } = proposingChat();
+  const templateId = isolatingTemplate();
+  const continuesA = [{ id: "a", edge: "on-success", continueBranch: true }];
+  for (const [id, dependsOn] of [["a", undefined], ["b", continuesA], ["c", undefined]] as const) {
+    const proposed = await callTool(token, "propose_run", {
+      templateId,
+      id,
+      title: id.toUpperCase(),
+      task: `Do ${id}.`,
+      dependsOn,
+    });
+    assert.equal(proposed.isError, false, proposed.text);
+  }
+
+  const replacing = await callTool(token, "propose_run", {
+    templateId,
+    supersedes: "c",
+    title: "C, on a's branch",
+    task: "Do c on a's branch.",
+    dependsOn: continuesA,
+  });
+  assert.equal(replacing.isError, true, replacing.text);
+  assert.match(replacing.text, /"b" is already waiting to carry on "a"'s branch/);
+  assert.equal(
+    chat.listProposals(chatId).find((p) => p.spec_id === "c")?.status,
+    "pending",
+    "the refused replacement decided nothing",
+  );
 });
 
 test("propose_workflow refuses a block whose folder is null, and takes \"\" as the mount root", async () => {

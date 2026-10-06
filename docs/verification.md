@@ -38,7 +38,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Taskboard | [taskboard-dependencies.md](verification/taskboard-dependencies.md) — task dependencies and their drawing | 5 | 4 |
 | Workflows and schedules | [workflows-and-schedules-loop-sections.md](verification/workflows-and-schedules-loop-sections.md) — a loop's repeated section: frames, marking, passes and pick-ups | 18 | 4 |
 | Workflows and schedules | [workflows-and-schedules-general.md](verification/workflows-and-schedules-general.md) — the canvas, instances, schedules, and a loop's region, link and board stop, review blocks | 13 | 12 |
-| Concurrency and ownership | [concurrency-and-ownership.md](verification/concurrency-and-ownership.md) | 19 | 8 |
+| Concurrency and ownership | [concurrency-and-ownership.md](verification/concurrency-and-ownership.md) | 20 | 9 |
 | Isolation and landing | [isolation-and-landing.md](verification/isolation-and-landing.md) | 14 | 11 |
 | Git and review | [git-and-review.md](verification/git-and-review.md) | 11 | 9 |
 | Agents, templates and models | [agents-templates-and-models.md](verification/agents-templates-and-models.md) | 20 | 9 |
@@ -63,4 +63,4 @@ measurement under *Verified* and cut the item down to what is still open.
 | Interface | [interface-narrow-viewports.md](verification/interface-narrow-viewports.md) — pages at 390px, layout sweeps and smoke-pages | 15 | 9 |
 | Interface | [interface-canvases.md](verification/interface-canvases.md) — the graph canvases, touched map and replay | 5 | 2 |
 | Interface | [interface-pages-and-api.md](verification/interface-pages-and-api.md) — pages, panels and API payloads | 20 | 12 |
-| **Total** | | **426** | **270** |
+| **Total** | | **427** | **271** |

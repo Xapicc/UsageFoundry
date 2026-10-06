@@ -179,6 +179,20 @@
   and a guard's refusal reached in the pre-cycle scan during a shutdown was
   reasoned about, not reproduced.
 
+- **A land that meets a held `index.lock` says so, and this app's `git
+  status` no longer takes one, 2026-10-06**, git 2.39.5 against temporary
+  repositories, `9a4d301`. With `.git/index.lock` present a fast-forward
+  merge or squash exits 1 with `error: Unable to create '…/index.lock': File
+  exists.` and writes nothing, the operator's report word for word; one that
+  is not a fast-forward prints `error: Unable to write index.` instead, writes
+  `MERGE_HEAD` over an untouched tree, and its `merge --abort` fails on the
+  same lock, which `unwind` reported as restored. `GIT_OPTIONAL_LOCKS=0` left
+  a stat-dirty checkout's index unwritten by `status` and not by `git diff`
+  against the working tree. The five new cases in `git.test.ts` and
+  `landAfterVerify.test.ts` failed before the change and pass after. Caveat:
+  what held the lock in the operator's checkout was never caught; the Land
+  cards' `status` polls are the likely holder, inferred rather than seen.
+
 ## Not yet verified by hand
 
 - **The `chat_proposals` rebuild on a real upgraded volume**, in a running
@@ -225,3 +239,13 @@
   run's log should say the server stopped "without shutting down cleanly"
   with a dollar figure, its work cycles should read 1, and `docker compose
   logs usagefoundry | grep 'Reconciled the spend'` should print one line.
+
+- **The `index.lock` refusals in the image, against a mounted checkout
+  (2026-10-06).** Nothing above ran in a container, so whether the refusals
+  the operator saw stop has not been seen. Settle: queue several branches
+  into one checkout with each run's page open, and none should be refused
+  naming `index.lock`; then `touch .git/index.lock` in that checkout and
+  press Land, and the card should say another git process was using it, with
+  `git status` there clean and no `.git/MERGE_HEAD`; remove the file, press
+  Land again, and it should land. A lock left by a merge cut off at shutdown,
+  the open item above, would now be named by the same refusal.

@@ -131,9 +131,15 @@ was its first eight: all 31 `No task with id` refusals in the transcripts of
 prefixes copied out of an opening brief — both for tasks the run could read, and
 both told the task was out of scope, which sent them to re-read a list whose ids
 were never the problem. An id that is not a string at all is refused by name
-before that (`nonStringArg`, `notTextRefusal`'s wording), as is
+before that (`nonStringArg`, `notStringRefusal`'s wording), as is
 `list_my_tasks`' `query`: `String()` read `["<id>"]` as the id inside it and
-searched for `[object Object]`. `taskIdShapeRefusal` in `tasks.ts` is asked first by
+searched for `[object Object]`. The same refusal stands in front of every other
+argument that is read as text and used as a filter, a prompt or a stored value:
+`list_tasks`' `mountId` and `folder` (an object `folder` read as `[object Object]`
+matched no row, which is an empty backlog, the one answer that stops a loop),
+`list_past_proposals`' `mountId`, `folder` and `query`,
+`list_recurring_failures`' `query`, `save_template`'s `prompt` and
+`propose_run`'s `promptOverride`. Absent and `null` keep their meaning. `taskIdShapeRefusal` in `tasks.ts` is asked first by
 `malformedTaskId` in the route: the run's `get_my_task`, `complete_task`,
 `release_task`, `comment_on_task` and `add_task_dependency`, and the chat's
 `get_task`, `comment_on_task` and `add_task_dependency` — and by both doors of
@@ -180,7 +186,10 @@ another run closed came back as completed by this one, and `releaseTask`
 refused an open task by quoting its title, both for any id on the board — two
 writes answering as a read wider than `get_my_task`'s. An id on no row and a
 task another holder has claimed still reach the rule's sentences, which name
-the holder and never the title. **No tool on this surface takes a run id**, and that is not an
+the holder and never the title. A task the run *does* hold that is already
+`done` is answered from its row before any close is tried — completed by this
+run, or closed by the operator, whose close leaves the run column set — since
+the same no-op would report a close the call never made, and the run repeats it. **No tool on this surface takes a run id**, and that is not an
 omission to be tidied: an argument would be a work cycle able to close every task
 on the board by guessing an id out of a list, and `list_my_tasks` hands it a list.
 `create_task` places what it files the same way — `origin: "run"`,

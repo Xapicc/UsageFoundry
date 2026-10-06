@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { measureEventLoopLagMs, opsCounters } from "./ops";
+import { errorClassOf, measureEventLoopLagMs, opsCounters } from "./ops";
 import { ownsDataDir } from "./serverLock";
 
 /**
@@ -54,7 +54,11 @@ export interface HealthReport {
   checks: {
     /** A real read and a real write lock against SQLite. */
     database: "ok" | "error";
-    /** Present only on failure, and a message rather than a stack. */
+    /**
+     * Present only on failure: a fixed sentence naming the failure's class
+     * (`errorClassOf`), never its message — `open()` creating `DATA_DIR` fails
+     * with an error naming that directory, and this route is open.
+     */
     databaseError?: string;
     /** Whether this process holds the data-directory lock. */
     dataDirOwned: boolean;
@@ -65,7 +69,7 @@ export interface HealthReport {
     lastTickAgeSeconds: number | null;
     /** Sweeps that threw and were swallowed since boot. */
     failures: number;
-    /** The last swallowed message, or null. */
+    /** The last swallowed failure's class, or null. Never its message. */
     lastError: string | null;
   };
   /** How late a zero-delay timer actually fired, in milliseconds. */
@@ -123,7 +127,7 @@ export async function healthReport(now = Date.now()): Promise<HealthReport> {
   try {
     counts = probeDatabase();
   } catch (err) {
-    databaseError = (err instanceof Error ? err.message : String(err)).slice(0, 300);
+    databaseError = `The database could not be read or written: ${errorClassOf(err)}.`;
   }
 
   const sweepAge = ops.lastSweepAt === null ? null : now - ops.lastSweepAt;

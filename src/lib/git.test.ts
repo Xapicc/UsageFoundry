@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 
 import { git, gitArgs, gitEnv, gitSync } from "./git";
+import { agentEnvironment } from "./stacks";
 
 /**
  * Covers what every git call this app makes carries, and only that.
@@ -96,6 +98,62 @@ describe("gitEnv", () => {
     assert.equal(env.GIT_TERMINAL_PROMPT, "0");
     assert.equal(env.PATH, process.env.PATH);
     assert.equal(env.HOME, process.env.HOME);
+  });
+
+  it("turns off git's optional locks for this app's git and nobody else's", () => {
+    // Without it every `git status` this app runs in the operator's checkout
+    // takes `index.lock` to write back a refreshed index, and a land into that
+    // checkout starting at the same moment is refused by git.
+    assert.equal(gitEnv().GIT_OPTIONAL_LOCKS, "0");
+    // `gitEnv` copies `agentEnvironment()`; set there, it would reach every
+    // agent and change how the agent's own git behaves.
+    assert.equal(agentEnvironment().GIT_OPTIONAL_LOCKS, undefined);
+  });
+});
+
+/**
+ * That a status read through `git()` leaves the index alone, against a real
+ * repository: whether `status` writes is git's behaviour, and a test of the
+ * environment alone would pass against a git that ignored the variable.
+ */
+describe("git status through git()", () => {
+  it("does not rewrite the index of a checkout with a stat-dirty file", async () => {
+    const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-git-locks-")));
+    const plainEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      GIT_AUTHOR_NAME: "t",
+      GIT_AUTHOR_EMAIL: "t@example.com",
+      GIT_COMMITTER_NAME: "t",
+      GIT_COMMITTER_EMAIL: "t@example.com",
+    };
+    delete plainEnv.GIT_OPTIONAL_LOCKS;
+    const plain = (...args: string[]) =>
+      execFileSync("git", args, { cwd: repo, encoding: "utf8", env: plainEnv });
+    try {
+      plain("init", "-q", "-b", "main");
+      fs.writeFileSync(path.join(repo, "f.txt"), "same\n");
+      plain("add", "f.txt");
+      plain("commit", "-q", "-m", "base");
+      // Same content, different mtime: what a checkout, a build or an editor's
+      // save leaves behind, and what `status` refreshes and writes back.
+      const past = new Date("2001-01-01T00:00:00Z");
+      fs.utimesSync(path.join(repo, "f.txt"), past, past);
+      const index = path.join(repo, ".git", "index");
+      const before = fs.readFileSync(index);
+
+      const res = await git(repo, ["status", "--porcelain"]);
+
+      assert.equal(res.ok, true, res.stderr);
+      assert.equal(res.stdout, "");
+      assert.ok(fs.readFileSync(index).equals(before), "git status rewrote the index");
+
+      // The control: a plain `status` does write it, so the fixture was dirty
+      // enough for the assertion above to have measured something.
+      plain("status", "--porcelain");
+      assert.equal(fs.readFileSync(index).equals(before), false, "the fixture was not stat-dirty");
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
   });
 });
 

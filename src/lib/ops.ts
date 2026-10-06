@@ -35,7 +35,10 @@ interface OpsState {
    */
   sweepFailures: number;
   lastSweepFailureAt: number | null;
-  /** The last failure's message, for the status endpoint. Never a stack. */
+  /**
+   * The last failure's class, for the status and health payloads — never its
+   * message, which goes to stdout instead. See `errorClassOf`.
+   */
   lastSweepError: string | null;
   lastLiveTickAt: number | null;
   liveTickFailures: number;
@@ -55,10 +58,31 @@ const state = ((globalThis as unknown as { __ufOps?: OpsState }).__ufOps ??= {
   lastLiveTickError: null,
 });
 
-/** A message with no stack, for a payload that goes to an operator. */
+/** A message with no stack, for the stdout line and nothing else. */
 function messageOf(err: unknown): string {
   const text = err instanceof Error ? err.message : String(err);
   return text.slice(0, 300);
+}
+
+/** What a code or a class name looks like, and all a served one may contain. */
+const ERROR_CLASS = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+
+/**
+ * What a payload read off this process may say about a failure: its `code`
+ * (`SQLITE_READONLY`, `ENOENT`) where it carries one, else its class's name.
+ *
+ * Never the message. A message is free text written by whatever threw, and the
+ * ones these catch-alls see name the folders this install works on: a swallowed
+ * sweep failure handed `/api/status` an `fs.readdirSync` ENOENT whole, worktree
+ * path and all, and `/api/health` serves the same field to anyone who can reach
+ * the port. The pattern is the guard rather than the trust, since a `code` is
+ * whatever the thrower assigned.
+ */
+export function errorClassOf(err: unknown): string {
+  if (!(err instanceof Error)) return "unknown";
+  const code = (err as { code?: unknown }).code;
+  if (typeof code === "string" && ERROR_CLASS.test(code)) return code;
+  return ERROR_CLASS.test(err.name) ? err.name : "Error";
 }
 
 /** Severity, in the three words every log aggregator already understands. */
@@ -107,10 +131,11 @@ export function noteSweep(): void {
 export function noteSweepFailure(err: unknown): void {
   state.sweepFailures += 1;
   state.lastSweepFailureAt = Date.now();
-  state.lastSweepError = messageOf(err);
+  state.lastSweepError = errorClassOf(err);
   opsLog("error", "sweep.failed", {
     failures: state.sweepFailures,
-    message: state.lastSweepError,
+    code: state.lastSweepError,
+    message: messageOf(err),
   });
 }
 
@@ -121,10 +146,11 @@ export function noteLiveTick(): void {
 export function noteLiveTickFailure(err: unknown): void {
   state.liveTickFailures += 1;
   state.lastLiveTickFailureAt = Date.now();
-  state.lastLiveTickError = messageOf(err);
+  state.lastLiveTickError = errorClassOf(err);
   opsLog("error", "live_guard_tick.failed", {
     failures: state.liveTickFailures,
-    message: state.lastLiveTickError,
+    code: state.lastLiveTickError,
+    message: messageOf(err),
   });
 }
 

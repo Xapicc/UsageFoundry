@@ -61,6 +61,21 @@ before(async () => {
   saveSettings({ planUsageFromApi: false });
 });
 
+/**
+ * A real ENOENT, whose message names the worktree it was asked to read — the
+ * shape of what a sweep throws when a checkout is removed under it.
+ */
+function folderNamingFailure(): unknown {
+  try {
+    fs.readdirSync(
+      path.join(root, "workspace", "secret-project", ".uf-worktrees", "secret-project-3"),
+    );
+  } catch (err) {
+    return err;
+  }
+  throw new Error("expected the made-up folder to be missing");
+}
+
 async function get(headers: Record<string, string> = {}) {
   const { GET } = await import("./route");
   const res = await GET(new Request("http://localhost/api/status", { headers }));
@@ -79,6 +94,9 @@ test("reports the rows it was seeded with, by status", async () => {
   insert.run("s-q2", "/workspace/secret-project", "queued", Date.now());
   insert.run("s-wait", "/workspace/secret-project", "waiting", Date.now());
   insert.run("s-done", "/workspace/secret-project", "completed", Date.now());
+  // What `createRun` stamps on a row it writes `queued`, and what the queue's
+  // age is read from.
+  db().prepare("UPDATE runs SET queued_at = created_at WHERE status = 'queued'").run();
 
   const { status, body } = await get();
 
@@ -223,6 +241,11 @@ test("carries no prompt, no folder path, no setting and no credential", async ()
   // string it had never heard of.
   process.env.UF_PY_TOOLS = "a-declared-python-tool==1.0";
   process.env.UF_GH_EXTENSIONS = "an-owner/gh-a-declared-extension";
+  // The two fields whose content a thrower wrote rather than this file. Their
+  // class is the reading, and is asserted so the absence below is not vacuous.
+  const { noteLiveTickFailure, noteSweepFailure } = await import("../../../lib/ops");
+  noteSweepFailure(folderNamingFailure());
+  noteLiveTickFailure(folderNamingFailure());
   try {
     const { body } = await get({ authorization: "Bearer monitor-token-value" });
     const serialised = JSON.stringify(body);
@@ -243,6 +266,8 @@ test("carries no prompt, no folder path, no setting and no credential", async ()
         `the status payload must not carry "${forbidden}"`,
       );
     }
+    assert.equal(body.sweeper.lastError, "ENOENT");
+    assert.equal(body.liveGuard.lastError, "ENOENT");
   } finally {
     delete process.env.UF_AUTH_TOKEN;
     delete process.env.UF_STATUS_TOKEN;
@@ -364,4 +389,43 @@ test("retains a restart's reconciliation count rather than only logging it", asy
     },
     { closed: 25, kept: 3 },
   );
+});
+
+test("ages a re-queued run from when it rejoined the queue, not from when it was created", async () => {
+  const { db } = await import("../../../lib/db");
+  const { getSettings, saveSettings } = await import("../../../lib/settings");
+  const { resumeRun } = await import("../../../lib/orchestrator");
+
+  // The gauge is a minimum over the install, so the first test's queued rows
+  // would answer for this one.
+  db().prepare("DELETE FROM runs WHERE status = 'queued'").run();
+
+  // A full fleet, so the resumed run is still `queued` when the report reads
+  // it — the state the README's alert is about.
+  const { maxConcurrentRuns } = getSettings();
+  saveSettings({ maxConcurrentRuns: 0 });
+  try {
+    const now = Date.now();
+    const threeDaysAgo = now - 3 * 24 * 3600_000;
+    db()
+      .prepare(
+        "INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations," +
+          " created_at, started_at, paused_at, resume_at)" +
+          " VALUES ('s-parked', ?, 'do the thing', 'paused', '{}', 5, 2, ?, ?, ?, ?)",
+      )
+      .run(path.join(root, "workspace"), threeDaysAgo, threeDaysAgo, now - 600_000, now - 60_000);
+
+    assert.equal(resumeRun("s-parked"), "requeued");
+    const row = db().prepare("SELECT status FROM runs WHERE id = 's-parked'").get() as {
+      status: string;
+    };
+    assert.equal(row.status, "queued", "a cap of 0 must leave the resumed run in the queue");
+
+    // Three days is what this reported before: a run that had already worked
+    // two cycles, read as "queued and never started" the second it rejoined.
+    const age = (await get()).body.queue.oldestQueuedAgeSeconds;
+    assert.ok(age !== null && age < 60, `a run re-queued just now has waited ${age}s`);
+  } finally {
+    saveSettings({ maxConcurrentRuns });
+  }
 });

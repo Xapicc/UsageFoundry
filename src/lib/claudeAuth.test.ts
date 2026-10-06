@@ -1,10 +1,57 @@
 import { strict as assert } from "node:assert";
-import { describe, it } from "node:test";
-import {
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { after, describe, it, mock } from "node:test";
+
+/**
+ * `config.ts` fixes `CLAUDE_BIN` at module load, so the stub `beginLogin`
+ * spawns is named before anything is required. The assertion after the require
+ * is what stops this file from spawning a real `claude auth login` should
+ * `config` ever be loaded ahead of it.
+ *
+ * The stub records its pid, prints a link carrying that pid, and holds stdin
+ * open the way the real CLI does while it waits for a code. `STUB_HOLD`, read
+ * at spawn time, makes it wait for that file before printing.
+ */
+const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-claude-auth-")));
+const pidsDir = path.join(tmp, "pids");
+fs.mkdirSync(pidsDir);
+const stub = path.join(tmp, "claude");
+fs.writeFileSync(
+  stub,
+  [
+    "#!/bin/sh",
+    `echo $$ > "${pidsDir}/$$"`,
+    'if [ -n "$STUB_HOLD" ]; then while [ ! -e "$STUB_HOLD" ]; do sleep 0.02; done; fi',
+    'echo "Open https://claude.ai/oauth/authorize?state=$$"',
+    "while read line; do :; done",
+    "",
+  ].join("\n"),
+  { mode: 0o755 },
+);
+
+process.env.DATA_DIR = path.join(tmp, "data");
+process.env.CLAUDE_HOME = path.join(tmp, "claude-home");
+process.env.WORKSPACE_ROOT = path.join(tmp, "workspace");
+delete process.env.WORKSPACE_ROOTS;
+process.env.CLAUDE_BIN = stub;
+
+const config = require("./config") as typeof import("./config");
+assert.equal(
+  config.CLAUDE_BIN,
+  stub,
+  "config was loaded before the stub was named — refusing to spawn a real `claude auth login`",
+);
+
+const {
+  beginLogin,
+  cancelLogin,
   extractLoginUrl,
   normalizeCode,
   parseAuthStatus,
-} from "./claudeAuth";
+  pendingLogin,
+} = require("./claudeAuth") as typeof import("./claudeAuth");
 
 /**
  * Three parsers reading another program's console output, captured from the
@@ -190,5 +237,119 @@ describe("normalizeCode", () => {
     assert.equal(normalizeCode(undefined).ok, false);
     assert.equal(normalizeCode(42).ok, false);
     assert.equal(normalizeCode("x".repeat(513)).ok, false);
+  });
+});
+
+/** Captured before any test mocks the clock, so the stub still gets real time to print. */
+const realSetTimeout = globalThis.setTimeout;
+const realDelay = (ms: number) =>
+  new Promise<void>((resolve) => realSetTimeout(resolve, ms));
+
+function recordedPids(): number[] {
+  return fs.readdirSync(pidsDir).map(Number);
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Advance a mocked clock 100 ms at a time — the login's own poll interval —
+ * with real time between steps for the stub to print, until `promise` settles.
+ * Bounded inside the 30 s the login allows for its link.
+ */
+async function driveUntilSettled<T>(promise: Promise<T>): Promise<T> {
+  let settled = false;
+  void promise.then(() => {
+    settled = true;
+  });
+  for (let step = 0; !settled; step++) {
+    assert.ok(step < 250, "the sign-in neither printed a link nor ended");
+    await realDelay(20);
+    if (!settled) mock.timers.tick(100);
+  }
+  return promise;
+}
+
+/** `PENDING_TIMEOUT_MS` in `claudeAuth.ts`. The last assertion below fails if it drifts. */
+const PENDING_TIMEOUT_MS = 10 * 60_000;
+
+/**
+ * The one pending login is the bound this module rests on: the child holds the
+ * PKCE verifier, so a second one is a process nothing can reach — not a code,
+ * not Cancel, not Sign out — holding stdin open for as long as the server
+ * lives. Two starts arriving together (two tabs, a script) used to both find
+ * nothing to cancel, both spawn, and both store, the second overwriting the
+ * first without killing it; and the first's still-armed timer later cancelled
+ * whichever login was pending when it fired.
+ *
+ * Real subprocesses, for `settleOnExit`'s reason in `review.test.ts`: the fault
+ * is a process left running, and nothing short of one shows it.
+ */
+describe("beginLogin, started twice at once", () => {
+  after(() => {
+    cancelLogin();
+    for (const pid of recordedPids()) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // Already gone, which is what the tests want.
+      }
+    }
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("leaves no child that cancelLogin cannot reach", async () => {
+    const results = await Promise.all([beginLogin(), beginLogin()]);
+    const pendingUrl = pendingLogin()?.url;
+
+    cancelLogin();
+    await realDelay(300);
+    assert.ok(recordedPids().length >= 1, "no stub was ever started");
+    assert.deepEqual(recordedPids().filter(alive), [], "a sign-in child outlived cancelLogin");
+
+    // Only one link may be handed out: the other's verifier is gone, and a code
+    // issued against it could never be redeemed.
+    const handedOut = results.flatMap((r) => (r.ok ? [r.value.url] : []));
+    assert.equal(handedOut.length, 1, `links handed out: ${JSON.stringify(results)}`);
+    assert.equal(pendingUrl, handedOut[0]);
+  });
+
+  it("does not let a superseded login's timer cancel the live one", async () => {
+    mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"] });
+    try {
+      const hold = path.join(tmp, "hold");
+      const first = beginLogin();
+      process.env.STUB_HOLD = hold;
+      const second = beginLogin();
+      delete process.env.STUB_HOLD;
+
+      await driveUntilSettled(first);
+      const firstSettledAt = Date.now();
+
+      fs.writeFileSync(hold, "");
+      const live = await driveUntilSettled(second);
+      assert.ok(live.ok, JSON.stringify(live));
+      const liveArmedAt = Date.now();
+      // Without this the two would expire on the same tick and the first
+      // assertion below could not tell them apart.
+      assert.ok(liveArmedAt > firstSettledAt);
+
+      // When the first start's own timer would be due, had it kept one.
+      mock.timers.tick(firstSettledAt + PENDING_TIMEOUT_MS - Date.now());
+      assert.equal(pendingLogin()?.url, live.value.url);
+
+      // And the live login still expires on its own timer.
+      mock.timers.tick(liveArmedAt + PENDING_TIMEOUT_MS - Date.now());
+      assert.equal(pendingLogin(), null);
+    } finally {
+      cancelLogin();
+      mock.timers.reset();
+    }
   });
 });
