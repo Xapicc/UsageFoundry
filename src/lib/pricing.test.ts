@@ -8,6 +8,7 @@ import {
   cacheReadMultiplierOf,
   costOf,
   costSplitOf,
+  guardCostOf,
   resolvePrice,
 } from "./pricing";
 
@@ -32,11 +33,12 @@ describe("the cache read rate is a property of the model", () => {
   const MTOK = { ...ZERO_TOKENS, cacheRead: 1_000_000 };
 
   it("resolves claude-fable-5-1 to its own entry, not the claude-fable-5 prefix", () => {
-    // The trap this exists for. `PREFIXES` is sorted longest-first, so the 5.1
-    // entry only wins because it is longer — a table re-ordered by hand, or a
-    // `sort` that lost its comparator, would silently fall through to the 5
-    // entry, whose input and output are the same $10/$50. Both figures a person
-    // can see on the page would still be right.
+    // The trap this exists for. `claude-fable-5` is a string prefix of
+    // `claude-fable-5-1`, and only `resolvePrice` refusing a key followed by a
+    // minor version — plus `PREFIXES` trying the longer key first — keeps the 5.1
+    // entry from falling through to the 5 entry, whose input and output are the
+    // same $10/$50. Both figures a person can see on the page would still be
+    // right.
     const fable51 = resolvePrice("claude-fable-5-1");
     assert.ok(fable51);
     assert.equal(cacheReadMultiplierOf(fable51), 0.025);
@@ -78,8 +80,9 @@ describe("the cache read rate is a property of the model", () => {
     // `[1m]` is a Claude Code construct — the CLI's name for the 1M-context
     // deployment of a model — and Anthropic charges no long-context premium for
     // that window, so the base rate *is* the right answer here. The suffix falls
-    // after the table's key, so `canonicalModelId` leaves it alone and the
-    // prefix match already lands correctly.
+    // after the table's key, `canonicalModelId` leaves it alone, and
+    // `resolvePrice` reads a bracketed suffix as decoration, so the match lands
+    // on the base.
     //
     // Pinned because both ways of getting it wrong are silent. Strip the suffix
     // in `canonicalModelId` and every figure below stays right while a
@@ -248,5 +251,68 @@ describe("claude-sonnet-5 costs the same whatever day it is priced on", () => {
     );
     // Its [1m] variant and a dated snapshot arrive at the same entry.
     assert.deepEqual(resolvePrice("claude-sonnet-5[1m]"), resolvePrice("claude-sonnet-5"));
+  });
+});
+
+/**
+ * A point release the table has no row for is unknown, not its predecessor.
+ *
+ * `claude-sonnet-5` is a prefix of `claude-sonnet-5-5` in the string sense, and
+ * for as long as `resolvePrice` took any key the id began with, every later
+ * point release in a tier priced at the rate of the undated key before it: the
+ * catch-all key `metering/pricing.md` forbids, arriving one release late. That
+ * is silent three times over — the dashboard shows a confident figure and no
+ * unpriced banner, the Settings row wears no *Unpriced* badge, and the guard
+ * charges the predecessor's rate instead of `UNKNOWN_MODEL_PRICE` — and both
+ * point releases this table does know differ from their prefix on the cache
+ * read, the one column nobody checks by eye. Measured on this install before the
+ * fix: ~1,540 `claude-sonnet-5-5` turns priced at Sonnet 5's $2/$10.
+ *
+ * The other half is what must still resolve, because every one of these is the
+ * key followed by decoration rather than by a minor version: a CLI `[1m]`, a
+ * dated snapshot, a Bedrock prefix and `-v1:0`, a Vertex `-v2`, and a point
+ * release that does have its own row.
+ */
+describe("a point release the table has no row for", () => {
+  it("resolves to null rather than to the undated key it extends", () => {
+    for (const id of [
+      "claude-sonnet-5-5",
+      "claude-opus-5-6",
+      "claude-fable-5-2",
+      "claude-mythos-5-2",
+      // Decoration does not make a successor known: these are the same three
+      // models arriving through the CLI, a snapshot and Bedrock.
+      "claude-sonnet-5-5[1m]",
+      "claude-opus-5-6-20261201",
+      "us.anthropic.claude-opus-5-6-v1:0",
+    ]) {
+      assert.equal(resolvePrice(id), null, id);
+    }
+  });
+
+  it("is charged the unknown rate by the guard, not the predecessor's", () => {
+    // A million output tokens: $10 at Sonnet 5's rate, $50 at the fallback. The
+    // dearer figure is the point — a guard under-charging a model whose price
+    // nobody knows is the direction that lets a run through.
+    const output = { ...ZERO_TOKENS, output: 1_000_000 };
+    assert.equal(guardCostOf(output, resolvePrice("claude-sonnet-5-5")), 50);
+    assert.equal(
+      guardCostOf(output, resolvePrice("claude-sonnet-5-5")),
+      guardCostOf(output, UNKNOWN_MODEL_PRICE),
+    );
+  });
+
+  it("still gives the base row to a key followed only by decoration", () => {
+    for (const [id, row] of [
+      ["claude-opus-5[1m]", { input: 5, output: 25 }],
+      ["claude-haiku-4-5-20251001", { input: 1, output: 5 }],
+      ["us.anthropic.claude-opus-4-5-20251101-v1:0", { input: 5, output: 25 }],
+      ["claude-opus-5-5", { input: 4, output: 20, cacheReadMultiplier: 0.05 }],
+      ["claude-fable-5-1", { input: 10, output: 50, cacheReadMultiplier: 0.025 }],
+      ["claude-3-5-sonnet-v2@20241022", { input: 3, output: 15 }],
+      ["anthropic.claude-3-5-sonnet-20241022-v2:0", { input: 3, output: 15 }],
+    ] as [string, object][]) {
+      assert.deepEqual(resolvePrice(id), row, id);
+    }
   });
 });
