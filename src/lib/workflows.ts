@@ -5959,9 +5959,18 @@ function stepPass(
     input: Omit<CreateRunInput, "dependsOn" | "origin">;
     dependsOn: InstanceCreation["dependsOn"];
   }> = [];
+  const recorded = db().prepare(
+    "SELECT 1 FROM workflow_instance_runs WHERE instance_id = ? AND node_id = ?",
+  );
   for (const creation of step.create) {
     const node = section.nodes.find((n) => n.id === creation.nodeId);
     if (!node) continue;
+    // A member is created once. A pass whose state missed a row it has — a
+    // member id misread, or a member whose run row has gone — would otherwise
+    // be answered with another run each step, every one of them outside the
+    // membership that stops, budgets and caps are read off. Skipped without a
+    // write, so `advanceLoop` does not ask again on the strength of it.
+    if (recorded.get(instanceId, memberId(node.id))) continue;
     const plan = planNode(
       node,
       node.templateId ? getTemplate(node.templateId) : null,
@@ -5994,8 +6003,9 @@ function stepPass(
 
   for (const plan of plans) {
     const node = section.nodes.find((n) => n.id === plan.nodeId)!;
+    let runId: string;
     try {
-      const run = createRun({
+      runId = createRun({
         ...plan.input,
         dependsOn: plan.dependsOn,
         // The instance's own, exactly as a deferred node takes it. A pass is not
@@ -6007,7 +6017,21 @@ function stepPass(
         // it carries null, where every pass of it is a workflow's.
         origin: instance.origin ?? "workflow",
         originRef: instance.originRef ?? instanceId,
-      });
+      }).id;
+    } catch (err) {
+      // `createRun` refuses a folder that has gone and a dependency graph it
+      // cannot satisfy. Either way this member will never run, and a row saying
+      // so is the difference between that and a member that quietly vanished.
+      upsertBlock(
+        instanceId,
+        passNode(node, pass, memberId(node.id)),
+        "blocked",
+        `It could not be started: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      wrote = true;
+      continue;
+    }
+    try {
       // The ledger row held this member's place while it was waiting, so it
       // carries the position `openPass` gave it; the row itself goes, because a
       // member in both tables is a member shown twice on the page and counted as
@@ -6024,7 +6048,7 @@ function stepPass(
         nodeId: memberId(node.id),
         nodeName: passMemberName(node.name, pass),
         position: held?.position ?? nextPosition(instanceId),
-        runId: run.id,
+        runId,
         // The **loop**, whatever block's work this is — the column an
         // orchestrator block's runs already use — so the instance budget guard,
         // `stopInstance`, the second-press refusal and the instance page cover a
@@ -6033,16 +6057,21 @@ function stepPass(
       });
       wrote = true;
     } catch (err) {
-      // `createRun` refuses a folder that has gone and a dependency graph it
-      // cannot satisfy. Either way this member will never run, and a row saying
-      // so is the difference between that and a member that quietly vanished.
+      // A run that is no member is one no stop, budget or cap can see, so it is
+      // stopped here — `startWorkflow`'s rollback, for the same gap. And it is
+      // **not** a write: `advanceLoop` steps again only on progress, and a
+      // member that cannot be recorded would be created again on that step.
+      const reason = err instanceof Error ? err.message : String(err);
+      stopRun(
+        runId,
+        `Stopped because workflow “${instance.workflowName}” could not record it as one of its runs`,
+      );
       upsertBlock(
         instanceId,
         passNode(node, pass, memberId(node.id)),
         "blocked",
-        `It could not be started: ${err instanceof Error ? err.message : String(err)}`,
+        `Its run could not be recorded as part of this workflow, so it was stopped: ${reason}`,
       );
-      wrote = true;
     }
   }
 

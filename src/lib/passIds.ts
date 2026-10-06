@@ -38,10 +38,22 @@ export function passPrefix(loopNodeId: string): string {
   return `${loopNodeId}#pass-`;
 }
 
+/**
+ * The loop, the pass and whatever follows, split at the **first** `#pass-N`.
+ *
+ * The first, because `pass-2` is a legal block id and a legal spec id, so a
+ * member id can carry the spelling twice and only the first is the loop's. A
+ * node id cannot contain `#` and a loop cannot sit inside another loop's
+ * section, so the first `#` is always the end of the loop's own id. Read off
+ * the last, a member of pass 1 was filed under a loop called `L#pass-1`, the
+ * pass never saw it, and every step created it again — one press of Run queued
+ * 64 runs that no stop, budget or cap could see.
+ */
+const PASS_MEMBER = /^([^#]*)#pass-(\d+)(?:#(.*))?$/;
+
 /** Which pass a member id belongs to, or null when it does not carry one. */
 export function passNumberOf(memberId: string): number | null {
-  const found = /#pass-(\d+)(?:#|$)/.exec(memberId);
-  return found ? Number(found[1]) : null;
+  return passMemberOf(memberId)?.pass ?? null;
 }
 
 /** What a member id says: which loop, which pass, and which block of it. */
@@ -64,7 +76,7 @@ export interface PassMemberId {
  * what it was.
  */
 export function passMemberOf(memberId: string): PassMemberId | null {
-  const found = /^(.*)#pass-(\d+)(?:#(.*))?$/.exec(memberId);
+  const found = PASS_MEMBER.exec(memberId);
   if (!found) return null;
   return {
     loopNodeId: found[1],

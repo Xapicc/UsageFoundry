@@ -127,7 +127,9 @@ before(async () => {
 
 after(() => fs.rmSync(root, { recursive: true, force: true }));
 
-beforeEach(() => {
+beforeEach(() => emptyTables());
+
+function emptyTables(): void {
   for (const table of [
     "workflow_instance_blocks",
     "workflow_instance_runs",
@@ -139,7 +141,7 @@ beforeEach(() => {
   ]) {
     dbMod.db().prepare(`DELETE FROM ${table}`).run();
   }
-});
+}
 
 /* ------------------------------------------------------------------ */
 /* The instance, written the way the instantiation writes one          */
@@ -895,6 +897,89 @@ describe("picking up a pass that stopped the loop", () => {
     const ended = workflows.leaveRunBehind(instanceId, a.runId);
     assert.match(ended.ok ? "" : ended.error, /ended on its own terms/);
     assert.equal(loopBlock(instanceId).status, "emitted", "the refusal wrote nothing");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* A block or a spec that is itself called pass-N                      */
+/* ------------------------------------------------------------------ */
+
+/** Every run but the ones `scene` parks in the folder, oldest first. */
+const instanceRuns = () =>
+  dbMod
+    .db()
+    .prepare("SELECT id FROM runs WHERE id NOT LIKE 'hold-%' ORDER BY created_at")
+    .all() as Array<{ id: string }>;
+
+/** Runs no member row names: invisible to a stop, the budget and the caps. */
+const orphansOf = (instanceId: string) =>
+  instanceRuns().filter((r) => !membersOf(instanceId).some((m) => m.runId === r.id));
+
+describe("a block or a spec named the way a pass is", () => {
+  it("creates the member once per pass, and every run it creates is a member", async () => {
+    // `pass-2` is a legal block id, and a model drawing a pass-1/pass-2 pair is
+    // plausible. Its member id carries the spelling twice, and one advance used
+    // to queue 64 runs of which one was a member.
+    const instanceId = scene({
+      nodes: [node("pass-2"), mergeNode("m")],
+      edges: [
+        { from: "L", to: "pass-2", edge: "repeats" },
+        { from: "pass-2", to: "m", edge: "on-success" },
+      ],
+      body: ["pass-2", "m"],
+      maxPasses: 2,
+    });
+    workflows.advanceInstances();
+    assert.equal(instanceRuns().length, 1);
+    assert.deepEqual(orphansOf(instanceId), []);
+
+    await drive(instanceId);
+    assert.deepEqual(
+      membersOf(instanceId).map((m) => m.memberId),
+      [passMemberId("L", 1, "pass-2"), passMemberId("L", 2, "pass-2")],
+    );
+    assert.deepEqual(orphansOf(instanceId), []);
+    assert.equal(loopBlock(instanceId).emitted, 2);
+  });
+
+  it("offers the same pick-ups whatever the stuck run's spec is called", async () => {
+    // A run an orchestrator member decided on is named `<member>#<spec>`, so a
+    // spec called `pass-2` puts the spelling in twice too — and read off the
+    // second, the stuck run belonged to no stopped pass and nothing was offered.
+    const kinds = async (spec: string) => {
+      emptyTables();
+      const instanceId = scene({
+        ...DECIDER,
+        edges: [
+          { from: "L", to: "o", edge: "repeats" },
+          { from: "o", to: "m", edge: "on-success" },
+        ],
+        maxPasses: 2,
+      });
+      workflows.advanceInstances();
+      decide(instanceId, passMemberId("L", 1, "o"), [twoRuns[0], { ...twoRuns[1], id: spec }], 0);
+      await driveUntilStopped(instanceId, (id) => id.endsWith(`#${spec}`));
+      assert.equal(loopBlock(instanceId).status, "failed");
+      return workflows.pickUpsOf(workflows.getInstance(instanceId)!).map((p) => p.kind);
+    };
+    const ordinary = await kinds("fix-tests");
+    assert.deepEqual(ordinary, ["run"]);
+    assert.deepEqual(await kinds("pass-2"), ordinary);
+  });
+
+  it("does not create a member again once its row exists", () => {
+    // The other half of the same runaway: whatever makes a pass's state miss a
+    // member it has, `stepPass` must not answer with another run. A member whose
+    // run row has gone is the shape real data has that reads that way.
+    const instanceId = scene({ ...FAN_OUT, maxPasses: 2 });
+    workflows.advanceInstances();
+    const [entry] = membersOf(instanceId);
+    assert.equal(entry.memberId, passMemberId("L", 1, "a"));
+    dbMod.db().prepare("DELETE FROM runs WHERE id=?").run(entry.runId);
+
+    workflows.advanceInstances();
+    assert.deepEqual(instanceRuns(), []);
+    assert.deepEqual(membersOf(instanceId).map((m) => m.runId), [entry.runId]);
   });
 });
 
