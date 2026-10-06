@@ -148,9 +148,13 @@ export function folderLabel(
  *
  * A local run never reaches the agent's model: its `--model` is always the
  * run's or the sign-in's, and a signed-out one is refused at the spawn, so
- * naming the agent's would name a model that cannot run. Words, not an id, for
- * every case that has none to name — `null` provider is "not recorded", never
- * drawn as Claude Code, for the run page's Provider row's reason.
+ * naming the agent's would name a model that cannot run. A Codex run never
+ * reaches it either: `buildCodexArgs` emits `-m` from the run's own model
+ * alone, so with none the cycle is on Codex's default whatever the agent names,
+ * and an agent's model is usually a Claude id that no Codex cycle is ever on.
+ * Words, not an id, for every case that has none to name — `null` provider is
+ * "not recorded", never drawn as Claude Code, for the run page's Provider row's
+ * reason.
  */
 export function resolveLiveModel(run: {
   model: string | null;
@@ -164,10 +168,10 @@ export function resolveLiveModel(run: {
       ? { label: run.localModel, source: "local" }
       : { label: "local model, signed out", source: "default" };
   }
-  if (run.agentModel) return { label: run.agentModel, source: "agent" };
   if (run.provider === "codex") {
     return { label: "Codex's own default", source: "default" };
   }
+  if (run.agentModel) return { label: run.agentModel, source: "agent" };
   if (run.provider === "claude") {
     return { label: "Claude Code's own default", source: "default" };
   }

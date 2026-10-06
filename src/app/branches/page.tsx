@@ -266,11 +266,13 @@ const STEP_RING: Record<MergeQueueItemDTO["status"], string> = {
  * never reached are three different sentences: only the first is about the
  * queue's order, only the second is about this branch, and the third is about
  * the repository. The worker writes a message for the last two; the first has
- * none to write, because nothing has happened to it yet.
+ * none to write, because nothing has happened to it yet — unless it is next
+ * and its checkout is held by a land, a delivery or a run, which the worker
+ * says, since "next" alone reads as a stalled queue for as long as that lasts.
  */
 function stepNote(item: MergeQueueItemDTO, ahead: number): string | null {
   if (item.status === "queued") {
-    if (ahead === 0) return "Next to be landed";
+    if (ahead === 0) return item.message ?? "Next to be landed";
     return `Waiting behind ${ahead} branch${ahead === 1 ? "" : "es"}`;
   }
   if (item.message) return item.message;

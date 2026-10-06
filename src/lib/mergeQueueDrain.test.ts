@@ -53,8 +53,8 @@ let otherRepo: string;
 /** One line per `claude` the app spawned, naming the directory it ran in. */
 let spawned: string;
 /**
- * Where a case holds the app's own git at one subcommand. A file named `merge`
- * or `status` here makes that call write `<name>.started` and wait for
+ * Where a case holds the app's own git at one subcommand. A file named `merge`,
+ * `status` or `remote` here makes that call write `<name>.started` and wait for
  * `<name>.release` before it runs.
  */
 let holds: string;
@@ -124,7 +124,7 @@ process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_err
       "#!/bin/sh",
       'for arg in "$@"; do',
       '  case "$arg" in',
-      "    merge|status)",
+      "    merge|status|remote)",
       `      if [ -e '${holds}'/"$arg" ]; then`,
       `        : > '${holds}'/"$arg".started`,
       "        i=0",
@@ -596,7 +596,7 @@ describe("the boot after a resolution was cut off", () => {
 });
 
 /** Hold the app's git at `step` from its next call on; resolves once one is held. */
-async function holdAt(step: "merge" | "status"): Promise<void> {
+async function holdAt(step: HeldStep): Promise<void> {
   fs.writeFileSync(path.join(holds, step), "");
   const started = path.join(holds, `${step}.started`);
   for (let i = 0; i < 500 && !fs.existsSync(started); i++) {
@@ -605,9 +605,156 @@ async function holdAt(step: "merge" | "status"): Promise<void> {
   assert.ok(fs.existsSync(started), `no git ${step} was reached`);
 }
 
-function release(...steps: ("merge" | "status")[]): void {
+function release(...steps: HeldStep[]): void {
   for (const step of steps) fs.writeFileSync(path.join(holds, `${step}.release`), "");
 }
+
+/**
+ * Take a hold away entirely, once whatever it held has finished, so a later
+ * case's `holdAt` is not answered by this one's `.started` or let straight
+ * through by its `.release`.
+ */
+function clearHold(step: HeldStep): void {
+  for (const suffix of ["", ".started", ".release"]) {
+    fs.rmSync(path.join(holds, `${step}${suffix}`), { force: true });
+  }
+}
+
+type HeldStep = "merge" | "status" | "remote";
+
+/**
+ * A person's Land or Deliver holding the checkout a batch drains into.
+ *
+ * Both take `landing`'s claim on the folder for as long as they run — a land
+ * through the operator's check and its merge, a delivery through its push and
+ * its pull request — and the worker's `landRun` meeting that claim was refused
+ * with "Another branch is being landed into this folder." The drain recorded
+ * that as the branch's own failure and took the next row, which met the same
+ * claim, so a repository's whole queue failed in about fifty milliseconds and
+ * a merge block over it counted failed landings for branches nobody had tried
+ * to merge. A run working in the checkout is the same refusal by `landRun`'s
+ * other folder-level door. Each is about the checkout and clears by itself,
+ * so the rows must wait for it in line and then land.
+ *
+ * The doors are held inside their claim by the git stub: the land at its
+ * `git merge`, the delivery at the `git remote` it reads first. The run is
+ * held by its row alone, which is all `landRun` reads of it.
+ */
+describe("the merge worker behind a checkout somebody else holds", () => {
+  /** Every row of a batch on `status`, naming the first that is not. */
+  function assertEvery(rows: ReturnType<typeof mergeQueue.batchRows>, status: string): void {
+    for (const row of rows) {
+      assert.equal(row.status, status, `${row.run_id} is ${row.status}: ${row.message ?? ""}`);
+    }
+  }
+
+  const doors = [
+    {
+      door: "a manual Land",
+      step: "merge",
+      ids: ["llllllll", "mmmmmmmm", "nnnnnnnn"],
+      press: (id: string) => land.landRun(id, "merge", null),
+      waiting: /Another branch is being landed into this folder/,
+    },
+    {
+      door: "a Deliver",
+      step: "remote",
+      ids: ["pppppppp", "qqqqqqqq", "rrrrrrrr"],
+      press: (id: string) => land.deliverRun(id),
+      waiting: /Another branch is being landed into this folder/,
+    },
+  ] as const;
+
+  for (const { door, step, ids, press, waiting } of doors) {
+    it(`waits for ${door} in the same checkout, then lands the batch`, async () => {
+      const [manual, ...queuedIds] = ids;
+      for (const id of ids) makeRun(id, `${id}.txt`);
+
+      const pressed = press(manual);
+      try {
+        await holdAt(step);
+        const queued = mergeQueue.enqueue([...queuedIds], {
+          strategy: "merge",
+          autoResolve: false,
+        });
+        assert.ok(queued.ok, JSON.stringify(queued));
+
+        // Many times longer than the ~50 ms in which the worker used to fail
+        // both rows, and the head row says what it is waiting on.
+        const held = await settle(queued.batchId, 2_000);
+        assertEvery(held, "queued");
+        assert.match(held[0].message ?? "", waiting);
+
+        release(step);
+        await pressed;
+        const rows = await settle(queued.batchId);
+        assertEvery(rows, "landed");
+      } finally {
+        release(step);
+        await pressed;
+        clearHold(step);
+      }
+    });
+  }
+
+  it("leaves a batch waiting on the checkout to Cancel, which a row held `landing` would not", async () => {
+    makeRun("vvvvvvvv", "vvvvvvvv.txt");
+    makeRun("wwwwwwww", "wwwwwwww.txt");
+
+    const pressed = land.landRun("vvvvvvvv", "merge", null);
+    try {
+      await holdAt("merge");
+      const queued = mergeQueue.enqueue(["wwwwwwww"], { strategy: "merge", autoResolve: false });
+      assert.ok(queued.ok, JSON.stringify(queued));
+      const [waiting] = await settle(queued.batchId, 2_000);
+      assert.match(waiting.message ?? "", /^Waiting — /, `${waiting.status}: ${waiting.message ?? ""}`);
+
+      assert.equal(mergeQueue.cancelBatch(queued.batchId), 1);
+      release("merge");
+      await pressed;
+      // Two looks of the wait, for a worker that went on to land it anyway.
+      await new Promise((r) => setTimeout(r, 2_500));
+      const [row] = mergeQueue.batchRows(queued.batchId);
+      assert.equal(row.status, "cancelled", `${row.status}: ${row.message ?? ""}`);
+      assert.throws(() => git(repo, "cat-file", "-e", "main:wwwwwwww.txt"));
+    } finally {
+      release("merge");
+      await pressed;
+      clearHold("merge");
+    }
+  });
+
+  it("waits for a run working in the checkout, then lands the batch", async () => {
+    makeRun("ssssssss", "ssssssss.txt");
+    makeRun("tttttttt", "tttttttt.txt");
+    dbMod
+      .db()
+      .prepare(
+        `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
+                           created_at, isolation)
+         VALUES ('uuuuuuuu', ?, 'task', 'running', '{}', 1, 0, ?, 'none')`,
+      )
+      .run(repo, Date.now());
+
+    try {
+      const queued = mergeQueue.enqueue(["ssssssss", "tttttttt"], {
+        strategy: "merge",
+        autoResolve: false,
+      });
+      assert.ok(queued.ok, JSON.stringify(queued));
+
+      const held = await settle(queued.batchId, 2_000);
+      assertEvery(held, "queued");
+      assert.match(held[0].message ?? "", /Run uuuuuuuu is working in this folder/);
+
+      dbMod.db().prepare("UPDATE runs SET status = 'completed' WHERE id = 'uuuuuuuu'").run();
+      const rows = await settle(queued.batchId);
+      assertEvery(rows, "landed");
+    } finally {
+      dbMod.db().prepare("UPDATE runs SET status = 'completed' WHERE id = 'uuuuuuuu'").run();
+    }
+  });
+});
 
 /**
  * A SIGTERM that arrives while two workers are part-way through a land.

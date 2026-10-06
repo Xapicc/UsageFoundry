@@ -1686,11 +1686,17 @@ export interface LiveRunsDTO {
   runs: LiveRunDTO[];
 }
 
-/** The strip at the top of `/runs/live`. */
+/**
+ * The strip at the top of `/runs/live`, keyed on the status each count links
+ * to. `waiting-for-stack` is its own count rather than folded into `paused`:
+ * the strip links each count to `/runs?status=<key>`, which would not list it
+ * under `paused`, and it is the park that waits on a person rather than a clock.
+ */
 export interface LiveCountsDTO {
   running: number;
   queued: number;
   paused: number;
+  "waiting-for-stack": number;
 }
 
 /**

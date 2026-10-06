@@ -10,6 +10,7 @@ import {
   diffRoster,
   liveCounts,
   replayShare,
+  sameCounts,
 } from "./liveStream";
 import { clipToolInput, describeEvent } from "./logLine";
 import type { PersistedRunEvent } from "./orchestrator";
@@ -165,18 +166,40 @@ describe("which runs to follow", () => {
 });
 
 describe("the strip's counts", () => {
-  it("counts the three statuses it names and nothing else", () => {
+  it("counts the four statuses it names and nothing else", () => {
     assert.deepEqual(
       liveCounts([
         { status: "running" },
         { status: "running" },
         { status: "queued" },
         { status: "paused" },
+        { status: "waiting-for-stack" },
         { status: "waiting" },
         { status: "completed" },
       ]),
-      { running: 2, queued: 1, paused: 1 },
+      { running: 2, queued: 1, paused: 1, "waiting-for-stack": 1 },
     );
+  });
+
+  /**
+   * `activeRuns()` returns this row and the strip is the page's only word on
+   * it, so leaving it out read "0 running · 0 queued · 0 paused" over a run
+   * that will not move until a person answers it.
+   */
+  it("counts a run waiting for a stack", () => {
+    assert.deepEqual(liveCounts([{ status: "waiting-for-stack" }]), {
+      running: 0,
+      queued: 0,
+      paused: 0,
+      "waiting-for-stack": 1,
+    });
+  });
+
+  it("sees a change in the waiting-for-stack count alone", () => {
+    const before = liveCounts([{ status: "running" }]);
+    const after = liveCounts([{ status: "running" }, { status: "waiting-for-stack" }]);
+    assert.equal(sameCounts(before, after), false);
+    assert.equal(sameCounts(after, after), true);
   });
 });
 

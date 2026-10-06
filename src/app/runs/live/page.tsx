@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { LiveCountsDTO, LiveFrameDTO, LiveRunDTO, LiveRunsDTO } from "@/lib/apiTypes";
-import { pollFailureMessage } from "@/lib/format";
+import { STATUS_LABEL, pollFailureMessage } from "@/lib/format";
 import { jsonRequest } from "@/lib/jsonRequest";
 import { EMPTY_LIVE, applyLiveFrame, type LiveState } from "@/lib/liveTiles";
 import { startPoll } from "@/lib/poll";
@@ -31,7 +31,12 @@ import { Notice } from "@/components/ui/Notice";
  */
 const POLL_MS = 5_000;
 
-const STRIP: readonly (keyof LiveCountsDTO)[] = ["running", "queued", "paused"];
+const STRIP: readonly (keyof LiveCountsDTO)[] = [
+  "running",
+  "queued",
+  "paused",
+  "waiting-for-stack",
+];
 
 export default function LiveRunsPage() {
   const [live, setLive] = useState<LiveState>(EMPTY_LIVE);
@@ -110,7 +115,7 @@ export default function LiveRunsPage() {
               href={`/runs?status=${status}`}
               className="max-md:inline-flex max-md:min-h-11 max-md:items-center"
             >
-              {live.counts?.[status]} {status}
+              {live.counts?.[status]} {STATUS_LABEL[status]}
             </Link>
           ))}
       </p>
