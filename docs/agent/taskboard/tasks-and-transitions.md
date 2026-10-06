@@ -215,8 +215,8 @@ wrong type), and so is a note's body in `taskComments.ts` and a patch's `title`,
 `String()` filed an object title as `[object Object]` and an array as its items
 joined by commas, and wrote the same into a note, which cannot be removed.
 
-**Nothing on the board expires**, and the reasoning is in `retention.md` beside
-the sweeps that do not touch it. A task's **comments** expire with it and never on
+**Nothing on the board expires**, and the reasoning is in `retention/sweeper-and-taskboard.md`
+beside the sweeper that does not touch it. A task's **comments** expire with it and never on
 their own: `task_comments.task_id` is `ON DELETE CASCADE`, which is the one
 cascade on this path and the only foreign key here that could be one — unlike the
 three run id columns, the row it points at *is* deleted, by the operator and by

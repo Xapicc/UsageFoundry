@@ -26,7 +26,7 @@ The paragraphs themselves live in `docs/agent/taskboard/`, one topic file per he
 - `GET`/`POST /api/tasks` and `GET`/`PATCH`/`DELETE /api/tasks/[id]` are operator-facing and behind the app's ordinary gate, and the actor is a constant in the route rather than anything read off a…
 - A `mount_id`/`folder` pair is proved against the app's own mount list at the door, through the resolver a run is confined by, and half a pair is refused rather than stored.
 - Three fields are recorded rather than claimed, and are refused by name off the wire.
-- Nothing on the board expires, and the reasoning is in `retention.md` beside the sweeps that do not touch it.
+- Nothing on the board expires, and the reasoning is in `retention/sweeper-and-taskboard.md` beside the sweeper that does not touch it.
 - The board's own index deliberately does not carry `priority`, and that is the one thing here a reader is most likely to "fix".
 
 ## [Operator-only tasks and giving a task back](taskboard/operator-only-and-release.md)
