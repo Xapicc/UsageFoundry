@@ -1,6 +1,11 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { authBootSignal } from "./authGuard";
+import { MIN_TOKEN_LENGTH, authBootSignal } from "./authGuard";
+
+// Shaped like what the docs tell the operator to generate, and not a secret:
+// 32 hex characters is `openssl rand -hex 16`, 64 is `openssl rand -hex 32`.
+const HEX_32 = "0123456789abcdef".repeat(2);
+const HEX_64 = HEX_32.repeat(2);
 
 /**
  * The boot signal fires for an empty token and does not fire for a set one.
@@ -13,7 +18,9 @@ import { authBootSignal } from "./authGuard";
  */
 
 test("a configured token says nothing at all", () => {
-  const signal = authBootSignal({ token: "s3cret", allowNoAuth: "" });
+  // Was "s3cret", which is now the short case below — deliberately moved, since
+  // a six-character token is exactly the one that should not pass quietly.
+  const signal = authBootSignal({ token: HEX_64, allowNoAuth: "" });
   assert.equal(signal.kind, "enabled");
   // The whole point of the enabled arm: no message, so nothing can be printed
   // on a correctly configured install and trained out of the operator's eye.
@@ -21,8 +28,31 @@ test("a configured token says nothing at all", () => {
 });
 
 test("an acknowledgement does not un-say the warning", () => {
-  const signal = authBootSignal({ token: "s3cret", allowNoAuth: "1" });
+  const signal = authBootSignal({ token: HEX_64, allowNoAuth: "1" });
   assert.equal(signal.kind, "enabled");
+});
+
+/**
+ * The limiters bound the guess rate and nothing else, so a short token is the
+ * gap they leave, and an install running on one boots looking exactly like one
+ * that is fine. Both directions are pinned: a warning that fires on the token
+ * the docs say to generate is one the operator learns to skip.
+ */
+test("a short token starts, and is announced without being echoed", () => {
+  for (const token of ["s3cret", HEX_32.slice(1)]) {
+    const signal = authBootSignal({ token, allowNoAuth: "" });
+    assert.equal(signal.kind, "short", `${token.length} characters must warn`);
+    assert.match(signal.message, /UF_AUTH_TOKEN IS SHORT/);
+    assert.match(signal.message, /openssl rand -hex 32/);
+    // The log is read by more people than the token is meant for.
+    assert.equal(signal.message.includes(token), false);
+  }
+});
+
+test("a token as long as the docs' recipe says nothing", () => {
+  assert.equal(HEX_32.length, MIN_TOKEN_LENGTH);
+  assert.equal(authBootSignal({ token: HEX_32, allowNoAuth: "" }).kind, "enabled");
+  assert.equal(authBootSignal({ token: HEX_64, allowNoAuth: "" }).kind, "enabled");
 });
 
 test("an empty token with no acknowledgement refuses to start", () => {

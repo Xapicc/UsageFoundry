@@ -4,7 +4,7 @@
 
 Read before adding or editing tests of `authGuard.ts`, `sessionToken.ts`, `/api/login` and `/api/logout`, the credential routes, `requestLog.ts`, `claudeAuth.ts`/`codexAuth.ts`, `config.ts`/`configCheck.ts`, `otlp.ts`' body cap, `http.ts`, `saveSettings` and the settings and stream routes. The health and status routes are in [health-and-status-routes.md](health-and-status-routes.md). What bounds guessing at the master token — the limiter, its budgets and its sources — is in [sign-in-limits.md](sign-in-limits.md).
 
-`authBootSignal` (`authGuard.test.ts`) is whether anything at all is said about an install that serves every route to whoever can reach the port.
+`authBootSignal` (`authGuard.test.ts`) is whether anything at all is said about an install that serves every route to whoever can reach the port, and about one whose token is short enough to guess at the rate the limiters allow — pinned both ways, since a warning on the token the docs say to generate is one the operator learns to skip, and on the message never echoing the token.
 
 `config.ts`'s three (`config.test.ts`) each fail *as an ordinary state* rather than as an error — a fifth workspace slot compose never mounted looks exactly like a mounted directory with nothing in it, and the wrong GitHub token **works**, leaving a commit in somebody else's history as the only evidence.
 

@@ -25,8 +25,10 @@
  */
 
 export type AuthBootSignal =
-  /** A token is set. Nothing to say. */
+  /** A token of at least `MIN_TOKEN_LENGTH` is set. Nothing to say. */
   | { kind: "enabled" }
+  /** A token is set and is short enough to guess. Serve, and say so loudly. */
+  | { kind: "short"; message: string }
   /** No token, and the operator said that is what they want. Say it, loudly. */
   | { kind: "unauthenticated"; message: string }
   /** No token and no acknowledgement. Do not serve. */
@@ -65,11 +67,42 @@ const WARNING = [
   "[usagefoundry] ################################################################",
 ].join("\n");
 
+/**
+ * The shortest token that says nothing at boot: what `openssl rand -hex 16`
+ * prints, half of what `.env.example` and `README.md` tell the operator to
+ * generate.
+ *
+ * The limiters bound the guess *rate* — about 100 a minute at sign-in, 100 at
+ * the gate's bearer branch, and a fresh gate budget per restart — so the
+ * token's length is the rest of the defence. Thirty-two hex characters is 128
+ * bits, which that rate never reaches; at about 288,000 guesses a day a
+ * six-digit one falls in under four days and a dictionary word in hours, and
+ * those are what an operator choosing by hand picks. A warning rather than a
+ * refusal, because a refusal would stop an upgraded install whose token was
+ * fine yesterday, ending every run in flight, and that trade is the operator's
+ * to make. Length rather than entropy: it is the one property of a secret this
+ * process can measure without guessing at how it was made.
+ */
+export const MIN_TOKEN_LENGTH = 32;
+
+// Says nothing about the token beyond the bound it missed — not its length,
+// which narrows the search for anybody reading the log.
+const SHORT = [
+  "[usagefoundry] ################################################################",
+  `[usagefoundry] UF_AUTH_TOKEN IS SHORT: fewer than ${MIN_TOKEN_LENGTH} characters. Sign-in and`,
+  "[usagefoundry] bearer guesses are rate-limited, not refused, so a short token",
+  "[usagefoundry] is one a guesser can reach. Replace it with the output of",
+  "[usagefoundry]     openssl rand -hex 32",
+  "[usagefoundry] at your next restart; changing it also signs every browser out.",
+  "[usagefoundry] ################################################################",
+].join("\n");
+
 export function authBootSignal(env: {
   token: string;
   allowNoAuth: string;
 }): AuthBootSignal {
-  if (env.token.length > 0) return { kind: "enabled" };
+  if (env.token.length >= MIN_TOKEN_LENGTH) return { kind: "enabled" };
+  if (env.token.length > 0) return { kind: "short", message: SHORT };
   if (env.allowNoAuth === ACKNOWLEDGEMENT) {
     return { kind: "unauthenticated", message: WARNING };
   }
