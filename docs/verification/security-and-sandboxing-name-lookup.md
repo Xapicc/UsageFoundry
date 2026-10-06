@@ -61,6 +61,18 @@
   it as root, and `gh_as_agent`'s environment was read off the text only (see
   below).
 
+- **What the chat child runs by name resolves on root's `PATH`, 2026-10-06.**
+  Board task `6f85c72a`. `cliPath.test.ts` plants `git` and `node` in a
+  scratch directory first on `UF_AGENT_PATH`, puts a `git` that writes a
+  marker in one on the server's `PATH`, and spawns `/bin/sh -c git` and an
+  `#!/usr/bin/env node` script with `chatEnv()`. Run against a build of this
+  branch with `chatEnv`'s `PATH: chatPath()` removed from the compiled
+  `chat.js`, which is `chatEnv` as it was, both cases failed because the
+  planted `git` and `node` ran. With it, all 14 of the file's cases passed.
+  Caveat: one process as uid 1000 with no `setgid`, so this shows what the
+  child resolves and not that a booted chat turn holds `UF_CHAT_GID` while it
+  does (see below).
+
 ## Not yet verified by hand
 
 - **No image carrying `UF_AGENT_PATH` has been built or booted.** There is no
@@ -101,3 +113,12 @@
   `docker compose logs usagefoundry | grep -E 'installed (Python tool|gh extension)|could not install'`
   (expect each entry installed or skipped as before). Remove the planted file
   afterwards.
+
+- **No booted chat turn has run with `chatPath()`.** Unmeasured: that a chat
+  turn in a booted image gets `/var/lib/uf-stacks/bin` first and no
+  `/home/node/pytools/bin`, and that a stack's tool still resolves there.
+  Settle: `docker compose up --build`, then ask a chat turn to run
+  `echo "$PATH"; command -v git` (expect the toolbox first, no
+  `/home/node/pytools/bin`, `/usr/bin/git`), and, with a `uv-tool` stack and a
+  `UF_PY_TOOLS` entry both installed, `command -v <each>` (expect the stack's
+  under `/var/lib/uf-stacks/bin` and nothing for the `UF_PY_TOOLS` one).

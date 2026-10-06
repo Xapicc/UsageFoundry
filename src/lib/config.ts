@@ -610,9 +610,10 @@ export const NOTIFY_ON_SUCCESS = optionalEnv("UF_NOTIFY_ON_SUCCESS");
  * was what every later spawn ran, the chat child with `UF_CHAT_GID` included
  * (board task `af2a031b`). In the image this one is root's, which
  * `docker-entrypoint.sh` states literally and which names nothing an agent or a
- * stack can write.
+ * stack can write. That is also why `chatPath` keeps only what is on it, beside
+ * the stacks' toolbox, of the agents' `PATH`.
  */
-const SERVER_PATH = process.env.PATH ?? "";
+export const SERVER_PATH = process.env.PATH ?? "";
 
 /**
  * Where `execvp` would find `name` on `searchPath`, or null.
@@ -810,8 +811,9 @@ export const GIT_BIN = env("GIT_BIN", "/usr/bin/git");
  * root — this server, the entrypoint before it, winnow's children after it —
  * never looks a name up in a directory something other than root can write. The
  * agents need both, so every environment built for a dropped child sets `PATH`
- * to this. Outside the image nothing sets it, and the agents' `PATH` is this
- * process's, as it always was.
+ * to this, except the chat and block child's, which holds `UF_CHAT_GID` and
+ * gets `chatPath()` instead. Outside the image nothing sets it, and the agents'
+ * `PATH` is this process's, as it always was.
  *
  * Not through `env()`: the image sets it and an operator never does, so compose
  * does not forward it and `configCheck` has nothing to say about it. Read per
