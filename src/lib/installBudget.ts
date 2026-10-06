@@ -130,12 +130,17 @@ export function installSpend(now = Date.now()): InstallProgress {
   }
 
   // An orchestrator block's deciding turn: measured money this app spent that no
-  // run row records, exactly as `instanceSpend` counts it.
+  // run row records. Only that kind, because a review block and a merge block
+  // copy the cost of their `run_reviews` rows onto their own `cost_usd` (for
+  // `instanceSpend`, which reads no `run_reviews`), and the `assists` sum below
+  // already counts those rows — summing the copy too charged every review and
+  // every auto-resolved conflict twice and tripped the limit at half the money.
   const blocks = db()
     .prepare(
       "SELECT COALESCE(SUM(cost_usd), 0) AS spent FROM workflow_instance_blocks" +
-        " WHERE COALESCE(finished_at, started_at) IS NULL" +
-        " OR COALESCE(finished_at, started_at) >= ?",
+        " WHERE kind = 'orchestrator'" +
+        " AND (COALESCE(finished_at, started_at) IS NULL" +
+        " OR COALESCE(finished_at, started_at) >= ?)",
     )
     .get(since) as { spent: number };
 
