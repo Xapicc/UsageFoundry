@@ -71,11 +71,22 @@ function windowStart(now: number): number {
  *   would bound that row on an instant a day old and drop a run that is about to
  *   spend out of the reading. Both instants null is a run that has never
  *   stopped, counted whole.
- * - A block: `finished_at`, or `started_at` while it has none. Every UPDATE
- *   that adds to `workflow_instance_blocks.cost_usd` writes `finished_at` in
- *   the same statement, so nothing live is dropped by this and the case it
- *   bounds is the one where a settled block is put back to `waiting` with its
- *   `finished_at` cleared and its accumulated cost kept.
+ * - A block, orchestrator rows only: `finished_at`, or `started_at` while it
+ *   has none. The one writer that adds to such a row's `cost_usd` is
+ *   `settleBlock`, and it does not write `finished_at` in the same statement:
+ *   its cost UPDATE is unlatched on purpose, so a turn billed before a halt is
+ *   still counted, and a second UPDATE latched on `status='thinking'` writes
+ *   `finished_at`. Both sit in one transaction, so a settle that wins the latch
+ *   leaves cost and `finished_at` together; one that loses it lands cost on a
+ *   row `haltBlocks` closed seconds earlier. Either way the row carries a recent
+ *   `finished_at`, which is all this bound needs, so nothing live is dropped by
+ *   it and the case it bounds is the one where a settled block is put back to
+ *   `waiting` with its `finished_at` cleared and its accumulated cost kept.
+ *   Review and merge rows are not summed here, so their writers are not held
+ *   to any of this: `bankReviewSpend` adds a review's cost while the block is
+ *   still `thinking` and never writes `finished_at`, and `finishMergeBlock`
+ *   has `settleBlock`'s two-UPDATE shape. The `blocks` read below says why those
+ *   kinds are left out.
  * - An assist: `finished_at`, or `created_at` while it has none. A review and a
  *   resolution are one press each and sat outside this reading for as long as
  *   that was true of every row in the table — defensible while a person is there
