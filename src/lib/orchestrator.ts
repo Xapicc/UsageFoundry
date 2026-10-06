@@ -12249,6 +12249,7 @@ export async function sweepPaused(): Promise<void> {
       return;
     }
     const now = Date.now();
+    const held = newWorkPaused();
     let freed = false;
     let resumeSlots = MAX_RESUMES_PER_SWEEP - forStack.released;
 
@@ -12309,6 +12310,13 @@ export async function sweepPaused(): Promise<void> {
         }
 
         case "resume": {
+          // Left `paused` while new work is held, for the folder hold's
+          // reason: `paused` is what `reconcileOnBoot`'s grace keys on, and a
+          // queued row is closed out by a restart — which is the usual reason
+          // the hold gets set. The walk would keep it in the queue anyway, so
+          // flipping it buys nothing but that. `setFleetPaused(false)` sweeps
+          // again rather than leaving it to the next tick.
+          if (held) break;
           // Only so many per tick, for `MAX_RESUMES_PER_SWEEP`'s reason. The
           // rest keep their `paused` row and a `resume_at` already in the past,
           // so the next tick reconsiders them from a fresh snapshot — which is
@@ -12434,6 +12442,10 @@ export function releaseStackWaits(
   const waiting = db()
     .prepare("SELECT id FROM runs WHERE status = 'waiting-for-stack' ORDER BY created_at")
     .all() as { id: string }[];
+  // `sweepPaused`'s hold rule, and for its reason: a restart keeps this status
+  // whatever its age and closes out the queue it would be released into. All
+  // still waiting, so the sweeper keeps ticking until the hold is lifted.
+  if (newWorkPaused()) return { released: 0, waiting: waiting.length };
 
   let released = 0;
   let still = 0;

@@ -1247,10 +1247,12 @@ export function sameValue(a: unknown, b: unknown): boolean {
  *
  * What it suppresses is *starting*, not recording: rows may still be created —
  * a press of Run on a workflow still writes its graph out — they simply never
- * leave the queue. Four call sites read it and each is separate: `promoteQueued`
+ * leave the queue. Six call sites read it and each is separate: `promoteQueued`
  * through `selectPromotable`, `releaseDependents` through `releasableRuns`,
- * `tickSchedules` through `decideSchedule`, and `emitBlockRuns` at its door. A
- * fix that misses one is silent, which is why there is a test per site.
+ * `tickSchedules` through `decideSchedule`, `emitBlockRuns` at its door, and
+ * the sweeper's two un-parkings, `sweepPaused` and `releaseStackWaits`, which
+ * leave a park parked because a restart closes out the queue. A fix that misses
+ * one is silent, which is why there is a test per site.
  */
 const PAUSE_KEY = "fleet.newWorkPaused";
 

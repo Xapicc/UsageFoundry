@@ -7,6 +7,7 @@ import {
   releaseDependents,
   reopenRun,
   stopRun,
+  sweepPaused,
   topologicalOrder,
   type RunRow,
   type RunStatus,
@@ -29,7 +30,7 @@ import { haltSteps, stopInstance, type HaltReport } from "./workflows";
  *     `blockWaitingRun`, choosing between the two with the very same
  *     `haltSteps` a workflow halt uses. There is no new status, no new signal
  *     path and no second answer to "which rows does this take down".
- *   - The hold on new work is `settings.newWorkPaused`, read by the four places
+ *   - The hold on new work is `settings.newWorkPaused`, read by the six places
  *     that start work and by nothing else. It is documented beside the flag.
  *   - `reopenFleet` is `reopenRun` in a loop over an explicit list of ids, with
  *     one budget laid over each run's own rather than in place of it.
@@ -165,6 +166,12 @@ export function stopFleet(): FleetStopReport {
  * this pair the queue would sit still until the next terminal transition
  * happened to wake it, which on a fleet that has just been stopped is never.
  *
+ * Then the sweeper, because the hold kept every park whose wait ended under it
+ * parked rather than queued — a restart closes the queue out — and its own
+ * timer is a minute. It promotes what it re-queues itself, and a run parked on
+ * a window needs a usage snapshot first, so it rejoins a moment after this
+ * returns rather than inside it.
+ *
  * `tickSchedules` needs nothing here: its timer keeps running throughout and
  * decides again on its own cadence. Deliberately so — a schedule's missed
  * windows are recorded and not made up, and resuming the fleet is not a reason
@@ -175,6 +182,7 @@ export function setFleetPaused(paused: boolean): void {
   if (!paused) {
     releaseDependents();
     promoteQueued();
+    void sweepPaused();
   }
 }
 

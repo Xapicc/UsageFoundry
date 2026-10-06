@@ -225,6 +225,13 @@
 - **A parked run taking its folder back** within a sweep of the run that took
   it finishing, and staying parked until then.
 
+- **A park whose wait ends under the hold has never met a real restart.**
+  `fleet.test.ts` pins it on 2026-10-06 against `50d60d8`'s failure (the due run
+  `queued` after a held sweep, then closed out by `reconcileOnBoot()`), with the
+  sweep and the boot called in one process. Settle: park a cheap run, **Hold new
+  work**, let its window clear, `docker compose restart`, check it is still
+  parked, then **Resume new work** and watch it rejoin within seconds.
+
 - **Resuming a finished run into a real agent**: `--resume` picking the
   session up, an isolated one back in its own checkout on its own branch.
 
