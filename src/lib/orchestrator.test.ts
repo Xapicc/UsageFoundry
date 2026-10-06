@@ -103,6 +103,7 @@ const {
   planPausedRun,
   previousCycleStoppedTasksNotice,
   releasableRuns,
+  releaseStackWaits,
   resolveIsolation,
   revivableDependents,
   getRun,
@@ -163,7 +164,7 @@ const { revokeIngestTokens, runForIngestToken } =
   require("./otlp") as typeof import("./otlp");
 const { db } = require("./db") as typeof import("./db");
 const { recentOpsEvents } = require("./ops") as typeof import("./ops");
-const { saveSettings } = require("./settings") as typeof import("./settings");
+const { getSettings, saveSettings } = require("./settings") as typeof import("./settings");
 const { stackGrants } = require("./stacks") as typeof import("./stacks");
 const { priceFiles, renderFileCostNotice } =
   require("./fileCostNotice") as typeof import("./fileCostNotice");
@@ -4346,6 +4347,110 @@ describe("the previous cycle's stopped background tasks, read back from the log"
     const runId = insertRun();
     startCycle(runId);
     assert.equal(previousCycleStoppedTasksNotice(runId), null);
+  });
+
+  /**
+   * A follow-up is sent alone, so whatever writes one decides whether the note
+   * reaches the cycle it was for — and the next `iteration` event moves the
+   * boundary, so a note that cycle does not carry is never given at all. Each
+   * case writes the row through the real door and builds the prompt the way the
+   * loop does, from `runs.follow_up` and the log.
+   */
+  describe("handed to a pick-up nobody typed", () => {
+    /** A run whose one cycle ended with a sub-agent the CLI killed at its ceiling. */
+    const endedWith = (status: RunStatus, extra: Record<string, number> = {}): string => {
+      const runId = insertRun();
+      startCycle(runId);
+      feed(runId, [...sub("p1", "bg sleeper"), ...killedAtCeiling("p1", "bg sleeper")]);
+      db()
+        .prepare(
+          `UPDATE runs SET status = ?, session_id = 'sess-1', iterations = 1, max_iterations = 5,
+                           budget = '{"maxIterations":5}', reported_done = ?, restart_closed = ?,
+                           work_dir = folder, finished_at = ?
+           WHERE id = ?`,
+        )
+        .run(status, extra.reportedDone ?? 0, extra.restartClosed ?? 0, Date.now(), runId);
+      // `insertRun` leaves its rows `running` in this folder, so the
+      // `promoteQueued` a pick-up ends in has nothing to start; this one makes
+      // that true whatever ran before.
+      insertRun();
+      return runId;
+    };
+
+    /** The next cycle's prompt, from the row and the log, as `startRun` builds it. */
+    const nextCycleOf = (runId: string): string => {
+      const row = getRun(runId)!;
+      return nextPrompt({
+        sessionId: row.session_id,
+        followUp: row.follow_up,
+        justRetriggered: false,
+        task: row.prompt,
+        isolationPreamble: null,
+        priorCycles: row.iterations,
+        worktreeBranch: null,
+        continuedFrom: null,
+        continuedWork: "READ-FIRST",
+        continuation: "CONTINUE",
+        donePushback: "PUSHBACK",
+        validation: null,
+        backgroundNotice: previousCycleStoppedTasksNotice(runId),
+        endsOnDone: false,
+      });
+    };
+
+    const pickedUp = (runId: string, note?: string): string => {
+      const outcome = reopenRun(runId, { maxIterations: 5 }, note);
+      assert.equal(outcome.ok, true, outcome.ok ? "" : outcome.reason);
+      assert.equal(getRun(runId)!.status, "queued", "the fixture's folder was free, so it ran");
+      const prompt = nextCycleOf(runId);
+      stopRun(runId);
+      return prompt;
+    };
+
+    const namesTheTaskOnce = (prompt: string) => {
+      assert.match(prompt, /bg sleeper/, `the prompt sent was:\n${prompt.slice(0, 300)}`);
+      assert.equal(prompt.split("bg sleeper").length - 1, 1, "the note was given twice");
+    };
+
+    it("goes ahead of the needs-review pick-up notice", () => {
+      const prompt = pickedUp(endedWith("needs-review"));
+      namesTheTaskOnce(prompt);
+      assert.match(prompt, /picked this run back up/);
+    });
+
+    it("goes ahead of the notice that a restart cut the cycle", () => {
+      const prompt = pickedUp(endedWith("failed", { restartClosed: 1 }));
+      namesTheTaskOnce(prompt);
+      assert.match(prompt, /server restarted/);
+    });
+
+    it("goes ahead of the pushback a DONE run is picked up with", () => {
+      const runId = endedWith("completed", { reportedDone: 1 });
+      const prompt = pickedUp(runId);
+      namesTheTaskOnce(prompt);
+      assert.ok(
+        prompt.endsWith(getSettings().donePushbackPrompt),
+        `the pushback is not the instruction the turn ends on:\n${prompt}`,
+      );
+    });
+
+    it("goes ahead of what a run resumed from a stack wait is told", () => {
+      const runId = endedWith("waiting-for-stack");
+      // Attached to no request, which the release resumes rather than keeping
+      // waiting for ever: what it writes is the subject here, not the decision.
+      assert.deepEqual(releaseStackWaits([]), { released: 1, waiting: 0 });
+      assert.equal(getRun(runId)!.status, "queued");
+      const prompt = nextCycleOf(runId);
+      stopRun(runId);
+      namesTheTaskOnce(prompt);
+      assert.match(prompt, /no longer on record/);
+    });
+
+    it("leaves a note the operator typed verbatim", () => {
+      const runId = endedWith("needs-review");
+      const prompt = pickedUp(runId, "  Only touch README.md  ");
+      assert.equal(prompt, "Only touch README.md");
+    });
   });
 });
 

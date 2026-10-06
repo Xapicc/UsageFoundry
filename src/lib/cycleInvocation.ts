@@ -274,10 +274,12 @@ export function nextPrompt(o: {
    * on them. Ahead of it so the instruction is the last thing read before the
    * agent answers.
    *
-   * Not on the operator's own note: `followUp` is sent verbatim, and appending
-   * a machine's text to words a person typed is the one edit that promise
-   * forbids. The operator who typed it picked the run up from its log, which
-   * names the tasks.
+   * Not on a follow-up, which is sent verbatim. Appending a machine's text to
+   * words a person typed is the one edit that promise forbids, and the operator
+   * who typed them picked the run up from its log, which names the tasks. A
+   * follow-up this app wrote — a pick-up with no note, a stack resume — already
+   * carries the note, put there by the door that wrote it, because nobody read
+   * that log and the cycle it opens moves the boundary the note is read from.
    */
   backgroundNotice: string | null;
   /**
@@ -324,7 +326,8 @@ export function nextPrompt(o: {
       .join("\n\n");
   }
   // Not appended: this branch is the operator's own words, which `docs/runs.md`
-  // promises are sent verbatim as the next turn. A run whose operator wrote a
+  // promises are sent verbatim as the next turn, or a notice this app resolved
+  // where it wrote it, which already carries what the turn needs. A run whose operator wrote a
   // note already has the person this ending exists to reach, and the contract is
   // restated on the very next cycle by the branch below.
   //
