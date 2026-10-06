@@ -172,6 +172,32 @@ describe("the note a cycle opens with after its background tasks were stopped", 
     assert.ok(line.length < 400, `one task took ${line.length} characters`);
   });
 
+  // The output path is the CLI's, not the model's, and it is the one thing left
+  // of a stopped sub-agent: clipped or with its whitespace folded, it names a
+  // file that does not exist.
+  const listedFor = (outputFile: string) =>
+    (stoppedTasksNotice([
+      started(1, "p1", "worker"),
+      notified(9, "p1", "stopped", "worker", outputFile),
+    ]) ?? "")
+      .split("\n")
+      .find((l) => l.startsWith("- ")) ?? "";
+
+  it("gives an output path longer than a description's bound whole", () => {
+    const slug =
+      "-workspace-" +
+      "a-fairly-long-project-directory-name-".repeat(3) +
+      "-uf-worktrees-proj-721638d11c0b-1";
+    const file = `/tmp/claude-1000/${slug}/57586897-fe9c-40e6-82da-450eb9f3fbc3/tasks/a1b2c3d4e.output`;
+    assert.ok(file.length > 200, `precondition: ${file.length} chars`);
+    assert.ok(listedFor(file).endsWith(file), `note says: ${listedFor(file)}`);
+  });
+
+  it("gives an output path with a doubled space whole", () => {
+    const file = "/tmp/claude-501/my  project/sess/tasks/t.output";
+    assert.ok(listedFor(file).endsWith(file), `note says: ${listedFor(file)}`);
+  });
+
   it("names a bounded number of tasks and counts the rest", () => {
     const events: RunEventDTO[] = [];
     const total = MAX_LISTED_TASKS + 3;

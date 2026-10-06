@@ -1473,6 +1473,33 @@ export function previousCycleStoppedTasksNotice(runId: string): string | null {
   return stoppedTasksNotice(events);
 }
 
+/**
+ * A follow-up this app wrote, with the previous cycle's stopped-tasks note
+ * ahead of it.
+ *
+ * `nextPrompt` sends a follow-up alone. That is right for the operator's own
+ * words, which are promised verbatim and were typed by somebody who picked the
+ * run up from a log that names the tasks, and wrong for text nobody typed: a
+ * pick-up with no note and a stack resume both open a resumed turn into a
+ * conversation that still believes its tasks are running, and the `iteration`
+ * event that turn writes moves the boundary, so no later cycle is told either.
+ * Resolved at the door that writes the text, `reopenRun`'s rule for the rest of
+ * that message, and the boundary is the one the spawn would have read: nothing
+ * writes an `iteration` event between a cycle's end and its pick-up.
+ *
+ * Not without a session, where `nextPrompt` sends the task, the follow-up after
+ * it and the note after both, so prepending it here would say it twice. Not for
+ * Codex, whose stream has no such events — the loop's own rule.
+ */
+function withStoppedTasksNotice(runId: string, followUp: string): string {
+  const run = db()
+    .prepare("SELECT provider, session_id FROM runs WHERE id = ?")
+    .get(runId) as Pick<RunRow, "provider" | "session_id"> | undefined;
+  if (!run?.session_id || run.provider === "codex") return followUp;
+  const note = previousCycleStoppedTasksNotice(runId);
+  return note ? `${note}\n\n${followUp}` : followUp;
+}
+
 export function subscribe(
   runId: string,
   fn: (e: PersistedRunEvent) => void,
@@ -9729,6 +9756,59 @@ export async function startRun(id: string): Promise<void> {
         break;
       }
 
+      // Every refusal that can stop a cycle before its child exists is taken
+      // here, above the increment and the clears of `followUp` and
+      // `pendingPushback` below. A cycle refused here was never spawned, so it
+      // is charged no work cycle and its message is still undelivered: below
+      // them, a one-cycle run refused at its first spawn could not be picked up
+      // the way its own stop reason says to, and a pick-up's note was cleared
+      // although nothing ever received it.
+      //
+      // A run can last hours, and the working directory was validated once when
+      // it was created. Re-checking before every spawn means a folder that has
+      // since been replaced by a symlink out of the mount cannot be handed to a
+      // process that writes files.
+      const stillContained = resolveWorkspaceFolder(
+        workDir,
+        describeFolder(workDir).mountId,
+      );
+      if (stillContained !== workDir) {
+        throw new Error(`Working directory changed underneath the run: ${workDir}`);
+      }
+
+      // The `pkill`/`killall` denial, for the provider that cannot carry it on
+      // an argv. **The cycle is refused rather than degraded when it is not
+      // there**, which is the one place this differs from the read guard and the
+      // vault skill below: those degrade to a cycle that reads more or knows
+      // less, and this would degrade to a cycle that can kill the server
+      // supervising every run in flight. `codexRules.ts` carries what the file
+      // is, why it is a file rather than a flag, and what it does not cover.
+      if (run.provider === "codex") {
+        const rules = prepareCodexRules();
+        if (rules.kind === "unavailable") {
+          throw new Error(
+            `Refusing to spawn a Codex work cycle with no process-kill denial: ${rules.reason}`,
+          );
+        }
+      }
+
+      // Read per cycle, so a sign-out reaches a parked run before its next cycle
+      // rather than after it. Refused rather than degraded: without the sign-in
+      // the only thing this cycle could do is go to Anthropic under a model id
+      // Anthropic does not have, or under the operator's plan, which is the one
+      // thing a local run exists not to spend.
+      let local: { signIn: LocalSignIn; model: string } | null = null;
+      if (run.provider === "local") {
+        const signIn = getLocalSignIn();
+        if (!signIn) {
+          throw new Error(
+            "Refusing to spawn a local-model work cycle: the local provider is signed out. Sign in under Settings and reopen the run.",
+          );
+        }
+        ensureLocalConfigDir();
+        local = { signIn, model: run.model ?? signIn.model };
+      }
+
       // Read before the increment below: what the next prompt needs to know is
       // how much this run had already been charged for *before* the cycle it is
       // about to open, which is what says whether opening with the task again
@@ -9944,18 +10024,6 @@ export async function startRun(id: string): Promise<void> {
         );
       }
 
-      // A run can last hours, and the working directory was validated once when
-      // it was created. Re-checking before every spawn means a folder that has
-      // since been replaced by a symlink out of the mount cannot be handed to a
-      // process that writes files.
-      const stillContained = resolveWorkspaceFolder(
-        workDir,
-        describeFolder(workDir).mountId,
-      );
-      if (stillContained !== workDir) {
-        throw new Error(`Working directory changed underneath the run: ${workDir}`);
-      }
-
       // What this cycle may write, if anything confines it at all. Read per
       // cycle rather than per run for the reason the containment check above is:
       // a run outlives the policy it started under, and an operator who has
@@ -9984,39 +10052,6 @@ export async function startRun(id: string): Promise<void> {
       // Read off the row rather than off anything in this segment's own state,
       // so a run picked up after a restart is spawned as what it was created as.
       const adapter = selectCycleAdapter(run.provider);
-
-      // The `pkill`/`killall` denial, for the provider that cannot carry it on
-      // an argv. **The cycle is refused rather than degraded when it is not
-      // there**, which is the one place this differs from the read guard and the
-      // vault skill above: those degrade to a cycle that reads more or knows
-      // less, and this would degrade to a cycle that can kill the server
-      // supervising every run in flight. `codexRules.ts` carries what the file
-      // is, why it is a file rather than a flag, and what it does not cover.
-      if (run.provider === "codex") {
-        const rules = prepareCodexRules();
-        if (rules.kind === "unavailable") {
-          throw new Error(
-            `Refusing to spawn a Codex work cycle with no process-kill denial: ${rules.reason}`,
-          );
-        }
-      }
-
-      // Read per cycle, so a sign-out reaches a parked run before its next cycle
-      // rather than after it. Refused rather than degraded: without the sign-in
-      // the only thing this cycle could do is go to Anthropic under a model id
-      // Anthropic does not have, or under the operator's plan, which is the one
-      // thing a local run exists not to spend.
-      let local: { signIn: LocalSignIn; model: string } | null = null;
-      if (run.provider === "local") {
-        const signIn = getLocalSignIn();
-        if (!signIn) {
-          throw new Error(
-            "Refusing to spawn a local-model work cycle: the local provider is signed out. Sign in under Settings and reopen the run.",
-          );
-        }
-        ensureLocalConfigDir();
-        local = { signIn, model: run.model ?? signIn.model };
-      }
 
       const args = adapter.buildArgs({
         prompt,
@@ -12410,7 +12445,8 @@ export async function sweepPaused(): Promise<void> {
  * spread. The rest keep their row and are taken next tick.
  *
  * What the run is told travels in `follow_up`, the door a pick-up's notices
- * use, so it is consumed at the spawn and the resumed turn is the notice. The
+ * use, so it is consumed at the spawn and the resumed turn is the notice —
+ * behind the stopped-tasks note when the cycle that asked left one. The
  * grant needs nothing here: `stackGrants()` is read per cycle, from receipts a
  * restart has just rewritten, and `buildArgs` puts it on a resumed cycle's
  * argv as on any other.
@@ -12439,7 +12475,7 @@ export function releaseStackWaits(
       .prepare(
         "UPDATE runs SET status='queued', follow_up=? WHERE id=? AND status='waiting-for-stack'",
       )
-      .run(stackResumeNotice(decision), id);
+      .run(withStoppedTasksNotice(id, stackResumeNotice(decision)), id);
     if (flip.changes !== 1) continue;
     released += 1;
     releaseStackWait(id, now);
@@ -12941,6 +12977,13 @@ export function reopenRun(
     // in the same statement that queues the run.
     restartKilled: cycleCutByRestart(run),
   });
+  // Text this app chose carries the stopped-tasks note; the operator's own
+  // words go as typed.
+  const firstFollowUp = !firstPrompt
+    ? null
+    : note
+      ? firstPrompt
+      : withStoppedTasksNotice(id, firstPrompt);
 
   const flip = db()
     .prepare(
@@ -12990,7 +13033,7 @@ export function reopenRun(
       waitingAgain ? "waiting" : "queued",
       blob,
       policy.maxIterations ?? 0,
-      firstPrompt || null,
+      firstFollowUp,
       // `origin` is deliberately untouched: it says which route *created* this
       // run, and rewriting it here would lose that while `created_at` went on
       // pointing at the original creation. A pick-up is its own act and gets its
