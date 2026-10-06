@@ -474,6 +474,20 @@ export const MAX_QUESTION_CHOICES = 8;
 export const MAX_QUESTION_CHARS = 2_000;
 
 /**
+ * How long one choice may be, in UTF-16 code units (`String.length`).
+ *
+ * `MAX_QUESTION_CHARS`' reason one step on: a picked choice *is* the answer,
+ * and `answerMessage` quotes it beside the question, so a pasted diff offered
+ * as a choice got the operator refused for pressing the button it was drawn
+ * on. Sized so that arithmetic still holds with one of these as every answer —
+ * `MAX_OPEN_QUESTIONS` questions at their cap, each answered at this one, in
+ * three-byte characters, is under half the message limit — which is why it is
+ * 150 rather than a rounder 200, which crosses the half by about 300 bytes.
+ * Comfortably more than anybody reads on a button either way.
+ */
+export const MAX_CHOICE_CHARS = 150;
+
+/**
  * How many undecided proposals one chat may hold.
  *
  * The failure this bounds is specific and cheap to reach: "open a run for every

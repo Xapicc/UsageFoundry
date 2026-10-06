@@ -10,6 +10,7 @@ import {
   createProposalReplacing,
   createQuestions,
   listProposals,
+  MAX_CHOICE_CHARS,
   MAX_OPEN_QUESTIONS,
   MAX_PENDING_PROPOSALS,
   MAX_QUESTION_CHARS,
@@ -1226,7 +1227,10 @@ const CHAT_TOOLS = [
                 items: { type: "string" },
                 description:
                   "Concrete answers to pick from, two or more, each short " +
-                  "enough to read on a button. Omit for a question with no " +
+                  "enough to read on a button: at most " +
+                  `${MAX_CHOICE_CHARS.toLocaleString("en-US")} characters ` +
+                  "(UTF-16 code units), because the one picked is quoted " +
+                  "back to you as the answer. Omit for a question with no " +
                   "shortlist. Do not put \"something else\" in here — that is " +
                   "allowText.",
               },
@@ -4833,6 +4837,22 @@ function askOperator(args: Record<string, unknown>, chatId: string) {
         `"${question}" offers ${choices.length} choices, and the most that can ` +
           `be shown is ${MAX_QUESTION_CHOICES}. Past that it is a search rather ` +
           "than a decision — narrow it, or ask it in the open.",
+        true,
+      );
+    }
+    // The question cap's reason, for the text the operator answers with
+    // rather than the text they answer: a picked choice is quoted as the
+    // answer, so an overlong one gets them refused for pressing its button.
+    // Named by position and not quoted, for the same reason as above.
+    const overlong = choices.findIndex((choice) => choice.length > MAX_CHOICE_CHARS);
+    if (overlong !== -1) {
+      return text(
+        `Choice ${overlong + 1} of question ${index + 1} is ` +
+          `${choices[overlong].length.toLocaleString("en-US")} characters long, and a ` +
+          `choice can be at most ${MAX_CHOICE_CHARS.toLocaleString("en-US")} characters: ` +
+          "the one picked is quoted as the answer in the message that answers the " +
+          "question, and past this that message can be too long to send. Nothing " +
+          "was asked. Put the detail in your reply and offer a short label for it.",
         true,
       );
     }
