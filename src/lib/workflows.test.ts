@@ -5164,6 +5164,21 @@ describe("passMemberId", () => {
     assert.equal(passMemberOf("body-2"), null);
     assert.equal(passNumberOf("body-2"), null);
   });
+
+  it("reads the loop's own pass when a block or a spec is itself named pass-N", () => {
+    // `pass-2` is a legal block id and a legal spec id, so the id carries the
+    // spelling twice. Read off the last one, a member of pass 1 was filed under
+    // a loop called `L#pass-1` that does not exist: `passState` never saw it,
+    // and every step of the pass created it again — 64 runs from one press of
+    // Run, none of them members, so no stop and no cap reached them.
+    for (const [id, bodyNodeId] of [
+      [passMemberId("L", 1, "pass-2"), "pass-2"],
+      [`${passMemberId("L", 1, "o")}#pass-2`, "o#pass-2"],
+    ] as const) {
+      assert.deepEqual(passMemberOf(id), { loopNodeId: "L", pass: 1, bodyNodeId }, id);
+      assert.equal(passNumberOf(id), passMemberOf(id)?.pass, id);
+    }
+  });
 });
 
 describe("groupPasses", () => {
