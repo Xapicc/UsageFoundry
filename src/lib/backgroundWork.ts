@@ -115,7 +115,11 @@ export function backgroundWaitCeiling(o: {
  */
 export const MAX_LISTED_TASKS = 12;
 
-/** Longest description or path kept on a line. Model-authored text has no bound. */
+/**
+ * Longest description kept on a line. Model-authored text has no bound. The
+ * output path is not put through this: it is the CLI's, and clipped or with its
+ * whitespace folded it names a file that does not exist.
+ */
 const MAX_FIELD_CHARS = 200;
 
 function oneLine(text: string): string {
@@ -139,7 +143,7 @@ function kindOf(task: RunTask): string {
 function lineFor(task: RunTask): string {
   const label = oneLine(task.description ?? task.summary ?? task.id);
   const where = task.outputFile
-    ? `partial output: ${oneLine(task.outputFile)}`
+    ? `partial output: ${task.outputFile}`
     : "it wrote no output file";
   return `- ${kindOf(task)} "${label}" — ${where}`;
 }
