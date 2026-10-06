@@ -43,7 +43,7 @@ work is about to be merged into and never sees the work, passing or failing
 identically whatever the agent wrote, with nothing on either side visible. When
 the slot no longer holds the run's branch because a later run took it over,
 this **refuses** rather than falling back — and a slot stopped mid-rebase or
-mid-bisect of the branch, which reads as holding none, is refused naming that. It does not cut a fresh worktree,
+mid-bisect of the branch, which reads as holding none, is refused naming that, as is one on a plain detached HEAD. It does not cut a fresh worktree,
 for the reason `resolveConflicts` records when it hands a temporary checkout
 `resolveAllowedTools: []`: a slot cut from bare git has no `node_modules` and no
 build output, so `npm test` there fails for a reason that is not the work, and

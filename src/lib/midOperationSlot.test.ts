@@ -345,3 +345,34 @@ describe("what a checkout stopped mid-operation says before any button is presse
     assert.equal((await land.landState(s.runId))?.pending, null);
   });
 });
+
+describe("a run's checkout on a plain detached HEAD", () => {
+  it("is named by Commit and by the verify gate, rather than called gone or taken over", async () => {
+    // `git checkout <commit>` detaches the slot with nothing in progress. The
+    // directory is there and nobody else has it, but both doors read "no
+    // branch" as the checkout gone or a later run's.
+    const s = scene("detached-doors");
+    // Back to the base, so the land is a fast-forward and reaches the gate.
+    fixtureGit(s.repo, ["reset", "-q", "--hard", "main~1"]);
+    const main = fixtureGit(s.repo, ["rev-parse", "main"]);
+    fixtureGit(s.slot, ["checkout", "-q", "--detach"]);
+
+    const commit = await land.commitPending(s.runId);
+    assert.equal(commit.ok, false, "a commit was made on a detached HEAD");
+    const commitReason = commit.ok ? "" : commit.reason;
+    assert.doesNotMatch(commitReason, /gone/, `a checkout standing there was called gone: ${commitReason}`);
+    assert.match(commitReason, /detached HEAD rather than on uf\/detached-doors/);
+
+    saveSettings({ landVerifyCommand: `${process.execPath} -e 0` });
+    try {
+      const landed = await land.landRun(s.runId, "merge");
+      assert.equal(landed.ok, false, "landed with the check run against a detached HEAD");
+      const landReason = landed.ok ? "" : landed.reason;
+      assert.doesNotMatch(landReason, /taken that checkout over/, landReason);
+      assert.match(landReason, /detached HEAD rather than on uf\/detached-doors/);
+      assert.equal(fixtureGit(s.repo, ["rev-parse", "main"]), main);
+    } finally {
+      saveSettings({ landVerifyCommand: "" });
+    }
+  });
+});

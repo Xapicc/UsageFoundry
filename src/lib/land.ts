@@ -3409,6 +3409,11 @@ interface SlotState {
    * HEAD, so `checkedOutBranch` is null while the slot is still this run's.
    */
   operation: BranchInOperation["operation"] | null;
+  /**
+   * There, with HEAD readable and on no branch: such an operation, or a plain
+   * `git checkout <commit>`. Not a checkout that is gone or a later run's.
+   */
+  detached: boolean;
 }
 
 /**
@@ -3445,6 +3450,7 @@ async function slotState(run: RunRow): Promise<SlotState> {
       files: [],
       mergeInProgress: false,
       operation: null,
+      detached: false,
     };
   }
 
@@ -3468,6 +3474,7 @@ async function slotState(run: RunRow): Promise<SlotState> {
       files: status?.ok ? parseStatusZ(status.stdout) : [],
       mergeInProgress: false,
       operation: mid.ok ? mid.operation : null,
+      detached: true,
     };
   }
   // Status is read only once the slot is proved to still hold this run's
@@ -3481,6 +3488,7 @@ async function slotState(run: RunRow): Promise<SlotState> {
       files: [],
       mergeInProgress: false,
       operation: null,
+      detached: false,
     };
   }
 
@@ -3496,6 +3504,7 @@ async function slotState(run: RunRow): Promise<SlotState> {
     files: status.ok ? parseStatusZ(status.stdout) : [],
     mergeInProgress: readable && merging === true,
     operation: null,
+    detached: false,
   };
 }
 
@@ -3575,6 +3584,8 @@ export function verifyTreeVerdict(s: {
   runBranch: string | null;
   /** That checkout is part-way through a rebase or bisect of `runBranch`. */
   operation: BranchInOperation["operation"] | null;
+  /** That checkout is there and on no branch. See `SlotState`. */
+  detached: boolean;
   /**
    * Uncommitted paths in that checkout, or null when its status could not be
    * read — which is not the same as clean.
@@ -3601,6 +3612,19 @@ export function verifyTreeVerdict(s: {
         `${s.operation} of ${s.runBranch ?? "this run's branch"}, which leaves it on no ` +
         `branch, so there is nothing there to run the check against. Nothing was landed. ` +
         `Run \`${OPERATION_ENDED_BY[s.operation]}\` there, or finish it, and land again.`,
+    };
+  }
+  // Nor a plain `git checkout <commit>`, which detaches it the same way with
+  // nothing in progress: the checkout is standing there, and it need not hold
+  // the commits the land would carry.
+  if (s.detached) {
+    const branch = s.runBranch ?? "this run's branch";
+    return {
+      ok: false,
+      reason:
+        `A verify command is configured, but ${s.slotPath} is on a detached HEAD rather than on ` +
+        `${branch}, so what is there need not be what the land would carry. Nothing was landed. ` +
+        `Switch it back to ${branch} there and land again.`,
     };
   }
   if (!s.runBranch || s.checkedOutBranch !== s.runBranch) {
@@ -3654,6 +3678,7 @@ async function verifyTree(run: RunRow): Promise<VerifyTree> {
     checkedOutBranch: slot.checkedOutBranch,
     runBranch: run.worktree_branch,
     operation: slot.operation,
+    detached: slot.detached,
     uncommitted: slot.readable ? slot.files.map((f) => f.path) : null,
   });
 }
@@ -3746,6 +3771,8 @@ export function commitRefusal(s: {
   checkedOutBranch: string | null;
   /** That checkout is part-way through a rebase or bisect of `branch`. */
   operation: BranchInOperation["operation"] | null;
+  /** That checkout is there and on no branch. See `SlotState`. */
+  detached: boolean;
   readable: boolean;
   /** Every uncommitted path in that checkout, with git's status letters. */
   pending: readonly Pick<PendingChange, "path" | "code">[];
@@ -3794,6 +3821,14 @@ export function commitRefusal(s: {
       `That checkout is part-way through a ${s.operation} of ${s.branch}, which leaves it ` +
       `on no branch, so there is nothing to commit to. Run \`${OPERATION_ENDED_BY[s.operation]}\` ` +
       "there, or finish it, and commit again."
+    );
+  }
+  // Nor a plain `git checkout <commit>`: still standing there, and a commit in
+  // it would be on no branch.
+  if (s.detached) {
+    return (
+      `That checkout is on a detached HEAD rather than on ${s.branch}, so a commit there would ` +
+      `be on no branch. Switch it back to ${s.branch} there and commit again.`
     );
   }
   if (!s.checkedOutBranch) {
@@ -3870,6 +3905,7 @@ export async function commitPending(
     branch: run.worktree_branch,
     checkedOutBranch: slot.checkedOutBranch,
     operation: slot.operation,
+    detached: slot.detached,
     readable: slot.readable,
     pending: slot.files,
     mergeInProgress: slot.mergeInProgress,
