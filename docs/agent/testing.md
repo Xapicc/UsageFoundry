@@ -75,15 +75,20 @@ Twenty are renderings rather than functions — every `*.test.tsx` in the tree, 
 | `resumedCycleSpend.test.ts` |  |
 | `validationGrant.test.ts` |  |
 
-## [Pricing, the model catalogue and model choice](testing/pricing-and-models.md)
+## [Pricing and model choice](testing/pricing-and-models.md)
+
+| Test file | Also in |
+|---|---|
+| `pricing.test.ts` |  |
+| `templates.test.ts` | [argv] |
+
+## [The model catalogue and model discovery](testing/model-catalogue-and-discovery.md)
 
 | Test file | Also in |
 |---|---|
 | `modelAdoption.test.ts` |  |
 | `modelCatalogue.test.ts` |  |
 | `modelDiscovery.test.ts` |  |
-| `pricing.test.ts` |  |
-| `templates.test.ts` | [argv] |
 
 ## [Transcript scanning and the usage snapshot](testing/transcripts-and-snapshot.md)
 
@@ -405,6 +410,7 @@ It prints nothing as this is written. Whoever owns a file it names owes that fil
 [data-dir]: testing/data-dir-retention-and-migrations.md
 [budgets]: testing/budgets-and-spend.md
 [pricing]: testing/pricing-and-models.md
+[catalogue]: testing/model-catalogue-and-discovery.md
 [transcripts]: testing/transcripts-and-snapshot.md
 [pruning]: testing/context-pruning.md
 [ceiling]: testing/context-samples-and-ceiling.md

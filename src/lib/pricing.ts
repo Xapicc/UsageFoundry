@@ -56,26 +56,29 @@ export function cacheReadMultiplierOf(price: ModelPrice): number {
 }
 
 /**
- * Keys are matched longest-prefix-first against the model string reported in
- * the transcript, so `claude-opus-4-5-20251101` resolves via `claude-opus-4-5`.
+ * Keys are matched longest-first against the canonical model id, and a key
+ * matches only when what follows it is decoration (`DECORATION_ONLY`), so
+ * `claude-opus-4-5-20251101` resolves via `claude-opus-4-5` and
+ * `claude-sonnet-5-5` resolves via nothing.
  */
 const PRICES: Record<string, ModelPrice> = {
-  // Fable / Mythos tier. The 5.1 pair is listed ahead of the 5 pair it would
-  // otherwise prefix-match, and exists *only* to carry the cache read rate:
-  // input and output are the same $10/$50, so an entry left out here would be
-  // priced correctly on both visible columns and 4x wrong on the invisible one.
+  // Fable / Mythos tier. The 5.1 pair differs from the 5 pair *only* on the
+  // cache read rate: input and output are the same $10/$50, so a 5.1 turn priced
+  // at the 5 row would be right on both visible columns and 4x wrong on the
+  // invisible one — which is why a point release never borrows its
+  // predecessor's row (`DECORATION_ONLY`).
   "claude-fable-5-1": { input: 10, output: 50, cacheReadMultiplier: 0.025 },
   "claude-mythos-5-1": { input: 10, output: 50, cacheReadMultiplier: 0.025 },
   "claude-fable-5": { input: 10, output: 50 },
   "claude-mythos-5": { input: 10, output: 50 },
   "claude-mythos-preview": { input: 10, output: 50 },
 
-  // Opus tier. `claude-opus-5-5` is listed ahead of the `claude-opus-5` it would
-  // otherwise prefix-match, the 5.1 pair's shape for the 5.1 pair's reason: it
-  // halves the cache read rate to 0.05x ($0.20/MTok against a $4 input). Unlike
-  // that pair it is also cheaper on both visible columns, so a missing entry
-  // here would show as *some* overcharge — but 2x of it would land on the cache
-  // read, which is the line item nobody can check and ~98% of this workload.
+  // Opus tier. `claude-opus-5-5` departs from `claude-opus-5` the 5.1 pair's
+  // way: it halves the cache read rate to 0.05x ($0.20/MTok against a $4 input).
+  // Unlike that pair it is also cheaper on both visible columns, so the Opus 5
+  // row would show as *some* overcharge on it — but 2x of it would land on the
+  // cache read, which is the line item nobody can check and ~98% of this
+  // workload.
   "claude-opus-5-5": { input: 4, output: 20, cacheReadMultiplier: 0.05 },
   "claude-opus-5": { input: 5, output: 25 },
   "claude-opus-4-8": { input: 5, output: 25 },
@@ -152,6 +155,23 @@ export const UNKNOWN_MODEL_PRICE: ModelPrice = { input: 10, output: 50 };
 const PREFIXES = Object.keys(PRICES).sort((a, b) => b.length - a.length);
 
 /**
+ * What may follow a `PRICES` key in a canonical id for the key to still name
+ * that model: nothing, or decoration only — a dated snapshot (`-20251001`), a
+ * provider's version tag (Bedrock's `-v1:0`, Vertex's `-v2`), a bracketed CLI
+ * suffix (`[1m]`), in any order and number.
+ *
+ * A `-<minor>` continuation is not decoration, and refusing it is the point. A
+ * bare `startsWith` made every undated key a catch-all for the point releases
+ * after it — `claude-sonnet-5` priced `claude-sonnet-5-5`, `claude-opus-5` would
+ * price `claude-opus-5-6` — which is the short catch-all key `canonicalModelId`
+ * rules out, arriving one release late. Both point releases this table does know
+ * departed from their predecessor on the cache read rate, the one column nobody
+ * checks by eye, so a successor with no row of its own resolves to null: $0
+ * shown, named as unpriced, and `UNKNOWN_MODEL_PRICE` in every guard.
+ */
+const DECORATION_ONLY = /^(?:-\d{8}|-v\d+(?::\d+)?|\[[^\]]*\])*$/;
+
+/**
  * Reduce a provider-decorated model string to the first-party form the table
  * is keyed on.
  *
@@ -165,18 +185,19 @@ const PREFIXES = Object.keys(PRICES).sort((a, b) => b.length - a.length);
  *
  * **`[1m]` is deliberately neither stripped nor special-cased.** Claude Code
  * takes `claude-opus-5[1m]` for the 1M-context deployment of a model, and the
- * suffix falls after the table's key, so a `[1m]` id already prefix-matches its
- * base and prices at the base rate. That is the correct rate rather than a
- * near-miss: the current models carry a 1M window natively and Anthropic
- * charges no long-context premium for it — "1M context window at standard API
- * pricing (no long-context premium)", the bundled `claude-api` skill's own
- * words about the Opus 4.7/4.8 generation these variants belong to. Left
+ * suffix falls after the table's key, where `resolvePrice` reads any bracketed
+ * suffix as decoration, so a `[1m]` id matches its base and prices at the base
+ * rate. That is the correct rate rather than a near-miss: the current models
+ * carry a 1M window natively and Anthropic charges no long-context premium for
+ * it — "1M context window at standard API pricing (no long-context premium)",
+ * the bundled `claude-api` skill's own words about the Opus 4.7/4.8 generation
+ * these variants belong to. Left
  * written down because the shape invites a fix that would break it: stripping
  * the suffix here would change nothing about the price and would put a
  * normalisation of a CLI-shaped id one refactor away from the path to `--model`,
  * where the brackets must survive. Should a premium ever appear, it belongs in
- * `PRICES` as its own `claude-…[1m]` key — listed before its base, the way the
- * 5.1 pair already is — and never in this function.
+ * `PRICES` as its own `claude-…[1m]` key — which, being the longer key,
+ * `PREFIXES` tries before its base — and never in this function.
  */
 function canonicalModelId(model: string): string {
   return model
@@ -210,7 +231,9 @@ export function resolvePrice(
   if (!model) return null;
   const id = canonicalModelId(model);
 
-  const key = PREFIXES.find((p) => id.startsWith(p));
+  const key = PREFIXES.find(
+    (p) => id.startsWith(p) && DECORATION_ONLY.test(id.slice(p.length)),
+  );
   if (!key) return null;
 
   if (opts.speed === "fast" && FAST_MODE_PRICES[key]) {
