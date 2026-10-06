@@ -58,6 +58,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - Whether a run can be continued is decided by `session_id`, so it is recorded the moment the stream names it — not when the cycle returns.
 - A resume that comes back under a different id is logged, never treated as a failure.
 - The first cycle of a resumed segment is the one that can fail without doing anything.
+- A session whose transcript is gone is restarted before the cycle, not discovered by failing one.
 
 ## [How a run ends: the terminus, cancellation, DONE, needs-review and verdicts](run-lifecycle/endings.md)
 

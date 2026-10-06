@@ -42,6 +42,7 @@ Twenty are renderings rather than functions — every `*.test.tsx` in the tree, 
 | `backgroundWork.test.ts` |  |
 | `cycleDeadline.test.ts` |  |
 | `resumeControl.test.ts` |  |
+| `resumeMissingTranscript.test.ts` |  |
 
 ## [Fleet stop, hold and shutdown](testing/fleet-and-shutdown.md)
 
