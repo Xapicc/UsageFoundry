@@ -5290,9 +5290,14 @@ function advanceInstance(instanceId: string): void {
   //
   // A shutdown leaves it `waiting` for the same reason, and what decides it then
   // is `reconcileBlocksOnBoot`, which already has a rule for a `waiting` block.
+  //
+  // So does the install-wide hold. `emitBlockRuns` refuses a held emission
+  // anyway, so a turn claimed here would be billed for a decision nothing can
+  // act on — the hold is pressed to stop new spending, and this is the turn's
+  // spending. Lifting it reaches this loop again through `releaseDependents`.
   const claimed: string[] = [];
   for (const nodeId of step.spawn) {
-    if (assistBudgetFull() || isShuttingDown()) break;
+    if (assistBudgetFull() || isShuttingDown() || newWorkPaused()) break;
     if (claimBlock(instanceId, nodeId)) claimed.push(nodeId);
   }
   for (const nodeId of claimed) {
@@ -5501,6 +5506,23 @@ function claimBlock(instanceId: string, nodeId: string): boolean {
       )
       .run(Date.now(), instanceId, nodeId).changes === 1
   );
+}
+
+/**
+ * Put a claimed block back to `waiting`, for a turn that gave up before it
+ * spawned anything.
+ *
+ * Guarded on `thinking`, so a halt that wrote the block off in the meantime
+ * keeps its own answer. `started_at` goes too, because nothing started, and the
+ * next claim writes its own.
+ */
+function releaseBlockClaim(instanceId: string, nodeId: string): void {
+  db()
+    .prepare(
+      "UPDATE workflow_instance_blocks SET status='waiting', started_at=NULL" +
+        " WHERE instance_id=? AND node_id=? AND status='thinking'",
+    )
+    .run(instanceId, nodeId);
 }
 
 /* ------------------------------------------------------------------ */
@@ -6157,10 +6179,10 @@ function stepPass(
   // its budget question per claim: the claim itself is what fills the budget, so
   // the next question already knows about the last answer, and a member left
   // `waiting` for want of a slot is not written off. Whatever frees one advances
-  // again. Its shutdown question too.
+  // again. Its shutdown and hold questions too.
   const claimed: string[] = [];
   for (const nodeId of step.spawn) {
-    if (assistBudgetFull() || isShuttingDown()) break;
+    if (assistBudgetFull() || isShuttingDown() || newWorkPaused()) break;
     if (claimBlock(instanceId, memberId(nodeId))) claimed.push(memberId(nodeId));
   }
   for (const id of claimed) {
@@ -6277,14 +6299,16 @@ function passState(
 /**
  * Spawn one block's turn.
  *
- * The gate in front of it is a chat turn's and no more: the host process budget
- * — taken at `advanceInstance`'s claim rather than here, so a shortage defers
- * this turn instead of failing it — `windowRefusal()`, the operator's own
- * configured ceiling already spent, `installBudgetRefusal()`, the
- * install-wide rolling-day limit this is the fifth door of, and
- * `isShuttingDown()`, asked at the claim and again before the spawn. There is
- * deliberately no `evaluateBudget` here — this is not a work cycle and
- * inventing a per-block
+ * The gate in front of it is a chat turn's, and one thing more: the host
+ * process budget — taken at `advanceInstance`'s claim rather than here, so a
+ * shortage defers this turn instead of failing it — `windowRefusal()`, the
+ * operator's own configured ceiling already spent, `installBudgetRefusal()`,
+ * the install-wide rolling-day limit this is the fifth door of, and
+ * `isShuttingDown()`, asked at the claim and again before the spawn. The one
+ * thing more is the install-wide hold, asked at the same two places, which a
+ * chat turn does not ask because a person is typing into it and nobody is
+ * typing into this. There is deliberately no `evaluateBudget` here — this is
+ * not a work cycle and inventing a per-block
  * fraction would be a threshold nobody set — and the instance's own budget is
  * checked where every other instance-wide decision is, at a member's cycle
  * boundary. What bounds the spend is `settings.chatTurnBudgetUSD`, inside the
@@ -6415,6 +6439,15 @@ async function startBlockTurn(instanceId: string, nodeId: string): Promise<void>
       "blocked",
       "The server shut down before this block could start deciding.",
     );
+    return;
+  }
+
+  // And of the hold, for the same reason: the claim asked before the scans, and
+  // a hold pressed during them would otherwise be a billed turn whose emission
+  // is refused. Handed back to `waiting` rather than written off, the claim's
+  // own answer to a held install, so the lift decides it.
+  if (newWorkPaused()) {
+    releaseBlockClaim(instanceId, nodeId);
     return;
   }
 
@@ -8085,6 +8118,8 @@ export interface BootBlockInstance {
   status: WorkflowInstanceStatus;
   /** Its member runs, as this same boot's run reconciler has just left them. */
   memberStatuses: readonly RunStatus[];
+  /** Whether a restart or a shutdown closed out any of those runs. */
+  restartClosedMember: boolean;
 }
 
 /** What a restart does with each instance's `waiting` blocks. */
@@ -8095,6 +8130,11 @@ export interface BootBlockPlan {
   settled: string[];
   /** A member survived the boot, so the blocks behind it are left waiting. */
   spared: string[];
+  /**
+   * New work is held and the restart closed out none of its members, so its
+   * blocks are left waiting for the lift.
+   */
+  held: string[];
 }
 
 /**
@@ -8122,15 +8162,31 @@ export interface BootBlockPlan {
  * alone, and a `failed` one is `startWorkflow`'s own rollback, which wrote
  * every other block off already. Reviving half a graph nobody finished building
  * is the failure the positive test for `started` exists to have none of.
+ *
+ * **The hold is the other thing that wakes a block.** Lifting it calls
+ * `releaseDependents`, so under the hold a block nothing of its own instance
+ * will wake is still woken — by a person, which answers the closing-out rule's
+ * other premise as well, re-deciding unattended. And the hold keeps a deciding
+ * turn unclaimed, so a block that is ready and held is the usual shape a
+ * restart finds, and the restart is the usual reason the hold was pressed:
+ * closing it out wrote off the very work the operator held the fleet to keep,
+ * where the run half keeps a `waiting` run that is ready and held. It is
+ * spared only when the restart closed out **none** of its members, read off
+ * `restart_closed`: a block behind a run the restart ended is behind a cycle
+ * that died with the container, `on-finish` would release it on that, and
+ * that is the queued-run rule's case under the hold as without it.
  */
 export function bootBlockPlan(
   instances: readonly BootBlockInstance[],
+  /** Whether new work is held across the install as this boot runs. */
+  newWorkHeld: boolean,
 ): BootBlockPlan {
-  const plan: BootBlockPlan = { abandoned: [], settled: [], spared: [] };
+  const plan: BootBlockPlan = { abandoned: [], settled: [], spared: [], held: [] };
   for (const instance of instances) {
     if (instance.status !== "started") plan.settled.push(instance.id);
     else if (instance.memberStatuses.some((s) => LIVE_STATUSES.includes(s)))
       plan.spared.push(instance.id);
+    else if (newWorkHeld && !instance.restartClosedMember) plan.held.push(instance.id);
     else plan.abandoned.push(instance.id);
   }
   return plan;
@@ -8167,6 +8223,11 @@ export function bootBlockPlan(
  * question is asked per instance, and this pass mirrors that grace rather than
  * overriding it; the block itself is decided later by `planInstanceStep`, off
  * what is actually true when the member settles.
+ *
+ * **Or unless new work is held and the restart closed out none of its members**,
+ * the run half's ready-and-held row one level up: lifting the hold is what
+ * wakes it, and `bootBlockPlan` says why that is not the unattended decision
+ * the rule above refuses.
  *
  * Ordering makes that readable rather than guessed at: `src/instrumentation.ts`
  * runs `reconcileOnBoot` first, so a run row that is still live here is one that
@@ -8216,7 +8277,8 @@ export function reconcileBlocksOnBoot(): void {
   // One row per member; instances with neither status are not asked about.
   const rows = db()
     .prepare(
-      `SELECT i.id AS id, i.status AS status, r.status AS memberStatus
+      `SELECT i.id AS id, i.status AS status, r.status AS memberStatus,
+              r.restart_closed AS restartClosed
          FROM workflow_instances i
          LEFT JOIN workflow_instance_runs w ON w.instance_id = i.id
          LEFT JOIN runs r ON r.id = w.run_id
@@ -8228,22 +8290,31 @@ export function reconcileBlocksOnBoot(): void {
     id: string;
     status: WorkflowInstanceStatus;
     memberStatus: RunStatus | null;
+    restartClosed: number | null;
   }>;
   const gathered = new Map<
     string,
-    { status: WorkflowInstanceStatus; memberStatuses: RunStatus[] }
+    {
+      status: WorkflowInstanceStatus;
+      memberStatuses: RunStatus[];
+      restartClosedMember: boolean;
+    }
   >();
   for (const row of rows) {
     let entry = gathered.get(row.id);
     if (!entry) {
-      entry = { status: row.status, memberStatuses: [] };
+      entry = { status: row.status, memberStatuses: [], restartClosedMember: false };
       gathered.set(row.id, entry);
     }
     if (row.memberStatus) entry.memberStatuses.push(row.memberStatus);
+    if (row.restartClosed) entry.restartClosedMember = true;
   }
   const plan = bootBlockPlan(
     [...gathered].map(([id, entry]) => ({ id, ...entry })),
+    newWorkPaused(),
   );
+  // Both kinds of survivor are left alone by both sweeps below.
+  const kept = [...plan.spared, ...plan.held];
 
   // A loop is closed out for the queued-run reason rather than the `thinking`
   // one: its passes were failed by the same boot, so another pass would be an
@@ -8255,19 +8326,21 @@ export function reconcileBlocksOnBoot(): void {
   // loop is on is a run the same boot decided to keep, nothing was failed under
   // it, and the pass the next advance would start is the one the operator is
   // already paying for. Left `looping`, `advanceLoops` picks the row up again
-  // and `planLoopPass` decides it off that pass when it settles.
-  const sparedClause =
-    plan.spared.length === 0
+  // and `planLoopPass` decides it off that pass when it settles. A held one is
+  // spared for its own reason: the restart closed out none of its members, its
+  // passes' included, so neither premise holds, and its next step is the lift's.
+  const keptClause =
+    kept.length === 0
       ? ""
-      : ` AND instance_id NOT IN (${plan.spared.map(() => "?").join(",")})`;
+      : ` AND instance_id NOT IN (${kept.map(() => "?").join(",")})`;
   const looping = db()
     .prepare(
       "UPDATE workflow_instance_blocks SET status='failed', finished_at=?," +
         " error='The server restarted while this block was repeating its task, and the pass it was working on was closed out by the same restart.'" +
         " WHERE status='looping'" +
-        sparedClause,
+        keptClause,
     )
-    .run(now, ...plan.spared).changes;
+    .run(now, ...kept).changes;
 
   const closeOut = (ids: readonly string[], error: string): number => {
     if (ids.length === 0) return 0;
@@ -8293,7 +8366,7 @@ export function reconcileBlocksOnBoot(): void {
       `[usagefoundry] Closed out ${thinking + waiting + looping} workflow block(s) interrupted by a restart.`,
     );
   }
-  if (plan.spared.length > 0) {
+  if (kept.length > 0) {
     // Every `waiting` and `looping` row left is one of theirs, all three
     // statements above having run — so this is counted rather than carried
     // through the plan.
@@ -8303,10 +8376,17 @@ export function reconcileBlocksOnBoot(): void {
           " WHERE status IN ('waiting', 'looping')",
       )
       .get() as { n: number };
+    const why = [
+      plan.spared.length > 0
+        ? `${plan.spared.length} with a run that survived the restart, decided when it settles`
+        : null,
+      plan.held.length > 0
+        ? `${plan.held.length} held with the rest of new work, decided when the hold is lifted`
+        : null,
+    ].filter(Boolean);
     console.warn(
       `[usagefoundry] Left ${left.n} workflow block(s) waiting or repeating in ` +
-        `${plan.spared.length} instance(s) with a run that survived the restart; ` +
-        "they are decided when it settles.",
+        `${kept.length} instance(s): ${why.join("; ")}.`,
     );
   }
 }

@@ -383,6 +383,112 @@ describe("a waiting block with nothing left of its workflow", () => {
   });
 });
 
+/**
+ * A press of Run under the hold on a graph that starts by deciding: the block's
+ * turn was never claimed, and there are no members at all.
+ */
+function heldDecision(name: string): string {
+  const now = Date.now();
+  const instanceId = `inst-${name}`;
+  const graph = JSON.stringify({
+    nodes: [{ id: "O", name: "Decide", kind: "orchestrator", fanOut: 2 }],
+    edges: [],
+  });
+  const db = dbMod.db();
+  db.prepare(
+    "INSERT INTO workflows (id, name, graph, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+  ).run(`wf-${name}`, name, graph, now, now);
+  db.prepare(
+    `INSERT INTO workflow_instances (id, workflow_id, workflow_name, graph, created_at, status)
+     VALUES (?, ?, ?, ?, ?, 'started')`,
+  ).run(instanceId, `wf-${name}`, name, graph, now);
+  db.prepare(
+    "INSERT INTO workflow_instance_blocks (instance_id, node_id, node_name, position, kind, status)" +
+      " VALUES (?, 'O', 'Decide', 0, 'orchestrator', 'waiting')",
+  ).run(instanceId);
+  return instanceId;
+}
+
+describe("a waiting block across a restart taken while new work is held", () => {
+  it("is left waiting for the lift when the restart closed none of its workflow", async () => {
+    // The restart is the usual reason the hold is pressed. The run half keeps
+    // a row that is ready but held; writing the block off here would end the
+    // work the operator held the fleet to keep.
+    const instanceId = heldDecision("Held decision");
+
+    settings.setNewWorkPaused(true);
+    try {
+      await boot();
+    } finally {
+      settings.setNewWorkPaused(false);
+    }
+
+    const block = blockOf(instanceId, "O");
+    assert.equal(block.status, "waiting");
+    assert.equal(block.error, null);
+  });
+
+  it("is left waiting behind a member that completed before the restart", async () => {
+    const { instanceId, runId } = scene("Held after a finish", { status: "completed" });
+
+    settings.setNewWorkPaused(true);
+    try {
+      await boot();
+    } finally {
+      settings.setNewWorkPaused(false);
+    }
+
+    assert.equal(orch.getRun(runId)!.status, "completed");
+    assert.equal(blockOf(instanceId).status, "waiting");
+  });
+
+  it("leaves a loop repeating when the pass it was on finished before the restart", async () => {
+    // The `looping` sweep reads the same plan, so a loop whose next pass
+    // would open with a held turn is the lift's to decide as well.
+    const { instanceId } = loopScene("Held between passes", { status: "completed" });
+
+    settings.setNewWorkPaused(true);
+    try {
+      await boot();
+    } finally {
+      settings.setNewWorkPaused(false);
+    }
+
+    assert.equal(blockOf(instanceId, "L").status, "looping");
+    assert.equal(blockOf(instanceId).status, "waiting");
+  });
+
+  it("is closed out as before when nothing is held", async () => {
+    // The control: the same instance with the hold clear has nothing left that
+    // could wake it, which is what the rule was written for.
+    const instanceId = heldDecision("Unheld decision");
+
+    await boot();
+
+    assert.equal(blockOf(instanceId, "O").status, "blocked");
+  });
+
+  it("is still closed out when the restart closed out one of its members", async () => {
+    // A queued run is what a press of Run under the hold leaves, and the boot
+    // closes it out. What is behind it is then behind a run the restart
+    // ended — `on-finish` would release it on a cycle that died with the
+    // container — so the hold spares nothing here.
+    const { instanceId, runId } = scene("Held behind a queue", { status: "queued" });
+
+    settings.setNewWorkPaused(true);
+    try {
+      await boot();
+    } finally {
+      settings.setNewWorkPaused(false);
+    }
+
+    assert.equal(orch.getRun(runId)!.status, "stopped");
+    const block = blockOf(instanceId);
+    assert.equal(block.status, "blocked");
+    assert.match(block.error ?? "", /closed out by the same restart/);
+  });
+});
+
 describe("a looping block whose workflow kept its pass across the restart", () => {
   it("is left looping rather than failed", async () => {
     const { instanceId, runId } = loopScene("Docs sweep", {

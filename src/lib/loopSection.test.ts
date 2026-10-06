@@ -800,6 +800,29 @@ describe("an orchestrator member of a pass", () => {
     assert.match(block.error ?? "", /spent 4\.25 of its 3\.00 limit/);
   });
 
+  it("leaves its turn unclaimed while new work is held, and takes it once the hold clears", async () => {
+    // A pass claims its deciding members in a loop of its own rather than
+    // through `advanceInstance`'s, so the hold has to be asked there as well:
+    // claimed under it, the turn was billed and its emission then refused.
+    const settings = await import("./settings");
+    const instanceId = scene({ ...DECIDER, maxPasses: 1 });
+    const member = passMemberId("L", 1, "o");
+
+    settings.setNewWorkPaused(true);
+    try {
+      workflows.advanceInstances();
+      assert.equal(blockRow(instanceId, member).status, "waiting", "the held pass claimed its turn");
+      assert.equal(loopBlock(instanceId).status, "looping", "a held pass is not a stopped loop");
+    } finally {
+      settings.setNewWorkPaused(false);
+    }
+
+    workflows.advanceInstances();
+    decide(instanceId, member, twoRuns, 0);
+    await drive(instanceId);
+    assert.equal(loopBlock(instanceId).emitted, 1, "the pass went on to finish once the hold cleared");
+  });
+
   it("stops the loop when its turn did not finish", async () => {
     // A member that did not complete stops the loop, over members of all three
     // kinds — and a deciding turn that failed is one the next pass would meet

@@ -17,7 +17,8 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 ## [The fleet stop, the new-work hold and set-aside](run-lifecycle/fleet-stop-hold-and-set-aside.md)
 
 - There is one install-wide stop, one install-wide hold, and neither is a new way for a run to end.
-- The hold is a settings row of its own, and six separate call sites read it.
+- The hold is a settings row of its own, and seven separate call sites read it.
+- An orchestrator block's deciding turn is held at its claim, not refused at its emission.
 - A control that acts on a set needs a per-run way to say no, and `runs.set_aside_at` is it.
 - A refused run is still in the restart notice's count, so the answer to a press is drawn beside the button, never in place of it.
 
