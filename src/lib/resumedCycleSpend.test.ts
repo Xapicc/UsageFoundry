@@ -52,7 +52,8 @@ assert.equal(
     "run against the real database",
 );
 
-const { createRun, getRun, runEvents } = require("./orchestrator") as typeof import("./orchestrator");
+const { createRun, getRun, reopenRun, runEvents } =
+  require("./orchestrator") as typeof import("./orchestrator");
 const { saveSettings } = require("./settings") as typeof import("./settings");
 
 interface Cycle {
@@ -62,8 +63,17 @@ interface Cycle {
   window: number;
 }
 
+/**
+ * A `--resume` the CLI gives up on before doing anything: it names some other
+ * session, reports nothing and exits 1, after `exitAfterMs`.
+ */
+interface FailedResume {
+  names: string;
+  exitAfterMs: number;
+}
+
 /** What each child the loop spawns will do, in spawn order. */
-let script: Cycle[] = [];
+let script: Array<Cycle | FailedResume> = [];
 /** What each child was asked to `--resume`, and the limit it was handed. */
 let spawns: Array<{ resumed: string | null; ceiling: string | null }> = [];
 /** Each session's saved ledger, as the transcript's `cost-state` would hold it. */
@@ -88,10 +98,6 @@ childProcess.spawn = (bin: string, args: readonly string[], options: unknown) =>
   const resumed = flag(args, "--resume");
   spawns.push({ resumed, ceiling: flag(args, "--max-budget-usd") });
 
-  const session = resumed ?? `session-${n + 1}`;
-  const total = (resumed === null ? 0 : (ledgers.get(resumed) ?? 0)) + cycle.spend;
-  ledgers.set(session, total);
-
   const stdout = new PassThrough();
   const child = Object.assign(new EventEmitter(), {
     stdout,
@@ -100,6 +106,26 @@ childProcess.spawn = (bin: string, args: readonly string[], options: unknown) =>
     pid: undefined as number | undefined,
     kill: () => true,
   });
+
+  if ("names" in cycle) {
+    // The ledger it was asked for is untouched: nothing was done in it.
+    stdout.on("end", () => {
+      setTimeout(() => {
+        child.emit("exit", 1, null);
+        child.emit("close", 1, null);
+      }, cycle.exitAfterMs);
+    });
+    setImmediate(() => {
+      stdout.write(`${JSON.stringify({ type: "system", subtype: "init", session_id: cycle.names })}\n`);
+      stdout.end();
+    });
+    return child;
+  }
+
+  const session = resumed ?? `session-${n + 1}`;
+  const total = (resumed === null ? 0 : (ledgers.get(resumed) ?? 0)) + cycle.spend;
+  ledgers.set(session, total);
+
   const events = [
     { type: "system", subtype: "init", session_id: session },
     {
@@ -139,8 +165,18 @@ after(() => {
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
+/** Wait for the segment in flight to end, however it ends. */
+async function settled(id: string) {
+  for (let i = 0; i < 1_000; i++) {
+    const row = getRun(id)!;
+    if (row.status !== "queued" && row.status !== "running") return row;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  assert.fail(`run ${id} did not end`);
+}
+
 async function runToEnd(
-  cycles: Cycle[],
+  cycles: Array<Cycle | FailedResume>,
   budget: Parameters<typeof createRun>[0]["budget"],
 ) {
   script = cycles;
@@ -152,12 +188,7 @@ async function runToEnd(
     budget,
     origin: "form",
   });
-  for (let i = 0; i < 1_000; i++) {
-    const row = getRun(run.id)!;
-    if (row.status !== "queued" && row.status !== "running") return row;
-    await new Promise((r) => setTimeout(r, 10));
-  }
-  assert.fail(`run ${run.id} did not end`);
+  return settled(run.id);
 }
 
 const SMALL = 1_000;
@@ -250,5 +281,48 @@ describe("a run whose work cycles resume one session", () => {
     } finally {
       saveSettings({ freshStartContextTokens: null });
     }
+  });
+
+  it("keeps the baseline a failed resume's retry restored when the segment ends before the retry", async () => {
+    saveSettings({ freshStartContextTokens: null });
+    const first = await runToEnd(
+      [
+        { spend: 3, window: SMALL },
+        // Outlasts the second segment's time limit, so the pre-cycle guard
+        // ends it after the retry has restored the baseline and before the
+        // retry spawns.
+        { names: "junk-session", exitAfterMs: 1_500 },
+        { spend: 2, window: SMALL },
+      ],
+      { maxIterations: 1 },
+    );
+    assert.equal(first.session_cost_usd, 3);
+
+    const second = reopenRun(first.id, { maxIterations: 5, maxDurationMinutes: 0.02 });
+    assert.ok(second.ok, JSON.stringify(second));
+    const cut = await settled(first.id);
+    assert.equal(cut.status, "stopped", cut.stop_reason ?? "");
+    assert.equal(cut.session_id, "session-1");
+    // The failed cycle's own write nulled it, because the stream named another
+    // ledger; the retry's restore lived only in the loop's frame.
+    assert.equal(cut.session_cost_usd, 3, "the ledger session-1 stands at was lost with the segment");
+
+    const third = reopenRun(first.id, { maxIterations: 2, maxDurationMinutes: 60 });
+    assert.ok(third.ok, JSON.stringify(third));
+    const row = await settled(first.id);
+    assert.deepEqual(
+      spawns.map((s) => s.resumed),
+      [null, "session-1", "session-1"],
+      "the fixture must be one session, resumed by a failure and then by a cycle",
+    );
+    // The CLI reported $3, then $5 for session-1. Measured from no baseline
+    // the $5 is banked whole and the run reads $8.
+    assert.equal(row.spent_usd, 5);
+    assert.deepEqual(
+      runEvents(row.id)
+        .events.filter((e) => e.kind === "result")
+        .map((e) => e.payload.costUSD),
+      [3, 2],
+    );
   });
 });
