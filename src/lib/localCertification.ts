@@ -123,6 +123,9 @@ const EXIT_DONE: Record<"land" | "deliver", string> = {
 
 const short = (sha: string) => sha.slice(0, 8);
 
+const localRunNames = (state: { localRuns: string[] }) =>
+  state.localRuns.map((id) => id.slice(0, 8)).join(", ");
+
 /**
  * Why this branch may not leave by `exit` until a frontier model approves it,
  * or null when it may.
@@ -138,7 +141,7 @@ export function certificationRefusal(
 ): string | null {
   if (!state.required) return null;
   const done = EXIT_DONE[exit];
-  const who = state.localRuns.map((id) => id.slice(0, 8)).join(", ");
+  const who = localRunNames(state);
   const review = state.review;
 
   if (!review) {
@@ -180,6 +183,23 @@ export function certificationRefusal(
     return "The frontier review did not end in a clear APPROVE or REJECT, so nothing is certified. Review it again.";
   }
   return null;
+}
+
+/**
+ * Why an unattended resolution of this branch could not be followed by a land,
+ * or null when nothing here holds the branch.
+ *
+ * Whatever `certificationRefusal` answers now, an approval of the tip included:
+ * a resolution is a commit, so the tip it leaves is one no review has seen.
+ */
+export function resolutionCertificationRefusal(state: CertificationState): string | null {
+  if (!state.required) return null;
+  return (
+    `This branch carries work a local model wrote (run ${localRunNames(state)}), and a ` +
+    "resolution moves its tip past any frontier review, so it could not be landed after " +
+    "one and none was attempted. Press Resolve with Claude on this run, then Review, and " +
+    "land it once that review approves it."
+  );
 }
 
 /** The stored column, narrowed: anything but the two words is no verdict. */
