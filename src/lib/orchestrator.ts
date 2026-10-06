@@ -331,6 +331,8 @@ export interface RunRow {
   landed_strategy: string | null;
   /** Branch tip at that moment — the only proof a squash took these commits. */
   landed_tip: string | null;
+  /** The commit a squash made on the target; null for a merge. See `isLandedTip`. */
+  landed_commit: string | null;
   /**
    * The pull request Deliver opened from this run, and when. Null means never.
    * Read per branch rather than per run; see `deliveredPullRequest`.

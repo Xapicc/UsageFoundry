@@ -444,23 +444,24 @@ describe("checkout reclaim across a continueBranch chain", () => {
 
     gitIn(repo, "merge", "-q", "--squash", branch);
     gitIn(repo, "commit", "-qm", "squash-landed");
+    const squash = gitIn(repo, "rev-parse", "main");
 
     const insert = dbMod.db().prepare(
       `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
                          created_at, finished_at, isolation, repo_root, worktree_path,
                          worktree_branch, worktree_base, worktree_base_branch,
-                         continues_run, landed_at, landed_tip)
+                         continues_run, landed_at, landed_strategy, landed_tip, landed_commit)
        VALUES (?, ?, 'task', 'completed', '{}', 1, ?, ?, ?, 'worktree', ?, ?, ?, ?, 'main',
-               ?, ?, ?)`,
+               ?, ?, ?, ?, ?)`,
     );
     const finished = NOW - 30 * DAY;
     insert.run(
       `${name}-owner`, repo, 1, finished - DAY, finished, repo, slot, branch, base,
-      null, finished, tip,
+      null, finished, "squash", tip, squash,
     );
     insert.run(
       `${name}-link`, repo, 0, finished, finished, repo, slot, branch, base,
-      `${name}-owner`, null, null,
+      `${name}-owner`, null, null, null, null,
     );
     return { repo, slot, branch };
   }

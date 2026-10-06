@@ -631,7 +631,7 @@ export async function landState(
     await git(repoRoot, ["merge-base", "--is-ancestor", branch, target.branch], NO_CLOCK)
   ).ok;
 
-  const landedUnchanged = isLandedTip(links, tip);
+  const landedUnchanged = await isLandedTip(repoRoot, target.branch, links, tip);
 
   // Not previewed while the run can still commit: the answer would be stale
   // before it rendered, and `merge-tree` writes objects to work it out.
@@ -718,7 +718,8 @@ function chainMember(run: RunRow): ChainMember {
 }
 
 /**
- * Whether `tip` is the tip some run on this branch landed.
+ * Whether `tip` is the tip some run on this branch squashed into `target`, and
+ * the commit that squash made is still in `target`.
  *
  * Asked of the whole chain because `landRun` writes `landed_tip` on the run
  * that landed, which is only ever the chain's owner at the time. Read for one
@@ -726,9 +727,55 @@ function chainMember(run: RunRow): ChainMember {
  * after its owner had landed was failed by the queue with the owner refusal,
  * and a later link that added nothing offered the same squash for landing
  * again.
+ *
+ * Asked of the target as well as the branch, because the recorded tip says
+ * which commits were taken and nothing about whether the target still has
+ * them. An operator who undoes a land with `reset --hard ORIG_HEAD` leaves the
+ * tip exactly where it was, and trusting it alone called that branch landed:
+ * Land refused it as already squashed, and Delete — the door that is supposed
+ * to be unable to lose work — removed the only ref its commits were in. Only a
+ * squash is read at all, because a merge needs no stand-in: its commit makes
+ * the tip an ancestor of the target, so ancestry is the whole answer and it
+ * goes false by itself when the merge is reset away.
  */
-export function isLandedTip(chain: readonly RunRow[], tip: string | undefined): boolean {
-  return chain.some((r) => !!r.landed_tip && r.landed_tip === tip);
+export async function isLandedTip(
+  repoRoot: string,
+  target: string | null,
+  chain: readonly RunRow[],
+  tip: string | undefined,
+): Promise<boolean> {
+  if (!target || !tip) return false;
+  for (const run of squashesOnChain(chain)) {
+    if (run.landed_tip !== tip) continue;
+    if (await isAncestor(repoRoot, run.landed_commit, `refs/heads/${target}`)) return true;
+  }
+  return false;
+}
+
+/**
+ * Every squash recorded on this chain that says which commit it made, newest
+ * first. A squash landed before `landed_commit` was recorded is left out, and
+ * so reads as not landed: nothing can prove the target still has it, and the
+ * cost of that reading is a branch kept rather than one deleted.
+ */
+function squashesOnChain(
+  chain: readonly RunRow[],
+): (RunRow & { landed_tip: string; landed_commit: string })[] {
+  return chain
+    .filter(
+      (r): r is RunRow & { landed_tip: string; landed_commit: string } =>
+        r.landed_strategy === "squash" && !!r.landed_tip && !!r.landed_commit,
+    )
+    .sort((a, b) => (b.landed_at ?? 0) - (a.landed_at ?? 0));
+}
+
+/**
+ * Whether `commit` is `ref` or one of its ancestors. Any failure — including a
+ * commit gc took after the land was undone — reads as no, which every caller
+ * takes as "not landed", the reading that keeps the branch.
+ */
+async function isAncestor(repoRoot: string, commit: string, ref: string): Promise<boolean> {
+  return (await git(repoRoot, ["merge-base", "--is-ancestor", commit, ref], NO_CLOCK)).ok;
 }
 
 /**
@@ -1463,6 +1510,7 @@ export async function landRun(
       };
     }
 
+    let squashCommit: string | null = null;
     if (strategy === "squash") {
       // `--squash` stages the change and stops. Without this the operator is
       // left holding a staged merge that the app claims to have landed.
@@ -1487,14 +1535,19 @@ export async function landRun(
             : `The squash could not be committed and could not be rolled back, so it is still staged in your checkout — look at git status there before anything else: ${why}`,
         };
       }
+      // What `isLandedTip` asks the target for. Unreadable leaves it null, which
+      // reads as not landed: a branch kept that could have gone, never the
+      // other way round.
+      const head = await git(folder, ["rev-parse", "HEAD"], NO_CLOCK);
+      squashCommit = head.ok ? head.stdout : null;
     }
 
     const now = Date.now();
     db()
       .prepare(
-        "UPDATE runs SET landed_at=?, landed_into=?, landed_strategy=?, landed_tip=? WHERE id=?",
+        "UPDATE runs SET landed_at=?, landed_into=?, landed_strategy=?, landed_tip=?, landed_commit=? WHERE id=?",
       )
-      .run(now, target, strategy, tip || null, runId);
+      .run(now, target, strategy, tip || null, squashCommit, runId);
 
     emitRunEvent({
       runId,
@@ -2956,8 +3009,8 @@ export async function deleteBranch(runId: string): Promise<LandOutcome> {
   // A squash rewrites the commits, so git's ancestry test can never call this
   // branch merged. The tip recorded at land time is the stronger statement in
   // that case — it says *these exact commits* are the ones that were taken —
-  // and it stops being true the moment the branch moves, which is precisely
-  // when deleting would lose something.
+  // and it stops being true the moment the branch moves or the target loses
+  // the squash, which are precisely when deleting would lose something.
   if (!state.merged && !state.landedUnchanged) {
     return {
       ok: false,
@@ -2994,7 +3047,7 @@ export async function deleteBranch(runId: string): Promise<LandOutcome> {
       // passes that check, and a per-run compare here refused it as having
       // changed while it was being checked.
       const safe =
-        isLandedTip(chainRuns(run), tip) ||
+        (await isLandedTip(repoRoot, state.target, chainRuns(run), tip)) ||
         (state.target !== null &&
           (
             await git(
@@ -3977,10 +4030,15 @@ async function mapWithLimit<T, R>(
  * answer, or on anything the collecting loop writes.
  */
 interface PendingBranch extends ProbeCandidate {
-  summary: Omit<BranchSummary, "ahead" | "uncommitted" | "heldByCheckout" | "merging">;
+  summary: Omit<
+    BranchSummary,
+    "ahead" | "uncommitted" | "heldByCheckout" | "merging" | "landedUnchanged"
+  >;
   repoRoot: string;
   /** See `aheadRangeFor`; null when there is nothing to count. */
   aheadRange: string | null;
+  /** What `isLandedTip` is asked about this row; null when the branch is gone. */
+  landed: { tip: string | undefined; chain: RunRow[] } | null;
 }
 
 /**
@@ -4077,6 +4135,7 @@ export async function branchInventory(
           ? aheadRangeFor({ target, base: run.worktree_base, branch })
           : null,
         slot: (exists ? heldBy.get(branch) : undefined) ?? null,
+        landed: exists ? { tip: tips.get(branch), chain: chainRuns(run) } : null,
         summary: {
           runId: run.id,
           runStatus: run.status,
@@ -4086,7 +4145,6 @@ export async function branchInventory(
           repoLabel: describeFolder(repoRoot).relPath || repoRoot,
           createdAt: run.created_at,
           merged,
-          landedUnchanged: exists && isLandedTip(chainRuns(run), tips.get(branch)),
           exists,
           active: active.has(run.id),
           landedAt: run.landed_at,
@@ -4105,11 +4163,18 @@ export async function branchInventory(
   // run at all; `selectProbeTargets` is where it is applied, and its own note
   // says why that has to happen before the first one is dispatched.
   const probeTargets = selectProbeTargets(pending, MAX_PENDING_PROBES);
-  const [aheads, probed] = await Promise.all([
+  const [aheads, landed, probed] = await Promise.all([
     // One call per row whatever it answers — `MAX_INVENTORY` bounds these — so
     // a target renamed away is a null here. The Land card, with one branch to
     // pay for, counts that case against the base instead.
     mapWithLimit(pending, BRANCH_GIT_CONCURRENCY, (p) => countAhead(p.repoRoot, p.aheadRange)),
+    // A call only for a row some squash on its chain recorded this tip for;
+    // `isLandedTip` answers every other row without asking git.
+    mapWithLimit(pending, BRANCH_GIT_CONCURRENCY, async (p) =>
+      p.landed
+        ? isLandedTip(p.repoRoot, p.summary.target, p.landed.chain, p.landed.tip)
+        : false,
+    ),
     mapWithLimit(probeTargets, BRANCH_GIT_CONCURRENCY, async (i) => {
       // Non-null: `selectProbeTargets` picks only rows a checkout holds.
       const slot = pending[i].slot!;
@@ -4133,6 +4198,7 @@ export async function branchInventory(
   const branches: BranchSummary[] = pending.map((p, i) => ({
     ...p.summary,
     ahead: aheads[i],
+    landedUnchanged: landed[i],
     // A row nothing probed stays null, which the page reads as "not asked" —
     // the same answer a failed probe gives, and never a claim of clean.
     uncommitted: probedByRow.get(i)?.uncommitted ?? null,

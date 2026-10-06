@@ -1072,6 +1072,14 @@ function migrate(db: Database.Database) {
   // were taken, so "the branch still points at what we squashed" is a fact
   // rather than a guess.
   addColumn(db, "runs", "landed_tip", "TEXT");
+  // The commit a squash created on the target. `landed_tip` alone says what was
+  // taken, never that the target still has it: an operator who undoes the land
+  // with `reset --hard` leaves the tip exactly where it was, and the branch then
+  // read as landed and was deleted with its work in no other ref. So a squash is
+  // trusted only while this commit is still an ancestor of the target. Null on
+  // a merge, whose own ancestry answers the question, and on a squash landed
+  // before it was recorded, which is therefore read as not landed — the keep.
+  addColumn(db, "runs", "landed_commit", "TEXT");
 
   // The pull request Deliver opened, on the row for the reason `landed_*` is:
   // the card withdraws its button on it, and the `deliver` event it used to be

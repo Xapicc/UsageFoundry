@@ -170,12 +170,13 @@ describe("deleteBranch", () => {
     git(s.repo, "merge", "-q", "--squash", s.branch);
     git(s.repo, "commit", "-q", "-m", "land squashed");
     const tip = git(s.repo, "rev-parse", s.branch).trim();
+    const squash = git(s.repo, "rev-parse", "main").trim();
     dbMod
       .db()
       .prepare(
-        "UPDATE runs SET landed_at=?, landed_into='main', landed_strategy='squash', landed_tip=? WHERE id=?",
+        "UPDATE runs SET landed_at=?, landed_into='main', landed_strategy='squash', landed_tip=?, landed_commit=? WHERE id=?",
       )
-      .run(Date.now(), tip, s.runId);
+      .run(Date.now(), tip, squash, s.runId);
     git(s.repo, "switch", "-q", "other");
 
     const outcome = await land.deleteBranch(s.runId);
@@ -197,20 +198,21 @@ describe("deleteBranch", () => {
     git(s.repo, "merge", "-q", "--squash", s.branch);
     git(s.repo, "commit", "-q", "-m", "land squashed");
     const tip = git(s.repo, "rev-parse", s.branch).trim();
+    const squash = git(s.repo, "rev-parse", "main").trim();
     dbMod
       .db()
       .prepare(
         `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
                            created_at, finished_at, isolation, repo_root, worktree_path,
                            worktree_branch, worktree_base, worktree_base_branch, continues_run,
-                           landed_at, landed_into, landed_strategy, landed_tip)
+                           landed_at, landed_into, landed_strategy, landed_tip, landed_commit)
          SELECT ?, folder, prompt, status, budget, max_iterations, iterations,
                 created_at + 1, finished_at, isolation, repo_root, worktree_path,
                 worktree_branch, worktree_base, worktree_base_branch, id,
-                ?, 'main', 'squash', ?
+                ?, 'main', 'squash', ?, ?
            FROM runs WHERE id = ?`,
       )
-      .run(ownerId, Date.now(), tip, s.runId);
+      .run(ownerId, Date.now(), tip, squash, s.runId);
     git(s.repo, "switch", "-q", "other");
 
     const outcome = await land.deleteBranch(s.runId);
@@ -305,5 +307,77 @@ describe("deleteBranch", () => {
     assert.ok(reason.includes(s.slot), `the refusal does not say where: ${reason}`);
     assert.equal(git(s.repo, "rev-parse", s.branch).trim(), tip);
     assert.equal(fs.existsSync(s.slot), true, "the bisecting checkout was removed");
+  });
+});
+
+/**
+ * A land the operator undid on the target, which is git's own undo of an
+ * unpushed merge and the only one there is: this app offers none.
+ *
+ * `landed_tip` was trusted as proof that the work was in the target for as long
+ * as the branch had not moved, for both strategies. It says nothing about the
+ * target, so after `reset --hard ORIG_HEAD` the branch still read "squashed
+ * in", Land was refused as "Already squashed into main" over a merge that was
+ * nowhere, and Delete — the door the page calls the one that cannot lose work —
+ * removed the only ref holding the run's commits.
+ */
+describe("a land undone on its target", () => {
+  async function assertStillUnlanded(s: Scene) {
+    const tip = git(s.repo, "rev-parse", s.branch).trim();
+
+    const state = await land.landState(s.runId);
+    assert.ok(state, "the run has no land state");
+    assert.equal(state.landedUnchanged, false, `the Land card says it is in main: ${state.blocked}`);
+    assert.equal(state.blocked, null, "it cannot be landed again without a new commit");
+
+    const row = (await land.branchInventory()).branches.find((b) => b.branch === s.branch);
+    assert.ok(row, "the branch is not on the branches page");
+    assert.equal(row.landedUnchanged, false, "the branches page calls it squashed in");
+
+    const outcome = await land.deleteBranch(s.runId);
+
+    assert.equal(outcome.ok, false, "Delete removed the only ref holding the run's work");
+    assert.equal(git(s.repo, "rev-parse", s.branch).trim(), tip);
+    assert.equal(fs.existsSync(s.slot), true, "its checkout was removed anyway");
+  }
+
+  it("is not called landed once a merge is reset off the target", async () => {
+    const s = scene("undone-merge");
+    const base = git(s.repo, "rev-parse", "main").trim();
+    const landed = await land.landRun(s.runId, "merge");
+    assert.equal(landed.ok, true, landed.ok ? "" : landed.reason);
+
+    git(s.repo, "reset", "-q", "--hard", "ORIG_HEAD");
+    assert.equal(git(s.repo, "rev-parse", "main").trim(), base);
+
+    await assertStillUnlanded(s);
+  });
+
+  it("is not called landed once a squash commit is reset off the target", async () => {
+    const s = scene("undone-squash");
+    const base = git(s.repo, "rev-parse", "main").trim();
+    const landed = await land.landRun(s.runId, "squash");
+    assert.equal(landed.ok, true, landed.ok ? "" : landed.reason);
+
+    git(s.repo, "reset", "-q", "--hard", "HEAD~1");
+    assert.equal(git(s.repo, "rev-parse", "main").trim(), base);
+
+    await assertStillUnlanded(s);
+  });
+
+  it("still deletes a squash landed through Land while the squash is in the target", async () => {
+    // The control: the same land, not undone, is the case the recorded tip
+    // exists for, and Delete must go on taking it.
+    const s = scene("kept-squash");
+    const landed = await land.landRun(s.runId, "squash");
+    assert.equal(landed.ok, true, landed.ok ? "" : landed.reason);
+    git(s.repo, "switch", "-q", "other");
+
+    const state = await land.landState(s.runId);
+    assert.equal(state?.landedUnchanged, true, `not read as landed: ${state?.blocked}`);
+    const outcome = await land.deleteBranch(s.runId);
+
+    assert.equal(outcome.ok, true, outcome.ok ? "" : outcome.reason);
+    assert.equal(branchExists(s.repo, s.branch), false);
   });
 });

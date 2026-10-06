@@ -575,9 +575,10 @@ export async function sweepCheckouts(now = Date.now()): Promise<{
  *
  * Two readings, because git can only see one of them. A squash rewrites the
  * commits, so an ancestry test can never call such a branch merged — the tip
- * recorded at land time is what stands in for it, and it stops being true the
- * moment the branch gains a commit, which is exactly when reclaiming its
- * checkout would start throwing away something.
+ * recorded at land time is what stands in for it, for as long as the commit the
+ * squash made is still in the target. It stops being true the moment the
+ * branch gains a commit or the target loses that one, which is exactly when
+ * reclaiming its checkout would start throwing away something.
  *
  * The recorded tip is asked of the whole chain rather than of `row`, because
  * `landRun` writes it on the run that landed and a link that continues that run
@@ -602,7 +603,12 @@ async function branchIsSettled(
   const run = getRun(row.id);
   if (run) {
     const tip = await git(repoRoot, ["rev-parse", `refs/heads/${branch}`]);
-    if (tip.ok && isLandedTip(chainRuns(run), tip.stdout)) return true;
+    if (
+      tip.ok &&
+      (await isLandedTip(repoRoot, row.worktree_base_branch, chainRuns(run), tip.stdout))
+    ) {
+      return true;
+    }
   }
 
   const target = row.worktree_base_branch ?? row.worktree_base;
