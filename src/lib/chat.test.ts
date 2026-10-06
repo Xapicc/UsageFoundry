@@ -146,6 +146,7 @@ const {
   STALE_TURN_MARGIN_MS,
   answerChatQuestions,
   answerMessage,
+  approveRunBatch,
   chatEnv,
   chatOwnsRun,
   chatPrompt,
@@ -885,7 +886,7 @@ describe("planApprovalBatch", () => {
   it("resolves a label to the run an earlier click already started", () => {
     const steps = planApprovalBatch(
       [p("b", [after("a", true)])],
-      new Map([["a", { status: "approved", runId: "run-1" }]]),
+      new Map([["a", { kind: "run", status: "approved", runId: "run-1" }]]),
     );
     const b = steps.find((s) => s.ok) as {
       ok: true;
@@ -901,7 +902,7 @@ describe("planApprovalBatch", () => {
     // dependent anyway, which looks exactly like a run nobody ordered.
     const steps = planApprovalBatch(
       [p("b", [after("a")])],
-      new Map([["a", { status: "pending", runId: null }]]),
+      new Map([["a", { kind: "run", status: "pending", runId: null }]]),
     );
     assert.equal(created(steps).length, 0);
     assert.match(refusal(steps, "b")!.reason, /still waiting for a decision/);
@@ -910,12 +911,25 @@ describe("planApprovalBatch", () => {
   it("tells a label that never became a run apart from one that was never proposed", () => {
     const failedDep = planApprovalBatch(
       [p("b", [after("a")])],
-      new Map([["a", { status: "failed", runId: null }]]),
+      new Map([["a", { kind: "run", status: "failed", runId: null }]]),
     );
     assert.match(refusal(failedDep, "b")!.reason, /was failed and never became a run/);
 
     const unknown = planApprovalBatch([p("b", [after("ghost")])], none);
     assert.match(refusal(unknown, "b")!.reason, /not a proposal in this chat/);
+  });
+
+  it("names a label a schedule card holds as one, ahead of its status", () => {
+    // Pending, a run card's label earns "approve them together"; a schedule
+    // card's must not, because approving it saves a schedule and no run.
+    const steps = planApprovalBatch(
+      [p("b", [after("a")])],
+      new Map([["a", { kind: "schedule", status: "pending", runId: null }]]),
+    );
+    assert.equal(created(steps).length, 0);
+    const reason = refusal(steps, "b")!.reason;
+    assert.match(reason, /is a schedule proposal: approving it saves a schedule/);
+    assert.doesNotMatch(reason, /Approve them together/);
   });
 
   it("cascades a refusal to everything behind it, naming the one in front", () => {
@@ -1686,7 +1700,7 @@ describe("replacing a proposal that is still waiting", () => {
           dependsOn: [{ specId: "fix", edge: "on-success", continueBranch: false }],
         },
       ],
-      new Map([["fix", { status: "superseded", runId: null }]]),
+      new Map([["fix", { kind: "run", status: "superseded", runId: null }]]),
     );
     const sibling = steps.find((s) => s.id === "sibling")!;
     assert.equal(sibling.ok, true);
@@ -1699,6 +1713,94 @@ describe("replacing a proposal that is still waiting", () => {
         continueBranch: false,
       },
     ]);
+  });
+});
+
+/**
+ * A run card waiting on a label a workflow or schedule card inherited.
+ *
+ * Reachable with the tools alone: a sibling waits on a run card, and the chat
+ * replaces that card with a workflow, which takes its label. The refusal at the
+ * click is the intended outcome — what is pinned is the sentence, because both
+ * it used to give sent the operator the wrong way. Alone, the run card was told
+ * to approve them together; together, it was told the workflow card was in
+ * neither this click nor this chat, while the operator was looking at it.
+ *
+ * Driven against the database because the second half is `approveRunBatch`'s
+ * own outside map, built from rows, and not anything `planApprovalBatch` sees.
+ */
+describe("approveRunBatch — a label a workflow card inherited", () => {
+  const waitingOnWorkflow = () => {
+    const chat = createChat();
+    const first = createProposal(chat.id, {
+      templateId: null,
+      title: "Set up the pipeline",
+      task: "Set up the pipeline, in full.",
+      promptOverride: null,
+      mountId: "work",
+      folder: "repo",
+      specId: "wf",
+    });
+    const dependent = createProposal(chat.id, {
+      templateId: null,
+      title: "Run the migration",
+      task: "Apply the migration the pipeline sets up.",
+      promptOverride: null,
+      mountId: "work",
+      folder: "repo",
+      dependsOn: [{ specId: "wf", edge: "on-success", continueBranch: false }],
+    });
+    // `proposeWorkflow`'s own input: no label, so it inherits the one it replaces.
+    const written = createProposalReplacing(
+      chat.id,
+      {
+        kind: "workflow",
+        templateId: null,
+        title: "Refactor the pipeline",
+        task: "A workflow of 0 block(s).",
+        promptOverride: null,
+        mountId: null,
+        folder: null,
+        specId: null,
+        graph: JSON.stringify({ nodes: [], edges: [] }),
+      },
+      first.id,
+    );
+    assert.equal(written.ok, true);
+    if (!written.ok) throw new Error("the supersede this case rests on was refused");
+    assert.equal(written.proposal.spec_id, "wf", "the premise: the workflow card holds the label");
+    return { chat, dependent, workflow: written.proposal };
+  };
+
+  it("names the workflow card when it is in the same click, rather than calling it absent", () => {
+    const { chat, dependent, workflow } = waitingOnWorkflow();
+    const outcome = approveRunBatch(chat.id, [dependent.id, workflow.id]);
+
+    assert.deepEqual(outcome.started, []);
+    assert.equal(outcome.failed.length, 1);
+    const reason = outcome.failed[0].reason;
+    assert.doesNotMatch(reason, /not in this batch/);
+    assert.doesNotMatch(reason, /not a proposal in this chat/);
+    // The superseded run card still spells the label too, and it is not the
+    // card the operator is looking at.
+    assert.doesNotMatch(reason, /superseded/);
+    assert.match(reason, /“wf”, which is a workflow proposal/);
+    assert.equal(getProposal(dependent.id)?.status, "failed");
+    assert.equal(
+      getProposal(workflow.id)?.status,
+      "pending",
+      "the run half decides run cards only; saving the graph is the route's second half",
+    );
+  });
+
+  it("does not tell the operator to approve them together when the run card is alone", () => {
+    const { chat, dependent } = waitingOnWorkflow();
+    const outcome = approveRunBatch(chat.id, [dependent.id]);
+
+    assert.equal(outcome.failed.length, 1);
+    const reason = outcome.failed[0].reason;
+    assert.doesNotMatch(reason, /Approve them together/);
+    assert.match(reason, /“wf”, which is a workflow proposal/);
   });
 });
 
