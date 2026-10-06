@@ -34,6 +34,8 @@ let orch: typeof import("./orchestrator");
 let schedules: typeof import("./schedules");
 let workflows: typeof import("./workflows");
 let dbMod: typeof import("./db");
+let settings: typeof import("./settings");
+let fleet: typeof import("./fleet");
 
 /** What an operator presses while the snapshot is being read; nothing by default. */
 let pressDuringSnapshot: () => void = () => {};
@@ -66,11 +68,12 @@ before(async () => {
   schedules = await import("./schedules");
   workflows = await import("./workflows");
   dbMod = await import("./db");
+  settings = await import("./settings");
+  fleet = await import("./fleet");
 
   // The snapshot asks the provider for its own utilisation otherwise, and there
   // is no network here.
-  const { saveSettings } = await import("./settings");
-  saveSettings({ planUsageFromApi: false });
+  settings.saveSettings({ planUsageFromApi: false });
 
   const realSnapshot = orch.currentSnapshot;
   (orch as { currentSnapshot: unknown }).currentSnapshot = async () => {
@@ -91,6 +94,9 @@ after(async () => {
 
 beforeEach(() => {
   pressDuringSnapshot = () => {};
+  // A row of the settings table rather than a variable, so one case's hold
+  // would otherwise be the next case's.
+  settings.setNewWorkPaused(false);
   for (const table of [
     "workflow_schedules",
     "workflow_instance_blocks",
@@ -103,6 +109,8 @@ beforeEach(() => {
     dbMod.db().prepare(`DELETE FROM ${table}`).run();
   }
 });
+
+const HOUR_MS = 60 * 60_000;
 
 /** One run block in its own folder, so two workflows never contend for one. */
 function graphIn(folder: string): WorkflowGraph {
@@ -137,9 +145,11 @@ function graphIn(folder: string): WorkflowGraph {
  * A budgeted workflow whose hourly schedule had an occurrence `secondsAgo` and
  * a cursor just before it, so the next tick fires it. Inside `FIRE_GRACE_MS`
  * either way; the age only orders the rows, since the tick reads them oldest
- * first.
+ * first. `windowsBehind` moves the cursor back by that many whole hours, so the
+ * tick finds that many older occurrences to record as missed before the one it
+ * fires.
  */
-function dueSchedule(name: string, folder: string, secondsAgo = 10): string {
+function dueSchedule(name: string, folder: string, secondsAgo = 10, windowsBehind = 0): string {
   const id = workflows.createWorkflow({
     name,
     graph: graphIn(folder),
@@ -154,7 +164,7 @@ function dueSchedule(name: string, folder: string, secondsAgo = 10): string {
     id,
     { kind: "everyHours", hours: 1, anchorAt: occurrence },
     "UTC",
-    occurrence - 1,
+    occurrence - 1 - windowsBehind * HOUR_MS,
   );
   return id;
 }
@@ -164,6 +174,11 @@ function instancesOf(workflowId: string): number {
     .db()
     .prepare("SELECT COUNT(*) AS n FROM workflow_instances WHERE workflow_id = ?")
     .get(workflowId) as { n: number };
+  return row.n;
+}
+
+function runCount(): number {
+  const row = dbMod.db().prepare("SELECT COUNT(*) AS n FROM runs").get() as { n: number };
   return row.n;
 }
 
@@ -277,5 +292,59 @@ describe("a schedule's fire, against what the operator presses during it", () =>
     // A stale `setCursor` moved this back to the old recurrence's window, which
     // the new one was never set for.
     assert.deepEqual(rowOf(second), { cursor_at: editedAt, last_code: null });
+  });
+});
+
+/**
+ * The install-wide hold is the other press that lands in the snapshot gap, and
+ * the operator's usual reason for it — stop everything before a restart, or
+ * because the meters look wrong — is the one that least tolerates a fire that
+ * was already past the check. `fireIfDue` read the hold into `decideSchedule`
+ * before awaiting the snapshot and never asked again, so a fire in flight
+ * created the instance and recorded "started" while held, and the run was
+ * promoted the moment the hold was lifted: a window that passed during the hold,
+ * made up after it, under a card that said it started on time.
+ *
+ * The hold is pressed through `setFleetPaused`, which is what the button calls.
+ */
+describe("a schedule's fire, against the install-wide hold on new work", () => {
+  it("control: starts nothing, and moves nothing, when the hold is set before the tick", async () => {
+    const id = dueSchedule("Held before", "one");
+    const cursorBefore = rowOf(id)?.cursor_at;
+    settings.setNewWorkPaused(true);
+
+    await schedules.tickSchedules();
+
+    assert.equal(instancesOf(id), 0);
+    assert.deepEqual(rowOf(id), { cursor_at: cursorBefore, last_code: null });
+  });
+
+  it("starts nothing when the hold is set during the fire's own snapshot", async () => {
+    const id = dueSchedule("Held during", "one");
+    const cursorBefore = rowOf(id)?.cursor_at;
+    pressDuringSnapshot = () => fleet.setFleetPaused(true);
+
+    await schedules.tickSchedules();
+
+    assert.equal(instancesOf(id), 0, "a fire decided before the hold started an instance while held");
+    assert.equal(runCount(), 0, "the held fire still wrote a run for the hold's release to promote");
+    // The cursor stays where the hold found it, so lifting the hold records the
+    // window as missed rather than the card saying nothing happened at all.
+    assert.deepEqual(rowOf(id), { cursor_at: cursorBefore, last_code: null });
+  });
+
+  it("puts the cursor back only as far as the windows it already recorded as missed", async () => {
+    // One older occurrence ahead of the one being fired. The tick records it as
+    // missed before the snapshot, and a cursor put back past it would have the
+    // next decision record the same window again.
+    const id = dueSchedule("Held after a miss", "one", 10, 1);
+    const cursorBefore = rowOf(id)?.cursor_at as number;
+    pressDuringSnapshot = () => fleet.setFleetPaused(true);
+
+    await schedules.tickSchedules();
+
+    assert.equal(instancesOf(id), 0);
+    // The older occurrence is one millisecond past the cursor the fixture set.
+    assert.deepEqual(rowOf(id), { cursor_at: cursorBefore + 1, last_code: "missed" });
   });
 });
