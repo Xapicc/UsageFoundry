@@ -22,6 +22,7 @@ import { after, before, describe, it } from "node:test";
 
 let workflows: typeof import("./workflows");
 let dbMod: typeof import("./db");
+let installBudget: typeof import("./installBudget");
 let root: string;
 
 const MOUNT_DIR = "review-block-mount";
@@ -123,6 +124,7 @@ before(async () => {
   );
   dbMod = await import("./db");
   workflows = await import("./workflows");
+  installBudget = await import("./installBudget");
   const db = dbMod.db();
 
   const insertRun = db.prepare(
@@ -235,6 +237,13 @@ describe("a review block with no fix rounds", () => {
     assert.equal(block.status, "emitted");
     assert.match(block.error, /Approved 1 of 2 branch\(es\); set aside/);
     assert.ok(block.cost_usd > 0, "the reviews' cost lands on the block");
+
+    // The same money is on the block's row and in `run_reviews`; the install's
+    // rolling spend must see it once, not twice.
+    const reviewed = db
+      .prepare("SELECT COALESCE(SUM(cost_usd), 0) AS s FROM run_reviews")
+      .get() as { s: number };
+    assert.equal(installBudget.installSpend().spentUSD.toFixed(4), reviewed.s.toFixed(4));
 
     const tasks = db
       .prepare(
