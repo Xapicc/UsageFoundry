@@ -531,9 +531,9 @@ describe("dependencies", () => {
   type State = import("./orchestrator").DependencyState;
   type Link = import("./orchestrator").DependencyLink;
 
-  const waiting = (id: string): State => ({ id, status: "waiting", iterations: 0 });
+  const waiting = (id: string): State => ({ id, status: "waiting", iterations: 0, refundedCycles: 0 });
   /** A dependency that did work and ended well. */
-  const done = (id: string): State => ({ id, status: "completed", iterations: 1 });
+  const done = (id: string): State => ({ id, status: "completed", iterations: 1, refundedCycles: 0 });
   const link = (
     runId: string,
     dependsOn: string,
@@ -551,7 +551,7 @@ describe("dependencies", () => {
     // it would build on work it has not done.
     for (const status of ["queued", "running", "paused", "waiting-for-stack"] as const) {
       const decision = releasableRuns(
-        [{ id: "a", status, iterations: 0 }, waiting("b")],
+        [{ id: "a", status, iterations: 0, refundedCycles: 0 }, waiting("b")],
         [link("b", "a")],
       );
       assert.deepEqual(decision, { release: [], block: [] });
@@ -571,7 +571,7 @@ describe("dependencies", () => {
   it("waits for both halves of a fan-in", () => {
     const links = [link("c", "a"), link("c", "b")];
     assert.deepEqual(
-      releasableRuns([done("a"), { id: "b", status: "running", iterations: 0 }, waiting("c")], links),
+      releasableRuns([done("a"), { id: "b", status: "running", iterations: 0, refundedCycles: 0 }, waiting("c")], links),
       { release: [], block: [] },
     );
     assert.deepEqual(releasableRuns([done("a"), done("b"), waiting("c")], links), {
@@ -590,7 +590,7 @@ describe("dependencies", () => {
 
   it("terminates the whole chain when a dependency fails under on-success", () => {
     const decision = releasableRuns(
-      [{ id: "a", status: "failed", iterations: 2 }, waiting("b"), waiting("c")],
+      [{ id: "a", status: "failed", iterations: 2, refundedCycles: 0 }, waiting("b"), waiting("c")],
       [link("b", "a"), link("c", "b")],
     );
     assert.deepEqual(decision.release, []);
@@ -607,7 +607,7 @@ describe("dependencies", () => {
   it("starts on a failed dependency under on-finish, but not on one that never ran", () => {
     const links = [link("b", "a", "on-finish")];
     assert.deepEqual(
-      releasableRuns([{ id: "a", status: "failed", iterations: 2 }, waiting("b")], links),
+      releasableRuns([{ id: "a", status: "failed", iterations: 2, refundedCycles: 0 }, waiting("b")], links),
       { release: ["b"], block: [] },
     );
     // Refused before its first cycle, stopped before it started, closed out by
@@ -616,13 +616,37 @@ describe("dependencies", () => {
     // that never opened a file — and would leave nothing to end the chain.
     for (const status of ["blocked", "stopped", "failed"] as const) {
       const decision = releasableRuns(
-        [{ id: "a", status, iterations: 0 }, waiting("b")],
+        [{ id: "a", status, iterations: 0, refundedCycles: 0 }, waiting("b")],
         links,
       );
       assert.deepEqual(decision.release, []);
       assert.equal(decision.block.length, 1);
       assert.match(decision.block[0].reason, /without running a work cycle/);
     }
+  });
+
+  /**
+   * The cycle refunds put `iterations` back to zero on a run that worked, so a
+   * dependency is read as having run when either count says so. The pure half of
+   * the stack-wait scenario in `stackWait.test.ts`, which drives the same
+   * decision from a real parked run.
+   */
+  it("counts a refunded cycle as a run work cycle, on both edges", () => {
+    const refunded = { id: "a", status: "stopped" as const, iterations: 0, refundedCycles: 1 };
+    assert.equal(edgeSatisfied(refunded, "on-finish"), true);
+    // An operator stop is not a success, refund or no refund.
+    assert.equal(edgeSatisfied(refunded, "on-success"), false);
+    assert.equal(edgeSatisfied({ ...refunded, status: "completed" }, "on-success"), true);
+
+    const decision = releasableRuns(
+      [refunded, waiting("b"), waiting("c")],
+      [link("b", "a", "on-finish"), link("c", "a")],
+    );
+    assert.deepEqual(decision.release, ["b"]);
+    assert.equal(decision.block.length, 1);
+    assert.equal(decision.block[0].id, "c");
+    assert.match(decision.block[0].reason, /succeeded \(on-success\); it ended stopped/);
+    assert.doesNotMatch(decision.block[0].reason, /without running a work cycle/);
   });
 
   /**
@@ -636,7 +660,7 @@ describe("dependencies", () => {
    * `on-success` reading exists to prevent.
    */
   it("settles a chain on needs-review without treating it as success", () => {
-    const stuck = { id: "a", status: "needs-review" as const, iterations: 1 };
+    const stuck = { id: "a", status: "needs-review" as const, iterations: 1, refundedCycles: 0 };
     assert.equal(edgeSatisfied(stuck, "on-success"), false);
     assert.equal(edgeSatisfied(stuck, "on-finish"), true);
     // The rule that makes a chain terminate rather than sit there applies here
@@ -648,7 +672,7 @@ describe("dependencies", () => {
   });
 
   it("blocks an on-success dependent behind it and starts an on-finish one", () => {
-    const stuck = { id: "a", status: "needs-review" as const, iterations: 1 };
+    const stuck = { id: "a", status: "needs-review" as const, iterations: 1, refundedCycles: 0 };
     const refused = releasableRuns([stuck, waiting("b")], [link("b", "a")]);
     assert.deepEqual(refused.release, []);
     assert.equal(refused.block.length, 1);
@@ -668,7 +692,7 @@ describe("dependencies", () => {
     // defaults to 1 — so requiring the reply would mean a dependent almost
     // never starts.
     const decision = releasableRuns(
-      [{ id: "a", status: "completed", iterations: 1 }, waiting("b")],
+      [{ id: "a", status: "completed", iterations: 1, refundedCycles: 0 }, waiting("b")],
       [link("b", "a")],
     );
     assert.deepEqual(decision, { release: ["b"], block: [] });

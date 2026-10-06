@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
-import { after, describe, it } from "node:test";
+import { after, afterEach, describe, it } from "node:test";
 
 /**
  * A run that asks for a stack, driven through the real run loop: the park at
@@ -103,6 +103,10 @@ interface Cycle {
   ask?: { name: string; binaries: string[] };
   /** Anything else that lands while the child runs, after the request does. */
   during?: () => void;
+  /** What the cycle's `result` event reports as spent. */
+  cost?: number;
+  /** The provider turns the cycle away at the wall: no work, no spend, exit 1. */
+  refuse?: boolean;
   reply: string;
 }
 
@@ -140,9 +144,23 @@ childProcess.spawn = (command: unknown, ...rest: unknown[]) => {
   // After `runIteration` has attached its listeners, which it does once
   // `spawn` has returned.
   setImmediate(() => {
+    if (step.refuse) {
+      stdout.write(
+        `${JSON.stringify({
+          type: "result",
+          subtype: "error_during_execution",
+          is_error: true,
+          result: "Claude AI usage limit reached|1786400000",
+        })}\n`,
+      );
+      stdout.end();
+      child.emit("exit", 1, null);
+      child.emit("close", 1, null);
+      return;
+    }
     stdout.write(`${JSON.stringify({ type: "system", subtype: "init", session_id: "sess-stack" })}\n`);
     stdout.write(
-      `${JSON.stringify({ type: "result", subtype: "success", is_error: false, result: step.reply, total_cost_usd: 0, session_id: "sess-stack" })}\n`,
+      `${JSON.stringify({ type: "result", subtype: "success", is_error: false, result: step.reply, total_cost_usd: step.cost ?? 0, session_id: "sess-stack" })}\n`,
     );
     stdout.end();
     child.emit("exit", 0, null);
@@ -323,6 +341,110 @@ describe("a run that asks for a stack", () => {
     assert.equal(parked.early_ends, 1);
     assert.equal(parked.stack_waits, 1);
     stopRun(id);
+  });
+});
+
+/**
+ * A run chained behind one that paid for a cycle, was parked for a stack, and
+ * was stopped while it waited.
+ *
+ * The park refunds the cycle that asked, so the row ends `stopped` with
+ * `iterations = 0` and the cost already spent. `edgeSatisfied` read that zero
+ * as "never ran a work cycle", so the dependent was `blocked` with that
+ * sentence about a run that had worked and paid, "Try again" re-blocked it at
+ * once, and the only way out restarted the dependency's agent. The install-wide
+ * hold is set so that a dependent the fix lets through stays `waiting` rather
+ * than spawning the stub, which is also what makes "released" observable.
+ */
+describe("a dependent behind a run a stack wait refunded", () => {
+  const { setNewWorkPaused } = settings;
+  let seq = 0;
+  const dependents: string[] = [];
+
+  /** A parked at its first cycle's end, B chained behind it, then A stopped. */
+  async function chainedBehindStoppedPark(
+    edge: "on-finish" | "on-success",
+    parentCycle: (seq: number) => Cycle = (n) => ({
+      ask: { name: `zig-refunded-${n}`, binaries: ["zig"] },
+      cost: 0.42,
+      reply: "Waiting for zig.",
+    }),
+  ) {
+    seq += 1;
+    const parentId = start(`refunded-parent-${seq}`, [parentCycle(seq)]);
+    const parked = await settled(parentId);
+    assert.ok(
+      parked.status === "waiting-for-stack" || parked.status === "paused",
+      `the parent did not park: ${parked.status} ${parked.stop_reason ?? ""}`,
+    );
+    assert.equal(parked.iterations, 0, "the premise: the refund put the counter back to zero");
+    assert.equal(parked.pause_count, 1, "the premise: a park, so pause_count is no evidence of work");
+    // After the park, not before: the hold also keeps the parent itself queued.
+    setNewWorkPaused(true);
+
+    fs.mkdirSync(path.join(tmp, "workspace", `refunded-child-${seq}`), { recursive: true });
+    const child = createRun({
+      folder: `refunded-child-${seq}`,
+      mountId: null,
+      prompt: "build on the crate",
+      budget: { maxIterations: 1 },
+      origin: "form",
+      dependsOn: [{ runId: parentId, edge }],
+    });
+    dependents.push(child.id);
+    assert.equal(child.status, "waiting", "the dependency has not settled yet");
+
+    assert.equal(stopRun(parentId), "cancelled");
+    assert.equal(getRun(parentId)!.status, "stopped");
+    return { parentId, childId: child.id };
+  }
+
+  // Stopped before the hold lifts, and on failure too: a dependent left
+  // `waiting` is released the moment the hold clears and spawns the stub into
+  // whichever test runs next.
+  afterEach(() => {
+    for (const id of dependents.splice(0)) stopRun(id);
+    setNewWorkPaused(false);
+  });
+
+  it("on-finish: waits for the hold rather than being blocked as if nothing had run", async () => {
+    const { parentId, childId } = await chainedBehindStoppedPark("on-finish");
+    const child = getRun(childId)!;
+    assert.equal(getRun(parentId)!.spent_usd, 0.42, "the premise: the cycle that asked was paid for");
+    assert.equal(
+      child.status,
+      "waiting",
+      `a run that worked and paid was read as never having run a cycle: ${child.stop_reason ?? ""}`,
+    );
+    assert.doesNotMatch(child.stop_reason ?? "", /without running a work cycle/);
+    assert.equal(getRun(parentId)!.iterations, 0, "the refund itself is unchanged");
+  });
+
+  it("on-success: still blocked, and told the true thing: it ended stopped", async () => {
+    const { parentId, childId } = await chainedBehindStoppedPark("on-success");
+    const child = getRun(childId)!;
+    assert.equal(child.status, "blocked");
+    assert.match(
+      child.stop_reason ?? "",
+      new RegExp(`only after run ${parentId.slice(0, 8)} succeeded \\(on-success\\); it ended stopped`),
+    );
+    assert.doesNotMatch(child.stop_reason ?? "", /without running a work cycle/);
+  });
+
+  // The reason the answer is the three refund counters and not `pause_count`,
+  // which `ensureWorktree` reads: a provider refusal parks the run and refunds
+  // its cycle too, and in that cycle nothing was done.
+  it("control: a run the provider refused at the wall and that was stopped still ran nothing", async () => {
+    const { parentId, childId } = await chainedBehindStoppedPark("on-finish", () => ({
+      refuse: true,
+      reply: "",
+    }));
+    const parent = getRun(parentId)!;
+    assert.equal(parent.refusal_pauses, 1, "the premise: this park is the provider's refusal");
+    assert.equal(parent.spent_usd, 0);
+    const child = getRun(childId)!;
+    assert.equal(child.status, "blocked", child.stop_reason ?? "");
+    assert.match(child.stop_reason ?? "", /ended stopped without running a work cycle/);
   });
 });
 

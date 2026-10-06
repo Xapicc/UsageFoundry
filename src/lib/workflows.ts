@@ -41,6 +41,7 @@ import {
   isShuttingDown,
   probeIsolation,
   promoteQueued,
+  refundedCyclesSql,
   releaseDependents,
   resolveWorkspaceFolder,
   revivableDependents,
@@ -5345,6 +5346,7 @@ function instanceState(
     .prepare(
       `SELECT w.node_id AS nodeId, w.emitted_by AS emittedBy, r.id AS id,
               r.status AS status, r.iterations AS iterations,
+              ${refundedCyclesSql("r")} AS refundedCycles,
               w.left_behind_at AS leftBehindAt
          FROM workflow_instance_runs w
          LEFT JOIN runs r ON r.id = w.run_id
@@ -5357,6 +5359,7 @@ function instanceState(
     id: string | null;
     status: RunStatus | null;
     iterations: number | null;
+    refundedCycles: number | null;
     leftBehindAt: number | null;
   }>;
 
@@ -5377,6 +5380,7 @@ function instanceState(
       id: row.id,
       status: row.status,
       iterations: row.iterations ?? 0,
+      refundedCycles: row.refundedCycles ?? 0,
     };
     if (row.emittedBy) {
       if (row.leftBehindAt !== null) {
@@ -5574,6 +5578,7 @@ function loopPasses(instanceId: string, nodeId: string): LoopPass[] {
       `SELECT w.node_id AS memberId, w.node_name AS name,
               w.emitted_by AS emittedBy, w.position AS position,
               r.id AS id, r.status AS status, r.iterations AS iterations,
+              ${refundedCyclesSql("r")} AS refundedCycles,
               r.reported_done AS reportedDone, w.left_behind_at AS leftBehindAt
          FROM workflow_instance_runs w
          LEFT JOIN runs r ON r.id = w.run_id
@@ -5588,6 +5593,7 @@ function loopPasses(instanceId: string, nodeId: string): LoopPass[] {
     id: string | null;
     status: RunStatus | null;
     iterations: number | null;
+    refundedCycles: number | null;
     reportedDone: number | null;
     leftBehindAt: number | null;
   }>;
@@ -5618,6 +5624,7 @@ function loopPasses(instanceId: string, nodeId: string): LoopPass[] {
           id: row.id,
           status: row.status,
           iterations: row.iterations ?? 0,
+          refundedCycles: row.refundedCycles ?? 0,
           reportedDone: !!row.reportedDone,
           leftBehind: row.leftBehindAt !== null,
         }
@@ -7087,6 +7094,7 @@ function approvedRunsOf(instanceId: string, blockId: string): LoopRunState[] {
   const rows = db()
     .prepare(
       `SELECT r.id AS id, r.status AS status, r.iterations AS iterations,
+              ${refundedCyclesSql("r")} AS refundedCycles,
               r.reported_done AS reportedDone
          FROM workflow_review_items i
          JOIN runs r ON r.id = i.run_id
@@ -7097,12 +7105,14 @@ function approvedRunsOf(instanceId: string, blockId: string): LoopRunState[] {
     id: string;
     status: RunStatus;
     iterations: number;
+    refundedCycles: number;
     reportedDone: number | null;
   }>;
   return rows.map((row) => ({
     id: row.id,
     status: row.status,
     iterations: row.iterations,
+    refundedCycles: row.refundedCycles,
     reportedDone: !!row.reportedDone,
     leftBehind: false,
   }));

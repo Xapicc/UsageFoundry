@@ -4313,6 +4313,7 @@ function admitDependencies(
       id: target.id,
       status: target.status,
       iterations: target.iterations,
+      refundedCycles: refundedCyclesOf(target),
     });
   }
 
@@ -4328,7 +4329,7 @@ function admitDependencies(
   }
 
   const { release, block } = releasableRuns(
-    [{ id, status: "waiting", iterations: 0 }, ...targets],
+    [{ id, status: "waiting", iterations: 0, refundedCycles: 0 }, ...targets],
     links,
   );
   if (block.length > 0) throw new Error(block[0].reason);
@@ -4971,6 +4972,53 @@ export interface DependencyState {
   status: RunStatus;
   /** Work cycles that *finished*, as `runs.iterations` counts them. */
   iterations: number;
+  /**
+   * Work cycles that ran, did work and were then refunded out of `iterations` —
+   * `refundedCyclesSql`'s sum. Required rather than defaulted, so a state built
+   * without it is a compile error and not a run read as never having worked.
+   */
+  refundedCycles: number;
+}
+
+/**
+ * The count `DependencyState.refundedCycles` carries, for a query to select.
+ *
+ * `guard_refunds`, `stack_waits` and `early_ends` each only ever increase and
+ * each is written only when a cycle that *did work* was put back on the cycle
+ * counter: a live-guard cut, a stack park and a context-ceiling end. The two
+ * other refunds are left out on purpose, and that is the whole reason this is
+ * not `pause_count`: a transient retry and a provider refusal both hand a cycle
+ * back, and in both the provider turned the cycle away before any work
+ * happened. A run refused at the wall and then stopped ended having done
+ * nothing, which is what the dependents' "without running a work cycle" says.
+ *
+ * `alias` is the `runs` table's alias in the caller's query, when it has one.
+ */
+export function refundedCyclesSql(alias?: string): string {
+  const col = (name: string) => (alias ? `${alias}.${name}` : name);
+  return `(${col("guard_refunds")} + ${col("stack_waits")} + ${col("early_ends")})`;
+}
+
+/** `refundedCyclesSql` for a row already in hand. */
+export function refundedCyclesOf(
+  run: Pick<RunRow, "guard_refunds" | "stack_waits" | "early_ends">,
+): number {
+  return run.guard_refunds + run.stack_waits + run.early_ends;
+}
+
+/**
+ * Whether a dependency ran at least one work cycle that did something.
+ *
+ * `iterations` alone is not that answer, because the cycle refunds put it back
+ * to zero: a stack park, a live-guard cut and a context-ceiling end each hand
+ * the cycle they ended back to the counter, so a run that paid for a whole cycle
+ * and was then stopped reads `iterations === 0`. `ensureWorktree` already makes
+ * this distinction for the same reason, with `pause_count`; this one asks the
+ * three refund counters instead, because `pause_count` also counts a provider
+ * refusal, which refunded a cycle that never started.
+ */
+export function ranWorkCycle(dep: DependencyState): boolean {
+  return dep.iterations > 0 || dep.refundedCycles > 0;
 }
 
 /**
@@ -5001,10 +5049,14 @@ export const TERMINAL_STATUSES: readonly RunStatus[] = [
  * rule is what makes a chain terminate rather than sit there: a run refused by
  * a guard at the door, a run whose own dependency failed, a run stopped before
  * it started, and a run closed out by a restart are all `blocked`, `stopped` or
- * `failed` with `iterations === 0`, and every one of them is a dependency that
+ * `failed` having run nothing, and every one of them is a dependency that
  * is finished and did nothing. Reading `on-finish` as "it reached a terminal
  * status, whatever that status was" would start the next run in the chain on
  * the strength of a run that never opened a file.
+ *
+ * "Ran a work cycle" is `ranWorkCycle`, which is not `iterations > 0`: the
+ * refunds put that back to zero on a run that worked and paid, and reading the
+ * zero as nothing blocked its dependent with a sentence that was false.
  *
  * `on-success` is `completed`, and deliberately **not** `completed &&
  * reported_done`. `completed` is written for two endings — the agent replying
@@ -5028,7 +5080,7 @@ export function edgeSatisfied(
   dep: DependencyState,
   edge: DependencyEdge,
 ): boolean {
-  if (dep.iterations < 1) return false;
+  if (!ranWorkCycle(dep)) return false;
   if (edge === "on-success") return dep.status === "completed";
   return TERMINAL_STATUSES.includes(dep.status);
 }
@@ -5036,7 +5088,7 @@ export function edgeSatisfied(
 /** Why a dependent can never start, in words naming the run that stopped it. */
 function unsatisfiableReason(dep: DependencyState, edge: DependencyEdge): string {
   const name = `run ${shortId(dep.id)}`;
-  if (dep.iterations < 1) {
+  if (!ranWorkCycle(dep)) {
     return `Set to start after ${name}, which ended ${dep.status} without running a work cycle.`;
   }
   return `Set to start only after ${name} succeeded (${edge}); it ended ${dep.status}.`;
@@ -5248,7 +5300,12 @@ export function releasableRuns(
         block.push({ id: run.id, reason: stopper });
         // Treated as blocked from here on, which is what cascades the verdict
         // down the chain on the next pass.
-        byId.set(run.id, { id: run.id, status: "blocked", iterations: 0 });
+        byId.set(run.id, {
+          id: run.id,
+          status: "blocked",
+          iterations: 0,
+          refundedCycles: 0,
+        });
       } else if (pending) {
         continue;
       } else if (newWorkPaused) {
@@ -5293,7 +5350,8 @@ export function dependenciesOf(
     .prepare(
       `SELECT d.run_id AS runId, d.depends_on AS dependsOn, d.edge AS edge,
               d.continue_branch AS continueBranch,
-              r.status AS status, r.iterations AS iterations
+              r.status AS status, r.iterations AS iterations,
+              ${refundedCyclesSql("r")} AS refundedCycles
          FROM run_deps d
          JOIN runs r ON r.id = d.depends_on
         WHERE d.run_id IN (${ids.map(() => "?").join(",")})
@@ -5306,6 +5364,7 @@ export function dependenciesOf(
     Omit<DependencyLink, "continueBranch"> & {
       status: RunStatus;
       iterations: number;
+      refundedCycles: number;
       continueBranch: number;
     }
   >;
@@ -5318,7 +5377,12 @@ export function dependenciesOf(
       status: row.status,
       continueBranch: !!row.continueBranch,
       satisfied: edgeSatisfied(
-        { id: row.dependsOn, status: row.status, iterations: row.iterations },
+        {
+          id: row.dependsOn,
+          status: row.status,
+          iterations: row.iterations,
+          refundedCycles: row.refundedCycles,
+        },
         row.edge,
       ),
     });
@@ -5448,7 +5512,7 @@ function releasePass(holdReleases: boolean = newWorkPaused()): boolean {
 
   const states = db()
     .prepare(
-      `SELECT id, status, iterations FROM runs
+      `SELECT id, status, iterations, ${refundedCyclesSql()} AS refundedCycles FROM runs
         WHERE status = 'waiting'
            OR id IN (SELECT depends_on FROM run_deps
                       WHERE run_id IN (SELECT id FROM runs WHERE status = 'waiting'))`,

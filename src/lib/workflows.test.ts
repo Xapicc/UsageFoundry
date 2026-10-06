@@ -3672,7 +3672,7 @@ function ran(
   status: RunStatus,
   iterations = 1,
 ): InstanceNodeState {
-  return { run: { id, status, iterations }, block: null };
+  return { run: { id, status, iterations, refundedCycles: 0 }, block: null };
 }
 
 /** An orchestrator block's ledger row, with the runs it started. */
@@ -3689,6 +3689,7 @@ function decided(
         id,
         status: s,
         iterations: i ?? 1,
+        refundedCycles: 0,
       })),
       error,
     },
@@ -4082,7 +4083,7 @@ describe("planInstanceStep — a run left behind", () => {
       edges: [edge("build", "land", { edge: "on-success" })],
     };
     const build: InstanceNodeState = {
-      run: { id: "r-b", status: "needs-review", iterations: 1 },
+      run: { id: "r-b", status: "needs-review", iterations: 1, refundedCycles: 0 },
       block: null,
     };
     const stuck = stepOf({ build, land: decided("waiting") }, chain);
@@ -4561,6 +4562,7 @@ function runMember(
       id: `r-${opts.pass ?? 1}-${nodeId}`,
       status,
       iterations: opts.iterations ?? 1,
+      refundedCycles: 0,
       reportedDone: opts.done ?? false,
     },
     block: null,
@@ -4860,7 +4862,7 @@ describe("planLoopPass — a review member", () => {
           runMember("a", "completed", { done: true }),
           runMember("b", "completed", { done: true }),
           reviewMember("v", {
-            approved: [{ id: "r-1-a", status: "completed", iterations: 1, reportedDone: true }],
+            approved: [{ id: "r-1-a", status: "completed", iterations: 1, refundedCycles: 0, reportedDone: true }],
             workSetAside: 1,
           }),
           blockMember("m", "merge", "emitted"),
@@ -4871,7 +4873,7 @@ describe("planLoopPass — a review member", () => {
   });
 
   it("stops done when the review approved the branch", () => {
-    const approved = { id: "r-1-a", status: "completed" as const, iterations: 1, reportedDone: true };
+    const approved = { id: "r-1-a", status: "completed" as const, iterations: 1, refundedCycles: 0, reportedDone: true };
     const decision = loopOf([reviewed(reviewMember("v", { approved: [approved] }))]);
     assert.equal(decision.kind === "stop" && decision.code, "done");
   });
