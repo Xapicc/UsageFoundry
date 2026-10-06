@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { CLAUDE_BIN, spawnCommand } from "./config";
 import { db } from "./db";
-import { git } from "./git";
+import { headBranchOf } from "./git";
 import { childCredentials, deprioritiseChildForOom } from "./privsep";
 import { diffAsText, runDiff, type RunDiff } from "./diff";
 import { agentsArgs, type AgentDefinition } from "./agents";
@@ -724,8 +724,8 @@ export async function windowRefusal(): Promise<string | null> {
 async function reviewCwd(run: RunRow): Promise<string | null> {
   const work = workDirOf(run);
   if (fs.existsSync(work)) {
-    const head = await git(work, ["rev-parse", "--abbrev-ref", "HEAD"]);
-    if (!run.worktree_branch || head.stdout === run.worktree_branch) return work;
+    const { branch } = await headBranchOf(work);
+    if (!run.worktree_branch || branch === run.worktree_branch) return work;
   }
   if (run.repo_root && fs.existsSync(run.repo_root)) return run.repo_root;
   return fs.existsSync(run.folder) ? run.folder : null;

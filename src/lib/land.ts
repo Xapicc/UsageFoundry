@@ -2,7 +2,7 @@ import fs from "node:fs";
 import { runVerify } from "./landGate";
 import { openPullRequest, planDelivery, type DeliveryRequest } from "./delivery";
 import path from "node:path";
-import { git } from "./git";
+import { git, headBranchOf } from "./git";
 import { withRepoAdmin } from "./repoLock";
 import { checkoutWriter, claimCheckout, releaseCheckout } from "./checkoutClaim";
 import { db } from "./db";
@@ -2424,8 +2424,7 @@ async function slotState(run: RunRow): Promise<SlotState> {
     };
   }
 
-  const head = await git(slot, ["rev-parse", "--abbrev-ref", "HEAD"], NO_CLOCK);
-  const checkedOutBranch = head.ok && head.stdout !== "HEAD" ? head.stdout : null;
+  const { readable: headReadable, branch: checkedOutBranch } = await headBranchOf(slot, NO_CLOCK);
   // Status is read only once the slot is proved to still hold this run's
   // branch. Anything uncommitted under a different branch is a later run's, and
   // reporting it here would offer to commit one run's work onto another's.
@@ -2433,7 +2432,7 @@ async function slotState(run: RunRow): Promise<SlotState> {
     return {
       path: slot,
       checkedOutBranch,
-      readable: head.ok,
+      readable: headReadable,
       files: [],
       mergeInProgress: false,
     };
