@@ -918,6 +918,106 @@ describe("shutting down with a run waiting on the one it interrupts", () => {
     );
     assert.ok(!selectPromotable(activeRuns(), null).includes(b.id));
   });
+
+  /**
+   * A fan-in: B after both A and C, either way, and the operator picks up C
+   * alone. Picking C up wakes B, and C's next ending ran the release pass, which
+   * read A's restart ending as `on-finish` satisfied and queued B while A was
+   * still closed out — so picking A up afterwards ran A and B side by side.
+   */
+  it("does not release a fan-in dependent when only one of its closed-out runs is picked up", async () => {
+    const label = "graceful-fan-in";
+    for (const folder of [`${label}-a`, `${label}-b`, `${label}-c`]) {
+      fs.mkdirSync(path.join(tmp, "workspace", folder), { recursive: true });
+    }
+    const working = async (suffix: string) => {
+      const run = createRun({
+        folder: `${label}-${suffix}`,
+        mountId: null,
+        prompt: `dependency ${suffix.toUpperCase()}`,
+        budget: { maxIterations: 3 },
+        origin: "form",
+      });
+      if (getRun(run.id)!.status === "queued") void startRun(run.id);
+      await waitFor(
+        () => getRun(run.id)?.active_started_at !== null,
+        `${suffix.toUpperCase()}'s first work cycle`,
+      );
+      return run;
+    };
+    const a = await working("a");
+    const c = await working("c");
+    const b = createRun({
+      folder: `${label}-b`,
+      mountId: null,
+      prompt: "dependent B, after A and C either way",
+      budget: { maxIterations: 1 },
+      origin: "form",
+      dependsOn: [
+        { runId: a.id, edge: "on-finish" },
+        { runId: c.id, edge: "on-finish" },
+      ],
+    });
+    assert.equal(getRun(b.id)!.status, "waiting");
+
+    await shutdownRuns("SIGTERM");
+    await reconcileOnBoot();
+    for (const run of [a, c]) {
+      const row = getRun(run.id)!;
+      assert.equal(row.status, "stopped");
+      assert.equal(row.restart_closed, 1);
+      assert.equal(row.iterations, 1);
+    }
+    assert.equal(getRun(b.id)!.status, "blocked");
+
+    // C alone, by name, and then run and stopped: an ending that is not the
+    // restart's, so B's pass decides on A's ending alone.
+    const reopened = reopenRun(c.id, JSON.parse(getRun(c.id)!.budget) as unknown);
+    assert.ok(reopened.ok, reopened.ok ? "" : reopened.reason);
+    const loop = startRun(c.id);
+    await waitFor(() => getRun(c.id)?.active_started_at !== null, "C's picked-up cycle");
+    assert.equal(stopRun(c.id), "signalled");
+    await loop;
+    assert.equal(getRun(c.id)!.status, "stopped");
+    assert.equal(getRun(c.id)!.restart_closed, 0);
+
+    const stillClosed = getRun(a.id)!;
+    assert.equal(stillClosed.status, "stopped");
+    assert.equal(stillClosed.restart_closed, 1, "A has not been picked up");
+    const behind = getRun(b.id)!;
+    assert.notEqual(
+      behind.status,
+      "queued",
+      "B was released on the strength of the restart's ending on A, which nobody has picked up",
+    );
+    assert.equal(behind.work_dir, null, "B was given a workspace while A is closed out");
+    assert.equal(behind.status, "blocked");
+    assert.match(
+      behind.stop_reason ?? "",
+      new RegExp(`run ${a.id.slice(0, 8)}, which the server restart closed out`),
+      "B's reason must name the run still closed out, which picking up brings it back",
+    );
+    // A new run told to start after A is refused at the door rather than
+    // released on the same reading and queued beside A's pick-up.
+    assert.throws(
+      () =>
+        createRun({
+          folder: `${label}-b`,
+          mountId: null,
+          prompt: "a later dependent, after A either way",
+          budget: { maxIterations: 1 },
+          origin: "form",
+          dependsOn: [{ runId: a.id, edge: "on-finish" }],
+        }),
+      /closed out by a server restart and nobody has picked it up/,
+    );
+
+    // Which is what brings it back, behind A rather than beside it.
+    const pickedUp = reopenRun(a.id, JSON.parse(stillClosed.budget) as unknown);
+    assert.ok(pickedUp.ok, pickedUp.ok ? "" : pickedUp.reason);
+    assert.equal(getRun(b.id)!.status, "waiting");
+    assert.ok(!selectPromotable(activeRuns(), null).includes(b.id));
+  });
 });
 
 /**
