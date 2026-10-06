@@ -7356,6 +7356,16 @@ async function driveReviewItem(
       // A halt while the review was being prepared: `stillWanted` refused it
       // before anything was spawned, and it is no verdict on the branch.
       if (!open()) return;
+      // The check above is not a claim: this block's other branches passed it
+      // in the same tick, and a chat turn or another block can take the slot
+      // while the diff is read. So `startReview`'s own door can still find the
+      // queue full, and that is the same shortage, waited out the same way. Only
+      // the budget is `busy` — a spent window or install limit is an answer, and
+      // a halt or a shutdown ends this wait at the top of the loop.
+      if (started.busy) {
+        await pause();
+        continue;
+      }
       // Nothing committed is a fact about the run — the model did nothing
       // worth merging — and anything else is this app unable to review at this
       // moment. Neither is a frontier verdict, so neither marks the tasks.
