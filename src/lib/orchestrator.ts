@@ -67,6 +67,7 @@ import {
   readCompactions,
   resolveSessionTranscript,
   scanUsage,
+  sessionTranscriptPresence,
   sessionTranscriptResolver,
   type CompactionBoundary,
   type UsageEntry,
@@ -427,6 +428,13 @@ export interface RunRow {
    * `reopenRun`, cleared by the loop as soon as it is delivered.
    */
   follow_up: string | null;
+  /**
+   * 1 when `follow_up` is the operator's own note, 0 when this app resolved it
+   * for the session the run was about to resume. Written with `follow_up`
+   * wherever that is written, and read only when that session's transcript is
+   * gone: the note survives the restart, the resolved text does not.
+   */
+  follow_up_is_note: number;
   /**
    * The work cycle currently in flight, or null when no child is running.
    *
@@ -10280,6 +10288,50 @@ export async function startRun(id: string): Promise<void> {
         );
       }
 
+      // A session whose transcript is gone is restarted rather than resumed.
+      // The CLI deletes its own transcripts past `cleanupPeriodDays` — read off
+      // the binary, not measured — and `sweepTranscripts` never lists a file the
+      // CLI removed first, so `session_id` can outlive what it names. Resuming
+      // it fails before doing anything, the retry fails the same way, and the
+      // run ends `failed` naming a `claude --resume` that cannot work either, on
+      // every pick-up, because nothing on the row changes. Dropped by clearing
+      // the loop's session, `startsFresh`'s reason below: every branch
+      // downstream already asks "is there a session", and the restart it then
+      // takes, with `priorWorkNotice`, is the one a picked-up run already gets.
+      //
+      // Only `absent` acts. A wrong working directory or an expired credential
+      // leaves the file where it was, so both still reach
+      // `looksLikeResumeFailure` and end the way they did. The first cycle of a
+      // segment only, that test's reason: later, the id is one this segment
+      // just used. Never a carried fork, whose failed resume returns to the
+      // conversation it was cut from, which this would skip. Claude Code's tree
+      // only: a Codex session is not one of its transcripts, and a local cycle
+      // writes under its own config directory. Above the pre-spawn re-check because this awaits a
+      // walk, and a Stop pressed during it must still win.
+      if (
+        sessionId !== null &&
+        cyclesThisSegment === 0 &&
+        !pendingFork.has(id) &&
+        run.provider !== "codex" &&
+        run.provider !== "local" &&
+        (await sessionTranscriptPresence(sessionId)) === "absent"
+      ) {
+        log(
+          id,
+          `Claude Code no longer has the transcript of this run's session (${sessionId}), so this work cycle starts over from the task instead of resuming it. The work so far is still on disk.`,
+        );
+        adoptSession(null);
+        // Text this app resolved for that session — a pushback, a restart or
+        // needs-review notice, a stack resume — describes a conversation that
+        // is gone. The operator's note is kept, and `nextPrompt` appends it to
+        // the task as it does for any pick-up with no session. Cleared on the
+        // row as well, or a later segment of the new conversation delivers it.
+        if (followUp !== null && run.follow_up_is_note === 0) {
+          followUp = null;
+          db().prepare("UPDATE runs SET follow_up = NULL WHERE id = ?").run(id);
+        }
+      }
+
       // Re-check before committing to a cycle. The guard at the top of the loop
       // ran before an `await` that takes seconds on a large ~/.claude, and
       // `stopRun` promises "it will not start another work cycle" for a stop
@@ -10447,7 +10499,9 @@ export async function startRun(id: string): Promise<void> {
       pendingPushback = null;
       if (followUp !== null) {
         followUp = null;
-        db().prepare("UPDATE runs SET follow_up = NULL WHERE id = ?").run(id);
+        db()
+          .prepare("UPDATE runs SET follow_up = NULL, follow_up_is_note = 0 WHERE id = ?")
+          .run(id);
       }
 
       emit({
@@ -13074,7 +13128,7 @@ export function releaseStackWaits(
     }
     const flip = db()
       .prepare(
-        "UPDATE runs SET status='queued', queued_at=?, follow_up=? WHERE id=? AND status='waiting-for-stack'",
+        "UPDATE runs SET status='queued', queued_at=?, follow_up=?, follow_up_is_note=0 WHERE id=? AND status='waiting-for-stack'",
       )
       .run(now, withStoppedTasksNotice(id, stackResumeNotice(decision)), id);
     if (flip.changes !== 1) continue;
@@ -13631,7 +13685,8 @@ export function reopenRun(
       // must never be sent back into a cycle by a verdict — least of all on the
       // pick-up of the operator who came to answer it. A pick-up stays the
       // fresh segment it has always been.
-      `UPDATE runs SET status=?, queued_at=?, budget=?, max_iterations=?, follow_up=?, reopened_at=?,
+      `UPDATE runs SET status=?, queued_at=?, budget=?, max_iterations=?, follow_up=?,
+         follow_up_is_note=?, reopened_at=?,
          started_at=NULL, finished_at=NULL, exit_code=NULL, stop_reason=NULL,
          needs_review_reason=NULL, paused_ms=0, paused_at=NULL, refusal_pauses=0,
          resume_at=NULL, restart_closed=0, restart_cut_cycle=0, set_aside_at=NULL,
@@ -13645,6 +13700,9 @@ export function reopenRun(
       blob,
       policy.maxIterations ?? 0,
       firstFollowUp,
+      // `reopenPrompt` returns the note whenever there is one, so this is what
+      // `firstFollowUp` holds.
+      note ? 1 : 0,
       // `origin` is deliberately untouched: it says which route *created* this
       // run, and rewriting it here would lose that while `created_at` went on
       // pointing at the original creation. A pick-up is its own act and gets its
