@@ -143,7 +143,7 @@ describe("a connection opening", () => {
 
     assert.deepEqual(frames[0], {
       kind: "counts",
-      counts: { running: 1, queued: 1, paused: 0 },
+      counts: { running: 1, queued: 1, paused: 0, "waiting-for-stack": 0 },
     });
     const joins = frames.filter((f) => f.kind === "join");
     assert.equal(joins.length, 1);
@@ -206,7 +206,7 @@ describe("a connection that is open", () => {
 
     assert.deepEqual(frames[0], {
       kind: "counts",
-      counts: { running: 1, queued: 0, paused: 0 },
+      counts: { running: 1, queued: 0, paused: 0, "waiting-for-stack": 0 },
     });
     const join = frames.at(-1) as Extract<LiveFrameDTO, { kind: "join" }>;
     assert.equal(join.runId, queued);

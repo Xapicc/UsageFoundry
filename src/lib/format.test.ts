@@ -738,9 +738,16 @@ test("a run that named no model falls back to its agent's and says so", () => {
     label: "claude-sonnet-5",
     source: "agent",
   });
+});
+
+test("a Codex run with no model of its own is on Codex's default, never the agent's", () => {
+  assert.deepEqual(modelOf({ provider: "codex", agentModel: "claude-sonnet-5" }), {
+    label: "Codex's own default",
+    source: "default",
+  });
   assert.deepEqual(modelOf({ provider: "codex", agentModel: "gpt-5" }), {
-    label: "gpt-5",
-    source: "agent",
+    label: "Codex's own default",
+    source: "default",
   });
 });
 

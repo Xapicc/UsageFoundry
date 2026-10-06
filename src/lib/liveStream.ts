@@ -126,11 +126,16 @@ export function diffRoster(
   };
 }
 
-/** The strip's three counts, from `activeRuns()`'s rows. */
+/** The strip's four counts, from `activeRuns()`'s rows. */
 export function liveCounts(rows: readonly { status: string }[]): LiveCountsDTO {
-  const counts: LiveCountsDTO = { running: 0, queued: 0, paused: 0 };
+  const counts: LiveCountsDTO = { running: 0, queued: 0, paused: 0, "waiting-for-stack": 0 };
   for (const { status } of rows) {
-    if (status === "running" || status === "queued" || status === "paused") {
+    if (
+      status === "running" ||
+      status === "queued" ||
+      status === "paused" ||
+      status === "waiting-for-stack"
+    ) {
       counts[status] += 1;
     }
   }
@@ -142,7 +147,8 @@ export function sameCounts(a: LiveCountsDTO | null, b: LiveCountsDTO): boolean {
     a !== null &&
     a.running === b.running &&
     a.queued === b.queued &&
-    a.paused === b.paused
+    a.paused === b.paused &&
+    a["waiting-for-stack"] === b["waiting-for-stack"]
   );
 }
 
