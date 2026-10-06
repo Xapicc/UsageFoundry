@@ -42,6 +42,8 @@ The host check on the URL is tested rather than commented because that string is
 
 What is deliberately *not* unit-tested there is the spawn half, for `spawnAssist`'s reason — it needs a real `claude` — and the three outcomes that matter were measured by hand against the pinned CLI instead: a code the CLI rejects locally leaves the child on its prompt and the link reusable, a well-formed but spent code exits non-zero and ends it, and neither touches the credential on disk.
 
+The exception is `beginLogin, started twice at once` in both files, which spawns a stub CLI on `settleOnExit`'s terms: the fault was a sign-in child nothing could reach — two overlapping starts both spawned, the second stored over the first without killing it, and the orphan's timer later cancelled the live login — and only a process shows one left running. A mocked clock pins that a timer expires only its own login.
+
 What `saveSettings` *writes* is now pinned in `src/lib/settings.test.ts`, and the assertions are deliberately about the stored blob rather than about a round trip: the effective object is `{...DEFAULTS, ...stored}`, so a test that only checked `getSettings()` after `saveSettings()` passes whether the blob holds one key or thirty-three, which is exactly why writing the whole object survived long enough to strand `maxConcurrentRuns`.
 
 The cases are the ones whose failure is silent for weeks: an unedited Save storing nothing at all, a key dropped again when it is set back to the shipped value, an object value compared structurally rather than by reference, the same value with its keys reordered off the wire still reading as unchanged, and an explicit `null` that shadows a shipped number still being kept.

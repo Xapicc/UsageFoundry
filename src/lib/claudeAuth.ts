@@ -107,6 +107,15 @@ const store = globalThis as typeof globalThis & {
 };
 
 /**
+ * The child of a login still waiting to print its link, which has no
+ * `PendingLogin` to live in yet. A key of its own rather than a looser shape
+ * for `__ufClaudeLogin`, which a hot reload would hand back unchanged.
+ */
+const startSlot = globalThis as typeof globalThis & {
+  __ufClaudeLoginStarting?: ChildProcess | null;
+};
+
+/**
  * Terminal escapes, removed before anything is read out of CLI output.
  *
  * `FORCE_COLOR=0` and a pipe get us plain text today, but the URL is also
@@ -398,12 +407,18 @@ export function pendingLogin(): { url: string; startedAt: number } | null {
 }
 
 /**
- * Drop the pending login, killing the child that holds its verifier.
+ * Drop the pending login, killing the child that holds its verifier — or the
+ * child of one still starting, which is the same login a few seconds early.
  *
  * Called on cancel, on timeout, and at the start of every new login. Safe to
  * call when there is none.
  */
 export function cancelLogin(): void {
+  const starting = startSlot.__ufClaudeLoginStarting;
+  if (starting) {
+    startSlot.__ufClaudeLoginStarting = null;
+    starting.kill("SIGKILL");
+  }
   const p = store.__ufClaudeLogin;
   if (!p) return;
   store.__ufClaudeLogin = null;
@@ -433,6 +448,11 @@ export async function beginLogin(): Promise<ClaudeAuthResult<{ url: string }>> {
       error: `Could not run \`${CLAUDE_BIN}\`: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
+  // Claimed before the wait for the link, not after it. Two starts that both
+  // waited first both found nothing to cancel, and the second stored over the
+  // first without killing it: a child nothing could reach, holding stdin open,
+  // whose timer later cancelled whichever login was pending by then.
+  startSlot.__ufClaudeLoginStarting = child;
 
   let output = "";
   const take = (chunk: Buffer) => {
@@ -452,15 +472,29 @@ export async function beginLogin(): Promise<ClaudeAuthResult<{ url: string }>> {
   );
 
   const url = await waitForUrl(child, () => output, exited);
+  if (startSlot.__ufClaudeLoginStarting !== child) {
+    // A newer start, a cancel or a sign-out took the slot during the wait, and
+    // killed this child as it did. A link it printed has no verifier behind it
+    // any more, so it is not handed out.
+    return {
+      ok: false,
+      error: "This sign-in was replaced by a newer one, or cancelled, before its link arrived.",
+    };
+  }
+  startSlot.__ufClaudeLoginStarting = null;
   if (!url.ok) {
     child.kill("SIGKILL");
     return url;
   }
 
-  const timer = setTimeout(() => cancelLogin(), PENDING_TIMEOUT_MS);
+  // Expires only the login it was armed for. One that called `cancelLogin`
+  // blind cancelled whatever was pending when it fired.
+  const timer = setTimeout(() => {
+    if (store.__ufClaudeLogin === pending) cancelLogin();
+  }, PENDING_TIMEOUT_MS);
   timer.unref?.();
 
-  store.__ufClaudeLogin = {
+  const pending: PendingLogin = {
     child,
     url: url.value,
     startedAt: Date.now(),
@@ -468,6 +502,7 @@ export async function beginLogin(): Promise<ClaudeAuthResult<{ url: string }>> {
     exited,
     timer,
   };
+  store.__ufClaudeLogin = pending;
   return { ok: true, value: { url: url.value } };
 }
 
@@ -585,8 +620,10 @@ export async function submitCode(input: unknown): Promise<SubmitOutcome> {
     };
   }
 
-  // Everything below is terminal for this child, so the pending login goes.
-  store.__ufClaudeLogin = null;
+  // Everything below is terminal for this child, so the pending login goes —
+  // unless a newer start has already replaced it, whose child this must not
+  // strand.
+  if (store.__ufClaudeLogin === pending) store.__ufClaudeLogin = null;
   clearTimeout(pending.timer);
 
   if (outcome.kind === "timeout") {
