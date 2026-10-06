@@ -7,7 +7,7 @@ import type { ContextPrunerDTO, PruneSavingsDTO } from "../lib/apiTypes";
 import { fmtTokens, fmtUSD } from "../lib/format";
 import { Stat } from "./ui/Card";
 import { Notice } from "./ui/Notice";
-import { type PruneStatement, prunerLine } from "../lib/pruneStatement";
+import { netBound, type PruneStatement, prunerLine } from "../lib/pruneStatement";
 
 /**
  * One run's pruning figures, for the region that carries its cost readings.
@@ -32,7 +32,9 @@ import { type PruneStatement, prunerLine } from "../lib/pruneStatement";
  * clothes that `PruneSavingsRows` exists to refuse. An *unpriced* prune is the
  * other fault and is not the same one: it is missing from both halves, so the
  * money is incomplete rather than high, and the count says which of the prunes
- * beside it the money actually covers.
+ * beside it the money actually covers. An *unmeasured* prune is the third, and
+ * the mirror of the first: a fork whose removal waits on the turn that resumes
+ * it has credited no saving yet, so the tokens and the net are floors.
  */
 export function RunPruning({
   savings,
@@ -43,6 +45,7 @@ export function RunPruning({
   statement: PruneStatement | null;
   pruner: ContextPrunerDTO | null;
 }) {
+  const bound = savings ? netBound(savings) : "exact";
   return (
     <>
       {savings && (
@@ -56,9 +59,11 @@ export function RunPruning({
               {/* Bound to the figure it sits beside, on the same baseline, and
                   ahead of the token count: the reader has to know the sign of
                   the error before they read the number, not after. */}
-              {savings.unsettledPrunes > 0 && <>at most &middot; </>}
-              {fmtTokens(savings.tokensRemoved)} tokens removed over{" "}
-              {savings.prunes} {savings.prunes === 1 ? "prune" : "prunes"}
+              {bound !== "exact" && <>{bound} &middot; </>}
+              {savings.unmeasuredPrunes >= savings.prunes
+                ? "removal not measured yet"
+                : `${savings.unmeasuredPrunes > 0 ? "at least " : ""}${fmtTokens(savings.tokensRemoved)} tokens removed`}{" "}
+              over {savings.prunes} {savings.prunes === 1 ? "prune" : "prunes"}
               {/* The token count covers every prune and the money does not, so
                   the two denominators are printed apart rather than the money's
                   being quietly borrowed for both. */}
@@ -77,6 +82,13 @@ export function RunPruning({
             <p className="mt-2 text-xs leading-snug text-ink-muted">
               What cycle-boundary prunes cost stays unsettled until more plain
               resumes have been seen.
+            </p>
+          )}
+          {savings.unmeasuredPrunes > 0 && (
+            <p className="mt-2 text-xs leading-snug text-ink-muted">
+              A fork&rsquo;s removal is read off the first turn of the cycle
+              that resumes it, so until then what it saved is unknown rather
+              than nothing.
             </p>
           )}
           {savings.pricedPrunes < savings.prunes && (

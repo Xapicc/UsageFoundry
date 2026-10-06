@@ -22,6 +22,7 @@ import {
   emitRunEvent,
   getRun,
   isShuttingDown,
+  promptArgs,
   sandboxArgsFor,
   SEARCH_TOOLS,
   signalTree,
@@ -292,6 +293,13 @@ export async function startReview(
      * so its reviews ask for one on a Claude branch too.
      */
     requireVerdict?: boolean;
+    /**
+     * Asked after the last `await`, immediately before the row is written and
+     * the child spawned. A workflow's review block passes "am I still running":
+     * a halt that lands while the diff is read or the scans run would otherwise
+     * get a billed reviewer started into a workflow already stopped.
+     */
+    stillWanted?: () => boolean;
   } = {},
 ): Promise<ReviewOutcome> {
   // A review is a billed child and a `run_reviews` row, so it is a write like
@@ -329,6 +337,10 @@ export async function startReview(
       ok: false,
       reason: "This run's checkout and folder are both gone, so there is nowhere to run a review.",
     };
+  }
+
+  if (opts.stillWanted && !opts.stillWanted()) {
+    return { ok: false, reason: "The review was no longer wanted by the time it could start." };
   }
 
   const { text, shown, truncated } = diffAsText(diff, REVIEW_DIFF_BYTES);
@@ -992,6 +1004,24 @@ export function assistModel(
   return run.provider === "codex" || run.provider === "local" ? defaultModel : run.model;
 }
 
+/**
+ * Each assist's child by its row id, for as long as `trackAssistChild` holds it.
+ *
+ * The shutdown's set cannot answer "which child is this row's", and a workflow
+ * halt has to: a review block's reviewers are billed children the halt exists
+ * to stop, and without a handle on them they ran to the end under a page that
+ * already said the workflow was stopped. Its own `globalThis` key for the
+ * reason `__ufAssistProcs` has one.
+ */
+const assistChildren = ((globalThis as unknown as {
+  __ufAssistChildrenById?: Map<string, ChildProcess>;
+}).__ufAssistChildrenById ??= new Map<string, ChildProcess>());
+
+/** The live child behind one `run_reviews` row, if this process still has it. */
+export function assistChild(id: string): ChildProcess | undefined {
+  return assistChildren.get(id);
+}
+
 /** Spawn one, and record what it cost whatever happened. */
 async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
   // Read again here rather than trusted from the door. `assistRefusal` answered
@@ -1016,7 +1046,6 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
   return new Promise((resolve) => {
     const args = [
       "-p",
-      prompt,
       // Line-delimited events rather than one object at exit, `chat.ts`'s
       // reason and one of its own. A validation is the only child this app
       // starts without being asked, and under `json` the whole of what it did
@@ -1094,6 +1123,10 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
     // `docs/verification.md`.
     args.push(...sandboxArgsFor({ kind: "assist", cwd, permissionMode }));
 
+    // Last, after every flag: a review's prompt quotes the run's task, and a
+    // caller may hand this anything. See `promptArgs`.
+    args.push(...promptArgs(prompt));
+
     // No shell, as everywhere else here: the prompt carries a diff, which is
     // arbitrary repository content full of quotes and backticks.
     const cli = spawnCommand(CLAUDE_BIN, args);
@@ -1115,6 +1148,7 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
     // written and a resolution's `after` has run, so a shutdown waiting on it
     // waits for the merge to be aborted rather than only for the exit.
     const untrack = trackAssistChild(child);
+    assistChildren.set(id, child);
 
     // The whole of stdout is still kept: `parseReviewOutput` reads the result
     // object out of it at the end, and a child killed mid-line leaves whatever
@@ -1179,6 +1213,7 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
       if (timer) clearTimeout(timer);
       stopWatching?.();
       untrack();
+      assistChildren.delete(id);
       resolve();
     };
 

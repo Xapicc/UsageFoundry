@@ -18,6 +18,7 @@ function savings(over: Partial<PruneSavingsDTO> = {}): PruneSavingsDTO {
     prunes: 4,
     pricedPrunes: 4,
     unsettledPrunes: 0,
+    unmeasuredPrunes: 0,
     tokensRemoved: 40_000,
     turnsAfter: 9,
     cacheSavedUSD: 1.2,
@@ -46,6 +47,31 @@ test("the prune count beside the money says how many it covers", () => {
   // the two denominators are printed apart rather than sharing one.
   assert.match(html, /tokens removed over 4 prunes/);
   assert.match(html, /money over 2 of 4/);
+});
+
+test("a fork nobody has measured is a floor, never zero tokens removed", () => {
+  // A fork's removal waits on the first billed turn of the cycle that resumes
+  // it, and stays unknown for good after a rollback. Its $0 saving is unknown,
+  // so the net beside it can only rise.
+  const html = render({
+    prunes: 1,
+    pricedPrunes: 1,
+    unmeasuredPrunes: 1,
+    tokensRemoved: 0,
+    cacheSavedUSD: 0,
+    invalidationUSD: 1.8,
+    netUSD: -1.8,
+  });
+  assert.match(html, /−\$1\.80/);
+  assert.match(html, /at least &middot;|at least ·/);
+  assert.doesNotMatch(html, /0 tokens removed/);
+  assert.match(html, /removal not measured yet over 1 prune/);
+  assert.match(html, /unknown rather than nothing/);
+});
+
+test("a removal measured on some prunes only is counted as at least", () => {
+  const html = render({ unmeasuredPrunes: 1 });
+  assert.match(html, /at least 40\.0k tokens removed over 4 prunes/);
 });
 
 test("a settled, fully priced net is not qualified", () => {

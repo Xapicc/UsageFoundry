@@ -1032,6 +1032,32 @@ const TASKBOARD_NOTICE =
   "fix nobody asked for, and widening your own work is how a diff a reviewer " +
   "could read stops being one. Say in your reply what you filed.";
 
+/**
+ * Where a prompt goes on a `claude` argv: last, after a `--`.
+ *
+ * `-p` is `--print`, a boolean, and the prompt is the root command's positional
+ * `[prompt]`, so the token after `-p` is parsed like any other. Under commander
+ * a token longer than one character that starts with `-` is an option unless a
+ * `--` came before it, and a prompt starts with whatever the operator typed — a
+ * pasted bullet list starts with `-`. An unknown option exits the child before
+ * it reads a prompt, naming the operator's own text as the option; one that
+ * spells a real option is consumed as it and leaves no prompt at all. Read off
+ * the pinned bundle's `parseOptions` rather than run: the `--` check comes
+ * before a variadic option takes its next value, so the separator also ends
+ * `--allowedTools`, `--add-dir` and `--mcp-config` wherever they sit.
+ *
+ * Every site that hands `claude` a prompt spreads this as the **last** thing on
+ * its argv, because a flag pushed after it would reach the CLI as a second
+ * operand and be ignored, which fails nothing. Passing the prompt on stdin
+ * would avoid the separator, but changes how all three children are started
+ * for a defect this closes on its own. What `--` does not cover is a prompt
+ * that is exactly a subcommand's name: commander dispatches the first operand
+ * to a subcommand whichever side of the separator it came from.
+ */
+export function promptArgs(prompt: string): string[] {
+  return ["--", prompt];
+}
+
 export function buildArgs(opts: {
   prompt: string;
   model: string | null;
@@ -1277,7 +1303,7 @@ export function buildArgs(opts: {
    */
   stackGrants?: { allow: readonly string[]; deny: readonly string[] } | null;
 }): string[] {
-  const args = ["-p", opts.prompt, "--output-format", "stream-json", "--verbose"];
+  const args = ["-p", "--output-format", "stream-json", "--verbose"];
   if (opts.model) args.push("--model", opts.model);
   if (opts.permissionMode) args.push("--permission-mode", opts.permissionMode);
   if (opts.forwardSubAgentText) args.push("--forward-subagent-text");
@@ -1392,16 +1418,17 @@ export function buildArgs(opts: {
     const remaining = Math.max(0, opts.maxRunCostUSD - opts.spentGuardUSD);
     args.push("--max-budget-usd", String(remaining));
   }
-  // Last, and that position is asserted rather than incidental: this used to be
-  // appended by the run loop after `buildArgs` returned, so an install with a
-  // managed sandbox has an argv on record ending in these two entries and a
-  // stock install has one that never contained them. Both stay byte-identical.
+  // The last flag, and that position is asserted rather than incidental: this
+  // used to be appended by the run loop after `buildArgs` returned, so an
+  // install with a managed sandbox has an argv on record whose flags end in
+  // these two entries and a stock install has one that never contained them.
   if (opts.writableRoots && opts.writableRoots.length > 0) {
     args.push(
       "--settings",
       JSON.stringify({ sandbox: { filesystem: { allowWrite: opts.writableRoots } } }),
     );
   }
+  args.push(...promptArgs(opts.prompt));
   return args;
 }
 

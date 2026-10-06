@@ -233,7 +233,7 @@ describe("a run that asks for a stack", () => {
       !flagValues(argvs[0], "--allowedTools").includes("Bash(cargo:*)"),
       "the control: the first cycle, before the stack, had no grant for it",
     );
-    const prompt = resumed[resumed.indexOf("-p") + 1];
+    const prompt = resumed[resumed.indexOf("--") + 1];
     assert.match(prompt, /installed/);
     assert.match(prompt, /cargo, rustc/);
   });
@@ -271,7 +271,7 @@ describe("a run that asks for a stack", () => {
 
     const done = await settled(id);
     assert.equal(done.status, "completed", done.stop_reason ?? "");
-    const prompt = argvs[1][argvs[1].indexOf("-p") + 1];
+    const prompt = argvs[1][argvs[1].indexOf("--") + 1];
     assert.match(prompt, /declined/);
     assert.match(prompt, /NEEDS_REVIEW/);
   });
@@ -434,7 +434,7 @@ describe("a task check left in flight by a park", () => {
 
     const done = await settled(id);
     const task = tasks.getTask(handles!.taskId)!;
-    const prompts = argvs.map((args) => args[args.indexOf("-p") + 1]);
+    const prompts = argvs.map((args) => args[args.indexOf("--") + 1]);
     return { done, task, prompts };
   }
 

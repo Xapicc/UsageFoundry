@@ -1167,7 +1167,11 @@ export function contextOccupancy(runId: string): ContextOccupancyDTO | undefined
           apiContextBefore: f.api_context_before,
           apiContextAfter: f.api_context_after,
         });
-        return { ts: cut.ts, trigger: cut.trigger, tokensRemoved: cut.tokensRemoved };
+        return {
+          ts: cut.ts,
+          trigger: cut.trigger,
+          tokensRemoved: cut.removalKnown ? cut.tokensRemoved : null,
+        };
       }),
     ]
       .sort((a, b) => b.ts - a.ts)
@@ -3851,6 +3855,10 @@ export interface NettableCut {
    * measurement — the case the five forks in `docs/verification.md` are.
    */
   removalKnown: boolean;
+  /**
+   * `runs.model` as read, which is NULL on a stock install. The pricing passes
+   * replace it with the model the resume billed at — see `atResumeModel`.
+   */
   model: string | null;
 }
 
@@ -3876,7 +3884,10 @@ export interface ResumeWrite {
 
 /** What a prune actually came to, once both sides are counted. */
 export interface PruneNet {
-  /** Turns that have carried the smaller conversation. The saving is over these. */
+  /**
+   * Billed turns that have carried the smaller conversation. The saving is over
+   * these, so a `<synthetic>` all-zero frame is not one.
+   */
   turnsAfter: number;
   /**
    * False when the model this ran on has no price here, in which case the three
@@ -4102,7 +4113,7 @@ export function resumeControl(
     const firstBilled = firstBilledTurn(bySession, probe.sessionId, probe.ts);
     if (!firstBilled) continue;
     observed += 1;
-    if (classifyResume(firstBilled) === "warm") warm += 1;
+    if (classifyResume(resumeWriteOf(firstBilled)) === "warm") warm += 1;
   }
   return {
     cleanResumes: observed,
@@ -4143,35 +4154,64 @@ export interface CleanProbe {
  * usage block is present and entirely zero, and taking that one reports the
  * invalidation as $0.00 — which is how this was wrong before it was measured.
  *
- * For the control, which has a probe timestamp and no pre-filtered turn list.
- * `priceReceipts` does the same read off the `following` array it has already
+ * For the control and the fork engine, which have a timestamp and no
+ * pre-filtered turn list. `priceReceipts` does the same read off the `following` array it has already
  * built, and the two must not come to disagree about which turn a resume is —
- * the zero-usage skip is the part that would drift.
+ * the zero-usage skip is the part that would drift, so both read
+ * `billedAnything`.
  */
 function firstBilledTurn(
   bySession: ReadonlyMap<string, UsageEntry[]>,
   sessionId: string,
   after: number,
-): ResumeWrite | null {
+): UsageEntry | null {
   let best: UsageEntry | null = null;
   for (const e of bySession.get(sessionId) ?? []) {
-    if (e.ts <= after) continue;
-    const billed =
-      e.tokens.cacheRead + cacheWriteTokens(e.tokens);
-    if (billed <= 0) continue;
+    if (e.ts <= after || !billedAnything(e)) continue;
     if (!best || e.ts < best.ts) best = e;
   }
-  return best
-    ? {
-        cacheRead: best.tokens.cacheRead,
-        // Cache creation the record declared no TTL for goes on the 5m
-        // field, which is the class `observedWriteUSD` prices this row at:
-        // the floor, the same end `costOf` shows, and the alternative is
-        // dropping the volume out of the figure entirely.
-        cacheWrite5m: best.tokens.cacheWrite5m + best.tokens.cacheWriteUnattributed,
-        cacheWrite1h: best.tokens.cacheWrite1h,
-      }
-    : null;
+  return best;
+}
+
+/**
+ * Whether a turn read or wrote any cache at all.
+ *
+ * The one test every reader here shares, so that the resume a cut is priced
+ * off and the turns its saving is counted over cannot come to disagree about
+ * what a turn is. The CLI's `<synthetic>` record — written at a restart or an
+ * API error, its usage block present and entirely zero — fails it.
+ */
+function billedAnything(e: UsageEntry): boolean {
+  return e.tokens.cacheRead + cacheWriteTokens(e.tokens) > 0;
+}
+
+/** The cache traffic of the turn a resume is read off. */
+function resumeWriteOf(e: UsageEntry): ResumeWrite {
+  return {
+    cacheRead: e.tokens.cacheRead,
+    // Cache creation the record declared no TTL for goes on the 5m field, which
+    // is the class `observedWriteUSD` prices this row at: the floor, the same
+    // end `costOf` shows, and the alternative is dropping the volume out of the
+    // figure entirely.
+    cacheWrite5m: e.tokens.cacheWrite5m + e.tokens.cacheWriteUnattributed,
+    cacheWrite1h: e.tokens.cacheWrite1h,
+  };
+}
+
+/**
+ * The cut as it is priced: at the model its resume actually billed at.
+ *
+ * A cut's own `model` is `runs.model`, and that column is NULL for every run
+ * started on Claude Code's own default — the stock install, where
+ * `defaultModel` is null and the form leaves the field blank — and for a run
+ * whose model came from its agent. Priced at that, every prune and fork on
+ * such a run came out unpriced while the turns it is netted over named a model
+ * with a price, and the run page blamed the price table. The first billed turn
+ * is the one the invalidation is read off, so its model is the rate; the
+ * run's column stands in only until a turn has followed.
+ */
+function atResumeModel(cut: NettableCut, resume: UsageEntry | null): NettableCut {
+  return resume ? { ...cut, model: resume.model } : cut;
 }
 
 /** The clean boundaries in a window, newest last. */
@@ -4278,7 +4318,8 @@ export function netReceipt(
   resumeWrite: ResumeWrite | null = null,
   control: ResumeControl | null = null,
 ): PruneNet {
-  // Priced at the rate for the run's own model, and `at` is the receipt's own
+  // Priced at `row.model`, which `atResumeModel` has set to the model the
+  // resume billed at wherever one has, and `at` is the receipt's own
   // timestamp rather than now — `byAgent.counterfactualUSD`'s rule: a rate
   // looked up at read time prices last week's prune at this week's list.
   const price = resolvePrice(row.model ?? undefined, { at: row.ts });
@@ -4441,6 +4482,18 @@ export interface PruneSavings {
    * is the difference between this and the version that could not report a loss.
    */
   unsettledPrunes: number;
+  /**
+   * Prunes whose removal nobody has measured — `PruneNet.removalKnown` false.
+   *
+   * The other half of `unsettledPrunes`. These contribute 0 to `tokensRemoved`
+   * and `cacheSavedUSD` and that 0 is unknown, so with any here the two are
+   * floors and the net is one too; summed without the count, a fork waiting on
+   * its first resumed turn was this object byte for byte as one measured to
+   * remove nothing. Counted over every prune and not only the priced, because
+   * the token count is over every prune and the removal is unknown whatever
+   * the price table says.
+   */
+  unmeasuredPrunes: number;
   tokensRemoved: number;
   turnsAfter: number;
   cacheSavedUSD: number;
@@ -4452,6 +4505,7 @@ export const NO_PRUNE_SAVINGS: PruneSavings = {
   prunes: 0,
   pricedPrunes: 0,
   unsettledPrunes: 0,
+  unmeasuredPrunes: 0,
   tokensRemoved: 0,
   turnsAfter: 0,
   cacheSavedUSD: 0,
@@ -4481,6 +4535,7 @@ export function sumPruneSavings(priced: readonly PricedReceipt[]): PruneSavings 
       // same omission twice in two different words.
       unsettledPrunes:
         acc.unsettledPrunes + (net.priced && !net.invalidationKnown ? 1 : 0),
+      unmeasuredPrunes: acc.unmeasuredPrunes + (net.removalKnown ? 0 : 1),
       tokensRemoved: acc.tokensRemoved + row.tokensRemoved,
       // Summed rather than maxed: two prunes on one run each saved their own
       // tokens over their own turns, and the second one's turns are a subset of
@@ -4612,9 +4667,13 @@ export async function priceReceipts(
 
   return receipts.map((row) => {
     const sessionId = sessions.get(row.runId) ?? null;
+    // Billed turns only. A restart writes a record whose usage block is present
+    // and entirely zero: taken as the resume it reports the invalidation as
+    // nothing at all, and counted as a turn it credits one more re-read avoided
+    // for a request that read nothing.
     const following = sessionId
       ? (bySession.get(sessionId) ?? [])
-          .filter((e) => e.ts > row.ts)
+          .filter((e) => e.ts > row.ts && billedAnything(e))
           .sort((a, b) => a.ts - b.ts)
       : [];
 
@@ -4622,29 +4681,16 @@ export async function priceReceipts(
     // always available for a boundary prune and was deliberately discarded,
     // which is what made its $0 unfalsifiable rather than merely likely.
     //
-    // Taken off `following`, which is already this session's turns after this
-    // receipt in time order, rather than re-scanning the whole main thread per
-    // receipt. The **first turn that billed anything** rather than simply the
-    // first: a restart writes a record whose usage block is present and entirely
-    // zero, and taking that one reports the invalidation as nothing at all.
-    const firstBilled = following.find(
-      (e) =>
-        e.tokens.cacheRead > 0 || cacheWriteTokens(e.tokens) > 0,
-    );
-    const resumeWrite: ResumeWrite | null = firstBilled
-      ? {
-          cacheRead: firstBilled.tokens.cacheRead,
-          // The 5m field for the reason above.
-          cacheWrite5m:
-            firstBilled.tokens.cacheWrite5m +
-            firstBilled.tokens.cacheWriteUnattributed,
-          cacheWrite1h: firstBilled.tokens.cacheWrite1h,
-        }
-      : null;
+    // Taken off `following`, which is already this session's billed turns after
+    // this receipt in time order, rather than re-scanning the whole main thread
+    // per receipt.
+    const firstBilled = following[0] ?? null;
+    const resumeWrite = firstBilled ? resumeWriteOf(firstBilled) : null;
+    const cut = atResumeModel(row, firstBilled);
 
     return {
-      row,
-      net: netReceipt(row, following.length, resumeWrite, control),
+      row: cut,
+      net: netReceipt(cut, following.length, resumeWrite, control),
     };
   });
 }
@@ -4894,13 +4940,25 @@ async function priceForks(
   const bySession = indexBySession(mainThread);
 
   return forks.map(({ cut, sessionId }) => {
+    // Billed turns only, on `priceReceipts`' reasoning.
     const following = sessionId
-      ? (bySession.get(sessionId) ?? []).filter((e) => e.ts > cut.ts)
+      ? (bySession.get(sessionId) ?? []).filter(
+          (e) => e.ts > cut.ts && billedAnything(e),
+        )
       : [];
-    const resumeWrite = sessionId
+    const resume = sessionId
       ? firstBilledTurn(bySession, sessionId, cut.ts)
       : null;
-    return { row: cut, net: netReceipt(cut, following.length, resumeWrite, control) };
+    const priced = atResumeModel(cut, resume);
+    return {
+      row: priced,
+      net: netReceipt(
+        priced,
+        following.length,
+        resume ? resumeWriteOf(resume) : null,
+        control,
+      ),
+    };
   });
 }
 
@@ -4910,6 +4968,7 @@ export function addSavings(a: PruneSavings, b: PruneSavings): PruneSavings {
     prunes: a.prunes + b.prunes,
     pricedPrunes: a.pricedPrunes + b.pricedPrunes,
     unsettledPrunes: a.unsettledPrunes + b.unsettledPrunes,
+    unmeasuredPrunes: a.unmeasuredPrunes + b.unmeasuredPrunes,
     tokensRemoved: a.tokensRemoved + b.tokensRemoved,
     turnsAfter: a.turnsAfter + b.turnsAfter,
     cacheSavedUSD: a.cacheSavedUSD + b.cacheSavedUSD,

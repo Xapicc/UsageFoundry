@@ -7,7 +7,7 @@ import type {
 } from "@/lib/apiTypes";
 import { fmtTokens, fmtUSD, signedUSD } from "@/lib/format";
 import { TBody, Table, Td, Tr } from "@/components/ui/Table";
-import { pruneStatement, prunerLine } from "@/lib/pruneStatement";
+import { netBound, pruneStatement, prunerLine } from "@/lib/pruneStatement";
 
 /**
  * One span's pruning figures.
@@ -58,12 +58,17 @@ export function PruneSavingsRows({
     prunes,
     pricedPrunes,
     unsettledPrunes,
+    unmeasuredPrunes,
     tokensRemoved,
     turnsAfter,
     cacheSavedUSD,
     invalidationUSD,
     netUSD,
   } = savings;
+  const bound = netBound(savings);
+  // An unmeasured removal credits $0, so a saving of exactly that is unknown
+  // rather than a floor worth printing.
+  const savedKnown = unmeasuredPrunes === 0 || cacheSavedUSD > 0;
 
   if (prunes === 0) {
     return (
@@ -93,17 +98,25 @@ export function PruneSavingsRows({
           <Tr>
             <Td>Conversation removed</Td>
             <Td className="tabular-nums text-right">
-              {fmtTokens(tokensRemoved)} tokens over {prunes}{" "}
-              {prunes === 1 ? "prune" : "prunes"}
+              {unmeasuredPrunes >= prunes
+                ? "not measured yet"
+                : `${unmeasuredPrunes > 0 ? "at least " : ""}${fmtTokens(tokensRemoved)} tokens`}{" "}
+              over {prunes} {prunes === 1 ? "prune" : "prunes"}
             </Td>
           </Tr>
           <Tr>
             <Td>Re-reads it avoided</Td>
             <Td className="tabular-nums text-right">
-              +{fmtUSD(cacheSavedUSD)}{" "}
-              <span className="text-ink-muted">
-                over {turnsAfter} later {turnsAfter === 1 ? "turn" : "turns"}
-              </span>
+              {savedKnown ? (
+                <>
+                  {unmeasuredPrunes > 0 && "at least "}+{fmtUSD(cacheSavedUSD)}{" "}
+                  <span className="text-ink-muted">
+                    over {turnsAfter} later {turnsAfter === 1 ? "turn" : "turns"}
+                  </span>
+                </>
+              ) : (
+                <span className="text-ink-muted">not measured yet</span>
+              )}
             </Td>
           </Tr>
           <Tr>
@@ -125,7 +138,7 @@ export function PruneSavingsRows({
           </Tr>
           <Tr>
             <Td className="font-medium">
-              {unsettledPrunes > 0 ? "Net, at most" : "Net"}
+              {bound === "exact" ? "Net" : `Net, ${bound}`}
             </Td>
             <Td className="tabular-nums text-right font-medium">
               {signedUSD(netUSD)}
@@ -139,7 +152,20 @@ export function PruneSavingsRows({
               <Td className="text-ink-muted" colSpan={2}>
                 {unsettledPrunes} of {pricedPrunes}{" "}
                 {pricedPrunes === 1 ? "prune has" : "prunes have"} an unsettled
-                invalidation cost, so the net above is a ceiling.
+                invalidation cost
+                {bound === "at most" ? ", so the net above is a ceiling." : "."}
+              </Td>
+            </Tr>
+          )}
+          {/* The same row from the other side: a fork's removal waits on the
+              turn that resumes it, and until then its saving is unknown. */}
+          {unmeasuredPrunes > 0 && (
+            <Tr>
+              <Td className="text-ink-muted" colSpan={2}>
+                {unmeasuredPrunes} of {prunes}{" "}
+                {prunes === 1 ? "prune has" : "prunes have"} a removal not
+                measured yet
+                {bound === "at least" ? ", so the net above is a floor." : "."}
               </Td>
             </Tr>
           )}

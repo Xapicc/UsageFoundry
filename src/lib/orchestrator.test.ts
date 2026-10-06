@@ -3403,10 +3403,42 @@ describe("buildArgs", () => {
       resumeSessionId: "sess-1",
       isolated: true,
     });
-    assert.deepEqual(args.slice(0, 2), ["-p", "do the thing"]);
+    assert.equal(args[0], "-p");
+    assert.deepEqual(args.slice(-2), ["--", "do the thing"]);
     assert.equal(args[args.indexOf("--model") + 1], "claude-opus-5");
     assert.equal(args[args.indexOf("--permission-mode") + 1], "acceptEdits");
     assert.equal(args[args.indexOf("--resume") + 1], "sess-1");
+  });
+
+  /**
+   * A prompt is ordinary text, and its first character is whatever the operator
+   * typed: a pasted bullet list starts with `-`. `-p` is the CLI's boolean
+   * `--print` and the prompt is the root command's positional, so a prompt
+   * anywhere but after `--` is parsed as an option — an unknown one exits the
+   * cycle before it reads a word, and a valid one is consumed as that option.
+   * Asserted on the widest argv, because the separator ends every option
+   * including a variadic one, so anything after it would be prompt rather than
+   * flag; `promptArgv.test.ts` hands the same argv to a parser built like the
+   * CLI's.
+   */
+  it("puts the prompt after the separator that ends the options, last", () => {
+    const prompt = "- one\n- two";
+    const args = buildArgs({
+      ...base,
+      prompt,
+      model: "claude-opus-5",
+      resumeSessionId: "sess-1",
+      isolated: true,
+      maxRunCostUSD: 10,
+      vaultSkill: { pluginDir: "/run/uf-skills/vault", vaultPath: "/workspace2" },
+      taskboard: { mcpConfigPath: "/run/uf-mcp/run-1/config.json" },
+      writableRoots: ["/workspace/project"],
+    });
+    assert.deepEqual(args.slice(-2), ["--", prompt]);
+    assert.equal(args.indexOf("--"), args.length - 2, "one separator, and nothing after the prompt");
+    assert.equal(args.indexOf(prompt), args.length - 1, "the prompt is on the argv once");
+    assert.equal(args[0], "-p");
+    assert.notEqual(args[1], prompt);
   });
 });
 
@@ -3492,7 +3524,10 @@ describe("the cycle adapter", () => {
       "--add-dir",
       "--resume",
       "--max-budget-usd",
+      "--",
     ]);
+    // And the prompt after the separator, last: see `promptArgs`.
+    assert.equal(args[args.length - 1], "do the thing");
 
     // The two the loop cannot recover from losing, spelled out rather than
     // counted. `PROCESS_KILLERS` is the one grant withheld from every agent
@@ -4554,9 +4589,10 @@ describe("injectionFates", () => {
         prompt: "You review.",
         model: null,
       },
+      // The sandbox's write set, which the run loop used to push after
+      // `buildArgs` returned and which now has to sit before the prompt.
+      writableRoots: ["/tmp"],
     });
-    // Plus the flag the run loop pushes after `buildArgs` returns.
-    args.push(...sandboxArgs({ kind: "confined", allowWrite: ["/tmp"] }, "on"));
 
     const unclassified = injectionFates(args).filter((i) => i.fate === "unclassified");
     assert.deepEqual(
@@ -4592,7 +4628,7 @@ describe("injectionFates", () => {
    * asks somebody to do something is the row that must survive the cut.
    */
   it("puts an unclassified flag ahead of the rows it does know", () => {
-    const rows = injectionFates(["-p", "go", "--brand-new-flag", "x"]);
+    const rows = injectionFates(["-p", "--brand-new-flag", "x", "--", "go"]);
     assert.equal(rows[0].fate, "unclassified");
   });
 
@@ -4635,14 +4671,36 @@ describe("injectionFates", () => {
   });
 
   it("does not mistake the prompt for a variadic tool value", () => {
-    // `--disallowedTools` is variadic and `-p` is the one short flag on the
-    // argv, so a scan that stopped only at `--` would swallow the prompt.
-    const rows = injectionFates(["--disallowedTools", "Bash(pkill:*)", "-p", "go"]);
-    assert.equal(rows.find((i) => i.via === "-p")?.fate, "unknown");
+    // `--disallowedTools` is variadic and the separator is all that stands
+    // between its last tool and the prompt, which begins with a dash here as an
+    // operator's bullet list does. A scan that ran past `--` would record it as
+    // a tool; one that took `-p` for a valued flag would read `--` as the prompt.
+    const rows = injectionFates(["-p", "--disallowedTools", "Bash(pkill:*)", "--", "- go"]);
+    const prompt = rows.find((i) => i.via === "-p");
+    assert.equal(prompt?.fate, "unknown");
+    assert.match(prompt?.what ?? "", /\(4 characters\)/);
     assert.equal(
       rows.some((i) => i.fate === "unclassified"),
       false,
     );
+  });
+
+  /**
+   * The one way the separator goes wrong: a flag pushed after `promptArgs`. The
+   * CLI reads it as a second operand and ignores it, so the flag is silently
+   * off every cycle — and this record is the only place that can say so.
+   */
+  it("reports a token after the prompt rather than reading it as a flag", () => {
+    const rows = injectionFates(["-p", "--", "go", "--mcp-config", "/run/c.json"]);
+    assert.deepEqual(
+      rows.filter((i) => i.fate === "unclassified").map((i) => [i.via, i.what]),
+      [
+        ["--", "a value this function did not expect: --mcp-config"],
+        ["--", "a value this function did not expect: /run/c.json"],
+      ],
+    );
+    assert.equal(rows.some((i) => i.via === "--mcp-config"), false);
+    assert.match(rows.find((i) => i.via === "-p")?.what ?? "", /\(2 characters\)/);
   });
 
   it("says a compaction happened, and says the classification is not measured", () => {
@@ -4655,7 +4713,7 @@ describe("injectionFates", () => {
       durationMs: 140432,
       cliVersion: "2.1.226",
     };
-    const notice = compactionNotice(boundary, injectionFates(["-p", "go"]));
+    const notice = compactionNotice(boundary, injectionFates(["-p", "--", "go"]));
     assert.match(notice, /compacted this run's conversation \(auto\)/);
     assert.match(notice, /180,694 tokens summarised down to 17,456/);
     assert.match(notice, /140s/);

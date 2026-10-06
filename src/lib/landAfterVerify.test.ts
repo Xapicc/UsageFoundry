@@ -23,6 +23,9 @@ import { after, before, beforeEach, describe, it } from "node:test";
  * `land.test.ts` pins it; this file pins that `landRun` asks it at the moment
  * that matters — which no test of the pure function can.
  *
+ * Its last describe is the one thing about the checkout no status read can
+ * see: a file it ignores, which git's merge replaced by default.
+ *
  * Its own file, with `DATA_DIR` named before the first import, for
  * `loopMergeOwnership.test.ts`' reason: `config.ts` is read at module load.
  */
@@ -138,13 +141,15 @@ interface Scene {
  * A finished isolated run with one commit on its branch, checked out in a slot
  * where `allocateSlotPath` would look for one, and the operator's checkout on
  * `main`, clean. `other` is a second branch there for a person to switch to.
+ * `gitignore` goes into the base commit as `.gitignore`.
  */
-function scene(name: string): Scene {
+function scene(name: string, opts: { gitignore?: string } = {}): Scene {
   const repo = path.join(root, MOUNT_DIR, name);
   fs.mkdirSync(repo);
   git(repo, "init", "-q", "-b", "main");
   fs.writeFileSync(path.join(repo, "shared.txt"), "base\n");
   fs.writeFileSync(path.join(repo, "other.txt"), "base\n");
+  if (opts.gitignore) fs.writeFileSync(path.join(repo, ".gitignore"), opts.gitignore);
   git(repo, "add", "-A");
   git(repo, "commit", "-q", "-m", "base");
   git(repo, "branch", "other");
@@ -396,4 +401,55 @@ describe("the check runs against what the land would carry", () => {
       assert.equal(landedAt(s.runId), null);
     });
   }
+});
+
+const OPERATORS_ENV = "API_KEY=the-operators-own-key\n";
+
+/**
+ * A run whose branch tracks `.env`, which the operator's checkout ignores —
+ * got there with `git add -f`, git's own hint when `add` meets an ignored path.
+ * With `operatorEnv` the operator's checkout holds its own `.env`.
+ */
+function trackedEnvScene(name: string, opts: { operatorEnv: boolean }): Scene {
+  const s = scene(name, { gitignore: ".env\n" });
+  if (opts.operatorEnv) fs.writeFileSync(path.join(s.repo, ".env"), OPERATORS_ENV);
+  fs.writeFileSync(path.join(s.slot, ".env"), "API_KEY=placeholder\n");
+  git(s.slot, "add", "-f", ".env");
+  git(s.slot, "commit", "-qm", "track .env");
+  return s;
+}
+
+describe("landRun never overwrites a file the operator's checkout ignores", () => {
+  for (const strategy of ["merge", "squash"] as const) {
+    it(`refuses a ${strategy} over one, naming it, and keeps its content`, async () => {
+      const s = trackedEnvScene(`ignored-${strategy}`, { operatorEnv: true });
+
+      // `git status --porcelain` never lists an ignored file, so the checkout
+      // reads as clean and Land is offered: the refusal has to come from the merge.
+      const state = await land.landState(s.runId);
+      assert.equal(state?.checkout?.dirty, false);
+      assert.equal(state?.blocked, null);
+
+      const landed = await land.landRun(s.runId, strategy);
+
+      assert.equal(landed.ok, false, "landed over the operator's .env");
+      assert.match(landed.ok ? "" : landed.reason, /uf\/ignored-\w+ tracks \.env/);
+      // The data loss: "API_KEY=placeholder\n", with the card saying it landed.
+      assert.equal(fs.readFileSync(path.join(s.repo, ".env"), "utf8"), OPERATORS_ENV);
+      assert.equal(git(s.repo, "rev-parse", "main").trim(), s.base);
+      assert.equal(git(s.repo, "status", "--porcelain").trim(), "", "the checkout was left part-way");
+      assert.equal(landedAt(s.runId), null);
+    });
+  }
+
+  it("lands a branch tracking an ignored path when the operator holds no file there", async () => {
+    // The control: what is refused is the operator's file, not the branch
+    // tracking a path `.gitignore` names.
+    const s = trackedEnvScene("ignored-absent", { operatorEnv: false });
+
+    const landed = await land.landRun(s.runId, "merge");
+
+    assert.equal(landed.ok, true, landed.ok ? "" : landed.reason);
+    assert.equal(fs.readFileSync(path.join(s.repo, ".env"), "utf8"), "API_KEY=placeholder\n");
+  });
 });

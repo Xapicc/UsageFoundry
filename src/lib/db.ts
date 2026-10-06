@@ -952,6 +952,13 @@ function migrate(db: Database.Database) {
   addColumn(db, "runs", "work_dir", "TEXT");
   addColumn(db, "runs", "isolation", "TEXT");
   addColumn(db, "runs", "repo_root", "TEXT");
+  // The repository the run's folder is in, whether or not it got a checkout.
+  // Not `repo_root`, which every landing, claim and sandbox reader takes to mean
+  // "the repository a checkout was cut from"; repository spend is its one
+  // reader. Not backfilled: older rows keep `repo_root`, which `repoSpend` falls
+  // back to, and an older run with no checkout stays in "(not a repository)"
+  // rather than being filed by a guess made from `folder` today.
+  addColumn(db, "runs", "folder_repo", "TEXT");
   addColumn(db, "runs", "worktree_path", "TEXT");
   addColumn(db, "runs", "worktree_branch", "TEXT");
   addColumn(db, "runs", "worktree_base", "TEXT");
@@ -2684,6 +2691,22 @@ function migrate(db: Database.Database) {
     INSERT OR IGNORE INTO run_tasks (run_id, task_id, position)
       SELECT id, task_id, 0 FROM runs WHERE task_id IS NOT NULL;
   `);
+  // 1 once the run has asked to claim this task, which it does once, when it
+  // first starts. `claimTasksForRun` used to ask again at every pick-up, and an
+  // open task it had given back — by its own `release_task` or by the
+  // operator's release — was silently claimed for it again. Backfilled for every
+  // run that has started, because the claim runs synchronously beside the write
+  // that sets `started_at`, so such a run has asked; a row reopened since
+  // (`started_at` cleared) is left at 0 and asks once more, which is what it
+  // would have done before. In one transaction with the ALTER for
+  // `refusal_pauses`' reason. See docs/agent/taskboard/runs-from-tasks.md.
+  db.transaction(() => {
+    if (addColumn(db, "run_tasks", "claim_asked", "INTEGER NOT NULL DEFAULT 0")) {
+      db.exec(
+        "UPDATE run_tasks SET claim_asked = 1 WHERE run_id IN (SELECT id FROM runs WHERE started_at IS NOT NULL)",
+      );
+    }
+  })();
   // Whether the work needs the operator rather than a run: a Mac, a GUI,
   // hardware, credentials only they hold, a physical action. A flag rather than
   // a fifth status, because it says who may do the work and not where the task

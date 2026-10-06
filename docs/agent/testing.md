@@ -23,12 +23,14 @@ Twenty are renderings rather than functions — every `*.test.tsx` in the tree, 
 | Test file | Also in |
 |---|---|
 | `budget.test.ts` | [harnesses] |
+| `cutOffCheckout.test.ts` |  |
 | `diff.test.ts` |  |
 | `land.test.ts` | [landing], [merge-queue], [harnesses] |
 | `orchestrator.test.ts` | [cycle], [argv], [ceiling], [pruning], [parsers], [budgets], [pricing], [landing], [merge-queue], [sandbox], [harnesses] |
 | `patch.test.ts` |  |
 | `planUsage.test.ts` |  |
 | `queueOrder.test.ts` |  |
+| `repoSpendAdmission.test.ts` |  |
 | `runOrigin.test.ts` |  |
 | `slotProbes.test.ts` |  |
 | `windows.test.ts` | [harnesses] |
@@ -108,13 +110,18 @@ Twenty are renderings rather than functions — every `*.test.tsx` in the tree, 
 | Test file | Also in |
 |---|---|
 | `contextPruning.test.ts` | [ceiling], [stacks] |
-| `contextPruningReporting.test.ts` |  |
-| `forkAttempts.test.ts` |  |
 | `intakeFilter.test.ts` |  |
 | `pruneStatement.test.ts` |  |
 | `pruneTranscript.test.ts` |  |
-| `transcriptForkDedupe.test.ts` |  |
 | `transcriptOwnership.test.ts` |  |
+
+## [Forked conversations and prune money](testing/forked-conversations-and-prune-money.md)
+
+| Test file | Also in |
+|---|---|
+| `contextPruningReporting.test.ts` |  |
+| `forkAttempts.test.ts` |  |
+| `transcriptForkDedupe.test.ts` |  |
 
 ## [Context samples, the live tick and the context ceiling](testing/context-samples-and-ceiling.md)
 
@@ -239,6 +246,7 @@ Units that are about no test file in the tree:
 | `fileCostNotice.test.ts` |  |
 | `plugins.test.ts` |  |
 | `privsep.test.ts` | [knowledge] |
+| `promptArgv.test.ts` |  |
 | `sandbox.test.ts` |  |
 | `schedules.test.ts` | [proposals] |
 | `serverLock.test.ts` | [data-dir] |
@@ -282,7 +290,7 @@ Units that are about no test file in the tree:
 | `localLandGate.test.ts` | [harnesses] |
 | `localProvider.test.ts` |  |
 | `reviewBlock.test.ts` |  |
-| `reviewBlockRun.test.ts` | [harnesses] |
+| `reviewBlockRun.test.ts` | [workflows], [harnesses] |
 
 ## [Auth, credentials, config and the status routes](testing/auth-config-and-status-routes.md)
 
@@ -303,17 +311,18 @@ Units that are about no test file in the tree:
 | `src/app/api/jsonObjectBody.test.ts` |  |
 | `src/app/api/health/route.test.ts` |  |
 | `src/app/api/login/route.test.ts` | [sign-in] |
+| `src/app/api/otlp/v1/logs/route.test.ts` |  |
 | `src/app/api/runs/[id]/stream/route.test.ts` |  |
 | `src/app/api/runs/live/stream/route.test.ts` | [harnesses] |
 | `src/app/api/settings/route.test.ts` | [harnesses] |
 | `src/app/api/status/route.test.ts` | [sign-in] |
+| `src/middleware.test.ts` | [sign-in] |
 
 ## [Sign-in limits](testing/sign-in-limits.md)
 
 | Test file | Also in |
 |---|---|
 | `loginLimiter.test.ts` |  |
-| `src/middleware.test.ts` |  |
 
 ## [Container, compose and backups](testing/container-and-deployment.md)
 

@@ -429,6 +429,166 @@ describe("pricing a cut beside other cuts", () => {
   });
 });
 
+describe("what a cut is priced at, and over which turns", () => {
+  const HOUR = 3_600_000;
+  const cutAt = Date.now() - HOUR;
+  const projectDir = path.join(TMP, "claude", "projects", "-workspace-money");
+  const turn = (sessionId: string, ts: number, cacheRead: number, cacheWrite1h: number) =>
+    JSON.stringify({
+      type: "assistant",
+      uuid: `u-${sessionId}-${ts}`,
+      requestId: `req_${sessionId}_${ts}`,
+      timestamp: new Date(ts).toISOString(),
+      sessionId,
+      cwd: "/workspace/money",
+      message: {
+        id: `msg_${sessionId}_${ts}`,
+        model: "claude-opus-5",
+        usage: {
+          input_tokens: 10,
+          output_tokens: 200,
+          cache_read_input_tokens: cacheRead,
+          cache_creation_input_tokens: cacheWrite1h,
+          cache_creation: { ephemeral_1h_input_tokens: cacheWrite1h },
+        },
+      },
+    });
+  const writeSession = (sessionId: string, lines: string[]) => {
+    fs.mkdirSync(projectDir, { recursive: true });
+    fs.writeFileSync(path.join(projectDir, `${sessionId}.jsonl`), `${lines.join("\n")}\n`);
+  };
+  const addRun = async (id: string, model: string | null, sessionId: string | null) => {
+    const { db } = await import("./db.js");
+    db()
+      .prepare(
+        "INSERT OR REPLACE INTO runs (id, folder, prompt, status, budget, created_at, model, session_id) VALUES (?,?,?,?,?,?,?,?)",
+      )
+      .run(id, "/x", "t", "running", 10, cutAt - HOUR, model, sessionId);
+  };
+  const addReceipt = async (runId: string, model: string | null) => {
+    const { db } = await import("./db.js");
+    db()
+      .prepare(
+        `INSERT INTO prune_receipts (ts, run_id, trigger, tier, tokens_before, tokens_after, tokens_removed, model)
+         VALUES (?,?,?,?,?,?,?,?)`,
+      )
+      .run(cutAt, runId, "early-end", "standard", 120_000, 70_000, 50_000, model);
+  };
+  // A fork taken at `cutAt` into a session of its own, measured to have
+  // removed `apiBefore - apiAfter` tokens, or unmeasured when `apiAfter` is null.
+  const addFork = async (runId: string, newSessionId: string, apiAfter: number | null) => {
+    const { recordForkAttempt } = await import("./contextPruning.js");
+    const { db } = await import("./db.js");
+    recordForkAttempt(runId, "src", { ...WRITTEN, newSessionId }, 0, "early-end", 180_000, 200_000);
+    db()
+      .prepare("UPDATE fork_attempts SET ts = ?, api_context_after = ? WHERE run_id = ?")
+      .run(cutAt, apiAfter, runId);
+  };
+
+  it("prices a cut at the model its later turns ran on when the run names none", async () => {
+    // `runs.model` is NULL for every run started on Claude Code's own default,
+    // which is the stock install (`defaultModel: null`, a blank form field), and
+    // for a run whose model came from its agent. Pricing at that column left
+    // every prune and fork on such a run unpriced, and the run page blamed the
+    // price table for a model that has a price. The transcript names the model
+    // the resume actually billed at.
+    const { pruneSavingsByRun } = await import("./contextPruning.js");
+    for (const [id, model] of [
+      ["money-null", null],
+      ["money-named", "claude-opus-5"],
+    ] as const) {
+      await addRun(id, model, `s-${id}`);
+      await addReceipt(id, model);
+      writeSession(`s-${id}`, [
+        turn(`s-${id}`, cutAt + 60_000, 16_000, 90_000),
+        turn(`s-${id}`, cutAt + 120_000, 106_000, 0),
+        turn(`s-${id}`, cutAt + 180_000, 108_000, 0),
+      ]);
+      await addFork(id, `fk-${id}`, 150_000);
+      writeSession(`fk-${id}`, [
+        turn(`fk-${id}`, cutAt + 60_000, 16_000, 160_000),
+        turn(`fk-${id}`, cutAt + 120_000, 170_000, 0),
+      ]);
+    }
+    // And a receipt with no turn after it yet, whose only reading of the model
+    // is the run's: a prune made a moment ago must not read as unpriced.
+    await addRun("money-pending", "claude-opus-5", "s-money-pending");
+    await addReceipt("money-pending", "claude-opus-5");
+
+    const byRun = await pruneSavingsByRun(["money-null", "money-named", "money-pending"]);
+    const named = byRun.get("money-named");
+    assert.equal(named?.pricedPrunes, 2, "the fixture's twin is priced on both engines");
+    assert.ok((named?.netUSD ?? 0) !== 0, "so the equality below is not zero against zero");
+    assert.deepEqual(byRun.get("money-null"), named);
+    assert.equal(byRun.get("money-pending")?.pricedPrunes, 1);
+  });
+
+  it("counts only the turns that billed something as turns the cut saved on", async () => {
+    // The CLI writes a `<synthetic>` record at a restart or an API error, with
+    // a usage block that is entirely zero. It read nothing, so it avoided no
+    // re-read — counting it credited one more turn's saving per frame, always
+    // in the flattering direction.
+    const { pruneSavingsByRun } = await import("./contextPruning.js");
+    const synthetic = (sessionId: string, ts: number) =>
+      JSON.stringify({
+        type: "assistant",
+        uuid: `u-syn-${sessionId}-${ts}`,
+        timestamp: new Date(ts).toISOString(),
+        sessionId,
+        cwd: "/workspace/money",
+        message: {
+          id: `syn-${sessionId}-${ts}`,
+          model: "<synthetic>",
+          usage: {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+        },
+      });
+    const billedAroundAFrame = (sessionId: string) => [
+      turn(sessionId, cutAt + 60_000, 16_000, 90_000),
+      synthetic(sessionId, cutAt + 90_000),
+      turn(sessionId, cutAt + 120_000, 106_000, 0),
+    ];
+    await addRun("money-synth", "claude-opus-5", "s-money-synth");
+    await addReceipt("money-synth", "claude-opus-5");
+    writeSession("s-money-synth", billedAroundAFrame("s-money-synth"));
+    await addRun("money-synth-fk", "claude-opus-5", "fk-money-synth");
+    await addFork("money-synth-fk", "fk-money-synth", 150_000);
+    writeSession("fk-money-synth", billedAroundAFrame("fk-money-synth"));
+
+    const byRun = await pruneSavingsByRun(["money-synth", "money-synth-fk"]);
+    assert.deepEqual(
+      {
+        inPlace: byRun.get("money-synth")?.turnsAfter,
+        fork: byRun.get("money-synth-fk")?.turnsAfter,
+      },
+      { inPlace: 2, fork: 2 },
+    );
+  });
+
+  it("does not sum a fork nobody measured into one measured to remove nothing", async () => {
+    // A fork's removal is read off the first billed turn of the cycle that
+    // resumes it, so for that whole cycle — and for good after a rollback — it
+    // is unknown. Both credit $0 saved, and summed without the flag they were
+    // the same object byte for byte, so every surface printed "0 tokens
+    // removed, Saved +$0.00" as a measured fact.
+    const { pruneSavingsByRun } = await import("./contextPruning.js");
+    await addRun("money-unmeasured", "claude-opus-5", null);
+    await addFork("money-unmeasured", "fk-money-unmeasured", null);
+    await addRun("money-measured0", "claude-opus-5", null);
+    await addFork("money-measured0", "fk-money-measured0", 200_000);
+
+    const byRun = await pruneSavingsByRun(["money-unmeasured", "money-measured0"]);
+    const unmeasured = byRun.get("money-unmeasured");
+    const measured0 = byRun.get("money-measured0");
+    assert.equal(measured0?.tokensRemoved, 0, "the fixture's control removed nothing, measured");
+    assert.notDeepEqual(unmeasured, measured0);
+  });
+});
+
 describe("pricing a page of runs", () => {
   it("prices both engines in one pass and gives each run its own page's figure", async (t) => {
     // `/api/runs/live` asks this every five seconds for every running run. The

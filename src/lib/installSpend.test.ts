@@ -175,6 +175,44 @@ describe("what the install's spend limit is measured from", () => {
     assert.equal(spend.spentGuardUSD, spend.spentUSD, "nothing killed, nothing in flight");
   });
 
+  it("counts a review's or a resolution's money once, not again on the block row that copies it", () => {
+    clearAll();
+
+    // A review block and an auto-resolving merge block copy what their `run_reviews`
+    // rows cost onto their own `cost_usd` so `instanceSpend` can see it. The
+    // install's reading counts `run_reviews` itself, so summing the copy as well
+    // charged every one of these dollars twice and tripped the daily limit at half
+    // the money. Only an orchestrator block's turn has no other row.
+    addRun({ id: "reviewed", status: "completed", spent: 4, finishedAt: NOW - HOUR });
+    const db = dbMod.db();
+    db.prepare(
+      "INSERT INTO workflows (id, name, graph, created_at, updated_at) VALUES ('w1', 'wf', '{}', ?, ?)",
+    ).run(NOW - 2 * HOUR, NOW - 2 * HOUR);
+    db.prepare(
+      `INSERT INTO workflow_instances (id, workflow_id, workflow_name, graph, created_at, status)
+       VALUES ('i1', 'w1', 'wf', '{}', ?, 'started')`,
+    ).run(NOW - 2 * HOUR);
+    const block = db.prepare(
+      `INSERT INTO workflow_instance_blocks
+         (instance_id, node_id, node_name, position, kind, status, finished_at, cost_usd)
+       VALUES ('i1', ?, ?, ?, ?, 'emitted', ?, ?)`,
+    );
+    block.run("n-decide", "Decide", 0, "orchestrator", NOW - HOUR, 2);
+    block.run("n-review", "Review", 1, "review", NOW - HOUR, 1);
+    block.run("n-merge", "Merge", 2, "merge", NOW - HOUR, 3);
+    const review = db.prepare(
+      `INSERT INTO run_reviews (id, run_id, created_at, finished_at, status, cost_usd)
+       VALUES (?, 'reviewed', ?, ?, 'done', ?)`,
+    );
+    review.run("rv-1", NOW - HOUR, NOW - HOUR, 0.5);
+    review.run("rv-2", NOW - HOUR, NOW - HOUR, 0.5);
+    review.run("rv-resolve", NOW - HOUR, NOW - HOUR, 3);
+
+    const spend = installBudget.installSpend(NOW);
+    assert.equal(spend.spentUSD, 4 + 2 + 1 + 3, "run + deciding turn + reviews + resolution, each once");
+    assert.equal(spend.spentGuardUSD, spend.spentUSD);
+  });
+
   it("ages a parked run out of the window without waiting for it to finish", () => {
     clearAll();
 
