@@ -15,7 +15,11 @@ import {
   type Settings,
 } from "../../../lib/settings";
 import { normalizePolicy } from "../../../lib/budget";
-import { jsonMaybeGzipped, readJsonObject } from "../../../lib/http";
+import {
+  jsonMaybeGzipped,
+  optionalObjectField,
+  readJsonObject,
+} from "../../../lib/http";
 import { normalizeSubpath } from "../../../lib/knowledge";
 import { agentKnowledgeOf, agentRefusal, getAgent } from "../../../lib/agents";
 import {
@@ -731,7 +735,11 @@ async function applySettingsPut(body: Record<string, unknown>): Promise<Response
 
   if ("chatDefaultGuards" in body) {
     const g = (body.chatDefaultGuards ?? {}) as Record<string, unknown>;
-    const rawBudget = (g.budget ?? {}) as Record<string, unknown>;
+    const budgetField = optionalObjectField(g, "budget");
+    if (!budgetField.ok) {
+      return NextResponse.json({ error: budgetField.error }, { status: 400 });
+    }
+    const rawBudget = budgetField.value ?? {};
     const mode = String(g.permissionMode ?? "");
     if (!(PERMISSION_MODES as readonly string[]).includes(mode)) {
       return NextResponse.json(

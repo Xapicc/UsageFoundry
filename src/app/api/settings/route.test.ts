@@ -394,6 +394,37 @@ test("PUT /api/settings refuses a knowledge base mount that is not configured", 
 });
 
 /**
+ * The guard set every approved chat proposal starts under. `normalizePolicy`
+ * threw on a budget that was not an object, which this route answered — and
+ * audited — as a 500; read as the default policy instead, it would store one
+ * cycle under a "Saved" the operator never asked for.
+ */
+test("PUT /api/settings refuses a chat guard set whose budget is not an object", async () => {
+  const { PUT } = await import("./route");
+  const { DEFAULTS } = await import("../../../lib/settings");
+  const before = (await read()).chatDefaultGuards;
+
+  for (const budget of ["lots", 5]) {
+    const res = await PUT(
+      new Request("http://localhost/api/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ chatDefaultGuards: { ...DEFAULTS.chatDefaultGuards, budget } }),
+      }),
+    );
+    const body = (await res.json()) as { error?: string };
+    assert.equal(res.status, 400, `budget ${JSON.stringify(budget)}: ${body.error ?? "(no message)"}`);
+    assert.match(String(body.error), /"budget" has to be an object/);
+  }
+
+  assert.deepEqual(
+    (await read()).chatDefaultGuards,
+    before,
+    "a refused guard set was stored anyway",
+  );
+});
+
+/**
  * What the settings page folds on.
  *
  * A fold whose contents differ from their defaults opens by default, and that

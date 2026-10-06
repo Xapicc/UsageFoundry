@@ -19,7 +19,12 @@ import {
 } from "../../../lib/orchestrator";
 import { pruneSavingsByRun } from "../../../lib/contextPruning";
 import { recentOpsEvents } from "../../../lib/ops";
-import { jsonMaybeGzipped, readJsonObject } from "../../../lib/http";
+import {
+  jsonMaybeGzipped,
+  optionalObjectField,
+  optionalStringField,
+  readJsonObject,
+} from "../../../lib/http";
 import {
   clipListPrompt,
   RUN_PROVIDERS,
@@ -258,6 +263,15 @@ async function postHandler(req: Request) {
   if (!read.ok) return read.response;
   const body = read.body;
 
+  // Refused by name rather than run through `String()`, which made an object
+  // prompt the task "[object Object]" on a run that was admitted and billed.
+  const text: Partial<Record<"prompt" | "folder" | "mountId" | "model", string>> = {};
+  for (const key of ["prompt", "folder", "mountId", "model"] as const) {
+    const field = optionalStringField(body, key);
+    if (!field.ok) return NextResponse.json({ error: field.error }, { status: 400 });
+    text[key] = field.value;
+  }
+
   // This value reaches `--permission-mode` on a process that edits files, so it
   // is narrowed against the allowed set rather than trusted from the wire.
   let permissionMode: PermissionMode | undefined;
@@ -300,7 +314,7 @@ async function postHandler(req: Request) {
   // table of Anthropic prices and holds Claude Code's own id spellings; a Codex
   // run names something else entirely, and refusing it against this list would
   // be this build claiming to know a set it has never been told.
-  let model = body.model ? String(body.model).trim() || null : null;
+  let model = text.model?.trim() || null;
   if (provider === "local") {
     // Refused here rather than at the first cycle, which would refuse it too:
     // a person is at this door, and a run admitted with no endpoint to go to is
@@ -336,7 +350,11 @@ async function postHandler(req: Request) {
     return NextResponse.json({ error: agent.error }, { status: 400 });
   }
 
-  const rawBudget = (body.budget ?? {}) as Record<string, unknown>;
+  const budgetField = optionalObjectField(body, "budget");
+  if (!budgetField.ok) {
+    return NextResponse.json({ error: budgetField.error }, { status: 400 });
+  }
+  const rawBudget = budgetField.value ?? {};
 
   // Narrowed for the same reason permissionMode is: this value decides whether
   // a running agent is killed part-way through a work cycle, so an unrecognised
@@ -409,9 +427,9 @@ async function postHandler(req: Request) {
     // It never blocks on the agent: the run loop reports through the event
     // stream, and the response should not last the lifetime of a session.
     const run = createRun({
-      folder: String(body.folder ?? ""),
-      mountId: body.mountId ? String(body.mountId) : null,
-      prompt: String(body.prompt ?? ""),
+      folder: text.folder ?? "",
+      mountId: text.mountId || null,
+      prompt: text.prompt ?? "",
       model,
       provider: provider ?? null,
       permissionMode,
