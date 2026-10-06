@@ -4439,6 +4439,22 @@ async function completeTaskForRun(args: Record<string, unknown>, runId: string) 
   const notHeld = notHeldByRun("complete_task", taskId, runId);
   if (notHeld) return notHeld;
 
+  // Answered from the row, because the close below restates `done` as
+  // `taskTransitionRefusal`'s allowed no-op and would then report a close this
+  // call never made. Past `notHeldByRun` the run holds the task, but the
+  // operator may have closed it from the board — which leaves the run column
+  // set — and the run repeats what it is told here to them.
+  const before = getTask(taskId);
+  if (before?.status === "done") {
+    return text(
+      before.completedByRunId === runId
+        ? `“${before.title}” is already done, and it is recorded as completed by ` +
+            "this run. Nothing was changed."
+        : `“${before.title}” is already done: the operator closed it, not this ` +
+            "run. Nothing was changed.",
+    );
+  }
+
   const outcome = await completeTaskWithValidation(taskId, runId);
 
   if (outcome.kind === "refused") {
@@ -5315,10 +5331,13 @@ function proposeRun(args: Record<string, unknown>, chatId: string, decision: Mod
     // at the click is two run ids for two cards, and — since a proposal that
     // fails to start is terminal — one of the cards is gone. Asked here after
     // the guard check above, because with no branch at either end there is
-    // nothing for a rival to be claiming.
+    // nothing for a rival to be claiming. The card being replaced is no rival,
+    // for the reason it does not count against the pending limit: it is
+    // decided in the same transaction that writes this one, and counted it
+    // refuses the correction of any card that carries a branch on.
     const rival = rivalContinuation(
       continuing[0].specId,
-      proposals.map((p) => ({
+      proposals.filter((p) => p.id !== superseded?.id).map((p) => ({
         specId: p.spec_id,
         title: p.title,
         status: p.status,
