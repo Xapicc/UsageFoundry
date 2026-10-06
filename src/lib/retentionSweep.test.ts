@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, describe, it } from "node:test";
@@ -49,6 +50,7 @@ before(async () => {
   root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-retention-")));
   process.env.DATA_DIR = path.join(root, "data");
   process.env.CLAUDE_HOME = path.join(root, "claude");
+  process.env.CLAUDE_CONFIG_DIR = path.join(root, "claude");
   // The checkout sweep re-proves every stored repository path inside a mount
   // before it runs git there, so the chain case below needs a real one.
   process.env.WORKSPACE_ROOT = path.join(root, MOUNT_DIR);
@@ -508,6 +510,142 @@ describe("checkout reclaim across a continueBranch chain", () => {
 
     assert.equal(swept.removed, 0);
     assert.equal(fs.existsSync(c.slot), true, "a checkout with unlanded commits went");
+  });
+});
+
+/**
+ * A pick-up that lands while the transcript sweep is unlinking.
+ *
+ * `reopenRun` resumes whatever `runs.session_id` holds, and the sweep used to
+ * clear that column only after its whole unlink loop, and only on rows that were
+ * still terminal by then. A run picked up inside the loop had its transcript
+ * deleted and its id kept: the first cycle `--resume`d a file that was gone,
+ * ended `failed` telling the operator to run `claude --resume` against it, and
+ * no later sweep ever cleared the id, because a sweep clears only the ids of
+ * files it lists and that file no longer exists. Every pick-up after that failed
+ * the same way. Nothing throws on the way — the row looks like any other
+ * finished run — so the only place the order is checked is here.
+ *
+ * Driven through the real `reopenRun`, called from inside a patched
+ * `fs/promises.unlink` at the moment the sweep reaches that run's file, because
+ * the window is the sweep's own `await` and a fixture that set the row's status
+ * by hand would state the outcome rather than reach it.
+ */
+describe("sweepTranscripts against a run picked up mid-sweep", () => {
+  const sessionOf = (id: string) => `bbbbbbbb-0000-4000-8000-${id.padStart(12, "0")}`;
+  let projects: string;
+  const realUnlink = fsp.unlink;
+
+  /** A run that finished 40 days ago, and the transcript its session left. */
+  function seedFinished(runId: string, sessionNo: string): string {
+    const now = Date.now();
+    const folder = path.join(root, MOUNT_DIR, "proj");
+    fs.mkdirSync(folder, { recursive: true });
+    dbMod
+      .db()
+      .prepare(
+        `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
+                           created_at, started_at, finished_at, stop_reason, session_id)
+         VALUES (?, ?, 'task', 'completed', '{"maxIterations":2}', 2, 2, ?, ?, ?, 'done', ?)`,
+      )
+      .run(runId, folder, now - 41 * DAY, now - 41 * DAY, now - 40 * DAY, sessionOf(sessionNo));
+    const dir = path.join(projects, `-${MOUNT_DIR}-proj`);
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `${sessionOf(sessionNo)}.jsonl`);
+    fs.writeFileSync(file, '{"type":"user"}\n');
+    const t = (now - 40 * DAY) / 1000;
+    fs.utimesSync(file, t, t);
+    return file;
+  }
+
+  const row = (id: string) =>
+    dbMod.db().prepare("SELECT status, session_id FROM runs WHERE id = ?").get(id) as {
+      status: string;
+      session_id: string | null;
+    };
+
+  /** Runs this file picks up have a `CLAUDE_BIN` that cannot spawn: they end `failed`. */
+  async function untilTerminal(id: string): Promise<void> {
+    for (let i = 0; i < 100; i++) {
+      if (orchestrator.TERMINAL_STATUSES.includes(row(id).status as never)) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.fail(`${id} never settled; it is ${row(id).status}`);
+  }
+
+  /** Runs `body` with `fsp.unlink` replaced, and puts the real one back whatever happens. */
+  async function withUnlink<T>(
+    unlink: (p: fs.PathLike) => Promise<void>,
+    body: () => Promise<T>,
+  ): Promise<T> {
+    (fsp as { unlink: typeof fsp.unlink }).unlink = unlink as typeof fsp.unlink;
+    try {
+      return await body();
+    } finally {
+      (fsp as { unlink: typeof fsp.unlink }).unlink = realUnlink;
+    }
+  }
+
+  before(() => {
+    projects = path.join(process.env.CLAUDE_HOME as string, "projects");
+    settings.saveSettings({ transcriptRetentionDays: 30 });
+  });
+
+  beforeEach(() => {
+    dbMod.db().prepare("DELETE FROM runs").run();
+    fs.rmSync(projects, { recursive: true, force: true });
+  });
+
+  it("leaves no run holding a session whose transcript the sweep deleted", async () => {
+    const pickedFile = seedFinished("run-picked", "1");
+    seedFinished("run-control", "2");
+
+    let reopened: unknown = null;
+    await withUnlink(
+      async (p) => {
+        if (p === pickedFile && reopened === null) {
+          reopened = orchestrator.reopenRun("run-picked", { maxIterations: 3 });
+        }
+        return realUnlink(p);
+      },
+      () => retention.sweepTranscripts(Date.now()),
+    );
+    assert.deepEqual(reopened, { ok: true }, "the pick-up has to have happened mid-sweep");
+
+    await untilTerminal("run-picked");
+    await retention.sweepTranscripts(Date.now());
+
+    assert.equal(row("run-control").session_id, null, "control: a swept terminal run's session is cleared");
+    assert.equal(fs.existsSync(pickedFile), false);
+    assert.equal(
+      row("run-picked").session_id,
+      null,
+      "the picked-up run will --resume a transcript the sweep just deleted",
+    );
+  });
+
+  it("keeps the session of a file it could not delete, and clears one that was already gone", async () => {
+    const stuck = seedFinished("run-stuck", "3");
+    const vanished = seedFinished("run-vanished", "4");
+
+    const swept = await withUnlink(
+      async (p) => {
+        if (p === stuck) throw Object.assign(new Error("read-only file system"), { code: "EROFS" });
+        // Removed between the walk and the unlink, as the CLI's own cleanup does.
+        if (p === vanished) fs.rmSync(p);
+        return realUnlink(p);
+      },
+      () => retention.sweepTranscripts(Date.now()),
+    );
+
+    assert.equal(swept.removed, 0, "nothing here was this sweep's to remove");
+    assert.equal(fs.existsSync(stuck), true);
+    assert.equal(
+      row("run-stuck").session_id,
+      sessionOf("3"),
+      "a transcript that is still on disk is still what the run resumes into",
+    );
+    assert.equal(row("run-vanished").session_id, null);
   });
 });
 
