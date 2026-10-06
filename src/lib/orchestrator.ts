@@ -390,6 +390,14 @@ export interface RunRow {
    */
   validation_cycles: number;
   /**
+   * The start of the earliest work cycle whose boundary never read the task
+   * checks' verdicts, because the loop left above it — a park, a guard, a
+   * ceiling cut. The first boundary after the pick-up reads from here rather
+   * than from its own cycle's start. Null once a boundary has read, and cleared
+   * by `reopenRun`, which starts a fresh segment.
+   */
+  verdicts_unread_since: number | null;
+  /**
    * What the agent said when it reported it could not finish, clipped to
    * `MAX_NEEDS_REVIEW_REASON`.
    *
@@ -9419,6 +9427,18 @@ export async function startRun(id: string): Promise<void> {
    * happened would be delivered into a conversation that has moved on.
    */
   let pendingPushback: string | null = null;
+  /**
+   * Where the next boundary starts reading verdicts from: the start of the
+   * earliest cycle no boundary has read for, or null when the last one did.
+   *
+   * On the row, unlike `pendingPushback`, because what it guards against is a
+   * verdict landing *during* a park. A cycle that parks breaks out above the
+   * boundary, which reads nothing, and the first boundary after the resume used
+   * its own cycle's start — so a `not-finished` that landed during the wait
+   * was older than every boundary that could have read it, and the run ended
+   * `completed` still holding the task the check had judged unfinished.
+   */
+  let verdictsUnreadSince: number | null = run.verdicts_unread_since ?? null;
   let stopReason = "";
   let finalStatus: RunStatus = "completed";
   /** Set only by the needs-review branch, so any other ending clears the row. */
@@ -10030,6 +10050,13 @@ export async function startRun(id: string): Promise<void> {
       // back into the previous cycle, whose figures the UPDATE below has
       // already folded into `spent_usd`.
       const cycleStartedAt = Date.now();
+      // The earlier of the two, so a cycle that follows one whose boundary was
+      // never reached — a park's resume, or the `continue` after a ceiling
+      // cut — reads the verdicts that landed in between. Still read once: the
+      // boundary that reads them clears this, and every later cycle starts
+      // after that read.
+      const verdictsSince = Math.min(verdictsUnreadSince ?? cycleStartedAt, cycleStartedAt);
+      verdictsUnreadSince = verdictsSince;
 
       // Frozen here for the same reason: the limit this cycle is spawned
       // with is derived from it, and the two `+=` lines after the cycle
@@ -10955,7 +10982,9 @@ export async function startRun(id: string): Promise<void> {
       // and the cycle cap below would end on the default of one cycle a run
       // that is about to be given the thing it was missing. A claim for the
       // validator to check is left in flight for the same reason — the boundary
-      // that would act on its verdict is the one this run is not crossing.
+      // that would act on its verdict is the one this run is not crossing, and
+      // `verdictsUnreadSince` carries this cycle's start across the park so the
+      // first boundary after the resume is the one that does.
       //
       // Asked of the record rather than of anything the agent said, so a model
       // that calls `request_stack` and then carries on working still parks, and
@@ -11022,9 +11051,10 @@ export async function startRun(id: string): Promise<void> {
       const { validationAtBoundary, recordValidationCycle } = await import(
         "./validation"
       );
-      const heldBack = await validationAtBoundary(id, cycleStartedAt, () =>
+      const heldBack = await validationAtBoundary(id, verdictsSince, () =>
         interrupts.has(id),
       );
+      verdictsUnreadSince = null;
 
       // Completion signal from the continuation protocol. Recorded even when it
       // is absent, because "the agent said the task was finished" is the only
@@ -11188,6 +11218,7 @@ export async function startRun(id: string): Promise<void> {
       // other.
       guard_refunds: guardRefunds,
       stack_waits: stackWaits,
+      verdicts_unread_since: verdictsUnreadSince,
       spent_usd: spentUSD,
       spent_tokens: spentTokens,
       spent_usd_est: spentEstUSD,
@@ -13135,10 +13166,18 @@ export function reopenRun(
       // `pause_count` stays because `ensureWorktree` reads it as "has worked
       // before", and zeroing it would send a run parked in its first cycle
       // past the orphaned-branch guard.
+      //
+      // `verdicts_unread_since=NULL` because it is a park's carry and this is
+      // not a park's resume. Every ending above the verdict boundary leaves it
+      // set, `needs-review` included, and a run that said it could not finish
+      // must never be sent back into a cycle by a verdict — least of all on the
+      // pick-up of the operator who came to answer it. A pick-up stays the
+      // fresh segment it has always been.
       `UPDATE runs SET status=?, budget=?, max_iterations=?, follow_up=?, reopened_at=?,
          started_at=NULL, finished_at=NULL, exit_code=NULL, stop_reason=NULL,
          needs_review_reason=NULL, paused_ms=0, paused_at=NULL, refusal_pauses=0,
-         resume_at=NULL, restart_closed=0, restart_cut_cycle=0, set_aside_at=NULL
+         resume_at=NULL, restart_closed=0, restart_cut_cycle=0, set_aside_at=NULL,
+         verdicts_unread_since=NULL
          WHERE id=? AND status=?`,
     )
     .run(

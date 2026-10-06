@@ -55,12 +55,14 @@ assert.equal(
     "run against the real database",
 );
 
-const { createRun, getRun, reconcileOnBoot, releaseStackWaits, stopRun } =
+const { createRun, getRun, reconcileOnBoot, releaseStackWaits, resumeRun, stopRun } =
   require("./orchestrator") as typeof import("./orchestrator");
 const { readReceipts, stackGrants } = require("./stacks") as typeof import("./stacks");
 const { declineStackRequest, recordStackRequest, stackRequestsOfRun, stackWaitOf } =
   require("./stackRequests") as typeof import("./stackRequests");
 const { db } = require("./db") as typeof import("./db");
+const settings = require("./settings") as typeof import("./settings");
+const tasks = require("./tasks") as typeof import("./tasks");
 const interrupts = (globalThis as unknown as {
   __ufInterrupts: Map<string, import("./orchestrator").Interrupt>;
 }).__ufInterrupts;
@@ -321,5 +323,145 @@ describe("a run that asks for a stack", () => {
     assert.equal(parked.early_ends, 1);
     assert.equal(parked.stack_waits, 1);
     stopRun(id);
+  });
+});
+
+/**
+ * A task check started in a cycle that ends in a park, whose verdict lands while
+ * the run is parked.
+ *
+ * The boundary acts only on a verdict that finished inside the cycle it closes,
+ * so that a verdict buys a cycle once — and a park breaks out above the boundary,
+ * which reads nothing. The first boundary after the resume then read from the
+ * resumed cycle's start, and a `not-finished` that landed during the wait was
+ * older than that: no pushback, no cycle, and the run ended `completed` still
+ * holding the task the validator had just judged unfinished.
+ */
+describe("a task check left in flight by a park", () => {
+  let seq = 0;
+
+  /** What `complete_task` leaves when the check is on: the task claimed, a check running. */
+  function claimAndValidate(runId: string): { taskId: string; reviewId: string } {
+    seq += 1;
+    const parsed = tasks.normalizeTaskInput(
+      { title: `Ship the crate ${seq}`, body: "the brief" },
+      { origin: "operator", createdByRunId: null },
+    );
+    if (!parsed.ok) throw new Error(parsed.error);
+    const created = tasks.createTask(parsed.value);
+    if (!created.ok) throw new Error(created.error);
+    const claimed = tasks.updateTask(created.task.id, { status: "claimed" }, { kind: "run", runId });
+    if (!claimed.ok) throw new Error(claimed.error);
+    const reviewId = `review-parked-${seq}`;
+    db()
+      .prepare(
+        `INSERT INTO run_reviews (id, run_id, kind, created_at, finished_at, status, text, verdict, task_id)
+         VALUES (?, ?, 'validate', ?, NULL, 'running', NULL, NULL, ?)`,
+      )
+      .run(reviewId, runId, Date.now(), created.task.id);
+    return { taskId: created.task.id, reviewId };
+  }
+
+  function verdictLands(reviewId: string): void {
+    const text = [
+      "```json",
+      JSON.stringify({ verdict: "not-finished", reason: "PARKED-MARKER the tests were never written" }),
+      "```",
+    ].join("\n");
+    db()
+      .prepare(
+        "UPDATE run_reviews SET status='completed', finished_at=?, text=?, verdict='not-finished' WHERE id=?",
+      )
+      .run(Date.now(), text, reviewId);
+  }
+
+  /** How the first cycle ends besides claiming the task, and how the run is handed back. */
+  type Park = "stack" | "ceiling" | "guard";
+
+  async function scenario(folder: string, park: Park, verdictDuringPark: boolean) {
+    settings.saveSettings({ validateTaskCompletion: true, maxValidationCycles: 2 });
+    let handles: { taskId: string; reviewId: string } | null = null;
+    const ask = park === "stack" || park === "ceiling" ? { name: `zig-${folder}`, binaries: ["zig"] } : undefined;
+    const id = start(folder, [
+      {
+        ask,
+        during: () => {
+          handles = claimAndValidate(scriptedRun);
+          if (park === "ceiling") {
+            interrupts.set(scriptedRun, {
+              kind: "prune",
+              reason: "This work cycle's context reached the ceiling.",
+              pause: false,
+              at: Date.now(),
+            });
+          }
+          if (park === "guard") {
+            interrupts.set(scriptedRun, {
+              kind: "guard",
+              reason: "Paused: this run reached its share of the 5-hour window.",
+              code: "session_fraction",
+              pause: true,
+              // An hour out, so the sweeper never hands it back on its own.
+              resumeAt: Date.now() + 3_600_000,
+              at: Date.now(),
+            });
+          }
+        },
+        reply: "Called complete_task.",
+      },
+      {
+        during: () => {
+          if (!verdictDuringPark) verdictLands(handles!.reviewId);
+        },
+        reply: "Carried on. DONE",
+      },
+      { reply: "Wrote the tests. DONE" },
+    ]);
+
+    const parked = await settled(id);
+    assert.equal(parked.status, park === "guard" ? "paused" : "waiting-for-stack", parked.stop_reason ?? "");
+    if (verdictDuringPark) verdictLands(handles!.reviewId);
+    // Later than the verdict by a clock tick, so the resumed cycle's start
+    // cannot share its millisecond and admit it by accident.
+    await new Promise((r) => setTimeout(r, 20));
+    if (park === "guard") {
+      assert.equal(resumeRun(id), "requeued");
+    } else {
+      const [request] = stackRequestsOfRun(id);
+      assert.equal(declineStackRequest(request.id), true);
+      releaseStackWaits(readReceipts(receiptsDir).receipts);
+    }
+
+    const done = await settled(id);
+    const task = tasks.getTask(handles!.taskId)!;
+    const prompts = argvs.map((args) => args[args.indexOf("-p") + 1]);
+    return { done, task, prompts };
+  }
+
+  function assertVerdictBoughtACycle(r: Awaited<ReturnType<typeof scenario>>, expected: number): void {
+    assert.equal(
+      r.prompts.length,
+      expected,
+      `the verdict was dropped: ${r.prompts.length} spawns, run ${r.done.status} (${r.done.stop_reason}), ` +
+        `task ${r.task.status} and claimed by ${r.task.claimedByRunId === r.done.id ? "this run" : r.task.claimedByRunId}`,
+    );
+    assert.match(r.prompts[expected - 1], /PARKED-MARKER/, "the granted cycle was not shown the evidence");
+    assert.equal(r.done.validation_cycles, 1, "a verdict buys one cycle");
+  }
+
+  it("control: a verdict that lands in the resumed cycle buys a cycle", async () => {
+    assertVerdictBoughtACycle(await scenario("verdict-after-resume", "stack", false), 3);
+  });
+
+  it("acts on a verdict that landed while the run waited for a stack", async () => {
+    assertVerdictBoughtACycle(await scenario("verdict-during-stack-wait", "stack", true), 3);
+  });
+
+  it("acts on a verdict that landed while a ceiling-cut cycle's park waited", async () => {
+    assertVerdictBoughtACycle(await scenario("verdict-during-ceiling-park", "ceiling", true), 3);
+  });
+
+  it("acts on a verdict that landed while a guard had the run paused", async () => {
+    assertVerdictBoughtACycle(await scenario("verdict-during-guard-pause", "guard", true), 3);
   });
 });
