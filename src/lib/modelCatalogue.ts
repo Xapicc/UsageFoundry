@@ -98,6 +98,7 @@ const MODEL_LABELS: Record<string, string> = {
   "claude-opus-4-0": "Claude Opus 4",
   "claude-3-opus": "Claude 3 Opus",
 
+  "claude-sonnet-5-5": "Claude Sonnet 5.5",
   "claude-sonnet-5": "Claude Sonnet 5",
   "claude-sonnet-4-6": "Claude Sonnet 4.6",
   "claude-sonnet-4-5": "Claude Sonnet 4.5",
@@ -155,6 +156,10 @@ const ONE_MEGA_VARIANTS: { id: string; base: string }[] = [
  * entries are off for the ordinary reason: they are in the price table because
  * a transcript may still name one, which is not a reason to start new work on
  * one. Every one of them is one switch away.
+ *
+ * `claude-sonnet-5-5` is off for the first clause: current, GA and priced, but
+ * the pinned 2.1.280 binary names neither it nor a `[1m]` of it, which is also
+ * why `ONE_MEGA_VARIANTS` has no row for it.
  */
 const ENABLED_ON_SEED: ReadonlySet<string> = new Set([
   "claude-fable-5-1",
