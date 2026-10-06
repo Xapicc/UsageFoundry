@@ -44,12 +44,17 @@ Twenty are renderings rather than functions — every `*.test.tsx` in the tree, 
 | `resumeControl.test.ts` |  |
 | `resumeMissingTranscript.test.ts` |  |
 
-## [Fleet stop, hold and shutdown](testing/fleet-and-shutdown.md)
+## [Fleet stop and hold](testing/fleet-stop-and-hold.md)
 
 | Test file | Also in |
 |---|---|
 | `fleet.test.ts` | [harnesses] |
 | `restartClosedView.test.ts` |  |
+
+## [Shutdown](testing/shutdown.md)
+
+| Test file | Also in |
+|---|---|
 | `shutdown.test.ts` | [workflows] |
 
 ## [Data directory ownership, retention and migrations](testing/data-dir-retention-and-migrations.md)
@@ -151,7 +156,7 @@ Twenty are renderings rather than functions — every `*.test.tsx` in the tree, 
 |---|---|
 | `loopBoardCount.test.ts` |  |
 | `loopMergeOwnership.test.ts` |  |
-| `loopSection.test.ts` |  |
+| `loopSection.test.ts` | [fleet] |
 | `workflows.test.ts` | [argv], [pricing], [workflows], [decider] |
 
 Units that are about no test file in the tree:
@@ -235,7 +240,7 @@ Units that are about no test file in the tree:
 |---|---|
 | `conflictedPaths.test.ts` |  |
 | `mergeQueue.test.ts` | [argv] |
-| `mergeQueueDrain.test.ts` |  |
+| `mergeQueueDrain.test.ts` | [fleet] |
 | `mergeQueueOrder.test.ts` |  |
 | `mergeQueueView.test.ts` |  |
 | `midOperationSlot.test.ts` |  |
@@ -445,7 +450,7 @@ It prints nothing as this is written. Whoever owns a file it names owes that fil
 
 [queue]: testing/run-queue-and-admission.md
 [cycle]: testing/work-cycle-prompts-and-endings.md
-[fleet]: testing/fleet-and-shutdown.md
+[fleet]: testing/fleet-stop-and-hold.md
 [data-dir]: testing/data-dir-retention-and-migrations.md
 [budgets]: testing/budgets-and-spend.md
 [pricing]: testing/pricing-and-models.md

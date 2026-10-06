@@ -5360,7 +5360,12 @@ function advanceInstance(instanceId: string): void {
   // The merge's shape and its claim, for its reason: the block awaits reviews
   // and runs, and two advances arriving together would otherwise both review
   // the same branches.
+  //
+  // Held at the claim for the deciding turn's reason: every branch it is handed
+  // is a billed review nobody is watching. Left `waiting`, so the lift's
+  // `releaseDependents` claims it.
   for (const review of step.review) {
+    if (newWorkPaused()) break;
     if (!claimBlock(instanceId, review.nodeId)) continue;
     void startReviewBlock(instanceId, review.nodeId, review.runIds).catch((err) => {
       finishMergeBlock(instanceId, review.nodeId, {
@@ -6247,7 +6252,9 @@ function stepPass(
     });
   }
 
+  // Held as `advanceInstance`'s review claims are, and for their reason.
   for (const review of step.review) {
+    if (newWorkPaused()) break;
     const id = memberId(review.nodeId);
     if (!claimBlock(instanceId, id)) continue;
     wrote = true;
@@ -7303,6 +7310,13 @@ export async function startReviewBlock(
   // already written this block off, and seeding its branches would draw a
   // review on the page that never happened.
   if (!reviewStillOpen(instanceId, nodeId)) return;
+  // And the hold, `startBlockTurn`'s question after its own awaits: the claim
+  // asked before the snapshot. Nothing is seeded yet, so the claim is handed
+  // back for the lift rather than written off.
+  if (newWorkPaused()) {
+    releaseBlockClaim(instanceId, nodeId);
+    return;
+  }
 
   // Seeded once. `INSERT OR IGNORE` because a retried block finds its rows.
   const now = Date.now();
@@ -7415,8 +7429,10 @@ async function driveReviewItem(
 
     // Waited for rather than refused: a full assist queue is a shortage that
     // clears in minutes, and a branch set aside over it would be judged by the
-    // queue rather than by a review.
-    if (assistBudgetFull()) {
+    // queue rather than by a review. The hold is waited out the same way, for a
+    // review this block had not started when it was pressed — a reviewer is new
+    // spending — and the poll is what notices the lift.
+    if (assistBudgetFull() || newWorkPaused()) {
       await pause();
       continue;
     }
