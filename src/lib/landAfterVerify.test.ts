@@ -23,8 +23,9 @@ import { after, before, beforeEach, describe, it } from "node:test";
  * `land.test.ts` pins it; this file pins that `landRun` asks it at the moment
  * that matters — which no test of the pure function can.
  *
- * Its last describe is the one thing about the checkout no status read can
- * see: a file it ignores, which git's merge replaced by default.
+ * Its last two describes are what no status read of the checkout can see: a
+ * file it ignores, which git's merge replaced by default, and another git
+ * process holding its index lock.
  *
  * Its own file, with `DATA_DIR` named before the first import, for
  * `loopMergeOwnership.test.ts`' reason: `config.ts` is read at module load.
