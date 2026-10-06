@@ -9738,6 +9738,59 @@ export async function startRun(id: string): Promise<void> {
         break;
       }
 
+      // Every refusal that can stop a cycle before its child exists is taken
+      // here, above the increment and the clears of `followUp` and
+      // `pendingPushback` below. A cycle refused here was never spawned, so it
+      // is charged no work cycle and its message is still undelivered: below
+      // them, a one-cycle run refused at its first spawn could not be picked up
+      // the way its own stop reason says to, and a pick-up's note was cleared
+      // although nothing ever received it.
+      //
+      // A run can last hours, and the working directory was validated once when
+      // it was created. Re-checking before every spawn means a folder that has
+      // since been replaced by a symlink out of the mount cannot be handed to a
+      // process that writes files.
+      const stillContained = resolveWorkspaceFolder(
+        workDir,
+        describeFolder(workDir).mountId,
+      );
+      if (stillContained !== workDir) {
+        throw new Error(`Working directory changed underneath the run: ${workDir}`);
+      }
+
+      // The `pkill`/`killall` denial, for the provider that cannot carry it on
+      // an argv. **The cycle is refused rather than degraded when it is not
+      // there**, which is the one place this differs from the read guard and the
+      // vault skill below: those degrade to a cycle that reads more or knows
+      // less, and this would degrade to a cycle that can kill the server
+      // supervising every run in flight. `codexRules.ts` carries what the file
+      // is, why it is a file rather than a flag, and what it does not cover.
+      if (run.provider === "codex") {
+        const rules = prepareCodexRules();
+        if (rules.kind === "unavailable") {
+          throw new Error(
+            `Refusing to spawn a Codex work cycle with no process-kill denial: ${rules.reason}`,
+          );
+        }
+      }
+
+      // Read per cycle, so a sign-out reaches a parked run before its next cycle
+      // rather than after it. Refused rather than degraded: without the sign-in
+      // the only thing this cycle could do is go to Anthropic under a model id
+      // Anthropic does not have, or under the operator's plan, which is the one
+      // thing a local run exists not to spend.
+      let local: { signIn: LocalSignIn; model: string } | null = null;
+      if (run.provider === "local") {
+        const signIn = getLocalSignIn();
+        if (!signIn) {
+          throw new Error(
+            "Refusing to spawn a local-model work cycle: the local provider is signed out. Sign in under Settings and reopen the run.",
+          );
+        }
+        ensureLocalConfigDir();
+        local = { signIn, model: run.model ?? signIn.model };
+      }
+
       // Read before the increment below: what the next prompt needs to know is
       // how much this run had already been charged for *before* the cycle it is
       // about to open, which is what says whether opening with the task again
@@ -9953,18 +10006,6 @@ export async function startRun(id: string): Promise<void> {
         );
       }
 
-      // A run can last hours, and the working directory was validated once when
-      // it was created. Re-checking before every spawn means a folder that has
-      // since been replaced by a symlink out of the mount cannot be handed to a
-      // process that writes files.
-      const stillContained = resolveWorkspaceFolder(
-        workDir,
-        describeFolder(workDir).mountId,
-      );
-      if (stillContained !== workDir) {
-        throw new Error(`Working directory changed underneath the run: ${workDir}`);
-      }
-
       // What this cycle may write, if anything confines it at all. Read per
       // cycle rather than per run for the reason the containment check above is:
       // a run outlives the policy it started under, and an operator who has
@@ -9993,39 +10034,6 @@ export async function startRun(id: string): Promise<void> {
       // Read off the row rather than off anything in this segment's own state,
       // so a run picked up after a restart is spawned as what it was created as.
       const adapter = selectCycleAdapter(run.provider);
-
-      // The `pkill`/`killall` denial, for the provider that cannot carry it on
-      // an argv. **The cycle is refused rather than degraded when it is not
-      // there**, which is the one place this differs from the read guard and the
-      // vault skill above: those degrade to a cycle that reads more or knows
-      // less, and this would degrade to a cycle that can kill the server
-      // supervising every run in flight. `codexRules.ts` carries what the file
-      // is, why it is a file rather than a flag, and what it does not cover.
-      if (run.provider === "codex") {
-        const rules = prepareCodexRules();
-        if (rules.kind === "unavailable") {
-          throw new Error(
-            `Refusing to spawn a Codex work cycle with no process-kill denial: ${rules.reason}`,
-          );
-        }
-      }
-
-      // Read per cycle, so a sign-out reaches a parked run before its next cycle
-      // rather than after it. Refused rather than degraded: without the sign-in
-      // the only thing this cycle could do is go to Anthropic under a model id
-      // Anthropic does not have, or under the operator's plan, which is the one
-      // thing a local run exists not to spend.
-      let local: { signIn: LocalSignIn; model: string } | null = null;
-      if (run.provider === "local") {
-        const signIn = getLocalSignIn();
-        if (!signIn) {
-          throw new Error(
-            "Refusing to spawn a local-model work cycle: the local provider is signed out. Sign in under Settings and reopen the run.",
-          );
-        }
-        ensureLocalConfigDir();
-        local = { signIn, model: run.model ?? signIn.model };
-      }
 
       const args = adapter.buildArgs({
         prompt,
