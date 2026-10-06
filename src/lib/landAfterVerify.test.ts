@@ -404,26 +404,32 @@ describe("the check runs against what the land would carry", () => {
   }
 });
 
-const OPERATORS_ENV = "API_KEY=the-operators-own-key\n";
+const OPERATORS_FILE = '{ "Values": { "API_KEY": "the-operators-own-key" } }\n';
+const PLACEHOLDER = '{ "Values": { "API_KEY": "placeholder" } }\n';
 
 /**
- * A run whose branch tracks `.env`, which the operator's checkout ignores —
- * got there with `git add -f`, git's own hint when `add` meets an ignored path.
- * With `operatorEnv` the operator's checkout holds its own `.env`.
+ * A run whose branch tracks `local.settings.json`, which the operator's checkout
+ * ignores — got there with `git add -f`, git's own hint when `add` meets an
+ * ignored path. With `operatorFile` the operator's checkout holds its own.
+ *
+ * Not `.env`, which this used to be: the default `isolationCopyGlobs` names
+ * that, so a branch carrying it is now refused as a seeded file before the
+ * merge is reached (`seededRefusal`, pinned in `deliverRun.test.ts`), and what
+ * is pinned here is the merge's own refusal for an ignored file nothing seeds.
  */
-function trackedEnvScene(name: string, opts: { operatorEnv: boolean }): Scene {
-  const s = scene(name, { gitignore: ".env\n" });
-  if (opts.operatorEnv) fs.writeFileSync(path.join(s.repo, ".env"), OPERATORS_ENV);
-  fs.writeFileSync(path.join(s.slot, ".env"), "API_KEY=placeholder\n");
-  git(s.slot, "add", "-f", ".env");
-  git(s.slot, "commit", "-qm", "track .env");
+function trackedIgnoredScene(name: string, opts: { operatorFile: boolean }): Scene {
+  const s = scene(name, { gitignore: "local.settings.json\n" });
+  if (opts.operatorFile) fs.writeFileSync(path.join(s.repo, "local.settings.json"), OPERATORS_FILE);
+  fs.writeFileSync(path.join(s.slot, "local.settings.json"), PLACEHOLDER);
+  git(s.slot, "add", "-f", "local.settings.json");
+  git(s.slot, "commit", "-qm", "track local.settings.json");
   return s;
 }
 
 describe("landRun never overwrites a file the operator's checkout ignores", () => {
   for (const strategy of ["merge", "squash"] as const) {
     it(`refuses a ${strategy} over one, naming it, and keeps its content`, async () => {
-      const s = trackedEnvScene(`ignored-${strategy}`, { operatorEnv: true });
+      const s = trackedIgnoredScene(`ignored-${strategy}`, { operatorFile: true });
 
       // `git status --porcelain` never lists an ignored file, so the checkout
       // reads as clean and Land is offered: the refusal has to come from the merge.
@@ -433,10 +439,10 @@ describe("landRun never overwrites a file the operator's checkout ignores", () =
 
       const landed = await land.landRun(s.runId, strategy);
 
-      assert.equal(landed.ok, false, "landed over the operator's .env");
-      assert.match(landed.ok ? "" : landed.reason, /uf\/ignored-\w+ tracks \.env/);
-      // The data loss: "API_KEY=placeholder\n", with the card saying it landed.
-      assert.equal(fs.readFileSync(path.join(s.repo, ".env"), "utf8"), OPERATORS_ENV);
+      assert.equal(landed.ok, false, "landed over the operator's local.settings.json");
+      assert.match(landed.ok ? "" : landed.reason, /uf\/ignored-\w+ tracks local\.settings\.json/);
+      // The data loss: the placeholder, with the card saying it landed.
+      assert.equal(fs.readFileSync(path.join(s.repo, "local.settings.json"), "utf8"), OPERATORS_FILE);
       assert.equal(git(s.repo, "rev-parse", "main").trim(), s.base);
       assert.equal(git(s.repo, "status", "--porcelain").trim(), "", "the checkout was left part-way");
       assert.equal(landedAt(s.runId), null);
@@ -446,12 +452,12 @@ describe("landRun never overwrites a file the operator's checkout ignores", () =
   it("lands a branch tracking an ignored path when the operator holds no file there", async () => {
     // The control: what is refused is the operator's file, not the branch
     // tracking a path `.gitignore` names.
-    const s = trackedEnvScene("ignored-absent", { operatorEnv: false });
+    const s = trackedIgnoredScene("ignored-absent", { operatorFile: false });
 
     const landed = await land.landRun(s.runId, "merge");
 
     assert.equal(landed.ok, true, landed.ok ? "" : landed.reason);
-    assert.equal(fs.readFileSync(path.join(s.repo, ".env"), "utf8"), "API_KEY=placeholder\n");
+    assert.equal(fs.readFileSync(path.join(s.repo, "local.settings.json"), "utf8"), PLACEHOLDER);
   });
 });
 

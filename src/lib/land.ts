@@ -8,7 +8,7 @@ import { checkoutWriter, claimCheckout, releaseCheckout } from "./checkoutClaim"
 import { db } from "./db";
 import { passMemberOf, passNumberOf } from "./passIds";
 import { commitDiff, type DiffFile } from "./diff";
-import { githubTokenFor } from "./config";
+import { githubTokenFor, WORKSPACE_MOUNTS } from "./config";
 import { getSettings } from "./settings";
 import {
   certificationRefusal,
@@ -30,6 +30,7 @@ import {
   activeRuns,
   auxWorktreePath,
   conflictKey,
+  copyGlobsFor,
   describeFolder,
   emitRunEvent,
   forgetSlotVerdict,
@@ -37,6 +38,7 @@ import {
   githubEnv,
   holdSlot,
   isShuttingDown,
+  matchesCopyGlobs,
   overlaps,
   repoSlug,
   resolveWorkspaceFolder,
@@ -246,6 +248,13 @@ export interface LandState {
    * past the branch-exists check — Deliver does not read `blocked`.
    */
   certification: CertificationState;
+  /**
+   * Files seeding copied in from the operator's checkout that the branch's
+   * history carries (`seededOnBranch`). Null where no target was found to
+   * measure from, which both exits refuse for that already. Read by Deliver as
+   * well as Land, like `certification`.
+   */
+  seeded: SeededRead | null;
   landedAt: number | null;
   landedInto: string | null;
   landedStrategy: string | null;
@@ -550,6 +559,7 @@ export async function landState(
     pending: null,
     blocked: null,
     certification: NOT_REQUIRED,
+    seeded: null,
     landedAt: run.landed_at,
     landedInto: run.landed_into,
     landedStrategy: run.landed_strategy,
@@ -625,6 +635,14 @@ export async function landState(
     };
   }
 
+  const seeded = await seededOnBranch(
+    repoRoot,
+    tip || `refs/heads/${branch}`,
+    target.branch,
+    run.worktree_base,
+    seedGlobsOf(run),
+  );
+
   const counts = await git(
     repoRoot,
     ["rev-list", "--left-right", "--count", `${target.branch}...${branch}`],
@@ -679,6 +697,7 @@ export async function landState(
     preview,
     checkout,
     pending,
+    seeded,
   };
   return {
     ...state,
@@ -690,7 +709,15 @@ export async function landState(
         ...state,
         pendingCount: pending?.count ?? 0,
         loopBlock: loopStillRepeating(state.chain, asker),
-      }) ?? certificationRefusal(state.certification, "land"),
+      }) ??
+      // Ahead of the review, because taking the file out rewrites the tip
+      // that review would approve.
+      seededRefusal(seeded, {
+        branch,
+        target: target.branch,
+        exit: "land",
+      }) ??
+      certificationRefusal(state.certification, "land"),
   };
 }
 
@@ -720,6 +747,130 @@ function certificationOf(run: RunRow, tip: string): CertificationState {
       model: review.model,
     },
   };
+}
+
+/**
+ * The paths `seededOnBranch` found, or the git failure that stopped it looking.
+ */
+export type SeededRead = { ok: true; paths: string[] } | { ok: false; error: string };
+
+/** The patterns `seedWorktree` copies into this run's checkouts, as Settings names them now. */
+function seedGlobsOf(run: RunRow): string[] {
+  const settings = getSettings();
+  return copyGlobsFor(
+    run.repo_root ?? run.folder,
+    settings.isolationCopyGlobs,
+    settings.isolationCopyGlobsByRepo,
+    WORKSPACE_MOUNTS,
+  ).globs;
+}
+
+/**
+ * Which files seeding copies into a checkout some commit between the target and
+ * `tip` writes, leaving out any the target or the chain's base already tracks.
+ *
+ * `seedWorktree` puts the operator's own gitignored configuration — an `.env`,
+ * usually holding real credentials — into the run's checkout, and nothing there
+ * stops it being committed: `git add -f` is git's own hint when `add` meets an
+ * ignored path, and `add -A`, the agent's or `commitPending`'s, stages one the
+ * repository does not ignore. On the branch, Deliver published it and a land
+ * after moving the operator's copy aside put it into the target's history,
+ * because neither exit looked at what the branch carried. Both ask this.
+ *
+ * Every commit rather than the tip's tree, because what leaves is history: a
+ * later commit that deletes the file still pushes the one that added it. A
+ * merge is read against its first parent, which lists anything it brought in
+ * from the target — the subtraction takes those back out — and anything it
+ * wrote itself, while what it brought in from elsewhere is a commit in the
+ * range already. A path the target or the base tracks is the repository's own
+ * file: seeding copies only what a checkout lacks, so an edit to a tracked
+ * `.env.development` is ordinary work. Read off Settings as they are now, the
+ * operator's current word on what is private, because what was copied at the
+ * time is recorded only in a log line the event sweep deletes.
+ *
+ * `--name-only` opens no blob, `conflictedFiles`' exemption in `diffs.md`, and
+ * the driver flags are passed regardless. `-z` because the paths go out again
+ * as pathspecs and into a sentence. The merge, rename and relative-path modes
+ * are spelled out because each has a config key the repository sets.
+ */
+async function seededOnBranch(
+  repo: string,
+  tip: string,
+  target: string,
+  base: string | null,
+  globs: string[],
+): Promise<SeededRead> {
+  if (globs.length === 0) return { ok: true, paths: [] };
+  const known = [`refs/heads/${target}`, ...(base ? [base] : [])];
+  const log = await git(
+    repo,
+    [
+      "log", "-z", "--format=", "--name-only", "--no-renames", "--no-relative",
+      "--diff-merges=first-parent", "--no-color", "--no-ext-diff", "--no-textconv",
+      "--no-show-signature", tip, "--not", ...known, "--",
+    ],
+    { ...NO_CLOCK, trim: false },
+  );
+  if (!log.ok) return { ok: false, error: gitFailureLine(log.stderr) || "git log failed" };
+  const named = [...new Set(log.stdout.split("\0"))].filter(
+    (p) => p !== "" && matchesCopyGlobs(p, globs),
+  );
+  if (named.length === 0) return { ok: true, paths: [] };
+
+  const tracked = new Set<string>();
+  for (const ref of known) {
+    const listed = await git(
+      repo,
+      ["ls-tree", "-r", "-z", "--full-tree", "--name-only", ref, "--", ...named.map((p) => `:(top,literal)${p}`)],
+      { ...NO_CLOCK, trim: false },
+    );
+    if (!listed.ok) return { ok: false, error: gitFailureLine(listed.stderr) || "git ls-tree failed" };
+    for (const p of listed.stdout.split("\0")) if (p !== "") tracked.add(p);
+  }
+  return { ok: true, paths: named.filter((p) => !tracked.has(p)).sort() };
+}
+
+/**
+ * Why a branch carrying seeded files may not leave by `exit`, or null when it
+ * carries none. Null `read` is a state with no target to measure from, which
+ * both exits already refuse for that.
+ *
+ * Unreadable refuses, `checkoutStateOf`'s rule and the stronger here for what
+ * the door does: a push cannot be taken back. Worded so it reads the same on
+ * the card before a press as in answer to one, the card and the press giving
+ * one sentence. The way out is spelled as history rather than a deletion, and
+ * the other way out is the setting, because a repository can mean to track a
+ * file the list names.
+ */
+export function seededRefusal(
+  read: SeededRead | null,
+  s: { branch: string; target: string; exit: "land" | "deliver" },
+): string | null {
+  if (!read) return null;
+  const leaving = s.exit === "deliver" ? "Delivering" : "Landing";
+  if (!read.ok) {
+    return (
+      `Could not read which files ${s.branch} carries, so whether it holds one copied in from ` +
+      `your checkout is unknown, and ${leaving.toLowerCase()} it waits until that can be read: ${read.error}`
+    );
+  }
+  if (read.paths.length === 0) return null;
+  const one = read.paths.length === 1;
+  const it = one ? "it" : "them";
+  const rest = read.paths.length - DIRT_NAMED;
+  const named = `${read.paths.slice(0, DIRT_NAMED).join(", ")}${rest > 0 ? ` and ${rest} more` : ""}`;
+  const consequence =
+    s.exit === "deliver"
+      ? `Delivering would publish ${it} to GitHub, and a push cannot be taken back.`
+      : `Landing would put ${it} into ${s.target}'s history, from where any push publishes ${it}.`;
+  return (
+    `${s.branch} carries ${named}, which this app copies into every checkout from yours: your own ` +
+    `configuration, and often credentials. ${consequence} Take ${it} out of every commit on the ` +
+    `branch, not only the last, since a commit deleting a file still carries the one that added it — ` +
+    `in the run's checkout, \`git rebase -i $(git merge-base ${s.target} HEAD)\` and ` +
+    `\`git rm --cached\` in each commit that adds ${it}. If the repository is meant to track ` +
+    `${one ? "this file" : "these files"}, take ${it} out of Settings' files copied into a new checkout instead.`
+  );
 }
 
 /** Every run on this run's branch, oldest first. See `chainRuns`. */
@@ -1631,6 +1782,15 @@ export async function landRun(
     // history that points back at these commits, and this is what makes them
     // identifiable afterwards.
     const tip = (await git(folder, ["rev-parse", branch], NO_CLOCK)).stdout;
+
+    // Asked again of the tip the merge takes, because `landState`'s answer was
+    // read before the check, and the card's Commit button can put a seeded
+    // file on the branch while it runs.
+    const seeded = seededRefusal(
+      await seededOnBranch(folder, tip || `refs/heads/${branch}`, target, run.worktree_base, seedGlobsOf(run)),
+      { branch, target, exit: "land" },
+    );
+    if (seeded) return { ok: false, reason: seeded };
 
     // Worked out before the recheck below, because nothing may await between
     // that read and the first write into the checkout — and worked out in the
@@ -5020,6 +5180,22 @@ export async function deliveryState(
     };
   }
 
+  const seeded = seededRefusal(state.seeded, {
+    branch: state.branch,
+    target: state.target ?? "",
+    exit: "deliver",
+  });
+  if (seeded) {
+    return {
+      possible: false,
+      reason: seeded,
+      remote: null,
+      head: null,
+      base: null,
+      delivered,
+    };
+  }
+
   // A pull request is a request to merge, so a local model's branch waits for
   // the same approval Land does before it is offered one.
   const uncertified = certificationRefusal(state.certification, "deliver");
@@ -5142,6 +5318,14 @@ export async function deliverRun(
 
   const state = await landState(runId);
   if (!state) return { ok: false, reason: "This run has no branch to deliver." };
+  // From `landState`'s read, so a press the card would not have offered runs no
+  // check; `pushAndOpen` asks again of the branch as it is pushed.
+  const seeded = seededRefusal(state.seeded, {
+    branch: state.branch,
+    target: state.target ?? "",
+    exit: "deliver",
+  });
+  if (seeded) return { ok: false, reason: seeded };
   const uncertified = certificationRefusal(state.certification, "deliver");
   if (uncertified) return { ok: false, reason: uncertified };
 
@@ -5241,6 +5425,16 @@ async function pushAndOpen(a: {
     const verify = await verifyInSlot(tree.path, state.branch, verifyCommand, "deliver");
     if (!verify.passed) return { ok: false, reason: verify.reason };
   }
+
+  // Of the branch as it is pushed rather than as `landState` read it before the
+  // check: a commit made during the check — the card's Commit button runs
+  // `add -A` — is pushed with the rest. Nothing after it awaits before the
+  // push's spawn.
+  const seeded = seededRefusal(
+    await seededOnBranch(folder, `refs/heads/${plan.head}`, plan.base, run.worktree_base, seedGlobsOf(run)),
+    { branch: plan.head, target: plan.base, exit: "deliver" },
+  );
+  if (seeded) return { ok: false, reason: seeded };
 
   // Asked again because the verify command above may have run for
   // `VERIFY_TIMEOUT_MS`, long enough for the run to be reopened or a

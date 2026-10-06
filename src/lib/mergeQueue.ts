@@ -8,6 +8,7 @@ import {
   landRun,
   landState,
   resolveConflicts,
+  seededRefusal,
   unsettledBranchRefusal,
   type LandAsker,
   type LandState,
@@ -209,6 +210,15 @@ export function planItem(
     if (!opts.autoResolve || unsettledBranchRefusal(state, "land")) {
       return { action: "fail", reason: state.blocked };
     }
+    // Nor on a branch carrying a file seeding copied in, which `landRun`
+    // refuses whatever a resolution does: taking it out rewrites the history a
+    // resolution would have been bought against.
+    const seeded = seededRefusal(state.seeded, {
+      branch: state.branch,
+      target: state.target ?? "",
+      exit: "land",
+    });
+    if (seeded) return { action: "fail", reason: `${state.blocked} ${seeded}` };
     // Nor on a branch a local model wrote on, which `landState` holds behind a
     // frontier review of its tip after the conflict. A resolution is a commit,
     // so `landRun` would stop at that gate whatever the resolution did — even

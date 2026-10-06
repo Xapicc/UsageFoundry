@@ -51,6 +51,7 @@ const base: LandState = {
   pending: null,
   blocked: null,
   certification: { required: false },
+  seeded: { ok: true, paths: [] },
   landedAt: null,
   landedInto: null,
   landedStrategy: null,
@@ -129,6 +130,16 @@ describe("planItem", () => {
     const reason = plan.action === "fail" ? plan.reason : "";
     assert.match(reason, /conflicts in 1 file/);
     assert.match(reason, /local model wrote \(run local123\).*none was attempted/);
+  });
+
+  it("fails a conflicting branch that carries a seeded file rather than paying to resolve it", () => {
+    // `landRun` refuses it whatever the resolution does, and taking the file
+    // out of the branch's history rewrites what would have been resolved.
+    const plan = planItem({ ...conflict, seeded: { ok: true, paths: [".env"] } }, open);
+    assert.equal(plan.action, "fail");
+    const reason = plan.action === "fail" ? plan.reason : "";
+    assert.match(reason, /conflicts in 1 file/);
+    assert.match(reason, /uf\/repo-1234abcd carries \.env, which this app copies into every checkout/);
   });
 
   it("stops trying to resolve once one refusal applies to all of them", () => {

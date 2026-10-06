@@ -232,21 +232,23 @@ describe("landing past a squash over a file the operator's checkout ignores", ()
     it(`refuses a ${strategy}, naming it, and keeps its content`, async () => {
       const name = `ignored-${strategy}`;
       const c = await squashedLinkA(name);
-      fs.writeFileSync(path.join(c.repo, ".gitignore"), ".env\n");
+      // Not `.env`, which the default seeding list names and so is refused as
+      // a seeded file before this path is reached (`seededRefusal`).
+      fs.writeFileSync(path.join(c.repo, ".gitignore"), "local.settings.json\n");
       git(c.repo, "add", ".gitignore");
-      git(c.repo, "commit", "-qm", "ignore .env");
-      fs.writeFileSync(path.join(c.repo, ".env"), "API_KEY=the-operators-own-key\n");
+      git(c.repo, "commit", "-qm", "ignore local.settings.json");
+      fs.writeFileSync(path.join(c.repo, "local.settings.json"), "the operator's own key\n");
       const b = linkB(name, c);
-      fs.writeFileSync(path.join(c.slot, ".env"), "API_KEY=placeholder\n");
-      git(c.slot, "add", "-f", ".env");
-      git(c.slot, "commit", "-qm", "link B tracks .env");
+      fs.writeFileSync(path.join(c.slot, "local.settings.json"), "placeholder\n");
+      git(c.slot, "add", "-f", "local.settings.json");
+      git(c.slot, "commit", "-qm", "link B tracks local.settings.json");
       const before = git(c.repo, "rev-parse", "main").trim();
 
       const landed = await land.landRun(b, strategy);
 
-      assert.equal(landed.ok, false, "landed over the operator's .env");
-      assert.match(landed.ok ? "" : landed.reason, /tracks \.env/);
-      assert.equal(read(path.join(c.repo, ".env")), "API_KEY=the-operators-own-key\n");
+      assert.equal(landed.ok, false, "landed over the operator's local.settings.json");
+      assert.match(landed.ok ? "" : landed.reason, /tracks local\.settings\.json/);
+      assert.equal(read(path.join(c.repo, "local.settings.json")), "the operator's own key\n");
       assert.equal(git(c.repo, "rev-parse", "main").trim(), before);
       assert.equal(git(c.repo, "status", "--porcelain").trim(), "", "the checkout was left part-way");
     });

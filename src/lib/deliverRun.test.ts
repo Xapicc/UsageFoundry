@@ -138,11 +138,19 @@ interface Scene {
  * `allocateSlotPath` would look for one, the operator's checkout on `main` and
  * clean, and `origin` reading as GitHub while pushing to a bare repository.
  */
-function scene(name: string, status = "completed"): Scene {
+function scene(
+  name: string,
+  status = "completed",
+  /** More files the base commit tracks, by repository-relative path. */
+  baseFiles: Record<string, string> = {},
+): Scene {
   const repo = path.join(root, MOUNT_DIR, name);
   fs.mkdirSync(repo);
   git(repo, "init", "-q", "-b", "main");
   fs.writeFileSync(path.join(repo, "shared.txt"), "base\n");
+  for (const [file, content] of Object.entries(baseFiles)) {
+    fs.writeFileSync(path.join(repo, file), content);
+  }
   git(repo, "add", "-A");
   git(repo, "commit", "-q", "-m", "base");
   const base = git(repo, "rev-parse", "main").trim();
@@ -279,6 +287,130 @@ describe("deliverRun refuses a branch something can still commit to, and pushes 
 
     assert.equal(state.possible, false);
     assert.equal(state.reason, pressed.ok ? "" : pressed.reason);
+  });
+});
+
+const OPERATORS_ENV = "API_KEY=the-operators-own-key\n";
+
+/**
+ * `s` with the operator's `.env` in their checkout and a copy in the run's
+ * slot, which is what `seedWorktree` leaves under the default
+ * `isolationCopyGlobs`. Copied here rather than by `ensureWorktree`, because
+ * what is pinned is what the exits do with a branch that took it in.
+ */
+function seedEnv(s: Scene): void {
+  fs.writeFileSync(path.join(s.repo, ".env"), OPERATORS_ENV);
+  fs.copyFileSync(path.join(s.repo, ".env"), path.join(s.slot, ".env"));
+}
+
+/** A scene whose `.gitignore` names `.env`, its `.env` seeded and committed with `git add -f`. */
+function forcedEnvScene(name: string): Scene {
+  const s = scene(name, "completed", { ".gitignore": ".env\n" });
+  seedEnv(s);
+  // git's own refusal, whose hint is the `-f` below.
+  assert.throws(() => git(s.slot, "add", ".env"));
+  git(s.slot, "add", "-f", ".env");
+  git(s.slot, "commit", "-qm", "track .env");
+  return s;
+}
+
+/**
+ * The operator's own configuration leaving by either exit.
+ *
+ * Measured before the fix, 2026-10-06 on git 2.39.5, in this harness: with the
+ * seeded `.env` committed by `git add -f`, `deliveryState` offered Deliver and
+ * `deliverRun` pushed the operator's key to the remote; `landRun` refused only
+ * on the operator's copy being in the way, and once it was moved aside as that
+ * sentence advised, landed it into `main`. `commitPending` stages a seeded file
+ * the repository does not ignore, since its `add -A` skips only ignored ones.
+ */
+describe("neither exit lets a file seeding copied in leave on the branch", () => {
+  it("refuses on the card and at the press a seeded .env committed with git add -f, pushing nothing", async () => {
+    const s = forcedEnvScene("seeded-forced");
+
+    const state = await land.deliveryState(s.runId);
+    const pressed = await land.deliverRun(s.runId);
+
+    assert.equal(state.possible, false);
+    assert.equal(pressed.ok, false);
+    const reason = pressed.ok ? "" : pressed.reason;
+    assert.equal(state.reason, reason);
+    assert.match(reason, /^uf\/seeded-forced carries \.env, which this app copies into every checkout from yours/);
+    assert.match(reason, /a push cannot be taken back/);
+    assert.equal(remoteTip(s), null);
+    assert.deepEqual(opened, []);
+  });
+
+  it("refuses a branch whose later commit deleted it, because the push carries the one that added it", async () => {
+    const s = forcedEnvScene("seeded-deleted");
+    git(s.slot, "rm", "-q", "--cached", ".env");
+    git(s.slot, "commit", "-qm", "untrack .env");
+    assert.equal(git(s.slot, "ls-tree", "--name-only", "HEAD", ".env").trim(), "");
+
+    const pressed = await land.deliverRun(s.runId);
+
+    assert.match(pressed.ok ? "" : pressed.reason, /^uf\/seeded-deleted carries \.env,/);
+    assert.equal(remoteTip(s), null);
+  });
+
+  it("refuses what the card's Commit button commits from a repository that does not ignore it", async () => {
+    const s = scene("seeded-unignored");
+    seedEnv(s);
+    fs.writeFileSync(path.join(s.slot, "more.txt"), "left uncommitted\n");
+
+    const committed = await land.commitPending(s.runId, "leftovers");
+    assert.equal(committed.ok, true, committed.ok ? "" : committed.reason);
+    assert.match(git(s.slot, "show", "--name-only", "--format=", "HEAD"), /^\.env$/m);
+
+    const pressed = await land.deliverRun(s.runId);
+
+    assert.match(pressed.ok ? "" : pressed.reason, /^uf\/seeded-unignored carries \.env,/);
+    assert.equal(remoteTip(s), null);
+  });
+
+  it("refuses the land, and still refuses it once the operator's copy is moved aside", async () => {
+    const s = forcedEnvScene("seeded-land");
+    const base = git(s.repo, "rev-parse", "main").trim();
+
+    const state = await land.landState(s.runId);
+    const landed = await land.landRun(s.runId, "merge");
+    // `overwriteRefusal`'s advice, taken.
+    fs.renameSync(path.join(s.repo, ".env"), path.join(root, "seeded-land.env"));
+    const again = await land.landRun(s.runId, "merge");
+
+    assert.match(state?.blocked ?? "", /^uf\/seeded-land carries \.env, .*into main's history/);
+    assert.equal(landed.ok ? "" : landed.reason, state?.blocked);
+    assert.equal(again.ok ? "" : again.reason, state?.blocked);
+    assert.equal(git(s.repo, "rev-parse", "main").trim(), base);
+    assert.equal(git(s.repo, "ls-tree", "--name-only", "main", ".env").trim(), "");
+  });
+
+  it("delivers a branch that edits a .env.development the repository tracks", async () => {
+    // The control for the subtraction: seeding copies only what a checkout
+    // lacks, so a tracked file matching `.env.*` is the repository's own.
+    const s = scene("seeded-tracked", "completed", { ".env.development": "API_URL=dev\n" });
+    fs.writeFileSync(path.join(s.slot, ".env.development"), "API_URL=staging\n");
+    git(s.slot, "commit", "-qam", "point dev at staging");
+
+    const delivered = await land.deliverRun(s.runId);
+
+    assert.equal(delivered.ok, true, delivered.ok ? "" : delivered.reason);
+    assert.equal(remoteTip(s), git(s.slot, "rev-parse", "HEAD").trim());
+  });
+
+  it("delivers the same branch once this repository's seeding list no longer names the file", async () => {
+    // The refusal's other way out, and the proof the list read is this
+    // repository's rather than only the install-wide one.
+    const s = forcedEnvScene("seeded-unlisted");
+    settings.saveSettings({ isolationCopyGlobsByRepo: { [s.repo]: ["config/local.json"] } });
+    try {
+      const delivered = await land.deliverRun(s.runId);
+
+      assert.equal(delivered.ok, true, delivered.ok ? "" : delivered.reason);
+      assert.equal(git(s.remote, "show", `${s.branch}:.env`), OPERATORS_ENV);
+    } finally {
+      settings.saveSettings({ isolationCopyGlobsByRepo: {} });
+    }
   });
 });
 
