@@ -9,12 +9,12 @@ import { after, describe, it } from "node:test";
 /**
  * What a run picked up on a session whose transcript is gone does next.
  *
- * The pinned CLI deletes its own transcripts past `cleanupPeriodDays`, and
- * nothing in this app sets that or hears about it, so `runs.session_id` can
- * outlive the file it names. Every pick-up of such a run used to put
- * `--resume` on the argv, fail the cycle, retry once against the same id and
- * end `failed` naming a `claude --resume` that cannot work either — the same
- * way on every pick-up, with nothing on the row ever changing. The fix is a
+ * The pinned CLI deletes its own transcripts 30 days after they were last
+ * written, and nothing in this app sets that or hears about it, so
+ * `runs.session_id` can outlive the file it names. Every pick-up of such a run
+ * used to put `--resume` on the argv, be charged a cycle the CLI refused with
+ * "No conversation found", and end `failed` on a bare exit code — the same way
+ * on every pick-up, with nothing on the row ever changing. The fix is a
  * decision taken in `startRun` before the spawn, so it drives real segments
  * through `startRun` and `reopenRun` against a stubbed child and reads what
  * the child was handed: an argv assertion on `buildArgs` cannot see which

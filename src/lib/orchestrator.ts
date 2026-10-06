@@ -10289,25 +10289,26 @@ export async function startRun(id: string): Promise<void> {
       }
 
       // A session whose transcript is gone is restarted rather than resumed.
-      // The CLI deletes its own transcripts past `cleanupPeriodDays` — read off
-      // the binary, not measured — and `sweepTranscripts` never lists a file the
-      // CLI removed first, so `session_id` can outlive what it names. Resuming
-      // it fails before doing anything, the retry fails the same way, and the
-      // run ends `failed` naming a `claude --resume` that cannot work either, on
-      // every pick-up, because nothing on the row changes. Dropped by clearing
-      // the loop's session, `startsFresh`'s reason below: every branch
-      // downstream already asks "is there a session", and the restart it then
-      // takes, with `priorWorkNotice`, is the one a picked-up run already gets.
+      // The pinned CLI deletes its own transcripts 30 days after they were last
+      // written, and `sweepTranscripts` never lists a file the CLI removed
+      // first, so `session_id` can outlive what it names. A `--resume` of it
+      // exits 1 with a `result` event and no API call, which is not the shape
+      // `looksLikeResumeFailure` retries, so each pick-up was charged a cycle
+      // and ended `failed` on a bare exit code, because nothing on the row
+      // changes. Both measured: `docs/verification/run-lifecycle.md`. Dropped
+      // by clearing the loop's session, `startsFresh`'s reason below: every
+      // branch downstream already asks "is there a session", and the restart it
+      // then takes, with `priorWorkNotice`, is the one a picked-up run gets.
       //
       // Only `absent` acts. A wrong working directory or an expired credential
-      // leaves the file where it was, so both still reach
-      // `looksLikeResumeFailure` and end the way they did. The first cycle of a
-      // segment only, that test's reason: later, the id is one this segment
+      // leaves the file where it was, so both still reach the resume and end
+      // the way they did. The first cycle of a segment only, for
+      // `looksLikeResumeFailure`'s reason: later, the id is one this segment
       // just used. Never a carried fork, whose failed resume returns to the
       // conversation it was cut from, which this would skip. Claude Code's tree
       // only: a Codex session is not one of its transcripts, and a local cycle
-      // writes under its own config directory. Above the pre-spawn re-check because this awaits a
-      // walk, and a Stop pressed during it must still win.
+      // writes under its own config directory. Above the pre-spawn re-check
+      // because this awaits a walk, and a Stop pressed during it must still win.
       if (
         sessionId !== null &&
         cyclesThisSegment === 0 &&

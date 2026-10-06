@@ -138,6 +138,29 @@
   rule for any other uid, for `CLAUDE_CODE_TMPDIR`, and for a command the CLI
   runs unsandboxed rests on the binary's source and `tmpdirNotice.test.ts`.
 
+- **The pinned CLI deletes a transcript last written more than 30 days ago, on
+  any `claude -p` startup** (2026-10-06, `claude` 2.1.280). A scratch
+  `CLAUDE_CONFIG_DIR` with no settings file held `.jsonl` files whose mtimes
+  `touch -d` set to 25, 29, 31, 35 and 40 days back, plus a fresh one; one
+  `claude -p -- hello` against a dead `ANTHROPIC_BASE_URL`, killed by `timeout`,
+  left the 25-day, 29-day and fresh files and removed the other three. Nothing in
+  this app sets `cleanupPeriodDays`. Caveat: the default only, ages set by
+  `touch` rather than lived, and whether the sweep runs before the first request
+  was not separated.
+
+- **A `--resume` whose transcript is gone exits 1 with a `result` event and no
+  API call, so the loop never took it for a failed resume** (2026-10-06, `claude`
+  2.1.280). `claude -p --output-format stream-json --verbose --resume <new uuid>`
+  in a scratch config directory printed `No conversation found with session ID:
+  <id>` on stderr and one stdout line: `result`, `error_during_execution`,
+  `is_error: true`, `num_turns: 0`, `duration_api_ms: 0`, the same id, that
+  sentence in `errors`; it wrote no transcript. Those lines replayed through
+  `startRun` by a stubbed child: a `result` arrived, so `looksLikeResumeFailure`
+  is false, and before the transcript check each pick-up was charged a cycle and
+  ended `failed` with "Claude Code exited with code 1."; with it, the pick-up
+  restarts on a new session and carries on. Caveat: the replay fed the measured
+  lines to a stub, not the real CLI under the loop.
+
 ## Not yet verified by hand
 
 - **No real `reopenRestartClosed` refusal has reached the restart notice.**
