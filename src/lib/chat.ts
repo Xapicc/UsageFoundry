@@ -1670,6 +1670,12 @@ export interface BatchProposal {
 
 /** What a proposal in this chat that is *not* in the batch already became. */
 export interface SettledProposal {
+  /**
+   * What approving it does. A workflow or schedule card holds a label only by
+   * inheriting it from a run card it replaced, and no decision on it is a run
+   * anything could start after.
+   */
+  kind: ProposalKind;
   status: ProposalStatus;
   /** The run it became, or null — pending, rejected, or failed to start. */
   runId: string | null;
@@ -1772,19 +1778,7 @@ export function planApprovalBatch(
         });
         continue;
       }
-      // Three different facts, and the operator can act on a different thing in
-      // each: approve the other one too, look at why it did not start, or ask
-      // the chat what it meant. Collapsing them into "unknown dependency" is
-      // the sentence that sends someone to read the database.
-      refusal =
-        settled === undefined
-          ? `“${p.title}” is set to start after “${dep.specId}”, which is not ` +
-            "in this batch and is not a proposal in this chat."
-          : settled.status === "pending"
-            ? `“${p.title}” is set to start after “${dep.specId}”, which is ` +
-              "still waiting for a decision. Approve them together."
-            : `“${p.title}” is set to start after “${dep.specId}”, which was ` +
-              `${settled.status} and never became a run.`;
+      refusal = unresolvedDependency(p.title, dep.specId, settled);
       break;
     }
 
@@ -1868,6 +1862,41 @@ export function planApprovalBatch(
     if (reason) steps.push({ ok: false, id: p.id, title: p.title, reason });
   }
   return steps;
+}
+
+/**
+ * Why a label resolved to no run, in the one sentence that is true of it.
+ *
+ * Four different facts, and the operator can act on a different thing in each:
+ * approve the other one too, look at why it did not start, ask the chat what it
+ * meant, or ask it for a run in place of a card that saves something instead.
+ * Collapsing them into "unknown dependency" is the sentence that sends someone
+ * to read the database.
+ *
+ * Kind is asked before status, because a workflow or schedule card's status
+ * says nothing the operator can use: pending, it would earn "approve them
+ * together", which sends them to the one click that cannot satisfy the edge.
+ */
+function unresolvedDependency(
+  title: string,
+  label: string,
+  settled: SettledProposal | undefined,
+): string {
+  const lead = `“${title}” is set to start after “${label}”, which`;
+  if (settled === undefined) {
+    return `${lead} is not in this batch and is not a proposal in this chat.`;
+  }
+  if (settled.kind !== "run") {
+    const saves = settled.kind === "workflow" ? "a graph" : "a schedule";
+    return (
+      `${lead} is a ${settled.kind} proposal: approving it saves ${saves} ` +
+      "rather than starting a run, so nothing can start after it."
+    );
+  }
+  if (settled.status === "pending") {
+    return `${lead} is still waiting for a decision. Approve them together.`;
+  }
+  return `${lead} was ${settled.status} and never became a run.`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -2080,10 +2109,15 @@ export function approveRunBatch(
   }
 
   // Every labelled proposal of this chat that is *not* in the batch, so a
-  // dependency on one approved in an earlier click resolves to its run.
+  // dependency on one approved in an earlier click resolves to its run. The
+  // batch is the run cards, not the click: a workflow or schedule card ticked
+  // beside them is planned by nobody here, and skipping it as well left a
+  // label it holds in neither map — a card on the operator's screen, reported
+  // as not in this click and not in this chat.
+  const batched = new Set(proposals.map((p) => p.id));
   const outside = new Map<string, SettledProposal>();
   for (const p of listProposals(chatId)) {
-    if (wanted.has(p.id) || !p.spec_id) continue;
+    if (batched.has(p.id) || !p.spec_id) continue;
     // A replaced card does not hold its label: the replacement inherits it, and
     // a dependent naming it means the one that is still waiting. Ordering alone
     // would nearly always do this — the replacement is newer — but "nearly" is
@@ -2091,7 +2125,7 @@ export function approveRunBatch(
     // same millisecond as the card it replaces, and losing it turns a live
     // dependency into "superseded and never became a run".
     if (p.status === "superseded" && outside.has(p.spec_id)) continue;
-    outside.set(p.spec_id, { status: p.status, runId: p.run_id });
+    outside.set(p.spec_id, { kind: p.kind, status: p.status, runId: p.run_id });
   }
 
   const steps = planApprovalBatch(
