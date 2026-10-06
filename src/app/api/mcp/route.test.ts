@@ -651,6 +651,49 @@ test("a task id that is not shaped like one is refused for its shape, before any
   assert.equal(parentOf(real.text), held.id);
 });
 
+// `complete_task` and `release_task` move only a task the token's run holds, and
+// their refusals were a third read with a wider scope than the two reads: any id
+// on the board came back with its title. An id is no barrier — every run can
+// read its siblings' transcripts — so the refusal itself is what is pinned.
+test("release_task refuses a task this run does not hold without naming it", async () => {
+  const reader = seedRun(HERE);
+  const secret = file(ELSEWHERE, { title: "SECRET open task in another project" });
+  const beside = file(HERE, { title: "SECRET open task in this run's folder" });
+
+  for (const task of [secret, beside]) {
+    const released = await callTool(reader.token, "release_task", {
+      taskId: task.id,
+      reason: "Could not.",
+    });
+    assert.equal(released.isError, true);
+    assert.ok(
+      !released.text.includes(task.title),
+      `release_task handed a run the title of a task it does not hold: ${released.text}`,
+    );
+    assert.equal(tasks.getTask(task.id)?.status, "open");
+    assert.equal(comments.listTaskComments(task.id, 5).total, 0, "no release note was written");
+  }
+});
+
+test("complete_task refuses a task another run closed rather than saying this run did", async () => {
+  const reader = seedRun(HERE);
+  const other = seedRun(ELSEWHERE);
+  const doneElsewhere = file(ELSEWHERE, { title: "SECRET done task in another project" });
+  move(doneElsewhere, "claimed", other.runId);
+  move(doneElsewhere, "done", other.runId);
+
+  const completed = await callTool(reader.token, "complete_task", { taskId: doneElsewhere.id });
+  assert.equal(completed.isError, true, `a task this run never held is refused: ${completed.text}`);
+  assert.ok(!completed.text.includes(doneElsewhere.title), completed.text);
+  assert.doesNotMatch(completed.text, /completed by this run/);
+  assert.equal(tasks.getTask(doneElsewhere.id)?.completedByRunId, other.runId);
+
+  // The holder's own second call is not refused: a run that completed its task
+  // must be able to see that it did.
+  const again = await callTool(other.token, "complete_task", { taskId: doneElsewhere.id });
+  assert.equal(again.isError, false, again.text);
+});
+
 test("no refusal a run can receive names a tool the run does not have", async () => {
   const run = seedRun(HERE);
   const held = file(HERE, { title: "Held by the tester" });

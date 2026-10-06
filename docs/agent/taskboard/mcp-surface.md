@@ -169,7 +169,15 @@ arm, `{ kind: "run"; runId }`, and it is the one whose id is load-bearing rather
 than descriptive: `complete_task` passes `subject.runId` to `updateTask`, which
 compares it against the row's own `claimed_by_run_id` through
 `taskTransitionRefusal` — the same pure function the operator's route and the
-chat tools ask. **No tool on this surface takes a run id**, and that is not an
+chat tools ask. Ahead of it, `notHeldByRun` refuses `complete_task` and
+`release_task` on a task the run does not hold that nobody has claimed — open,
+or closed by somebody else — in a sentence naming no title. It words a refusal
+and permits nothing: the rule lets `from === to` through, so a `done` task
+another run closed came back as completed by this one, and `releaseTask`
+refused an open task by quoting its title, both for any id on the board — two
+writes answering as a read wider than `get_my_task`'s. An id on no row and a
+task another holder has claimed still reach the rule's sentences, which name
+the holder and never the title. **No tool on this surface takes a run id**, and that is not an
 omission to be tidied: an argument would be a work cycle able to close every task
 on the board by guessing an id out of a list, and `list_my_tasks` hands it a list.
 `create_task` places what it files the same way — `origin: "run"`,

@@ -4327,25 +4327,52 @@ function listMyTasks(args: Record<string, unknown>, runId: string) {
 }
 
 /**
- * Close a task this run holds.
+ * The refusal `complete_task` and `release_task` give for a task this run does
+ * not hold — or null to go on: for the run's own task, in any status, and for
+ * the two cases the move already answers without a title, an id on no row and a
+ * task another run or the operator has claimed, whose refusal names the holder.
  *
- * **The run id is the token's, never the call's**, which is the whole of the
- * authorisation here and the one line in this file not to change without reading
- * `docs/agent/security.md`. `updateTask` compares it against the row's own
- * `claimed_by_run_id` through `taskTransitionRefusal`; this route adds no second
- * answer to that rule and must not — a work cycle that could complete a task it
- * does not hold could close the whole board, and every refusal below is that
- * function's sentence rather than one written here.
+ * **It can refuse and never permit.** The authority is still
+ * `taskTransitionRefusal`, asked by `updateTask` against the row's own
+ * `claimed_by_run_id`, and nothing here lets through a move it refuses. What
+ * this changes is what a run is *told* about a task that is not its own. That
+ * rule lets `from === to` through for every actor, so `complete_task` on a task
+ * another run had closed answered "Marked … done. It is recorded as completed
+ * by this run" with the row unchanged, which the run then reported to the
+ * operator; and `releaseTask` refused an open task with a sentence quoting its
+ * title. Both answered for any id on the board, in any project, which made two
+ * writes bounded to what this run holds into a read of titles wider than
+ * `get_my_task`'s (`docs/agent/security.md`). So the sentence names no title,
+ * and the check is at this door rather than in the rule, where `from === to`
+ * stays a no-op for every other caller.
  */
+function notHeldByRun(tool: "complete_task" | "release_task", taskId: string, runId: string) {
+  const task = getTask(taskId);
+  if (!task || task.claimedByRunId === runId || task.status === "claimed") return null;
+  const verb = tool === "complete_task" ? "complete" : "release";
+  return text(
+    `${tool} cannot ${verb} "${taskId}": this run does not hold it, and a run ` +
+      `may ${verb} only a task claimed in its own name. list_my_tasks shows the ` +
+      "tasks this run holds, under held. Nothing was changed.",
+    true,
+  );
+}
+
 /**
  * Close a task this run holds, or start the check that decides whether it may
  * be closed.
  *
+ * **The run id is the token's, never the call's**, which is the whole of the
+ * authorisation here and the one line in this file not to change without reading
+ * `docs/agent/security.md`: a work cycle that could complete a task it does not
+ * hold could close the whole board.
+ *
  * **The authority is unchanged and that is deliberate.** `updateTask` with this
  * run as the actor is still the only door, so `taskTransitionRefusal` is still
  * the whole of the board’s authority model: a validation can *delay* a close
- * this run could have made and can never make one it could not. The refusals
- * below are the same two, in the same words, whether or not the check is on.
+ * this run could have made and can never make one it could not, and
+ * `notHeldByRun` only words a refusal. The refusals below are the same, in the
+ * same words, whether or not the check is on.
  *
  * **What the model is told when the check starts is a fact and not a
  * promise.** It is not told that a verdict will re-open anything, and it is not
@@ -4365,6 +4392,8 @@ async function completeTaskForRun(args: Record<string, unknown>, runId: string) 
 
   const malformed = malformedTaskId("run", { taskId });
   if (malformed) return malformed;
+  const notHeld = notHeldByRun("complete_task", taskId, runId);
+  if (notHeld) return notHeld;
 
   const outcome = await completeTaskWithValidation(taskId, runId);
 
@@ -4402,8 +4431,9 @@ async function completeTaskForRun(args: Record<string, unknown>, runId: string) 
  * Give back a task this run holds, with the reason on it.
  *
  * `completeTaskForRun`'s rule and for its reason: the run id is the token's and
- * no argument names one, and every refusal is `tasks.ts`' sentence rather than
- * one written here — `releaseTask` asks `updateTask`, which asks
+ * no argument names one. Past `notHeldByRun`, which refuses a task this run
+ * does not hold without naming it, every refusal is `tasks.ts`' sentence rather
+ * than one written here — `releaseTask` asks `updateTask`, which asks
  * `taskTransitionRefusal` and `operatorOnlyRefusal`, and this adds nothing to
  * either. The move and the note are one transaction in `taskRelease.ts`.
  */
@@ -4418,6 +4448,8 @@ function releaseTaskForRun(args: Record<string, unknown>, runId: string) {
   }
   const malformed = malformedTaskId("run", { taskId });
   if (malformed) return malformed;
+  const notHeld = notHeldByRun("release_task", taskId, runId);
+  if (notHeld) return notHeld;
 
   // Refused rather than coerced, `listTasksTool`'s reason: "false" is truthy,
   // and a coercion would hand the task to the operator when the model said not

@@ -109,7 +109,10 @@ restates the status it is not changing is a no-op rather than a refusal — the
 one exception being a non-operator restating `claimed` on a task the operator
 holds, above. `updateTask` asks the rule whenever a patch carries a status and
 applies a move's effects only when the status actually differs, which is what
-keeps a patch from applying them when nothing moved.
+keeps a patch from applying them when nothing moved. A run's `complete_task`
+and `release_task` never reach this no-op for a task the run does not hold:
+the MCP door refuses those first (`notHeldByRun`, `mcp-surface.md`), so it
+cannot answer a run as though it had closed somebody else's work.
 
 **A write that changes nothing is not written, so `updated_at` does not move.**
 That column means the task moved — `idx_tasks_board` and `listTasks` both sort on
