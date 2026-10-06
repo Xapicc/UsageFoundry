@@ -833,26 +833,52 @@ export async function sweepTranscripts(now = Date.now()): Promise<{
   });
   if (expired.length === 0) return { removed: 0, bytes: 0 };
 
+  // Cleared *before* the first `await`, in the section that took the decision.
+  // `reopenRun` resumes whatever the row holds, and the unlink loop below
+  // yields on every file, so a pick-up can land anywhere inside it. Clearing
+  // afterwards — and only on rows still terminal, which a picked-up run is not
+  // — left that run holding the id of a file the sweep then deleted, and no
+  // later sweep would ever clear it, since it only clears the files it lists.
+  // Cleared here, a pick-up sees no session and takes the restart; and because
+  // the keep set was read in this same section, no row matched below can be
+  // live, so there is no status to filter on.
+  const clearedFrom = new Map<string, string[]>();
+  const holders = db().prepare("SELECT id FROM runs WHERE session_id = ?");
+  const clear = db().prepare("UPDATE runs SET session_id = NULL WHERE session_id = ?");
+  db().transaction(() => {
+    for (const file of expired) {
+      const ids = (holders.all(file.sessionId) as Array<{ id: string }>).map((r) => r.id);
+      clearedFrom.set(file.path, ids);
+      clear.run(file.sessionId);
+    }
+  })();
+
+  const restore = db().prepare(
+    `UPDATE runs SET session_id = ?
+      WHERE id = ? AND session_id IS NULL
+        AND status IN (${TERMINAL_STATUSES.map(() => "?").join(",")})`,
+  );
+
   const gone: string[] = [];
-  const sessions: string[] = [];
   let bytes = 0;
   for (const file of expired) {
     try {
       await fsp.unlink(file.path);
-    } catch {
-      continue; // read-only mount, or already removed — neither is ours to fix
+    } catch (err) {
+      // Already removed — the CLI's own cleanup does that — is the outcome the
+      // clearing assumed. Anything else (a read-only mount) leaves the file
+      // where it is, and a session whose transcript is still on disk is still
+      // resumable, so it goes back unless the run has moved on since.
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        for (const id of clearedFrom.get(file.path) ?? []) {
+          restore.run(file.sessionId, id, ...TERMINAL_STATUSES);
+        }
+      }
+      continue;
     }
     gone.push(file.path);
-    sessions.push(file.sessionId);
     bytes += file.bytes;
   }
-
-  const clear = db().prepare(
-    `UPDATE runs SET session_id = NULL
-      WHERE session_id = ?
-        AND status IN (${TERMINAL_STATUSES.map(() => "?").join(",")})`,
-  );
-  for (const sessionId of sessions) clear.run(sessionId, ...TERMINAL_STATUSES);
 
   forgetTranscriptFiles(gone);
   // The same call for the second cache over the same corpus. Dreaming keeps its
