@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { RunDTO, RunReviewDTO } from "@/lib/apiTypes";
 import { fmtDateTime, fmtUSD, pollFailureMessage } from "@/lib/format";
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
@@ -76,14 +76,23 @@ export function RunReview({ run }: { run: RunDTO }) {
   const [error, setError] = useState<string | null>(null);
   const [readError, setReadError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  /** Which read is allowed to write; see `load`. */
+  const loadRequest = useRef(0);
 
   // The land card's failure, in a card that spends money the same way: this
   // poll only runs while a review is in flight, so a read dropped on the floor
   // left "Reading the diff" on screen after the review had finished or failed.
+  //
+  // Only the newest read may write. Start is disabled while the poll runs, but
+  // not while the mount read is out, and that read's answer landing after the
+  // one `start` asks for would draw no review in flight — and with none in
+  // flight no poll starts, so nothing would ever correct it.
   const load = useCallback(async () => {
+    const ticket = ++loadRequest.current;
     const res = await jsonRequest<{ reviews: RunReviewDTO[] }>(
       `/api/runs/${run.id}/review`,
     );
+    if (ticket !== loadRequest.current) return;
     if (!res.ok) {
       setReadError(pollFailureMessage(res.status, res.error));
       return;

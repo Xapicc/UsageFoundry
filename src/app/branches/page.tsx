@@ -806,12 +806,20 @@ export default function Branches() {
     }
   }, [repo, offset]);
 
+  /** Which queue read is allowed to write; see `loadQueue`. */
+  const queueRequest = useRef(0);
+
   const loadQueue = useCallback(async () => {
+    // Only the newest read may write: queueing a selection and cancelling a
+    // batch re-read beside the poll's own request, and an answer read before
+    // the press landing last would draw the queue as it was before it.
+    const ticket = ++queueRequest.current;
     try {
       const res = await fetch("/api/branches/queue", { cache: "no-store" });
       const json = (await res.json().catch(() => ({}))) as Partial<
         MergeQueueDTO & { error: string }
       >;
+      if (ticket !== queueRequest.current) return;
       if (!res.ok || !json.batches) {
         const detail =
           json.error ?? (res.ok ? "no queue in the response" : null);
@@ -821,6 +829,7 @@ export default function Branches() {
       setQueue(json as MergeQueueDTO);
       setReadError(null);
     } catch (err) {
+      if (ticket !== queueRequest.current) return;
       const cause = err instanceof Error ? err.message : String(err);
       setReadError(pollFailureMessage(null, cause));
     }

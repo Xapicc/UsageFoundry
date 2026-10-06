@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type {
   ConflictFileDTO,
@@ -226,6 +226,8 @@ export function RunLand({ run }: { run: RunDTO }) {
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [readError, setReadError] = useState<string | null>(null);
+  /** Which read is allowed to write; see `load`. */
+  const loadRequest = useRef(0);
 
   // What pressing Land will do. The select renders this, `act` sends it, and the
   // sentence above the button describes it, so the value on screen and the value
@@ -240,8 +242,14 @@ export function RunLand({ run }: { run: RunDTO }) {
    * only state this poll runs in is `running`, so what it froze on was a
    * conflict resolution rendered as in flight for ever, after it had finished
    * or failed, with nothing to clear it but a reload.
+   *
+   * Only the newest read may write: `act` and `deliver` re-read beside the
+   * resolving poll's own request, and an answer read before the press landing
+   * last would draw the branch as it was before it — unlanded, unpushed, or
+   * still resolving.
    */
   const load = useCallback(async () => {
+    const ticket = ++loadRequest.current;
     const res = await jsonRequest<{
       state: LandStateDTO | null;
       defaultStrategy: MergeStrategyDTO;
@@ -249,6 +257,7 @@ export function RunLand({ run }: { run: RunDTO }) {
       branchResolving: boolean;
       delivery: DeliveryStateDTO | null;
     }>(`/api/runs/${run.id}/land`);
+    if (ticket !== loadRequest.current) return;
     if (!res.ok) {
       setReadError(pollFailureMessage(res.status, res.error));
       return;

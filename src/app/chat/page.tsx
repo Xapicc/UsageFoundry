@@ -419,6 +419,19 @@ export default function ChatPage() {
     chatId: null,
     seq: 0,
   });
+  /** Which read is allowed to write; see `load`. */
+  const loadRequest = useRef(0);
+  /**
+   * The thread the operator last opened or started, which is the one the poll
+   * reads: the thread on screen trails it until the opened one's answer lands.
+   * Null until they first do, and the poll reads the thread on screen.
+   *
+   * Without it the newest-read rule in `load` would undo a click. The poll's
+   * effect only re-runs once the opened thread is on screen, so a tick in the
+   * gap read the thread being left after the read of the one asked for, and
+   * the newer of the two won.
+   */
+  const opened = useRef<string | null>(null);
 
   const chatId = chat?.id ?? null;
   const thinking = chat?.status === "thinking";
@@ -443,6 +456,13 @@ export default function ChatPage() {
    * indistinguishable from a turn still working.
    */
   const load = useCallback(async (id: string | null) => {
+    // Only the newest read may write. Opening a thread and a refused decision
+    // both read beside the poll's own request, and `setChat` below only stands
+    // off a *tail* of another thread: a whole thread read before the press —
+    // the first read of one just opened, or of one with nothing in it yet —
+    // landing last replaced the thread the operator had moved to, and a tail of
+    // this one put back the proposals and status from before the press.
+    const ticket = ++loadRequest.current;
     try {
       // The thread past what is already on screen, which is what makes the cost
       // of leaving this page open flat rather than a function of how long the
@@ -461,6 +481,7 @@ export default function ChatPage() {
         chats?: ChatListEntryDTO[];
         error?: string;
       };
+      if (ticket !== loadRequest.current) return;
       if (!res.ok || !data.chat) {
         const detail = data.error ?? (res.ok ? "no thread in the response" : null);
         setPollError(pollFailureMessage(res.status, detail));
@@ -514,6 +535,7 @@ export default function ChatPage() {
       if (data.chats) setChats(data.chats);
       setPollError(null);
     } catch (err) {
+      if (ticket !== loadRequest.current) return;
       // `void load(id)` from a click: without this the rejection is an
       // unhandled one and, again, nothing on screen changes.
       const cause = err instanceof Error ? err.message : String(err);
@@ -619,7 +641,7 @@ export default function ChatPage() {
   // nothing to do with this conversation — so ten seconds, not never.
   useEffect(() => {
     const period = chat?.status === "thinking" ? POLL_ACTIVE_MS : POLL_IDLE_MS;
-    return startPoll(() => load(chatId), period);
+    return startPoll(() => load(opened.current ?? chatId), period);
   }, [chatId, chat?.status, load]);
 
   const scrollToLatest = useCallback((smooth: boolean) => {
@@ -874,13 +896,16 @@ export default function ChatPage() {
         setError(data.error ?? "A new chat could not be started.");
         return;
       }
+      opened.current = data.chat.id;
       setChat(data.chat);
       setSelected(new Set());
       // Same rule the thread list's own switch follows: a refusal names a
       // proposal of the thread being left. It outlives an empty proposals list
       // now that the sentence is drawn without one, so this has to say so.
       setDecideError(null);
-      void load(null);
+      // No read of its own for the list: the thread changing re-runs the poll,
+      // which reads the new thread and the list at once, and a read sent from
+      // here would go out before that one and so always be dropped by `load`.
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -1674,6 +1699,7 @@ export default function ChatPage() {
                         // being left, and carried over it annotates a card in a
                         // conversation it was never about.
                         setAnswerError(null);
+                        opened.current = c.id;
                         void load(c.id);
                       }}
                     />
