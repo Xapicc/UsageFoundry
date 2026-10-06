@@ -178,7 +178,9 @@ const mergeNode = (id: string, over: NodeBlob = {}) =>
   node(id, { kind: "merge", mergeStrategy: "merge", folder: "", ...over });
 
 /**
- * A started instance holding one loop and whatever the fixture puts round it.
+ * A started instance holding one loop and whatever the fixture puts round it —
+ * or, with no `body`, no loop at all: a block outside every section is what a
+ * pass's spelling must not be read into.
  *
  * The section's members get **no rows of their own**, which is what
  * instantiation does with them: their work happens once per pass under the
@@ -188,7 +190,7 @@ const mergeNode = (id: string, over: NodeBlob = {}) =>
 function scene(opts: {
   nodes: NodeBlob[];
   edges: Array<{ from: string; to: string; edge: string; continueBranch?: boolean }>;
-  body: string[];
+  body?: string[];
   maxPasses?: number;
   maxLoopCostUSD?: number | null;
   stopWhenTasks?: NodeBlob | null;
@@ -197,17 +199,19 @@ function scene(opts: {
 }): string {
   const now = Date.now();
   const instanceId = `inst-${now}-${Math.random().toString(36).slice(2)}`;
-  const loop = node("L", {
-    name: "Chip away",
-    kind: "loop",
-    folder: "",
-    maxPasses: opts.maxPasses ?? 3,
-    maxLoopCostUSD: opts.maxLoopCostUSD ?? null,
-    stopWhenTasks: opts.stopWhenTasks ?? null,
-    bodyNodeIds: opts.body,
-  });
+  const loop = opts.body
+    ? node("L", {
+        name: "Chip away",
+        kind: "loop",
+        folder: "",
+        maxPasses: opts.maxPasses ?? 3,
+        maxLoopCostUSD: opts.maxLoopCostUSD ?? null,
+        stopWhenTasks: opts.stopWhenTasks ?? null,
+        bodyNodeIds: opts.body,
+      })
+    : null;
   const graph = JSON.stringify({
-    nodes: [loop, ...opts.nodes],
+    nodes: [...(loop ? [loop] : []), ...opts.nodes],
     edges: opts.edges.map((e) => ({ continueBranch: false, ...e })),
   });
 
@@ -232,7 +236,7 @@ function scene(opts: {
     "INSERT INTO workflow_instance_blocks (instance_id, node_id, node_name, position, kind, status)" +
       " VALUES (?, ?, ?, ?, ?, 'waiting')",
   );
-  block.run(instanceId, "L", "Chip away", 0, "loop");
+  if (loop) block.run(instanceId, "L", "Chip away", 0, "loop");
   for (const [index, own] of (opts.ownBlocks ?? []).entries()) {
     block.run(instanceId, own.id, own.id.toUpperCase(), index + 1, own.kind);
   }
@@ -1032,6 +1036,46 @@ describe("a block or a spec named the way a pass is", () => {
     const ordinary = await kinds("fix-tests");
     assert.deepEqual(ordinary, ["run"]);
     assert.deepEqual(await kinds("pass-2"), ordinary);
+  });
+
+  it("does not read a top-level orchestrator's run as a pass, whatever its spec is called", () => {
+    // Outside every loop the run is named `o#<spec>`, and with a spec called
+    // `pass-2` that is the id a body-less loop `o` gave its second pass. Read
+    // as one, the stuck run belonged to a stopped pass of a loop that is not
+    // there: nothing was offered, and leaving it behind was refused for that
+    // loop rather than for anything about the run.
+    const stuck = (spec: string) => {
+      emptyTables();
+      const instanceId = scene({
+        nodes: [node("o", { kind: "orchestrator", fanOut: 2, folder: "" }), mergeNode("m")],
+        edges: [{ from: "o", to: "m", edge: "on-success" }],
+        ownBlocks: [
+          { id: "o", kind: "orchestrator" },
+          { id: "m", kind: "merge" },
+        ],
+      });
+      workflows.advanceInstances();
+      decide(instanceId, "o", [twoRuns[0], { ...twoRuns[1], id: spec }], 0);
+      for (const row of membersOf(instanceId)) {
+        settleOne(row.runId);
+        if (row.memberId === `o#${spec}`) {
+          dbMod.db().prepare("UPDATE runs SET status='needs-review' WHERE id=?").run(row.runId);
+        }
+      }
+      workflows.advanceInstances();
+      assert.equal(blockRow(instanceId, "m").status, "blocked");
+      const instance = workflows.getInstance(instanceId)!;
+      return {
+        instanceId,
+        runId: membersOf(instanceId).find((m) => m.memberId === `o#${spec}`)!.runId,
+        kinds: workflows.pickUpsOf(instance).map((p) => p.kind),
+      };
+    };
+    const ordinary = stuck("fix-tests");
+    assert.deepEqual(ordinary.kinds, ["run"]);
+    const named = stuck("pass-2");
+    assert.deepEqual(named.kinds, ordinary.kinds);
+    assert.deepEqual(workflows.leaveRunBehind(named.instanceId, named.runId), { ok: true });
   });
 
   it("does not create a member again once its row exists", () => {

@@ -7,7 +7,7 @@ import type {
   WorkflowScheduleDTO,
 } from "../../../lib/apiTypes";
 import { getSchedule, scheduleView, type ScheduleView } from "../../../lib/schedules";
-import { passMemberOf } from "../../../lib/passIds";
+import { passMemberIn } from "../../../lib/passIds";
 import {
   blockSpendReading,
   lastRunAt,
@@ -110,7 +110,7 @@ export function instanceDTO(instance: WorkflowInstance): WorkflowInstanceDTO {
    * run an orchestrator emitted.
    */
   const waitsForRow = (nodeId: string, createdBy: string | null): string[] => {
-    const member = passMemberOf(nodeId);
+    const member = passMemberIn(instance.graph, nodeId);
     const own = waits.get(member?.bodyNodeId ?? nodeId) ?? [];
     if (own.length > 0) return own;
     return createdBy ? [createdBy] : [];
@@ -129,9 +129,9 @@ export function instanceDTO(instance: WorkflowInstance): WorkflowInstanceDTO {
     emittedBy: n.emittedBy,
     // Read here rather than on the page, because the member id's format is
     // `passMemberId`'s and a second parser of it is how a three-pass loop over
-    // a two-block section comes to be drawn as six passes. `passMemberOf` is
+    // a two-block section comes to be drawn as six passes. `passMemberIn` is
     // the one reader, and it lives beside the writer.
-    passMember: passMemberOf(n.nodeId),
+    passMember: passMemberIn(instance.graph, n.nodeId),
     leftBehind: !!n.leftBehindAt,
   }));
 
@@ -172,13 +172,13 @@ export function instanceDTO(instance: WorkflowInstance): WorkflowInstanceDTO {
       // rather than a task: an orchestrator member and the merge block every
       // section ends at are ledger rows, not runs. The loop is what created it
       // when it is the section's entry.
-      waitsFor: waitsForRow(b.nodeId, passMemberOf(b.nodeId)?.loopNodeId ?? null),
+      waitsFor: waitsForRow(b.nodeId, passMemberIn(instance.graph, b.nodeId)?.loopNodeId ?? null),
       // Off the instance's own graph snapshot, so a pass that already ran keeps
       // the order it ran in however the workflow has been rewired since.
       bodyNodeIds: snapshot?.bodyNodeIds ?? [],
       maxPasses: snapshot?.kind === "loop" ? snapshot.maxPasses : null,
       maxLoopCostUSD: snapshot?.kind === "loop" ? snapshot.maxLoopCostUSD : null,
-      passMember: passMemberOf(b.nodeId),
+      passMember: passMemberIn(instance.graph, b.nodeId),
     };
   });
 

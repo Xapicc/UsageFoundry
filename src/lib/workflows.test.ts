@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 
 import {
   passMemberId,
+  passMemberIn,
   passMemberOf,
   passNumberOf,
   passPrefix,
@@ -5262,6 +5263,24 @@ describe("passMemberId", () => {
       assert.deepEqual(passMemberOf(id), { loopNodeId: "L", pass: 1, bodyNodeId }, id);
       assert.equal(passNumberOf(id), passMemberOf(id)?.pass, id);
     }
+  });
+
+  it("reads `o#pass-2` as a pass only when the graph's `o` is a loop", () => {
+    // Outside every loop, an orchestrator block `o` that decides on spec
+    // `pass-2` names the run `o#pass-2` — the body-less spelling of a loop's
+    // pass 2. Read as one, the stuck run was offered no pick-up and leaving it
+    // behind was refused for a loop that is not there.
+    const withO = (kind: string) => ({
+      nodes: [
+        { id: "L", kind: "loop" },
+        { id: "o", kind },
+      ],
+    });
+    assert.equal(passMemberIn(withO("orchestrator"), "o#pass-2"), null);
+    assert.deepEqual(passMemberIn(withO("loop"), "o#pass-2"), passMemberOf("o#pass-2"));
+    const inPass = `${passMemberId("L", 1, "o")}#pass-2`;
+    assert.deepEqual(passMemberIn(withO("orchestrator"), inPass), passMemberOf(inPass));
+    assert.equal(passMemberIn(withO("orchestrator"), "body-2"), null);
   });
 });
 
