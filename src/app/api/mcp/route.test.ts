@@ -1037,6 +1037,77 @@ test("save_template and propose_run refuse a prompt that is not a string and wri
   assert.equal(ok.isError, false, ok.text);
 });
 
+// `String()` read each of these through: an object `task` was a card, and on
+// approval a billed run, briefed with "[object Object]", and `["first"]` was
+// read as the label inside it — a supersede of a card the model never named.
+test("propose_run, save_template and propose_workflow refuse a text argument that is not a string and write nothing", async () => {
+  const { chatId, token, proposals } = proposingChat();
+  const templates = () =>
+    (db().prepare("SELECT COUNT(*) AS n FROM run_templates").get() as { n: number }).n;
+  const base = { mountId: MOUNT, folder: "RepoOne", title: "Typed", task: "Do a thing." };
+  const first = await callTool(token, "propose_run", { ...base, id: "first" });
+  assert.equal(first.isError, false, first.text);
+
+  const runRefusals: [Record<string, unknown>, string][] = [
+    [{ title: { text: "Typed" } }, "title"],
+    [{ task: { brief: "Do a thing." } }, "task"],
+    [{ task: ["Do", "a thing."] }, "task"],
+    [{ templateId: ["t-1"] }, "templateId"],
+    [{ agentId: ["a-1"] }, "agentId"],
+    [{ provider: { name: "codex" } }, "provider"],
+    [{ mountId: [MOUNT] }, "mountId"],
+    [{ folder: ["RepoOne"] }, "folder"],
+    [{ supersedes: ["first"] }, "supersedes"],
+    [{ id: ["second"] }, "id"],
+  ];
+  for (const [extra, field] of runRefusals) {
+    const proposed = await callTool(token, "propose_run", { ...base, ...extra });
+    assert.equal(proposed.isError, true, `propose_run took ${JSON.stringify(extra)}: ${proposed.text}`);
+    assert.match(proposed.text, new RegExp(`"${field}" has to be a string`), field);
+    assert.doesNotMatch(proposed.text, /\[object Object\]/, field);
+  }
+  assert.equal(proposals(), 1, "no card was written");
+  assert.deepEqual(
+    db().prepare("SELECT status FROM chat_proposals WHERE chat_id = ?").all(chatId),
+    [{ status: "pending" }],
+    "and the one a list-wrapped supersedes named is still waiting",
+  );
+
+  const before = templates();
+  for (const [args, field] of [
+    [{ name: { text: "Reviewer" }, prompt: "Review it." }, "name"],
+    [{ name: "Reviewer", prompt: "Review it.", templateId: ["t-1"] }, "templateId"],
+  ] as const) {
+    const saved = await callTool(token, "save_template", args);
+    assert.equal(saved.isError, true, `save_template took ${JSON.stringify(args)}: ${saved.text}`);
+    assert.match(saved.text, new RegExp(`"${field}" has to be a string`), field);
+  }
+  assert.equal(templates(), before, "no template was saved");
+
+  const block = { id: "a", name: "Step", mountId: MOUNT, folder: "RepoOne", task: "Do a thing." };
+  for (const [args, said] of [
+    [{ name: { text: "Nightly" }, blocks: [block] }, /"name" has to be a string/],
+    [{ name: "Nightly", blocks: [{ ...block, task: { brief: "x" } }] }, /“Step”: "task" has to be a string/],
+    [{ name: "Nightly", blocks: [{ ...block, name: ["Step"] }] }, /Block 1: "name" has to be a string/],
+  ] as const) {
+    const workflow = await callTool(token, "propose_workflow", args);
+    assert.equal(workflow.isError, true, `propose_workflow took ${JSON.stringify(args)}: ${workflow.text}`);
+    assert.match(workflow.text, said);
+  }
+  assert.equal(proposals(), 1, "no workflow card was written");
+
+  // Absent and null still mean "not given".
+  const plain = await callTool(token, "propose_run", {
+    ...base,
+    templateId: null,
+    agentId: null,
+    provider: null,
+    supersedes: null,
+    id: null,
+  });
+  assert.equal(plain.isError, false, plain.text);
+});
+
 /**
  * A chat to propose into, and a count of the rows it holds, because what the
  * proposal refusals below pin is that nothing reached the operator's panel:
@@ -1110,6 +1181,78 @@ test("a dependsOn that is not a list is refused by name and proposes nothing", a
     dependsOn: null,
   });
   assert.equal(unordered.isError, false, unordered.text);
+});
+
+// A workflow card holds a label only by inheriting it from the run card it
+// replaced, and approving it saves a graph — so an edge onto it was accepted
+// here and refused at the click, by the operator, on a card the model never
+// heard about again.
+test("propose_run refuses a dependsOn on a label a workflow card inherited, and proposes nothing", async () => {
+  const { token, proposals } = proposingChat();
+  const run = await callTool(token, "propose_run", {
+    mountId: MOUNT,
+    folder: "RepoOne",
+    id: "wf",
+    title: "First as a run",
+    task: "Do the first thing.",
+  });
+  assert.equal(run.isError, false, run.text);
+  const workflow = await callTool(token, "propose_workflow", {
+    name: `First as a workflow ${randomUUID()}`,
+    supersedes: "wf",
+    blocks: [{ id: "a", name: "A", mountId: MOUNT, folder: "RepoOne", task: "Step a." }],
+  });
+  assert.equal(workflow.isError, false, workflow.text);
+  const before = proposals();
+
+  const after = await callTool(token, "propose_run", {
+    mountId: MOUNT,
+    folder: "RepoOne",
+    title: "Second",
+    task: "Do the second thing after the first.",
+    dependsOn: [{ id: "wf", edge: "on-success" }],
+  });
+  assert.equal(after.isError, true, `propose_run took an edge onto a workflow card: ${after.text}`);
+  assert.match(after.text, /"wf" is a workflow proposal: approving it saves a graph/);
+  assert.equal(proposals(), before, "no card was written");
+});
+
+// The same state reached from the other end: the edge was wireable when it was
+// written, and the supersede is what strands it. Told in the reply rather than
+// refused — see `strandedDependents`.
+test("propose_workflow replacing a run card a sibling waits for says so in its reply", async () => {
+  const { token } = proposingChat();
+  const base = { mountId: MOUNT, folder: "RepoOne" };
+  const first = await callTool(token, "propose_run", { ...base, id: "a", title: "First", task: "Do a." });
+  assert.equal(first.isError, false, first.text);
+  const second = await callTool(token, "propose_run", {
+    ...base,
+    id: "b",
+    title: "Second",
+    task: "Do b after a.",
+    dependsOn: [{ id: "a", edge: "on-success" }],
+  });
+  assert.equal(second.isError, false, second.text);
+
+  const workflow = await callTool(token, "propose_workflow", {
+    name: `First as a workflow ${randomUUID()}`,
+    supersedes: "a",
+    blocks: [{ id: "x", name: "X", mountId: MOUNT, folder: "RepoOne", task: "Step x." }],
+  });
+  assert.equal(workflow.isError, false, workflow.text);
+  assert.match(workflow.text, /“Second” \(id [0-9a-f-]{36}\) is set to start after "a", which this replaces/);
+  assert.match(workflow.text, /the operator's click will refuse it/);
+
+  // A replacement with no sibling behind it says nothing of the kind.
+  const lone = await callTool(token, "propose_run", { ...base, id: "c", title: "Lone", task: "Do c." });
+  assert.equal(lone.isError, false, lone.text);
+  const quiet = await callTool(token, "propose_workflow", {
+    name: `Lone as a workflow ${randomUUID()}`,
+    supersedes: "c",
+    blocks: [{ id: "y", name: "Y", mountId: MOUNT, folder: "RepoOne", task: "Step y." }],
+  });
+  assert.equal(quiet.isError, false, quiet.text);
+  assert.doesNotMatch(quiet.text, /set to start after/);
 });
 
 test("propose_run refuses a mount with no folder, and a folder with no mount", async () => {
