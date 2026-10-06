@@ -18,11 +18,12 @@ import type Database from "better-sqlite3";
  * ordering exists to have none of, and nothing about it throws: the operator
  * gets a page saying everything stopped and an agent working underneath it.
  *
- * **The hold** is read by six separate call sites — `promoteQueued`,
- * `releaseDependents`, `tickSchedules` and `emitBlockRuns`, and the sweeper's
- * `sweepPaused` and `releaseStackWaits` — and a fix that misses one is silent in
- * exactly the same way: work starts while a banner says new work is held, or a
- * park the restart would have kept is closed out by it. So there is a case per
+ * **The hold** is read by seven separate call sites — `promoteQueued`,
+ * `releaseDependents`, `tickSchedules` and `emitBlockRuns`, the sweeper's
+ * `sweepPaused` and `releaseStackWaits`, and an orchestrator block's deciding
+ * turn — and a fix that misses one is silent in exactly the same way: work
+ * starts, or a turn is billed, while a banner says new work is held, or a park
+ * the restart would have kept is closed out by it. So there is a case per
  * site, each driving the real entry point rather than the pure decision
  * underneath it, and each proving the *difference* the flag makes — by running
  * the same call with it clear, or beside a row the same restart keeps.
@@ -474,6 +475,153 @@ describe("the hold on new work", () => {
       "an unrelated settings save must not clear the hold",
     );
   });
+});
+
+/**
+ * A started instance whose one block is an orchestrator with nothing in front of
+ * it: ready the moment anything advances it, which is what a press of Run leaves
+ * behind for a graph that starts by deciding.
+ */
+function decidingInstance(id: string): string {
+  const graph = JSON.stringify({
+    nodes: [
+      {
+        id: "o",
+        name: "Decide",
+        kind: "orchestrator",
+        templateId: null,
+        mountId: "workspace",
+        folder: "",
+        task: "decide",
+        promptOverride: null,
+        agentId: null,
+        fanOut: 2,
+        provider: null,
+      },
+    ],
+    edges: [],
+  });
+  workflow(`wf-${id}`, `Decide first ${id}`);
+  const db = dbMod.db();
+  db.prepare(
+    `INSERT INTO workflow_instances (id, workflow_id, workflow_name, graph, created_at, status)
+     VALUES (?, ?, 'Decide first', ?, ?, 'started')`,
+  ).run(id, `wf-${id}`, graph, Date.now());
+  db.prepare(
+    `INSERT INTO workflow_instance_blocks (instance_id, node_id, node_name, position, kind, status)
+     VALUES (?, 'o', 'Decide', 0, 'orchestrator', 'waiting')`,
+  ).run(id);
+  return id;
+}
+
+function decidingBlock(id: string): { status: string; started_at: number | null } {
+  return dbMod
+    .db()
+    .prepare(
+      "SELECT status, started_at FROM workflow_instance_blocks WHERE instance_id=? AND node_id='o'",
+    )
+    .get(id) as { status: string; started_at: number | null };
+}
+
+/** Poll until `done` holds, so an asynchronous turn has somewhere to land. */
+async function until(done: () => boolean, what: string): Promise<void> {
+  for (let tries = 0; tries < 200; tries += 1) {
+    if (done()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.fail(`timed out waiting until ${what}`);
+}
+
+/**
+ * The deciding turn is the seventh site, and the only one whose failure was a
+ * bill rather than a start: under the hold the turn spawned, was paid for, and
+ * was then told by `emitBlockRuns` that nothing it decided could start. So each
+ * case asserts on the claim — `thinking` is the row that precedes every spawn.
+ *
+ * Each halts its instance on the way out, pass or fail, because
+ * `advanceInstances` walks every instance in the file: a block left `waiting`
+ * would be claimed by the next case that releases anything. And the assist
+ * budget is opted out of for the describe, because a turn holds a slot while it
+ * is `thinking` — `emitBlockRuns`' fixture above holds one for good — and a
+ * block refused a slot is left `waiting` too, which is the answer the hold's
+ * cases assert for a different reason.
+ */
+describe("the hold on an orchestrator block's deciding turn", () => {
+  let assists: number | null;
+  before(() => {
+    assists = settings.getSettings().maxConcurrentAssists;
+    settings.saveSettings({ maxConcurrentAssists: null });
+  });
+  after(() => {
+    settings.setNewWorkPaused(false);
+    settings.saveSettings({ maxConcurrentAssists: assists });
+  });
+
+  /** Run `body` over a fresh instance, and leave nothing of it to the next case. */
+  async function withInstance(id: string, body: (id: string) => Promise<void>): Promise<void> {
+    decidingInstance(id);
+    try {
+      await body(id);
+    } finally {
+      settings.setNewWorkPaused(false);
+      workflows.stopInstance(id, { kind: "operator" });
+    }
+  }
+
+  it("leaves the block waiting rather than paying for a turn whose emission it would refuse", () =>
+    withInstance("hold-decide", async (id) => {
+      settings.setNewWorkPaused(true);
+      workflows.advanceInstances();
+      assert.equal(decidingBlock(id).status, "waiting", "a held install must not claim the turn");
+      assert.equal(decidingBlock(id).started_at, null);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.equal(decidingBlock(id).status, "waiting", "nor claim it a turn later");
+
+      // Cleared, the same call claims it. The halt on the way out lands in this
+      // same turn of the event loop, before `startBlockTurn`'s first await
+      // returns, so the turn it has just fired finds the door closed.
+      settings.setNewWorkPaused(false);
+      workflows.advanceInstances();
+      assert.equal(decidingBlock(id).status, "thinking", "clearing the hold must let it decide");
+    }));
+
+  it("decides it once the hold is lifted, with nothing else to wake it", () =>
+    withInstance("hold-lift", async (id) => {
+      // Lifting is the only event there will be: a fleet held and stopped has
+      // no run left whose ending would advance anything.
+      settings.setNewWorkPaused(true);
+      workflows.advanceInstances();
+      assert.equal(decidingBlock(id).status, "waiting");
+
+      fleet.setFleetPaused(false);
+      await until(() => decidingBlock(id).status !== "waiting", "the lift claimed the turn");
+      assert.notEqual(decidingBlock(id).started_at, null, "the turn was claimed");
+      // Let the turn end against the `claude` that is not there, so nothing of
+      // it is still running into the next case.
+      await until(() => decidingBlock(id).status !== "thinking", "the turn ended");
+    }));
+
+  it("hands the block back when the hold is pressed while its turn is being prepared", () =>
+    withInstance("hold-mid-turn", async (id) => {
+      // The claim's question is asked before `startBlockTurn` awaits the window
+      // and the transcript scan, and a hold pressed during those is not in it —
+      // `tickSchedules`' reason for asking again after its own snapshot.
+      workflows.advanceInstances();
+      assert.equal(
+        decidingBlock(id).status,
+        "thinking",
+        "the claim lands before the turn's first await",
+      );
+
+      settings.setNewWorkPaused(true);
+      await until(() => decidingBlock(id).status !== "thinking", "the turn gave up its claim");
+      assert.equal(
+        decidingBlock(id).status,
+        "waiting",
+        "a hold is a shortage rather than a decision, so the block waits for the lift",
+      );
+      assert.equal(decidingBlock(id).started_at, null);
+    }));
 });
 
 /**
