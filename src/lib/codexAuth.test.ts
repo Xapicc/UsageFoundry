@@ -1,11 +1,64 @@
 import { strict as assert } from "node:assert";
-import { describe, it } from "node:test";
-import {
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { after, describe, it, mock } from "node:test";
+
+/**
+ * `claudeAuth.test.ts`'s arrangement: `config.ts` fixes `CODEX_BIN` and
+ * `CODEX_HOME` at module load, so the stub is named before anything is
+ * required, and the assertion after the require refuses to go on if a real
+ * `codex login --device-auth` could be what `beginLogin` spawns.
+ *
+ * The stub records its pid and prints a link and a one-time code carrying it,
+ * then polls the way the real CLI does — by sitting there, since `beginLogin`
+ * closes its stdin. `STUB_HOLD`, read at spawn time, makes it wait for that file
+ * before printing.
+ */
+const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-codex-auth-")));
+const pidsDir = path.join(tmp, "pids");
+fs.mkdirSync(pidsDir);
+const stub = path.join(tmp, "codex");
+fs.writeFileSync(
+  stub,
+  [
+    "#!/bin/sh",
+    `echo $$ > "${pidsDir}/$$"`,
+    'if [ -n "$STUB_HOLD" ]; then while [ ! -e "$STUB_HOLD" ]; do sleep 0.02; done; fi',
+    "echo '1. Open this link in your browser and sign in to your account'",
+    "echo '   https://auth.openai.com/codex/device'",
+    "echo '2. Enter this one-time code'",
+    "printf '   CODE-%06d\\n' $(($$ % 1000000))",
+    "exec sleep 600",
+    "",
+  ].join("\n"),
+  { mode: 0o755 },
+);
+
+process.env.DATA_DIR = path.join(tmp, "data");
+process.env.CLAUDE_HOME = path.join(tmp, "claude-home");
+process.env.WORKSPACE_ROOT = path.join(tmp, "workspace");
+delete process.env.WORKSPACE_ROOTS;
+process.env.CODEX_HOME = path.join(tmp, "codex-home");
+process.env.CODEX_BIN = stub;
+
+const config = require("./config") as typeof import("./config");
+assert.equal(
+  config.CODEX_BIN,
+  stub,
+  "config was loaded before the stub was named — refusing to spawn a real `codex login`",
+);
+
+const {
+  beginLogin,
+  cancelLogin,
   extractDeviceLogin,
+  lastLoginFailure,
   normalizeApiKey,
   parseCodexStatus,
+  pendingLogin,
   redactSecrets,
-} from "./codexAuth";
+} = require("./codexAuth") as typeof import("./codexAuth");
 
 /**
  * `claudeAuth.test.ts`'s argument for the other provider, with one addition it
@@ -215,5 +268,116 @@ describe("redactSecrets", () => {
     // still render, saying less than it did.
     const line = "Logged in using an API key - sk-proj-***67890";
     assert.equal(redactSecrets(line), line);
+  });
+});
+
+/** Captured before any test mocks the clock, so the stub still gets real time to print. */
+const realSetTimeout = globalThis.setTimeout;
+const realDelay = (ms: number) =>
+  new Promise<void>((resolve) => realSetTimeout(resolve, ms));
+
+function recordedPids(): number[] {
+  return fs.readdirSync(pidsDir).map(Number);
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Advance a mocked clock 100 ms at a time — the login's own poll interval —
+ * with real time between steps for the stub to print, until `promise` settles.
+ * Bounded inside the 30 s the login allows for its link and code.
+ */
+async function driveUntilSettled<T>(promise: Promise<T>): Promise<T> {
+  let settled = false;
+  void promise.then(() => {
+    settled = true;
+  });
+  for (let step = 0; !settled; step++) {
+    assert.ok(step < 250, "the sign-in neither printed a link and code nor ended");
+    await realDelay(20);
+    if (!settled) mock.timers.tick(100);
+  }
+  return promise;
+}
+
+/** `PENDING_TIMEOUT_MS` in `codexAuth.ts`. The last assertions below fail if it drifts. */
+const PENDING_TIMEOUT_MS = 16 * 60_000;
+
+/**
+ * `claudeAuth.test.ts`'s case for the device flow, where the orphan is worse:
+ * a child nothing can reach is still polling OpenAI, and if somebody approves
+ * its code it writes `auth.json` behind whatever this app last showed. The
+ * superseded login's timer also wrote "not approved in time" over the live
+ * flow as it killed it.
+ */
+describe("beginLogin, started twice at once", () => {
+  after(() => {
+    cancelLogin();
+    for (const pid of recordedPids()) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // Already gone, which is what the tests want.
+      }
+    }
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("leaves no child that cancelLogin cannot reach", async () => {
+    const results = await Promise.all([beginLogin(), beginLogin()]);
+    const pendingCode = pendingLogin()?.code;
+
+    cancelLogin();
+    await realDelay(300);
+    assert.ok(recordedPids().length >= 1, "no stub was ever started");
+    assert.deepEqual(recordedPids().filter(alive), [], "a sign-in child outlived cancelLogin");
+
+    // Only one code may be handed out: the child behind the other is gone, so
+    // approving it in the browser would sign nothing in.
+    const handedOut = results.flatMap((r) => (r.ok ? [r.value.code] : []));
+    assert.equal(handedOut.length, 1, `codes handed out: ${JSON.stringify(results)}`);
+    assert.equal(pendingCode, handedOut[0]);
+  });
+
+  it("does not let a superseded login's timer cancel the live one", async () => {
+    mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"] });
+    try {
+      const hold = path.join(tmp, "hold");
+      const first = beginLogin();
+      process.env.STUB_HOLD = hold;
+      const second = beginLogin();
+      delete process.env.STUB_HOLD;
+
+      await driveUntilSettled(first);
+      const firstSettledAt = Date.now();
+
+      fs.writeFileSync(hold, "");
+      const live = await driveUntilSettled(second);
+      assert.ok(live.ok, JSON.stringify(live));
+      const liveArmedAt = Date.now();
+      // Without this the two would expire on the same tick and the assertions
+      // below could not tell them apart.
+      assert.ok(liveArmedAt > firstSettledAt);
+
+      // When the first start's own timer would be due, had it kept one.
+      mock.timers.tick(firstSettledAt + PENDING_TIMEOUT_MS - Date.now());
+      assert.equal(pendingLogin()?.code, live.value.code);
+      assert.equal(lastLoginFailure(), null);
+
+      // And the live login still expires on its own timer, saying so.
+      mock.timers.tick(liveArmedAt + PENDING_TIMEOUT_MS - Date.now());
+      assert.equal(pendingLogin(), null);
+      assert.match(lastLoginFailure() ?? "", /not approved in time/);
+    } finally {
+      cancelLogin();
+      mock.timers.reset();
+    }
   });
 });
