@@ -103,7 +103,7 @@ describe("unwind after a squash git refused", () => {
     const conflicts = await conflictedFiles(repo);
     assert.deepEqual(conflicts, [], "a refused squash is not a conflicted one");
 
-    assert.equal(await unwind(repo, "squash", conflicts.length > 0), true);
+    assert.equal(await unwind(repo, "squash", conflicts.length > 0), "restored");
 
     assert.equal(read(repo, "shared.txt"), "operator edit\n");
     assert.equal(read(repo, "other.txt"), "operator unrelated\n");
@@ -124,7 +124,7 @@ describe("unwind after a squash that wrote", () => {
     const conflicts = await conflictedFiles(repo);
     assert.deepEqual(conflicts, ["shared.txt"]);
 
-    assert.equal(await unwind(repo, "squash", conflicts.length > 0), true);
+    assert.equal(await unwind(repo, "squash", conflicts.length > 0), "restored");
 
     assert.deepEqual(await conflictedFiles(repo), []);
     assert.equal(read(repo, "shared.txt"), "main\n");
@@ -138,7 +138,7 @@ describe("unwind after a squash that wrote", () => {
     assert.equal(gitStatus(repo, "merge", "--squash", "uf/run"), 0);
     assert.notEqual(git(repo, "status", "--porcelain"), "", "the squash staged nothing");
 
-    assert.equal(await unwind(repo, "squash", true), true);
+    assert.equal(await unwind(repo, "squash", true), "restored");
 
     assert.equal(git(repo, "status", "--porcelain"), "");
     assert.equal(read(repo, "shared.txt"), "base\n");
@@ -152,7 +152,41 @@ describe("unwind after a squash that wrote", () => {
     assert.equal(gitStatus(repo, "merge", "--squash", "uf/run"), 0);
     write(repo, "shared.txt", "branch\nand an edit on top\n");
 
-    assert.equal(await unwind(repo, "squash", true), false);
+    assert.equal(await unwind(repo, "squash", true), "changed");
+
+    assert.equal(read(repo, "shared.txt"), "branch\nand an edit on top\n");
+  });
+});
+
+describe("unwind after a fast-forward git wrote and could not record", () => {
+  /**
+   * Another process holding `main`'s ref lock: git writes the branch's tree
+   * into the index and the working tree, then refuses to move `main`, leaving
+   * no MERGE_HEAD for `merge --abort` to work from.
+   */
+  function refusedAtTheRef(name: string): string {
+    const repo = fixture(name);
+    fs.writeFileSync(path.join(repo, ".git", "refs", "heads", "main.lock"), "");
+    assert.notEqual(gitStatus(repo, "merge", "--no-edit", "uf/run"), 0, "git moved main");
+    assert.notEqual(git(repo, "status", "--porcelain"), "", "the fast-forward wrote nothing");
+    return repo;
+  }
+
+  it("takes it back out while the lock is still held", async () => {
+    const repo = refusedAtTheRef("ff-ref-lock");
+
+    assert.equal(await unwind(repo, "merge", false), "restored");
+
+    assert.equal(git(repo, "status", "--porcelain"), "");
+    assert.equal(read(repo, "shared.txt"), "base\n");
+    assert.equal(fs.existsSync(path.join(repo, "added.txt")), false);
+  });
+
+  it("says so rather than overwriting an edit tangled with what it wrote", async () => {
+    const repo = refusedAtTheRef("ff-ref-lock-tangled");
+    write(repo, "shared.txt", "branch\nand an edit on top\n");
+
+    assert.equal(await unwind(repo, "merge", false), "changed");
 
     assert.equal(read(repo, "shared.txt"), "branch\nand an edit on top\n");
   });
