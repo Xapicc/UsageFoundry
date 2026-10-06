@@ -522,6 +522,52 @@ describe("what a cut is priced at, and over which turns", () => {
     assert.deepEqual(byRun.get("money-null"), named);
     assert.equal(byRun.get("money-pending")?.pricedPrunes, 1);
   });
+
+  it("counts only the turns that billed something as turns the cut saved on", async () => {
+    // The CLI writes a `<synthetic>` record at a restart or an API error, with
+    // a usage block that is entirely zero. It read nothing, so it avoided no
+    // re-read — counting it credited one more turn's saving per frame, always
+    // in the flattering direction.
+    const { pruneSavingsByRun } = await import("./contextPruning.js");
+    const synthetic = (sessionId: string, ts: number) =>
+      JSON.stringify({
+        type: "assistant",
+        uuid: `u-syn-${sessionId}-${ts}`,
+        timestamp: new Date(ts).toISOString(),
+        sessionId,
+        cwd: "/workspace/money",
+        message: {
+          id: `syn-${sessionId}-${ts}`,
+          model: "<synthetic>",
+          usage: {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+        },
+      });
+    const billedAroundAFrame = (sessionId: string) => [
+      turn(sessionId, cutAt + 60_000, 16_000, 90_000),
+      synthetic(sessionId, cutAt + 90_000),
+      turn(sessionId, cutAt + 120_000, 106_000, 0),
+    ];
+    await addRun("money-synth", "claude-opus-5", "s-money-synth");
+    await addReceipt("money-synth", "claude-opus-5");
+    writeSession("s-money-synth", billedAroundAFrame("s-money-synth"));
+    await addRun("money-synth-fk", "claude-opus-5", "fk-money-synth");
+    await addFork("money-synth-fk", "fk-money-synth", 150_000);
+    writeSession("fk-money-synth", billedAroundAFrame("fk-money-synth"));
+
+    const byRun = await pruneSavingsByRun(["money-synth", "money-synth-fk"]);
+    assert.deepEqual(
+      {
+        inPlace: byRun.get("money-synth")?.turnsAfter,
+        fork: byRun.get("money-synth-fk")?.turnsAfter,
+      },
+      { inPlace: 2, fork: 2 },
+    );
+  });
 });
 
 describe("pricing a page of runs", () => {

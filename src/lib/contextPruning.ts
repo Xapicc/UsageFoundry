@@ -3880,7 +3880,10 @@ export interface ResumeWrite {
 
 /** What a prune actually came to, once both sides are counted. */
 export interface PruneNet {
-  /** Turns that have carried the smaller conversation. The saving is over these. */
+  /**
+   * Billed turns that have carried the smaller conversation. The saving is over
+   * these, so a `<synthetic>` all-zero frame is not one.
+   */
   turnsAfter: number;
   /**
    * False when the model this ran on has no price here, in which case the three
@@ -4150,7 +4153,8 @@ export interface CleanProbe {
  * For the control and the fork engine, which have a timestamp and no
  * pre-filtered turn list. `priceReceipts` does the same read off the `following` array it has already
  * built, and the two must not come to disagree about which turn a resume is —
- * the zero-usage skip is the part that would drift.
+ * the zero-usage skip is the part that would drift, so both read
+ * `billedAnything`.
  */
 function firstBilledTurn(
   bySession: ReadonlyMap<string, UsageEntry[]>,
@@ -4159,13 +4163,22 @@ function firstBilledTurn(
 ): UsageEntry | null {
   let best: UsageEntry | null = null;
   for (const e of bySession.get(sessionId) ?? []) {
-    if (e.ts <= after) continue;
-    const billed =
-      e.tokens.cacheRead + cacheWriteTokens(e.tokens);
-    if (billed <= 0) continue;
+    if (e.ts <= after || !billedAnything(e)) continue;
     if (!best || e.ts < best.ts) best = e;
   }
   return best;
+}
+
+/**
+ * Whether a turn read or wrote any cache at all.
+ *
+ * The one test every reader here shares, so that the resume a cut is priced
+ * off and the turns its saving is counted over cannot come to disagree about
+ * what a turn is. The CLI's `<synthetic>` record — written at a restart or an
+ * API error, its usage block present and entirely zero — fails it.
+ */
+function billedAnything(e: UsageEntry): boolean {
+  return e.tokens.cacheRead + cacheWriteTokens(e.tokens) > 0;
 }
 
 /** The cache traffic of the turn a resume is read off. */
@@ -4636,9 +4649,13 @@ export async function priceReceipts(
 
   return receipts.map((row) => {
     const sessionId = sessions.get(row.runId) ?? null;
+    // Billed turns only. A restart writes a record whose usage block is present
+    // and entirely zero: taken as the resume it reports the invalidation as
+    // nothing at all, and counted as a turn it credits one more re-read avoided
+    // for a request that read nothing.
     const following = sessionId
       ? (bySession.get(sessionId) ?? [])
-          .filter((e) => e.ts > row.ts)
+          .filter((e) => e.ts > row.ts && billedAnything(e))
           .sort((a, b) => a.ts - b.ts)
       : [];
 
@@ -4646,16 +4663,10 @@ export async function priceReceipts(
     // always available for a boundary prune and was deliberately discarded,
     // which is what made its $0 unfalsifiable rather than merely likely.
     //
-    // Taken off `following`, which is already this session's turns after this
-    // receipt in time order, rather than re-scanning the whole main thread per
-    // receipt. The **first turn that billed anything** rather than simply the
-    // first: a restart writes a record whose usage block is present and entirely
-    // zero, and taking that one reports the invalidation as nothing at all.
-    const firstBilled =
-      following.find(
-        (e) =>
-          e.tokens.cacheRead > 0 || cacheWriteTokens(e.tokens) > 0,
-      ) ?? null;
+    // Taken off `following`, which is already this session's billed turns after
+    // this receipt in time order, rather than re-scanning the whole main thread
+    // per receipt.
+    const firstBilled = following[0] ?? null;
     const resumeWrite = firstBilled ? resumeWriteOf(firstBilled) : null;
     const cut = atResumeModel(row, firstBilled);
 
@@ -4911,8 +4922,11 @@ async function priceForks(
   const bySession = indexBySession(mainThread);
 
   return forks.map(({ cut, sessionId }) => {
+    // Billed turns only, on `priceReceipts`' reasoning.
     const following = sessionId
-      ? (bySession.get(sessionId) ?? []).filter((e) => e.ts > cut.ts)
+      ? (bySession.get(sessionId) ?? []).filter(
+          (e) => e.ts > cut.ts && billedAnything(e),
+        )
       : [];
     const resume = sessionId
       ? firstBilledTurn(bySession, sessionId, cut.ts)

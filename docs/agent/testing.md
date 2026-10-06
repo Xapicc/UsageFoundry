@@ -108,13 +108,18 @@ Twenty are renderings rather than functions — every `*.test.tsx` in the tree, 
 | Test file | Also in |
 |---|---|
 | `contextPruning.test.ts` | [ceiling], [stacks] |
-| `contextPruningReporting.test.ts` |  |
-| `forkAttempts.test.ts` |  |
 | `intakeFilter.test.ts` |  |
 | `pruneStatement.test.ts` |  |
 | `pruneTranscript.test.ts` |  |
-| `transcriptForkDedupe.test.ts` |  |
 | `transcriptOwnership.test.ts` |  |
+
+## [Forked conversations and prune money](testing/forked-conversations-and-prune-money.md)
+
+| Test file | Also in |
+|---|---|
+| `contextPruningReporting.test.ts` |  |
+| `forkAttempts.test.ts` |  |
+| `transcriptForkDedupe.test.ts` |  |
 
 ## [Context samples, the live tick and the context ceiling](testing/context-samples-and-ceiling.md)
 
