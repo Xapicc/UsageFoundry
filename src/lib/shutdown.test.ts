@@ -51,14 +51,18 @@ assert.equal(
 );
 
 const {
+  activeRuns,
   createRun,
   cycleCutByRestart,
   getRun,
   killAllAgents,
   reconcileInterruptedCycles,
   reconcileOnBoot,
+  reopenRestartClosed,
+  reopenRun,
   restartClosedRuns,
   runEvents,
+  selectPromotable,
   shutdownRuns,
   startRun,
   trackAssistChild,
@@ -797,5 +801,112 @@ describe("shutting down while a run waits for its completion verdict", () => {
       nextChildSaysDone = false;
       saveSettings({ validateTaskCompletion: validating });
     }
+  });
+});
+
+/**
+ * A graceful restart and a run told to start "after A, either way".
+ *
+ * The shutdown interrupts A mid-cycle, and A's loop writes the shutdown's
+ * ending, `stopped` with its one cycle counted, then runs the release pass in
+ * its `finally`. An `on-finish` edge is satisfied by any terminal status after
+ * a cycle, so B was given a workspace and queued while the process was going
+ * down; the boot stopped it as a queued row and flagged it `restart_closed`,
+ * and the restart notice's one press reopened A and B together, to run side by
+ * side. A crash already did the right thing: the boot writes B `blocked` behind
+ * A, unflagged, and picking A up puts B back to waiting for it. These pin the
+ * graceful path to that.
+ */
+describe("shutting down with a run waiting on the one it interrupts", () => {
+  /** A working, B waiting on it with `on-finish`, then a shutdown and a boot. */
+  async function shutDownBehind(label: string) {
+    for (const folder of [`${label}-a`, `${label}-b`]) {
+      fs.mkdirSync(path.join(tmp, "workspace", folder), { recursive: true });
+    }
+    const a = createRun({
+      folder: `${label}-a`,
+      mountId: null,
+      prompt: "dependency A",
+      budget: { maxIterations: 2 },
+      origin: "form",
+    });
+    // An earlier case has shut down, so `promoteQueued` refuses and the loop is
+    // started here; run alone, `createRun` will have started it already.
+    if (getRun(a.id)!.status === "queued") void startRun(a.id);
+    await waitFor(() => getRun(a.id)?.active_started_at !== null, "A's first work cycle");
+
+    const b = createRun({
+      folder: `${label}-b`,
+      mountId: null,
+      prompt: "dependent B, after A either way",
+      budget: { maxIterations: 1 },
+      origin: "form",
+      dependsOn: [{ runId: a.id, edge: "on-finish" }],
+    });
+    assert.equal(getRun(b.id)!.status, "waiting");
+
+    await shutdownRuns("SIGTERM");
+    const afterShutdown = { a: getRun(a.id)!, b: getRun(b.id)! };
+    await reconcileOnBoot();
+    return { a, b, afterShutdown, afterBoot: getRun(b.id)! };
+  }
+
+  it("does not release the dependent, and the restart pick-up never runs them side by side", async () => {
+    const { a, b, afterShutdown, afterBoot } = await shutDownBehind("graceful-press");
+
+    // The shutdown's own ending on A, which is what B's edge was read against.
+    assert.equal(afterShutdown.a.status, "stopped");
+    assert.equal(afterShutdown.a.iterations, 1);
+    assert.equal(afterShutdown.a.restart_closed, 1);
+
+    assert.notEqual(
+      afterShutdown.b.status,
+      "queued",
+      "the shutdown released B into the queue on the strength of the ending it gave A",
+    );
+    assert.equal(afterShutdown.b.work_dir, null, "B was given a workspace mid-shutdown");
+    assert.notEqual(
+      afterBoot.restart_closed,
+      1,
+      "B joined the restart notice's one-press pick-up beside the run it waits for",
+    );
+    assert.ok(
+      !restartClosedRuns().some((row) => row.id === b.id),
+      "the restart notice offers B as well as A",
+    );
+
+    const press = reopenRestartClosed();
+    assert.ok(
+      !press.refused.some((r) => r.id === a.id),
+      `A was refused by the pick-up: ${JSON.stringify(press.refused)}`,
+    );
+    const promotable = selectPromotable(activeRuns(), null);
+    assert.ok(promotable.includes(a.id), "the pick-up must make A promotable");
+    assert.ok(
+      !promotable.includes(b.id),
+      "A and its on-finish dependent B were promotable together",
+    );
+    assert.equal(getRun(b.id)!.status, "waiting", "B goes back to waiting behind A");
+  });
+
+  it("puts the dependent back to waiting when that run is picked up by name", async () => {
+    const { a, b, afterBoot } = await shutDownBehind("graceful-by-name");
+
+    // What the crash path writes: ended with nothing spent, naming A, and
+    // revivable, because it never reached a workspace.
+    assert.equal(afterBoot.status, "blocked");
+    assert.equal(afterBoot.work_dir, null);
+    assert.equal(afterBoot.iterations, 0);
+    assert.match(afterBoot.stop_reason ?? "", /restart closed out/);
+
+    const outcome = reopenRun(a.id, JSON.parse(getRun(a.id)!.budget) as unknown);
+    assert.ok(outcome.ok, outcome.ok ? "" : outcome.reason);
+    assert.equal(getRun(a.id)!.status, "queued");
+    assert.equal(
+      getRun(b.id)!.status,
+      "waiting",
+      "picking A up must put B back to waiting for it, as it does after a crash",
+    );
+    assert.ok(!selectPromotable(activeRuns(), null).includes(b.id));
   });
 });
