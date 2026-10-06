@@ -158,7 +158,8 @@ function PendingWork({
             <span className="mono whitespace-nowrap">
               {OPERATION_ENDED_BY[pending.operation]}
             </span>{" "}
-            in this checkout, or finish it, and Commit is offered again
+            in this checkout, or finish it, before committing, resolving or
+            deleting the branch
           </Hint>
         </>
       ) : (
@@ -400,24 +401,32 @@ export function RunLand({ run }: { run: RunDTO }) {
   );
   // A squashed branch is never an ancestor of its target, so `merged` alone
   // would leave it undeletable for ever.
-  const canDelete =
+  const deletable =
     (state.merged || state.landedUnchanged) && state.branchExists && settled;
+  // Not drawn while the run's checkout is stopped mid-rebase or mid-bisect of
+  // the branch, which `deleteBranch` refuses: the pending block names the way
+  // out, and Delete comes back once it is taken.
+  const canDelete = deletable && !state.pending?.operation;
   // Offered only for a real conflict on a run that has stopped committing, and
   // never on a branch already in its target, which `resolveConflicts` refuses.
   // The merge happens the other way round, in an isolated checkout — see
-  // `resolveConflicts`.
+  // `resolveConflicts`. Nor while the run's checkout is stopped mid-rebase or
+  // mid-bisect: git keeps the branch there, `resolveCheckout` refuses it, and
+  // the pending block above already names the operation and its way out.
   const canResolve =
     state.preview.outcome === "conflict" &&
     settled &&
     !state.merged &&
-    !state.landedUnchanged;
-  // The other door out of a branch, for everything `canDelete` refuses. Not
+    !state.landedUnchanged &&
+    !state.pending?.operation;
+  // The other door out of a branch, for everything `deletable` refuses. Not
   // offered beside Delete: when git can see the work is safe, that is the
   // button, and two destructive controls side by side is how the wrong one
   // gets pressed.
   // Not while a resolution works: its checkout is what a purge force-removes,
-  // with a billed agent editing files inside it.
-  const canPurge = state.branchExists && settled && !canDelete && !resolving;
+  // with a billed agent editing files inside it. Keyed on `deletable`, so a
+  // Delete withheld for a stopped rebase is not replaced by the destructive door.
+  const canPurge = state.branchExists && settled && !deletable && !resolving;
   // The other exit, and the only one here that leaves the machine. Offered once
   // per pull request: a second press would push again — updating the pull
   // request — and then be refused by GitHub's "already exists", so what it
