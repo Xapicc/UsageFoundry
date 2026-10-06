@@ -5277,6 +5277,39 @@ export function blockWaitingRun(id: string, reason: string): boolean {
 }
 
 /**
+ * End a run that has not started because an operator stopped it, the way Stop
+ * on its own page does — and release nothing.
+ *
+ * `stopped` rather than `blocked`, and the difference is who may bring it back.
+ * `reviveBlockedDependents` wakes any `blocked` row that never reached a
+ * workspace, so a waiting run the fleet's stop wrote `blocked` was put back to
+ * work by picking up the run in front of it, which is a decision about that
+ * run. A `stopped` row is never revived, and is picked up by name or by the
+ * fleet's pick-up, like any run somebody stopped.
+ *
+ * It leaves the release to the caller: `stopFleet` closes every waiting row
+ * before it signals anything, and a release in the middle of that walk would
+ * admit what it had not reached yet. Guarded on `status='waiting'` for
+ * `blockWaitingRun`'s reason.
+ */
+export function stopWaitingRun(id: string, reason: string): boolean {
+  const at = Date.now();
+  const done = db()
+    .prepare(
+      "UPDATE runs SET status='stopped', finished_at=?, stop_reason=? WHERE id=? AND status='waiting'",
+    )
+    .run(at, reason, id);
+  if (done.changes !== 1) return false;
+  emit({
+    runId: id,
+    ts: at,
+    kind: "status",
+    payload: { status: "stopped", finished_at: at, stop_reason: reason },
+  });
+  return true;
+}
+
+/**
  * Runs belonging to a workflow run somebody halted, and the workflow's name.
  *
  * One condition rather than one per caller, because the two that read it — the
@@ -5335,6 +5368,13 @@ export function haltedWorkflowOf(runId: string): string | null {
  * work under an instance the page reports as stopped, where the instance budget
  * guard — which acts only on a `started` instance — could no longer stop it.
  *
+ * A run set aside is the third, and for the same reason it is a fact about the
+ * row. Both bulk pick-ups reach this through `reopenRun`, so without it a run
+ * the operator said to leave alone was put back to work by a press that never
+ * named it, because it named the run in front. Left out of the candidate set,
+ * so the walk stops at it and does not reach what is behind it either. Picking
+ * it up by name clears the mark first, so that door still revives.
+ *
  * The count is of *runs*, and the blocks are counted by the function that
  * reopens them: half a workflow's graph is not runs at all — a node deferred
  * behind an orchestrator or a merge block holds a row in
@@ -5349,6 +5389,7 @@ export function reviveBlockedDependents(roots: readonly string[]): number {
     db()
       .prepare(
         "SELECT id FROM runs WHERE status='blocked' AND work_dir IS NULL AND iterations = 0" +
+          " AND set_aside_at IS NULL" +
           ` AND id NOT IN (SELECT runId FROM (${HALTED_MEMBERS}))`,
       )
       .all() as Array<{ id: string }>
@@ -11292,10 +11333,7 @@ export function stopRun(id: string, cause: string = OPERATOR_CAUSE): StopOutcome
   // ends with its own reason rather than starting on top of work that never
   // happened.
   if (run.status === "waiting") {
-    setStatus(id, "stopped", {
-      finished_at: Date.now(),
-      stop_reason: `${cause} while it was waiting for another run.`,
-    });
+    stopWaitingRun(id, `${cause} while it was waiting for another run.`);
     releaseDependents();
     promoteQueued();
     return "cancelled";

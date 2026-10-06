@@ -11,7 +11,7 @@ import type Database from "better-sqlite3";
  * The two halves of the install-wide control, and both are database subjects.
  *
  * **The stop** has to take down every live run in one pass, whatever status each
- * is in, and it has to block the ones that have not started *before* it signals
+ * is in, and it has to close out the ones that have not started *before* it signals
  * anything — because stopping a run releases its dependents, and a dependent
  * released a moment before the walk reached it would be admitted, promoted and
  * spawned. A run starting *because* the fleet was stopped is the failure this
@@ -123,6 +123,33 @@ function run(
   return id;
 }
 
+/**
+ * A run behind `on`, exactly as `createRun` leaves one with a dependency:
+ * `waiting`, with nothing about its workspace decided — which is the shape
+ * `reviveBlockedDependents` selects once a release pass has blocked it.
+ */
+function dependent(
+  id: string,
+  on: string,
+  edge: "on-success" | "on-finish" = "on-success",
+): string {
+  const folder = path.join(workspace, id);
+  fs.mkdirSync(folder, { recursive: true });
+  const now = Date.now() + seq++;
+  const db = dbMod.db();
+  db.prepare(
+    `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations,
+                       iterations, created_at, work_dir)
+     VALUES (?, ?, 'then this', 'waiting', '{"maxIterations":1,"permissionMode":"acceptEdits"}',
+             1, 0, ?, NULL)`,
+  ).run(id, folder, now);
+  db.prepare(
+    "INSERT INTO run_deps (run_id, depends_on, edge, continue_branch, created_at)" +
+      " VALUES (?, ?, ?, 0, ?)",
+  ).run(id, on, edge, now);
+  return id;
+}
+
 /** A stored budget with work cycles left after the first. */
 const ROOMY = '{"maxIterations":5,"permissionMode":"acceptEdits"}';
 
@@ -173,7 +200,7 @@ describe("stopFleet", () => {
     assert.equal(statusOf(queued), "stopped");
     assert.equal(statusOf(paused), "stopped");
     assert.equal(statusOf(forStack), "stopped");
-    assert.equal(statusOf(waiting), "blocked");
+    assert.equal(statusOf(waiting), "stopped");
     assert.match(orch.getRun(waiting)!.stop_reason ?? "", /every run in flight/);
 
     // Untouched, and still saying what they said.
@@ -186,7 +213,7 @@ describe("stopFleet", () => {
     }
   });
 
-  it("blocks a waiting run before stopping the run it waits on", () => {
+  it("closes a waiting run out before stopping the run it waits on", () => {
     // The ordering rule. `stopRun` on a queued row releases its dependents and
     // promotes, so a dependent still `waiting` when its dependency was stopped
     // would be admitted — a run starting because the fleet was stopped.
@@ -204,7 +231,7 @@ describe("stopFleet", () => {
 
     assert.equal(
       statusOf(tail),
-      "blocked",
+      "stopped",
       "the dependent must be closed out by the stop, not released by it",
     );
     assert.deepEqual(report.blocked, [tail]);
@@ -253,6 +280,40 @@ describe("stopFleet", () => {
     assert.equal(report.cancelled.includes(member), false);
   });
 
+  it("ends a waiting run the way its own Stop would, so picking up the run in front does not wake it", () => {
+    // Held, so the pick-ups below queue and nothing is promoted to a spawn.
+    settings.setNewWorkPaused(true);
+    const head = run("fleet-revive-head", "paused", { iterations: 1 });
+    const tail = dependent("fleet-revive-tail", head, "on-finish");
+    try {
+      fleet.stopFleet();
+      const ended = orch.getRun(tail)!;
+
+      // The run in front, picked up by name on its own page. That is a decision
+      // about that run, and the one behind it was stopped by the same press.
+      assert.deepEqual(orch.reopenRun(head, { maxIterations: 5 }), { ok: true });
+      const after = orch.getRun(tail)!;
+      assert.equal(
+        after.status,
+        ended.status,
+        "picking up the run in front undid the fleet's stop of the run behind it",
+      );
+      assert.equal(after.stop_reason, ended.stop_reason);
+
+      // What Stop on its own page writes for a waiting run, which nothing
+      // revives — and which the fleet's own pick-up offers, so a fleet stopped
+      // and picked up again does not strand the run behind.
+      assert.equal(ended.status, "stopped");
+      assert.match(ended.stop_reason ?? "", /every run in flight while it was waiting/);
+      assert.deepEqual(fleet.reopenFleet([tail], { maxIterations: 5 }).reopened, [tail]);
+      assert.equal(statusOf(tail), "waiting", "back behind the run in front");
+    } finally {
+      // Ended while still held: the next describe clears the hold and promotes.
+      orch.stopRun(tail);
+      orch.stopRun(head);
+      settings.setNewWorkPaused(false);
+    }
+  });
 });
 
 describe("the hold on new work", () => {
@@ -492,6 +553,55 @@ describe("a run set aside", () => {
     );
   });
 
+  // The side door: neither pick-up names the run set aside, but each picks up
+  // the run it waits on, and `reopenRun` revives what that run's ending blocked.
+  // A dependent beside it that nobody set aside is the control — it is woken by
+  // the same press, so the revive ran and the mark is the whole difference.
+  function blockedBehind(name: string, head: string) {
+    const aside = dependent(`${name}-aside`, head);
+    const beside = dependent(`${name}-beside`, head);
+    // Behind the one set aside, so a walk that went through it would reach this.
+    const further = dependent(`${name}-further`, aside);
+    // A failed run satisfies no `on-success` edge, held or not.
+    orch.releaseDependents();
+    for (const id of [aside, beside, further]) assert.equal(statusOf(id), "blocked");
+    assert.equal(orch.setRunAside(aside, true).ok, true);
+    return { aside, beside, further };
+  }
+
+  function assertLeftAlone(aside: string, further: string): void {
+    assert.equal(
+      statusOf(aside),
+      "blocked",
+      "a run set aside was brought back by a bulk pick-up of the run it waits on",
+    );
+    assert.notEqual(orch.getRun(aside)!.set_aside_at, null);
+    assert.equal(statusOf(further), "blocked", "the revive walked on through it");
+  }
+
+  it("is not brought back by the fleet's pick-up of the run it waits on", () => {
+    const head = run("aside-fleet-head", "failed", { iterations: 1 });
+    const { aside, beside, further } = blockedBehind("aside-fleet", head);
+
+    const report = fleet.reopenFleet([head], { maxIterations: 3 });
+
+    assert.deepEqual(report.reopened, [head]);
+    assert.equal(statusOf(beside), "waiting");
+    assertLeftAlone(aside, further);
+  });
+
+  it("is not brought back by the restart notice's pick-up of the run it waits on", () => {
+    // Picked up on its own stored budget, so it needs cycles left under it.
+    const head = run("aside-notice-head", "failed", { iterations: 1, budget: ROOMY });
+    dbMod.db().prepare("UPDATE runs SET restart_closed = 1 WHERE id = ?").run(head);
+    const { aside, beside, further } = blockedBehind("aside-notice", head);
+
+    orch.reopenRestartClosed();
+
+    assert.equal(statusOf(head), "queued");
+    assert.equal(statusOf(beside), "waiting");
+    assertLeftAlone(aside, further);
+  });
 });
 
 /**
