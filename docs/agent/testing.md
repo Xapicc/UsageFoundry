@@ -50,7 +50,7 @@ Twenty are renderings rather than functions — every `*.test.tsx` in the tree, 
 |---|---|
 | `fleet.test.ts` | [harnesses] |
 | `restartClosedView.test.ts` |  |
-| `shutdown.test.ts` |  |
+| `shutdown.test.ts` | [workflows] |
 
 ## [Data directory ownership, retention and migrations](testing/data-dir-retention-and-migrations.md)
 
