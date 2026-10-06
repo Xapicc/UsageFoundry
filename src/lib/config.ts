@@ -41,8 +41,9 @@ function env(name: string, fallback: string): string {
  * originally: blank is an **off switch** for the three credentials
  * (`UF_AUTH_TOKEN`, `ANTHROPIC_ADMIN_KEY`, `UF_GITHUB_TOKEN`, and
  * `UF_GITHUB_TOKENS` beside it), and blank is **"take the default"** for the
- * three that carry a value only an operator tuning something ever sets
- * (`UF_ALLOW_NO_AUTH`, `UF_COOKIE_SECURE`, `UF_TRANSCRIPT_CACHE_MAX_ENTRIES`)
+ * ones that carry a value only an operator tuning something ever sets
+ * (`UF_ALLOW_NO_AUTH`, `UF_COOKIE_SECURE`, `UF_TRANSCRIPT_CACHE_MAX_ENTRIES`,
+ * `UF_TRUSTED_PROXY_HOPS`)
  * plus `UF_UNMOUNTED_WORKSPACES`, which is not an operator value at all. Either
  * way the operator chose it, so it must never be swept into a validation
  * failure — which is precisely why this check belongs in the app, which knows
@@ -386,6 +387,23 @@ export const ALLOW_NO_AUTH = optionalEnv("UF_ALLOW_NO_AUTH");
  * two directions exist for different failures, and neither is a preference.
  */
 export const COOKIE_SECURE = optionalEnv("UF_COOKIE_SECURE");
+
+/**
+ * How many reverse proxies in front of this process append to
+ * `x-forwarded-for`, which is how far from that header's right-hand end the
+ * client's address sits. `sourceAddress` in `requestLog.ts` is the one reader.
+ *
+ * Zero by default because compose ships with nothing in front, and there both
+ * headers are whatever the client wrote: reading one let anybody who knew the
+ * operator's address put it under sign-in's fifteen-minute source lockout. Not
+ * a whole number reads as zero too, because that is the direction where a
+ * mistake costs the operator a per-source bucket rather than handing a guesser
+ * the operator's.
+ */
+export const TRUSTED_PROXY_HOPS = ((): number => {
+  const raw = optionalEnv("UF_TRUSTED_PROXY_HOPS").trim();
+  return /^\d+$/.test(raw) ? Number(raw) : 0;
+})();
 
 /** Admin API key (sk-ant-admin01-...). Optional. */
 export const ADMIN_API_KEY = optionalEnv("ANTHROPIC_ADMIN_KEY");
@@ -871,10 +889,11 @@ export const BLANK_MEANINGFUL_ENV_VARS = [
   // Blank is "use the Claude Code sign-in", for runs and for model discovery.
   "ANTHROPIC_API_KEY",
   // Blank is "take the default": no acknowledgement, let the request decide the
-  // cookie flag, and the shipped transcript cache bound.
+  // cookie flag, the shipped transcript cache bound, and no trusted proxy.
   "UF_ALLOW_NO_AUTH",
   "UF_COOKIE_SECURE",
   "UF_TRANSCRIPT_CACHE_MAX_ENTRIES",
+  "UF_TRUSTED_PROXY_HOPS",
   // Blank is "off" for the whole outbound notification channel, and blank is
   // what every stock install has. The two beside them shape a body that is only
   // ever built when the first two are set.

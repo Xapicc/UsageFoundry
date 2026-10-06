@@ -35,6 +35,9 @@ before(async () => {
   process.env.DATA_DIR = path.join(root, "data");
   process.env.CLAUDE_HOME = path.join(root, "claude");
   process.env.WORKSPACE_ROOT = path.join(root, "workspace");
+  // One proxy in front, so the wrapper's row has an address to record; what
+  // each hop count reads is pinned on `sourceAddress` directly below.
+  process.env.UF_TRUSTED_PROXY_HOPS = "1";
 
   const config = await import("./config");
   assert.equal(
@@ -64,6 +67,43 @@ function rows(): Array<Record<string, unknown>> {
     .all() as Array<Record<string, unknown>>;
 }
 
+/**
+ * Which address a request is charged to and recorded under, by how many proxies
+ * the operator declared. Silent both ways: read too far left and a client picks
+ * whose sign-in bucket its guesses fill and what the audit trail says it was;
+ * read anything at zero hops and the same is true with no proxy at all.
+ */
+describe("sourceAddress", () => {
+  const at = (hops: number, headers: Record<string, string>) =>
+    requestLog.sourceAddress(new Headers(headers), hops);
+
+  it("reads no forwarding header when no proxy is declared", () => {
+    assert.equal(at(0, { "x-forwarded-for": "203.0.113.7" }), null);
+    assert.equal(at(0, { "x-real-ip": "203.0.113.7" }), null);
+  });
+
+  it("counts declared hops from the right, past whatever the client wrote", () => {
+    const chain = { "x-forwarded-for": "192.0.2.1, 198.51.100.66, 203.0.113.7" };
+    assert.equal(at(1, chain), "203.0.113.7");
+    assert.equal(at(2, chain), "198.51.100.66");
+    assert.equal(at(3, chain), "192.0.2.1");
+  });
+
+  it("calls a header shorter than the declared chain unattributable", () => {
+    assert.equal(at(2, { "x-forwarded-for": "203.0.113.7" }), null);
+    assert.equal(at(1, { "x-forwarded-for": "" }), null);
+  });
+
+  it("reads x-real-ip only behind a proxy and only without x-forwarded-for", () => {
+    assert.equal(at(1, { "x-real-ip": " 203.0.113.7 " }), "203.0.113.7");
+    assert.equal(
+      at(1, { "x-forwarded-for": "198.51.100.66", "x-real-ip": "203.0.113.7" }),
+      "198.51.100.66",
+    );
+    assert.equal(at(1, {}), null);
+  });
+});
+
 describe("a mutating request leaves one line", () => {
   it("names the method, path, status, actor and source address", async () => {
     const handler = requestLog.auditMutation(async (_req: Request) =>
@@ -75,7 +115,7 @@ describe("a mutating request leaves one line", () => {
         method: "POST",
         headers: {
           authorization: `Bearer ${SECRET}`,
-          "x-forwarded-for": "203.0.113.7, 10.0.0.1",
+          "x-forwarded-for": "198.51.100.66, 203.0.113.7",
         },
         body: JSON.stringify({ prompt: "do the thing" }),
       }),
@@ -87,8 +127,8 @@ describe("a mutating request leaves one line", () => {
     assert.equal(row.status, 201);
     // The credential *class*, never the credential.
     assert.equal(row.actor, "bearer");
-    // The first hop only: the rest of that header is whatever the client felt
-    // like sending and is not evidence of anything.
+    // The entry the one declared proxy appended. The left of that header is
+    // whatever the client felt like sending and is not evidence of anything.
     assert.equal(row.address, "203.0.113.7");
     assert.equal(typeof row.duration_ms, "number");
   });

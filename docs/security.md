@@ -301,7 +301,10 @@ on may do nothing whatever. `docs/verification.md` carries what would settle it.
 - **`/api/login` is rate-limited.** Ten consecutive failures from one address
   lock that address out for 15 minutes; 100 failures across every address lock
   sign-in install-wide for 60 seconds, which is what still bounds an attacker
-  who forges `X-Forwarded-For`. A locked-out attempt answers exactly what a
+  with many addresses. The address is read `UF_TRUSTED_PROXY_HOPS` entries from
+  the right of `X-Forwarded-For`, so set that to the number of proxies in
+  front; at the default of 0 no header is trusted and only the install-wide
+  limit applies. A locked-out attempt answers exactly what a
   wrong token answers, with a `Retry-After`. Failures are kept in the database
   and **Settings → Failed sign-ins** shows the count and when they started and
   stopped. A correct token clears both counters.

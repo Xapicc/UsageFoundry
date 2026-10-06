@@ -40,29 +40,6 @@ function tokenMatches(offered: unknown): boolean {
 }
 
 /**
- * Who is guessing, as far as this process can tell.
- *
- * `x-forwarded-for` is set by a reverse proxy and is *also* settable by a
- * client when there is no proxy in front, so this bucket can be evaded by
- * rotating the header. That is not a flaw in reading it — there is nothing
- * better available to a Node process behind an arbitrary terminator — it is the
- * reason the install-wide budget in `loginLimiter.ts` exists.
- *
- * With neither header the answer is `null`, not a name. This used to be the
- * literal "unknown", one bucket shared by every client nothing in front of the
- * app had named — the operator's browser among them — so anybody's ten guesses
- * locked the operator out for the source lockout's whole fifteen minutes.
- * `checkLoginAllowed` says what a `null` is held to instead.
- */
-function clientSource(req: Request): string | null {
-  const forwarded = req.headers.get("x-forwarded-for") ?? "";
-  const first = forwarded.split(",")[0].trim();
-  if (first) return first.slice(0, 100);
-  const real = (req.headers.get("x-real-ip") ?? "").trim();
-  return real ? real.slice(0, 100) : null;
-}
-
-/**
  * Only a sign-in that worked is audited, and every other answer goes to stdout.
  *
  * The path is exempt from the edge gate, so whoever reaches it has proved
@@ -105,7 +82,17 @@ export async function POST(req: Request): Promise<Response> {
   // charged as a failure in the same step, with nothing awaited between the two,
   // because the body read below is an `await` and a check that the charge
   // trailed across it let a concurrent burst through whole. A success refunds it.
-  const source = clientSource(req);
+  //
+  // Who is guessing is `sourceAddress`'s answer, read from the right of
+  // `x-forwarded-for` as far as `UF_TRUSTED_PROXY_HOPS` says proxies vouch for,
+  // because the left of it is the client's own writing. A client holding many
+  // addresses, or one that reaches this port past the declared proxies, still
+  // gets a fresh bucket per source; the install-wide budget bounds that. With
+  // nothing declared in front the answer is `null`, not a name: the literal
+  // "unknown" was one bucket shared by every client nothing had named, the
+  // operator's browser among them, so anybody's ten guesses locked the
+  // operator out for the source lockout's fifteen minutes.
+  const source = sourceAddress(req.headers);
   const verdict = reserveLoginAttempt(source);
   if (!verdict.allow) {
     await uniformDelay();
