@@ -353,6 +353,21 @@ describe("neither exit lets a file seeding copied in leave on the branch", () =>
     assert.equal(remoteTip(s), null);
   });
 
+  it("still reads a branch whose recorded base commit no longer exists", async () => {
+    // A base the target was rewritten past and git collected: refused as
+    // unreadable, the run could never leave by either exit.
+    const s = forcedEnvScene("seeded-gone-base");
+    dbMod
+      .db()
+      .prepare("UPDATE runs SET worktree_base = ? WHERE id = ?")
+      .run("0123456789abcdef0123456789abcdef01234567", s.runId);
+
+    const pressed = await land.deliverRun(s.runId);
+
+    assert.match(pressed.ok ? "" : pressed.reason, /^uf\/seeded-gone-base carries \.env,/);
+    assert.equal(remoteTip(s), null);
+  });
+
   it("refuses what the card's Commit button commits from a repository that does not ignore it", async () => {
     const s = scene("seeded-unignored");
     seedEnv(s);

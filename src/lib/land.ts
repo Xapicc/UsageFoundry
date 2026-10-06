@@ -791,7 +791,11 @@ function seedGlobsOf(run: RunRow): string[] {
  * `--name-only` opens no blob, `conflictedFiles`' exemption in `diffs.md`, and
  * the driver flags are passed regardless. `-z` because the paths go out again
  * as pathspecs and into a sentence. The merge, rename and relative-path modes
- * are spelled out because each has a config key the repository sets.
+ * are spelled out because each has a config key the repository sets. A base
+ * commit that no longer exists is skipped rather than refused, and a tree that
+ * cannot be listed subtracts nothing: either can only make this refuse more,
+ * where failing would leave a run whose base was collected unable to leave at
+ * all.
  */
 async function seededOnBranch(
   repo: string,
@@ -807,7 +811,7 @@ async function seededOnBranch(
     [
       "log", "-z", "--format=", "--name-only", "--no-renames", "--no-relative",
       "--diff-merges=first-parent", "--no-color", "--no-ext-diff", "--no-textconv",
-      "--no-show-signature", tip, "--not", ...known, "--",
+      "--no-show-signature", "--ignore-missing", tip, "--not", ...known, "--",
     ],
     { ...NO_CLOCK, trim: false },
   );
@@ -824,7 +828,7 @@ async function seededOnBranch(
       ["ls-tree", "-r", "-z", "--full-tree", "--name-only", ref, "--", ...named.map((p) => `:(top,literal)${p}`)],
       { ...NO_CLOCK, trim: false },
     );
-    if (!listed.ok) return { ok: false, error: gitFailureLine(listed.stderr) || "git ls-tree failed" };
+    if (!listed.ok) continue;
     for (const p of listed.stdout.split("\0")) if (p !== "") tracked.add(p);
   }
   return { ok: true, paths: named.filter((p) => !tracked.has(p)).sort() };
@@ -847,11 +851,11 @@ export function seededRefusal(
   s: { branch: string; target: string; exit: "land" | "deliver" },
 ): string | null {
   if (!read) return null;
-  const leaving = s.exit === "deliver" ? "Delivering" : "Landing";
   if (!read.ok) {
     return (
       `Could not read which files ${s.branch} carries, so whether it holds one copied in from ` +
-      `your checkout is unknown, and ${leaving.toLowerCase()} it waits until that can be read: ${read.error}`
+      `your checkout is unknown, and ${s.exit === "deliver" ? "delivering" : "landing"} it ` +
+      `waits until that can be read: ${read.error}`
     );
   }
   if (read.paths.length === 0) return null;
@@ -1852,8 +1856,9 @@ export async function landRun(
     // be merged and had it rolled back.
     //
     // `--no-overwrite-ignore` because git's default replaces a file the checkout
-    // ignores wherever the branch tracks that path — an `.env` an agent
-    // committed with `git add -f` — and `git status` never lists one, so the
+    // ignores wherever the branch tracks that path — a config file an agent
+    // committed with `git add -f`, one the seeding list does not name, since
+    // one it names was refused above — and `git status` never lists one, so the
     // checkout read clean and the operator's own file was gone, never having
     // been in git, under a card that said it landed.
     const merge = pastSquash
