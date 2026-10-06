@@ -685,6 +685,22 @@ export function validationStoppedWithRun(runId: string): boolean {
 }
 
 /**
+ * Whether this run has been stopped, asked by a check about to start in its name.
+ *
+ * `validationStoppedWithRun` reaches only a check whose child exists, and
+ * `completeTaskWithValidation` awaits a diff read before it spawns one, so a
+ * Stop in that window marked nothing. A Stop is recorded in one of two places:
+ * on a live loop it is the operator's interrupt, which becomes a row only once
+ * the cycle's child has gone, and on a parked run `stopRun` writes the row
+ * itself. The row cannot say who stopped it — a guard's stop and a shutdown also
+ * write `stopped` — and none of the three is a run a new check should act for.
+ */
+export function runStoppedBeforeCheck(runId: string): boolean {
+  if (interrupts.get(runId)?.kind === "operator") return true;
+  return getRun(runId)?.status === "stopped";
+}
+
+/**
  * Why a run is being stopped, and whether it may come back.
  *
  * Replaces a reason-less `Set` of cancelled ids: with live guards there are now

@@ -2,7 +2,13 @@ import { db } from "./db";
 import { diffAsText, runDiff, type RunDiff } from "./diff";
 import { getSettings } from "./settings";
 import { getTask, updateTask, type Task } from "./tasks";
-import { emitRunEvent, getRun, validationStoppedWithRun, type RunRow } from "./orchestrator";
+import {
+  emitRunEvent,
+  getRun,
+  runStoppedBeforeCheck,
+  validationStoppedWithRun,
+  type RunRow,
+} from "./orchestrator";
 import {
   assistRefusal,
   assistRunning,
@@ -564,6 +570,24 @@ export async function completeTaskWithValidation(
   }
 
   const diff = await runDiff(runId);
+  const refusal = diff.kind === "none" ? null : await assistRefusal();
+
+  // After the last await and ahead of every close as well as the start: a Stop
+  // that landed while those read has no child to reach, and either a close or
+  // a check that settles later would be this run acting after it. The task is
+  // left as `settleValidation` leaves a stopped check's.
+  if (runStoppedBeforeCheck(runId)) {
+    logRun(
+      runId,
+      `The run was stopped before “${task.title}” could be checked, so no check was started and the task was not closed. It stays claimed by this run.`,
+    );
+    return {
+      kind: "refused",
+      error: `This run has been stopped, so “${task.title}” was not closed. It stays claimed by this run for the operator to close or release.`,
+      missing: false,
+    };
+  }
+
   if (diff.kind === "none") {
     return closeNow(
       taskId,
@@ -572,7 +596,6 @@ export async function completeTaskWithValidation(
     );
   }
 
-  const refusal = await assistRefusal();
   if (refusal) {
     // Closed rather than held, and this is the branch most worth stating. The
     // commonest cap it hits is `maxConcurrentAssists`, a bound on how many Node

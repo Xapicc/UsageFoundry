@@ -19,6 +19,7 @@ import type { Task } from "./tasks";
  * it, and a stand-in `claude` that never answers unless it is signalled, and
  * then answers `finished` on its way out, as a CLI that handles SIGINT may.
  * That answer is the case the settle has to refuse rather than merely not see.
+ * And a Stop that lands before there is a child, which must start none.
  *
  * Its own file, with `DATA_DIR` named before the first import, for
  * `loopMergeOwnership.test.ts`'s reason.
@@ -256,5 +257,49 @@ describe("an operator's Stop with a completion check in flight", () => {
     assert.equal(orchestrator.getRun(runId)!.status, "stopped");
 
     await assertStoppedCheck(runId, task, reviewId);
+  });
+});
+
+/**
+ * A Stop that lands before the check has a child to signal, while
+ * `completeTaskWithValidation` is still awaiting the diff read: nothing marks
+ * anything, so the child it then starts would settle for a stopped run.
+ */
+async function assertNoCheck(runId: string, task: Task, outcome: { kind: string }) {
+  assert.equal(outcome.kind, "refused", JSON.stringify(outcome));
+  // The row is written in the same synchronous step as the spawn, so its
+  // absence is the proof; the grace covers a stub that is still starting.
+  assert.equal(review.latestAssist(runId, "validate"), null, "a check was started for a stopped run");
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(fs.existsSync(control("started")), false, "the validator was spawned");
+
+  const held = tasks.getTask(task.id)!;
+  assert.equal(held.status, "claimed");
+  assert.equal(held.claimedByRunId, runId);
+  assert.ok(
+    logLines(runId).some((line) => /stopped/i.test(line) && /not closed/.test(line)),
+    logLines(runId).join("\n"),
+  );
+}
+
+describe("an operator's Stop before the completion check has started", () => {
+  it("starts no check when it lands on a live run during the diff read", async () => {
+    const runId = worktreeRun("running");
+    const task = heldTask(runId, "Change a.txt, stopped mid-read");
+    // `runDiff` is its first await, so the Stop lands while the diff is read.
+    const pending = validation.completeTaskWithValidation(task.id, runId);
+    assert.equal(orchestrator.stopRun(runId), "cancelled");
+
+    await assertNoCheck(runId, task, await pending);
+  });
+
+  it("starts no check when it lands on a parked run, which writes the row instead", async () => {
+    const runId = worktreeRun("paused");
+    const task = heldTask(runId, "Change a.txt, stopped mid-read while parked");
+    const pending = validation.completeTaskWithValidation(task.id, runId);
+    assert.equal(orchestrator.stopRun(runId), "cancelled");
+    assert.equal(orchestrator.getRun(runId)!.status, "stopped");
+
+    await assertNoCheck(runId, task, await pending);
   });
 });
