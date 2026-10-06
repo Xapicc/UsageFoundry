@@ -15,12 +15,25 @@ export const dynamic = "force-dynamic";
  * read that happens to compute a URL: pressing it twice abandons the first
  * link, and a code issued against the abandoned one can no longer be redeemed.
  *
- * 502 rather than 500 on failure: everything that can go wrong here went wrong
- * in the CLI, and the body carries its own sentence about it.
+ * 200 carries the link. 502 is the CLI failing — it would not run, printed no
+ * link in time, or exited first — and 502 rather than 500 because the fault is
+ * the CLI's, not this server's. 409 is this start taken over while it waited
+ * for its link, by a newer start, a cancel or a sign-out: two presses
+ * overlapping, not a CLI failing, and kept apart from the 502 because
+ * `request_log` keeps the status and never the body, so an operator reading
+ * the trail would otherwise go looking for a broken CLI over a double press.
+ * The superseded press still gets its request line and no durable row, since
+ * it minted no link. Both failures carry their own sentence in `error`, which
+ * is what the page shows.
  */
 async function postHandler(req: Request) {
   const res = await beginLogin();
-  if (!res.ok) return NextResponse.json({ error: res.error }, { status: 502 });
+  if (!res.ok) {
+    return NextResponse.json(
+      { error: res.error },
+      { status: res.superseded ? 409 : 502 },
+    );
+  }
   // The durable half. This is the first move of a credential replacement whose
   // second move — `login/code` — may be minutes later and from a different
   // browser, so the two are separate rows on purpose; a trail that recorded only

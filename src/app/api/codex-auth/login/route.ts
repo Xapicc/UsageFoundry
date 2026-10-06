@@ -21,12 +21,21 @@ export const dynamic = "force-dynamic";
  * that is useless without an OpenAI account to approve it with, and it is
  * printed on this page precisely so somebody can type it into one.
  *
- * 502 rather than 500 on failure: everything that can go wrong here went wrong
- * in the CLI, and the body carries its own sentence about it.
+ * 200 carries the link and the code. 502 is a start that failed: the CLI would
+ * not run, printed no link and code in time or exited first, or the
+ * `CODEX_HOME` it writes could not be prepared. 409 is this start taken over
+ * while it waited, by a newer start, a cancel, an API key or a sign-out, and
+ * is kept apart from the 502 for the reason the Claude route states. Both
+ * failures carry their own sentence in `error`, which is what the page shows.
  */
 async function postHandler(req: Request) {
   const res = await beginLogin();
-  if (!res.ok) return NextResponse.json({ error: res.error }, { status: 502 });
+  if (!res.ok) {
+    return NextResponse.json(
+      { error: res.error },
+      { status: res.superseded ? 409 : 502 },
+    );
+  }
   // `warn` where the Claude twin is `info`, and the field says why rather than
   // leaving the level to be read as a mood: this press is a credential
   // *deletion* that happens to be the start of a sign-in, so an operator

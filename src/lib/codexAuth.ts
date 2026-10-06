@@ -547,6 +547,14 @@ export function cancelLogin(): void {
 }
 
 /**
+ * `claudeAuth.ts`'s `StartOutcome`, with the code beside the link. A key or a
+ * sign-out taking the start over is as much a supersession as a newer start.
+ */
+export type StartOutcome =
+  | { ok: true; value: { url: string; code: string } }
+  | { ok: false; error: string; superseded: boolean };
+
+/**
  * Start a device login and return the link and the code to type into it.
  *
  * The child stays alive afterwards, polling OpenAI, until somebody approves the
@@ -560,16 +568,14 @@ export function cancelLogin(): void {
  * anything. The page therefore offers this only when signed out, and the sign-in
  * sheet says what pressing it costs.
  */
-export async function beginLogin(): Promise<
-  CodexAuthResult<{ url: string; code: string }>
-> {
+export async function beginLogin(): Promise<StartOutcome> {
   // Any earlier attempt is dead to us the moment a second code exists, and the
   // operator is about to be shown the newer one.
   cancelLogin();
   store.__ufCodexLoginFailure = null;
 
   const home = ensureCodexHome();
-  if (!home.ok) return home;
+  if (!home.ok) return { ok: false, error: home.error, superseded: false };
 
   let child: ChildProcess;
   try {
@@ -579,6 +585,7 @@ export async function beginLogin(): Promise<
     return {
       ok: false,
       error: `Could not run \`${CODEX_BIN}\`: ${err instanceof Error ? err.message : String(err)}`,
+      superseded: false,
     };
   }
   // Claimed before the wait, for `claudeAuth.ts`'s reason: two starts that both
@@ -616,12 +623,13 @@ export async function beginLogin(): Promise<
     return {
       ok: false,
       error: "This sign-in was replaced by a newer one, or cancelled, before its link and code arrived.",
+      superseded: true,
     };
   }
   startSlot.__ufCodexLoginStarting = null;
   if (!found.ok) {
     child.kill("SIGKILL");
-    return found;
+    return { ok: false, error: found.error, superseded: false };
   }
 
   // Expires only the login it was armed for. One that cancelled blind wrote
