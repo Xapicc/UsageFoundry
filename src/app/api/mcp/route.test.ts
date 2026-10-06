@@ -1301,6 +1301,48 @@ test("ask_operator refuses a question too long to be answered, and asks nothing"
   assert.equal(asked(), 1);
 });
 
+test("ask_operator refuses a choice too long to be answered with, and asks nothing", async () => {
+  const chatId = chat.createChat().id;
+  const token = chat.mintCapability({ kind: "chat", chatId });
+  const asked = () => chat.listQuestions(chatId).length;
+  const cap = `${chat.MAX_CHOICE_CHARS.toLocaleString("en-US")} characters`;
+
+  const listed = (await rpc(token, "tools/list")) as {
+    tools: {
+      name: string;
+      inputSchema: { properties: { questions: { items: { properties: { choices: { description: string } } } } } };
+    }[];
+  };
+  const description =
+    listed.tools.find((t) => t.name === "ask_operator")?.inputSchema.properties.questions.items
+      .properties.choices.description ?? "";
+  assert.ok(description.includes(cap), `the choices description says ${cap}: ${description}`);
+
+  // A picked choice is the answer, and `answerMessage` quotes it in the message
+  // `sendChatMessage` refuses past `MAX_CHAT_MESSAGE_BYTES` — so a pasted diff
+  // offered as a choice got the operator told to shorten text they did not
+  // write, for having pressed the button it was drawn on.
+  const pasted = await callTool(token, "ask_operator", {
+    questions: [
+      { question: "Which of these should I look at first?", choices: ["the build", "the tests"] },
+      { question: "Apply this patch?", choices: ["no", "y".repeat(80_000)] },
+    ],
+  });
+  assert.equal(pasted.isError, true, "the call is refused");
+  assert.ok(pasted.text.includes(cap), pasted.text.slice(0, 500));
+  assert.ok(pasted.text.length < 1_000, "and the refusal does not quote it back");
+  assert.equal(asked(), 0, "nor is the question beside it recorded");
+
+  // Counted after `normalizeChoices` trims, which is the text a button shows.
+  const atCap = await callTool(token, "ask_operator", {
+    questions: [
+      { question: "Apply this patch?", choices: ["no", `  ${"y".repeat(chat.MAX_CHOICE_CHARS)}  `] },
+    ],
+  });
+  assert.equal(atCap.isError, false, atCap.text);
+  assert.equal(asked(), 1);
+});
+
 /**
  * The chat can name the provider a proposed run is spawned as, which it could
  * not before: the tool had no field for it, so the orchestrator told the

@@ -142,6 +142,7 @@ process.env.UF_GITHUB_TOKEN = "ghp_" + "x".repeat(36);
 const {
   CHAT_IDLE_TIMEOUT_MS,
   MAX_CHAT_MESSAGE_BYTES,
+  MAX_CHOICE_CHARS,
   MAX_OPEN_QUESTIONS,
   MAX_QUESTION_CHARS,
   MAX_QUESTION_CHOICES,
@@ -1905,16 +1906,17 @@ describe("answerMessage", () => {
     assert.match(text, /Q: Should it push\?\nA: \(not answered\)/);
   });
 
-  it("leaves half the message limit for the answers when every open question is at the cap", () => {
-    // Three constants apart, and what joins them is the refusal in
-    // `sendChatMessage`: raise either question bound alone and Answer is
-    // refused again on questions the operator did not write, with a sentence
-    // telling them to shorten it. Three-byte characters, because the cap counts
-    // code units.
+  it("leaves half the message limit for typed answers when every open question and choice is at the cap", () => {
+    // Four constants apart, and what joins them is the refusal in
+    // `sendChatMessage`: raise any of the three question bounds alone and
+    // Answer is refused again on text the operator did not write, with a
+    // sentence telling them to shorten it. Each answered with a choice at its
+    // cap, because a picked choice is the model's text too. Three-byte
+    // characters, because both caps count code units.
     const text = answerMessage(
       Array.from({ length: MAX_OPEN_QUESTIONS }, () => ({
         question: "€".repeat(MAX_QUESTION_CHARS),
-        answer: null,
+        answer: "€".repeat(MAX_CHOICE_CHARS),
       })),
     );
     assert.ok(Buffer.byteLength(text, "utf8") <= MAX_CHAT_MESSAGE_BYTES / 2);
