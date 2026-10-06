@@ -93,7 +93,12 @@ import {
   turnCostOf,
   writeMcpConfig,
 } from "./chat";
-import { recordRunTasks, tasksLinkedToRun, updateTask } from "./tasks";
+import {
+  recordRunTasks,
+  recordTaskClaimAsked,
+  unaskedTaskClaims,
+  updateTask,
+} from "./tasks";
 import { enabledPluginDirs, pluginDirArgs } from "./plugins";
 import {
   apiContextSample,
@@ -9416,7 +9421,7 @@ async function reconcileKilledCycle(
  * Asked of `tasks.ts` rather than read off `run_tasks` here, which is the
  * boundary `recordRunTasks` names in that file: this module decides what a run
  * may do and what it costs, and no loop, guard, occupancy check or budget on
- * this side reads that table. `tasksLinkedToRun` is the one reader.
+ * this side reads that table. `unaskedTaskClaims` is the one reader.
  *
  * **All of them, in the order they were named.** A run holding one of three
  * tasks it was started for does the work for three and can close one, because
@@ -9433,9 +9438,17 @@ async function reconcileKilledCycle(
  * repeated to the operator on the run's own log because the alternative is a
  * board that silently disagrees with the run page about who holds what.
  *
- * A task already `claimed` by this same run is `from === to`, which the rule
- * allows and which changes nothing — the shape a resumed or picked-up run takes,
- * since this fires again on every segment.
+ * **Asked once, when the run first starts, and never again on a pick-up.** This
+ * fires at the top of every segment, and it used to claim every link each time:
+ * an open task the run had given back with `release_task`, or that the operator
+ * had released from it, was claimed for it again whenever it came back from a
+ * park, a stack wait or a restart, reversing either decision at a moment set by
+ * the park rather than by anybody. So each link is asked for once and recorded
+ * as asked, whatever the board answered, and a later segment asks for nothing:
+ * a run holds afterwards exactly what it held when it started, less what it gave
+ * back, whether or not it ever parked. The operator's pick-up of a finished run
+ * is not a new start either. A claim never released needs nothing restated,
+ * since restating it would be `from === to`, which writes nothing.
  *
  * A task marked operator-only is refused by the same rule and takes the same
  * path: a log line naming the flag, and the run carries on with the rest.
@@ -9445,7 +9458,10 @@ async function reconcileKilledCycle(
  * direction it falls is this function's, and neither needs a spawn to show.
  */
 export function claimTasksForRun(id: string): void {
-  for (const link of tasksLinkedToRun(id)) claimTaskForRun(id, link);
+  for (const link of unaskedTaskClaims(id)) {
+    claimTaskForRun(id, link);
+    recordTaskClaimAsked(id, link.id);
+  }
 }
 
 function claimTaskForRun(id: string, link: RunTaskDTO): void {
@@ -9830,6 +9846,9 @@ export async function startRun(id: string): Promise<void> {
     // Deliberately **not** gated on `taskboardForRuns`: the claim is this app
     // writing down what it just did, and the setting is about what an agent may
     // do. A run started from a task with the board switched off still holds it.
+    //
+    // Reached on every segment, and it asks only on the first: a pick-up that
+    // claimed again would take back a task the run or the operator released.
     claimTasksForRun(id);
 
     // Once per segment rather than once per cycle, because it is a fact about

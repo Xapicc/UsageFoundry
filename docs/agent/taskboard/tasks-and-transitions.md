@@ -100,9 +100,9 @@ the side effect of one, and the table keeps its eight rows. **Nothing but the
 operator moves a task the operator holds**: a run, a chat or a block is refused
 its release, its completion, its drop and even a restated claim, and the refusal
 names the operator rather than reading the null run column as "nobody holds it".
-That one is checked before `from === to` below on purpose: a run re-claims its
-tasks at every pick-up and resume, and against the operator's claim that would
-otherwise be an allowed no-op its log could only report as held by nobody.
+That one is checked before `from === to` below on purpose: a run claims its
+tasks when it starts, and against the operator's claim that would otherwise be
+an allowed no-op its log could only report as held by nobody.
 
 `from === to` is not a move and is allowed for every actor, so an update that
 restates the status it is not changing is a no-op rather than a refusal — the
@@ -118,10 +118,11 @@ cannot answer a run as though it had closed somebody else's work.
 That column means the task moved — `idx_tasks_board` and `listTasks` both sort on
 it — and the write is what stamps it, so `updateTask` compares the row it built
 against the one it read and returns the stored row untouched when no column
-differs. The case that needed it is `claimTasksForRun`, which fires again on
-every pick-up, resume and restart of a run: each re-claim by the holder, and each
-no-op against a task another run holds, used to lift the task to the top of its
-priority group in Claimed, the same false signal a comment or an edge is refused
+differs. The case that needed it was `claimTasksForRun` when it asked again on
+every pick-up, resume and restart of a run (it now asks once,
+`runs-from-tasks.md`): each re-claim by the holder, and each no-op against a
+task another run holds, lifted the task to the top of its priority group in
+Claimed, the same false signal a comment or an edge is refused
 the right to send. A `PATCH` restating a value is the same no-op, and a `PATCH`
 body that does not parse is a 400 rather than being read as the empty patch,
 which answers 200. `WRITTEN_TASK_FIELDS` is the list compared, and a column

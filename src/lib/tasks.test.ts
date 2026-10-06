@@ -1807,12 +1807,46 @@ test("a run picked up again re-claims without reordering the board", () => {
   assert.equal(getTask(mine.id)?.claimedByRunId, run);
   backdate(mine.id, theirs.id);
 
-  // What every pick-up, resume and restart of the run does.
+  // What a pick-up after a park, a stack wait or a restart does.
   claimTasksForRun(run);
 
   assert.equal(getTask(mine.id)?.updatedAt, LONG_AGO, "the holder's own re-claim");
   assert.equal(getTask(theirs.id)?.updatedAt, LONG_AGO, "a task this run never claimed");
   assert.equal(getTask(theirs.id)?.claimedByRunId, STRANGER);
+});
+
+test("a task the run gave back with release_task stays given back when the run is picked up again", () => {
+  const run = seedRun("run-released-its-own-task");
+  const task = file({ title: "Released by its own run" });
+  recordRunTasks(run, [task.id]);
+  claimTasksForRun(run); // the run's first start
+  assert.equal(getTask(task.id)?.claimedByRunId, run);
+  const released = releaseTask(task.id, run, {
+    reason: "I cannot finish this: no credentials.",
+    operatorOnly: false,
+  });
+  assert.ok(released.ok, JSON.stringify(released));
+
+  // What a pick-up after a park, a stack wait or a restart does.
+  claimTasksForRun(run);
+
+  const row = getTask(task.id)!;
+  assert.equal(row.status, "open", "the run re-claimed the task it released");
+  assert.equal(row.claimedByRunId, null);
+});
+
+test("a claim the operator released stays released when the run is picked up again", () => {
+  const run = seedRun("run-the-operator-released");
+  const task = file({ title: "Released by the operator" });
+  recordRunTasks(run, [task.id]);
+  claimTasksForRun(run);
+  assert.ok(updateTask(task.id, { status: "open" }, { kind: "operator" }).ok);
+
+  claimTasksForRun(run);
+
+  const row = getTask(task.id)!;
+  assert.equal(row.status, "open", "the run re-claimed the task the operator took back");
+  assert.equal(row.claimedByRunId, null);
 });
 
 /**

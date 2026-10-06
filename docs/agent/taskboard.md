@@ -84,6 +84,7 @@ The paragraphs themselves live in `docs/agent/taskboard/`, one topic file per he
 
 - The run is told the board exists on the appended system prompt, and the notice rides the same value the flag does.
 - A run started from tasks claims every one of them when the run starts, not when a tool is first called.
+- A run asks for each of its tasks once, when it first starts, and a pick-up asks for nothing.
 - Whether a work cycle reaches the board at all is `taskboardForRuns`, off by default, and the whole path is inert while it is off.
 - A run that came off the board carries the link, and the link is a record rather than a trigger.
 - One run may be for several tasks, and it is linked to every one.

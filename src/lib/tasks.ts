@@ -310,8 +310,8 @@ const COMPLETION_BELONGS_TO =
  *
  * **Nothing but the operator moves a task the operator holds** — not to
  * release it, complete it, drop it, or claim it again, and this one is checked
- * before `from === to` on purpose. A run re-claims its tasks at every pick-up
- * and resume, and against the operator's claim that restated `claimed` would
+ * before `from === to` on purpose. A run claims its tasks when it starts, and
+ * against the operator's claim that restated `claimed` would
  * otherwise be an allowed no-op the run's log could only report as held by
  * nobody; refused, the sentence it logs says who has the task.
  */
@@ -2056,8 +2056,9 @@ export function updateTask(
 
   // A patch that changes nothing is not written, because the write is what
   // stamps `updated_at` and that column is the board's record that the task
-  // moved. `claimTasksForRun` re-claims on every segment of a run, and each
-  // re-claim used to lift every task it holds to the top of Claimed.
+  // moved. `claimTasksForRun` used to re-claim on every segment of a run, and
+  // each re-claim lifted every task it held to the top of Claimed; a `PATCH`
+  // restating a value would do the same.
   if (!WRITTEN_TASK_FIELDS.some((field) => next[field] !== task[field])) {
     return { ok: true, task };
   }
@@ -2162,11 +2163,40 @@ export function recordRunTasks(runId: string, taskIds: readonly string[]): void 
  * would quietly lose the provenance the link exists to hold.
  */
 export function tasksLinkedToRun(runId: string): RunTaskDTO[] {
+  return readRunTaskLinks(runId, { unaskedOnly: false });
+}
+
+/**
+ * The tasks a run was started for that it has not yet asked to claim, in the
+ * order they were named. `claimTasksForRun` is the one reader, and
+ * `recordTaskClaimAsked` the one writer of what it filters on.
+ *
+ * Empty for a run picked up again, because the claim is asked once, when the
+ * run first starts. A pick-up that asked again would claim back an open task
+ * the run had given back with `release_task`, or that the operator had released
+ * from it, reversing either decision at whatever moment the run happened to
+ * park — see docs/agent/taskboard/runs-from-tasks.md.
+ */
+export function unaskedTaskClaims(runId: string): RunTaskDTO[] {
+  return readRunTaskLinks(runId, { unaskedOnly: true });
+}
+
+/** Recorded after the claim is asked, whatever the board answered. */
+export function recordTaskClaimAsked(runId: string, taskId: string): void {
+  db()
+    .prepare("UPDATE run_tasks SET claim_asked = 1 WHERE run_id = ? AND task_id = ?")
+    .run(runId, taskId);
+}
+
+function readRunTaskLinks(
+  runId: string,
+  { unaskedOnly }: { unaskedOnly: boolean },
+): RunTaskDTO[] {
   const rows = db()
     .prepare(
       `SELECT rt.task_id AS id, t.title AS title, t.status AS status
          FROM run_tasks rt LEFT JOIN tasks t ON t.id = rt.task_id
-        WHERE rt.run_id = ?
+        WHERE rt.run_id = ? ${unaskedOnly ? "AND rt.claim_asked = 0" : ""}
         ORDER BY rt.position`,
     )
     .all(runId) as Array<{ id: string; title: string | null; status: string | null }>;
