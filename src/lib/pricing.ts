@@ -86,6 +86,10 @@ const PRICES: Record<string, ModelPrice> = {
   "claude-opus-4-6": { input: 5, output: 25 },
   "claude-opus-4-5": { input: 5, output: 25 },
   "claude-opus-4-1": { input: 15, output: 75 },
+  // `-4-0` is the alias spelling; the id an API response, a transcript and
+  // Bedrock carry is the dated one, which no alias key can match now that a key
+  // only takes decoration after it. Both rows are the same model.
+  "claude-opus-4-20250514": { input: 15, output: 75 },
   "claude-opus-4-0": { input: 15, output: 75 },
   "claude-3-opus": { input: 15, output: 75 },
 
@@ -98,6 +102,7 @@ const PRICES: Record<string, ModelPrice> = {
   "claude-sonnet-5": { input: 2, output: 10 },
   "claude-sonnet-4-6": { input: 3, output: 15 },
   "claude-sonnet-4-5": { input: 3, output: 15 },
+  "claude-sonnet-4-20250514": { input: 3, output: 15 },
   "claude-sonnet-4-0": { input: 3, output: 15 },
   "claude-3-7-sonnet": { input: 3, output: 15 },
   "claude-3-5-sonnet": { input: 3, output: 15 },

@@ -109,3 +109,17 @@ to its row whole — `[1m]`, a dated Haiku, Bedrock's prefix and `-v1:0`, Vertex
 that do have rows. The first two failed against the `startsWith` they replaced;
 the third passed on it and is there so the next tightening cannot cost a known
 model its price.
+
+**Claude Opus 4 and Sonnet 4 under their dated ids earned a block, because the
+table keyed them only as the alias spellings.** `claude-opus-4-0` and
+`claude-sonnet-4-0` are what a person types; the id a response, a transcript and
+Bedrock carry is `claude-opus-4-20250514`, and no alias key is followed by
+decoration there, so once `resolvePrice` stopped treating a key as a prefix the
+turns showed $0 under the unpriced banner and the guard charged
+`UNKNOWN_MODEL_PRICE` — $10/$50, a third *below* Opus 4's $15/$75, the direction
+that lets a run through. The cases pin the dated id at each row, the Bedrock and
+Vertex spellings of it, the guard's charge for a million Opus 4 output tokens at
+the full $75, and the neighbours: Opus 4.1 still resolves to its own row, and an
+undated `claude-opus-4-9` or a different snapshot date stays null, because a
+dated key is not a catch-all. The first, second and fourth failed against the
+table without the dated keys; the alias and neighbour cases passed on it.

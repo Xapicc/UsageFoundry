@@ -316,3 +316,66 @@ describe("a point release the table has no row for", () => {
     }
   });
 });
+
+/**
+ * Claude Opus 4 and Sonnet 4, which the table keyed only as the alias spellings
+ * `claude-opus-4-0` and `claude-sonnet-4-0`.
+ *
+ * The ids an API response, a transcript and Bedrock actually carry are the dated
+ * ones — `claude-opus-4-20250514`, not `claude-opus-4-0-…` — and since
+ * `resolvePrice` stopped treating a key as a prefix of whatever follows, none of
+ * them reached either alias row. The failure is silent in both directions the
+ * table cares about: the dashboard shows $0 under the unpriced banner, and the
+ * guard charges `UNKNOWN_MODEL_PRICE` ($10/$50), which is a third *below* Opus
+ * 4's $15/$75 list rate — the direction that lets a run through.
+ */
+describe("Claude Opus 4 and Sonnet 4 under their dated ids", () => {
+  const OPUS_4 = { input: 15, output: 75 };
+  const SONNET_4 = { input: 3, output: 15 };
+
+  it("prices the dated first-party ids at their list rate", () => {
+    assert.deepEqual(resolvePrice("claude-opus-4-20250514"), OPUS_4);
+    assert.deepEqual(resolvePrice("claude-sonnet-4-20250514"), SONNET_4);
+  });
+
+  it("prices them through Bedrock's and Vertex's decoration too", () => {
+    for (const id of [
+      "anthropic.claude-opus-4-20250514-v1:0",
+      "us.anthropic.claude-opus-4-20250514-v1:0",
+      "claude-opus-4@20250514",
+    ]) {
+      assert.deepEqual(resolvePrice(id), OPUS_4, id);
+    }
+    for (const id of [
+      "anthropic.claude-sonnet-4-20250514-v1:0",
+      "claude-sonnet-4@20250514",
+    ]) {
+      assert.deepEqual(resolvePrice(id), SONNET_4, id);
+    }
+  });
+
+  it("still prices the alias spellings", () => {
+    assert.deepEqual(resolvePrice("claude-opus-4-0"), OPUS_4);
+    assert.deepEqual(resolvePrice("claude-sonnet-4-0"), SONNET_4);
+  });
+
+  it("makes the guard charge Opus 4 at least its list rate", () => {
+    const output = { ...ZERO_TOKENS, output: 1_000_000 };
+    assert.ok(guardCostOf(output, resolvePrice("claude-opus-4-20250514")) >= 75);
+    assert.equal(guardCostOf(output, resolvePrice("claude-opus-4-20250514")), 75);
+  });
+
+  it("leaves a neighbouring row to resolve to itself", () => {
+    // The dated Opus 4 key must not shadow Opus 4.1, which shares its prefix up
+    // to the minor version, and a dated key is not a catch-all for a model
+    // nobody has priced.
+    assert.equal(
+      resolvePrice("claude-opus-4-1-20250805"),
+      resolvePrice("claude-opus-4-1"),
+    );
+    assert.deepEqual(resolvePrice("claude-opus-4-5-20251101"), { input: 5, output: 25 });
+    assert.equal(resolvePrice("claude-opus-4-20250515"), null);
+    assert.equal(resolvePrice("claude-opus-4-9"), null);
+    assert.equal(resolvePrice("claude-sonnet-4-9"), null);
+  });
+});
