@@ -4341,7 +4341,7 @@ function chatGroupDir(dir: string, ownership: McpConfigOwnership): string {
  * `Bash` tool snapshots the shell with `bash -c -l` over `~/.bashrc`, which runs
  * `~/.profile` as well; git reads `~/.gitconfig`, whose `core.fsmonitor` runs on
  * `git status`; and `python3` runs a `usercustomize.py` from the user site under
- * `~/.local`, which the operator's own hooks call. Moving `HOME` closes those
+ * `~/.local`. Moving `HOME` closes those
  * and every other tool that keeps its configuration there (`gh`, `npm`, `ssh`)
  * in one step, where clearing them one variable at a time is a denylist. What
  * it costs is that the chat sees none of it, the `gh` extensions
@@ -4415,8 +4415,8 @@ export function chatHomeEnv(env: NodeJS.ProcessEnv, home: string): NodeJS.Proces
  * `filter.<name>.clean` or `diff.<name>.textconv` named from
  * `.git/info/attributes`. The first cannot be cleared by value —
  * `diff.external=` makes `git diff` die with "cannot run" — and the others are
- * keyed by a name the repository chooses. `docs/agent/security/` lists them as
- * open.
+ * keyed by a name the repository chooses.
+ * `docs/agent/security/chat-child-config-files.md` lists them as open.
  */
 const CHAT_GIT_CONFIG: ReadonlyArray<readonly [string, string]> = [
   ["core.fsmonitor", ""],
@@ -4436,8 +4436,9 @@ const CHAT_GIT_CONFIG: ReadonlyArray<readonly [string, string]> = [
  * `$CLAUDE_CONFIG_DIR/plugins/`, which `UF_LOCK_CLAUDE_HOME` leaves the
  * agents', so its hooks are a work cycle's to rewrite even under the lock.
  *
- * `--setting-sources user` drops both cwd scopes whole — their `env` and
- * `apiKeyHelper` as well as their hooks — and keeps the operator's own, and
+ * `--setting-sources user` drops both cwd scopes — measured for their hooks,
+ * and by the flag's definition their `env` and `apiKeyHelper` too — and keeps
+ * the operator's own, and
  * `--agent` still selects a saved agent under it. `disableAllHooks` stops the
  * user's and every plugin's hooks too. That is the cost: no hook the operator
  * wrote runs in a chat turn, which is the trade `chatPath` made for the same

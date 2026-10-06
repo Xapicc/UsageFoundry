@@ -270,7 +270,7 @@ describe("resolveMcpConfigOwnership", () => {
   });
 
   it("lets the chat child read, write and traverse its own HOME and scratch cwd", () => {
-    // The pinned CLI creates `~/.config/anthropic` before its first request, and
+    // The pinned CLI creates `~/.config/anthropic` during a turn, and
     // bwrap creates its placeholders in the cwd: a directory the child cannot
     // write is a turn whose every tool call fails.
     const own = ownership();

@@ -21,8 +21,8 @@ import { after, before, describe, it } from "node:test";
  * loaded: `claude` is the default's name, found on this server's `PATH` as an
  * `env node` script the way the image's `codex` is, and `uf-absent-codex` is a
  * name this server's `PATH` does not have. The agents' `PATH` has a planted
- * copy of all three names first, and of `git`, which the last block below has
- * the chat child run by name.
+ * copy of all three names first, and of `git`, which "the chat child's own
+ * lookups" below has the chat child run by name.
  */
 
 let scratch: string;

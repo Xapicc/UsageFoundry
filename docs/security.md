@@ -253,6 +253,22 @@ neither your files nor the agents — the entrypoint asks an agent's own uid
 whether it can still write that file and says so on the boot log, and that line
 is the only evidence here that the boundary exists.
 
+**The chat holds a capability no work cycle does, so it reads less of what
+they write.** A chat turn and an orchestrator block run with a `HOME` of their
+own, `/run/uf-chat-home`, which is root's and the chat group's. Nothing a run
+leaves in `/home/node` — a shell rc file, `~/.gitconfig`, Python's user site —
+runs in them. Their git ignores a repository's `core.fsmonitor` and hooks. They
+read no `.claude/settings*.json` from the folder they stand in. And they run no
+hooks at all, yours included, because an enabled plugin's hook file stays the
+agents' even with `UF_LOCK_CLAUDE_HOME=1`. So the answer is not simply "set the
+lock", but the lock is still needed: the chat does read `~/.claude/settings.json`
+itself, including its environment and `apiKeyHelper`, and with the lock off a
+run can edit that file. Two git routes stay open. A `diff.external`, or a filter
+or `textconv` driver named in a repository's `.git/info/attributes`, runs when
+the chat diffs that repository. Clearing `UF_CHAT_GID` puts the chat back on the
+agents' `HOME` along with removing the group.
+`docs/agent/security/chat-child-config-files.md` has the measurements.
+
 **This app can now put a hook on that path itself, and it ships off.**
 Settings → *Read guard* generates a small plugin directory of this app's own —
 a `PreToolUse` hook that refuses a whole re-read of a file the session has

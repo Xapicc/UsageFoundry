@@ -373,7 +373,7 @@ export interface McpConfigOwnership {
    * 0770: the chat's own `HOME` and scratch cwd, handed to the same group.
    *
    * The chat child has to write in both — the pinned CLI creates
-   * `~/.config/anthropic` before its first request — and a work cycle must not
+   * `~/.config/anthropic` during a turn — and a work cycle must not
    * be able to reach either, because what the chat loads from them runs under
    * this gid. Owned by the agents' uid, as both used to be, they were the
    * agents' to plant in. The group decides here for the reason it does above.

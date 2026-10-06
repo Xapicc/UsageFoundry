@@ -41,6 +41,14 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - The boot's own dropped helpers keep the same rule.
 - What the chat and block child runs by name once started is decided on root's `PATH` too.
 
+## [What the chat child loads from files a work cycle writes](security/chat-child-config-files.md)
+
+- The chat child's `HOME` is its own, because the agents' is every work cycle's to write.
+- Every variable naming a path in the agents' `HOME` leaves with it, except the Claude config directory.
+- A repository's `.git` may not run a command in the chat's git, as far as git lets that be said.
+- The chat reads the user's settings and nobody's cwd, and runs no hooks.
+- What is still open, and what would settle it.
+
 ## [Middleware, login, sessions and the audit trail](security/middleware-login-and-sessions.md)
 
 - A monitor must not be handed the credential that starts agents. (was line 27)

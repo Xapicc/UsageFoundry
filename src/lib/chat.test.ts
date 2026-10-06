@@ -2658,9 +2658,9 @@ describe("mintRunCapability", () => {
  * And it is over `chatEnv()` rather than over a bare strip, because that is
  * what the spawn site passes — `chatEnv` returns `{ ...env, ...githubEnv() }`
  * and the extras land after the strip and win every key they name.
- * `UF_GITHUB_TOKEN` is set at the top of this file so that half is non-empty
- * here; with it blank the composition is `{}` and this would pass without
- * measuring anything.
+ * `UF_GITHUB_TOKEN` is set at the top of this file so the GitHub pairs are in
+ * that half here; since board task `7dd5f973` it also always carries
+ * `CHAT_GIT_CONFIG`, so it is never empty.
  */
 describe("chatEnv — the PATH the chat's tools are resolved on", () => {
   const previous = { PATH: process.env.PATH, UF_AGENT_PATH: process.env.UF_AGENT_PATH };
@@ -2695,7 +2695,7 @@ describe("chatEnv — the PATH the chat's tools are resolved on", () => {
     const env = chatEnv();
     assert.ok(
       Object.keys(env).some((k) => k.startsWith("GIT_CONFIG_")),
-      "githubEnv() contributed nothing, so the composition above is untested",
+      "the git block contributed nothing, so the composition above is untested",
     );
     assert.equal(env.PATH, chatPath());
   });
