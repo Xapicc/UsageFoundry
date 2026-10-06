@@ -225,6 +225,14 @@ export function git(
      * so hooks and `core.fsmonitor` stay off however this is filled in.
      */
     env?: Record<string, string>;
+    /**
+     * Written to the child's stdin, which is then closed, for the one plumbing
+     * call that reads its records from there (`update-index --index-info`).
+     * Absent, the child has no stdin at all, for the prompt reason above; a
+     * child given one reads end-of-file once this is written, so a prompt
+     * still cannot wait on it.
+     */
+    input?: string;
   } = {},
 ): Promise<GitResult & { overflowed: boolean }> {
   const { timeoutMs = 20_000, maxBytes = 0, trim = true } = opts;
@@ -250,13 +258,23 @@ export function git(
     };
 
     try {
-      const child = spawn(GIT_BIN, gitArgs(args), {
+      const options = {
         cwd,
         env: opts.env ? { ...gitEnv(), ...opts.env } : gitEnv(),
         ...childCredentials(),
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      };
+      const child =
+        opts.input === undefined
+          ? spawn(GIT_BIN, gitArgs(args), { ...options, stdio: ["ignore", "pipe", "pipe"] })
+          : spawn(GIT_BIN, gitArgs(args), { ...options, stdio: ["pipe", "pipe", "pipe"] });
 
+      if (opts.input !== undefined && child.stdin) {
+        // A child that exits before reading all of it makes this write fail
+        // with EPIPE, and an unhandled stream error would take the server down.
+        // The exit status already reports that call as failed.
+        child.stdin.on("error", () => {});
+        child.stdin.end(opts.input);
+      }
       child.stdout.setEncoding("utf8");
       child.stderr.setEncoding("utf8");
       child.stdout.on("data", (c: string) => {
