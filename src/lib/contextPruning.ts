@@ -3851,6 +3851,10 @@ export interface NettableCut {
    * measurement — the case the five forks in `docs/verification.md` are.
    */
   removalKnown: boolean;
+  /**
+   * `runs.model` as read, which is NULL on a stock install. The pricing passes
+   * replace it with the model the resume billed at — see `atResumeModel`.
+   */
   model: string | null;
 }
 
@@ -4102,7 +4106,7 @@ export function resumeControl(
     const firstBilled = firstBilledTurn(bySession, probe.sessionId, probe.ts);
     if (!firstBilled) continue;
     observed += 1;
-    if (classifyResume(firstBilled) === "warm") warm += 1;
+    if (classifyResume(resumeWriteOf(firstBilled)) === "warm") warm += 1;
   }
   return {
     cleanResumes: observed,
@@ -4143,8 +4147,8 @@ export interface CleanProbe {
  * usage block is present and entirely zero, and taking that one reports the
  * invalidation as $0.00 — which is how this was wrong before it was measured.
  *
- * For the control, which has a probe timestamp and no pre-filtered turn list.
- * `priceReceipts` does the same read off the `following` array it has already
+ * For the control and the fork engine, which have a timestamp and no
+ * pre-filtered turn list. `priceReceipts` does the same read off the `following` array it has already
  * built, and the two must not come to disagree about which turn a resume is —
  * the zero-usage skip is the part that would drift.
  */
@@ -4152,7 +4156,7 @@ function firstBilledTurn(
   bySession: ReadonlyMap<string, UsageEntry[]>,
   sessionId: string,
   after: number,
-): ResumeWrite | null {
+): UsageEntry | null {
   let best: UsageEntry | null = null;
   for (const e of bySession.get(sessionId) ?? []) {
     if (e.ts <= after) continue;
@@ -4161,17 +4165,36 @@ function firstBilledTurn(
     if (billed <= 0) continue;
     if (!best || e.ts < best.ts) best = e;
   }
-  return best
-    ? {
-        cacheRead: best.tokens.cacheRead,
-        // Cache creation the record declared no TTL for goes on the 5m
-        // field, which is the class `observedWriteUSD` prices this row at:
-        // the floor, the same end `costOf` shows, and the alternative is
-        // dropping the volume out of the figure entirely.
-        cacheWrite5m: best.tokens.cacheWrite5m + best.tokens.cacheWriteUnattributed,
-        cacheWrite1h: best.tokens.cacheWrite1h,
-      }
-    : null;
+  return best;
+}
+
+/** The cache traffic of the turn a resume is read off. */
+function resumeWriteOf(e: UsageEntry): ResumeWrite {
+  return {
+    cacheRead: e.tokens.cacheRead,
+    // Cache creation the record declared no TTL for goes on the 5m field, which
+    // is the class `observedWriteUSD` prices this row at: the floor, the same
+    // end `costOf` shows, and the alternative is dropping the volume out of the
+    // figure entirely.
+    cacheWrite5m: e.tokens.cacheWrite5m + e.tokens.cacheWriteUnattributed,
+    cacheWrite1h: e.tokens.cacheWrite1h,
+  };
+}
+
+/**
+ * The cut as it is priced: at the model its resume actually billed at.
+ *
+ * A cut's own `model` is `runs.model`, and that column is NULL for every run
+ * started on Claude Code's own default — the stock install, where
+ * `defaultModel` is null and the form leaves the field blank — and for a run
+ * whose model came from its agent. Priced at that, every prune and fork on
+ * such a run came out unpriced while the turns it is netted over named a model
+ * with a price, and the run page blamed the price table. The first billed turn
+ * is the one the invalidation is read off, so its model is the rate; the
+ * run's column stands in only until a turn has followed.
+ */
+function atResumeModel(cut: NettableCut, resume: UsageEntry | null): NettableCut {
+  return resume ? { ...cut, model: resume.model } : cut;
 }
 
 /** The clean boundaries in a window, newest last. */
@@ -4278,7 +4301,8 @@ export function netReceipt(
   resumeWrite: ResumeWrite | null = null,
   control: ResumeControl | null = null,
 ): PruneNet {
-  // Priced at the rate for the run's own model, and `at` is the receipt's own
+  // Priced at `row.model`, which `atResumeModel` has set to the model the
+  // resume billed at wherever one has, and `at` is the receipt's own
   // timestamp rather than now — `byAgent.counterfactualUSD`'s rule: a rate
   // looked up at read time prices last week's prune at this week's list.
   const price = resolvePrice(row.model ?? undefined, { at: row.ts });
@@ -4627,24 +4651,17 @@ export async function priceReceipts(
     // receipt. The **first turn that billed anything** rather than simply the
     // first: a restart writes a record whose usage block is present and entirely
     // zero, and taking that one reports the invalidation as nothing at all.
-    const firstBilled = following.find(
-      (e) =>
-        e.tokens.cacheRead > 0 || cacheWriteTokens(e.tokens) > 0,
-    );
-    const resumeWrite: ResumeWrite | null = firstBilled
-      ? {
-          cacheRead: firstBilled.tokens.cacheRead,
-          // The 5m field for the reason above.
-          cacheWrite5m:
-            firstBilled.tokens.cacheWrite5m +
-            firstBilled.tokens.cacheWriteUnattributed,
-          cacheWrite1h: firstBilled.tokens.cacheWrite1h,
-        }
-      : null;
+    const firstBilled =
+      following.find(
+        (e) =>
+          e.tokens.cacheRead > 0 || cacheWriteTokens(e.tokens) > 0,
+      ) ?? null;
+    const resumeWrite = firstBilled ? resumeWriteOf(firstBilled) : null;
+    const cut = atResumeModel(row, firstBilled);
 
     return {
-      row,
-      net: netReceipt(row, following.length, resumeWrite, control),
+      row: cut,
+      net: netReceipt(cut, following.length, resumeWrite, control),
     };
   });
 }
@@ -4897,10 +4914,19 @@ async function priceForks(
     const following = sessionId
       ? (bySession.get(sessionId) ?? []).filter((e) => e.ts > cut.ts)
       : [];
-    const resumeWrite = sessionId
+    const resume = sessionId
       ? firstBilledTurn(bySession, sessionId, cut.ts)
       : null;
-    return { row: cut, net: netReceipt(cut, following.length, resumeWrite, control) };
+    const priced = atResumeModel(cut, resume);
+    return {
+      row: priced,
+      net: netReceipt(
+        priced,
+        following.length,
+        resume ? resumeWriteOf(resume) : null,
+        control,
+      ),
+    };
   });
 }
 
