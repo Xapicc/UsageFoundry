@@ -43,6 +43,7 @@ import {
   sectionLink,
   sectionLinkStatement,
   sectionOf,
+  worstCaseMembers,
   worstCaseRuns,
   type BlockDraft,
   type LinkDraft,
@@ -1524,11 +1525,7 @@ function BlockStatement({
     // answers null rather than guessing where a figure is not stated.
     const worst = worstCaseRuns(
       Number.isInteger(passes) && passes > 0 ? passes : null,
-      body.map((member) => ({
-        kind: member.kind,
-        fanOut:
-          member.fanOut.trim() === "" ? null : Number(member.fanOut),
-      })),
+      worstCaseMembers(body),
     );
     const fansOut = body.some((member) => member.kind === "orchestrator");
     // The merge block the section lands through, which is what makes a pass

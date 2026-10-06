@@ -1241,11 +1241,7 @@ export function linkRefusal(
  */
 export function worstCaseRuns(
   passes: number | null,
-  members: readonly {
-    kind: WorkflowNodeKind;
-    fanOut: number | null;
-    fixRounds?: number | null;
-  }[],
+  members: readonly WorstCaseMember[],
 ): number | null {
   if (passes === null || !Number.isInteger(passes) || passes <= 0) return null;
   let perPass = 0;
@@ -1276,6 +1272,34 @@ export function worstCaseRuns(
     perPass += rounds * branches;
   }
   return passes * perPass;
+}
+
+/** One loop member, as much of it as `worstCaseRuns` counts. */
+export interface WorstCaseMember {
+  kind: WorkflowNodeKind;
+  fanOut: number | null;
+  /**
+   * Required even though only a review member reads it: the editor's call site
+   * once left it out, still typechecked, and stated up to 20 runs over a
+   * section Save refused at 80.
+   */
+  fixRounds: number | null;
+}
+
+/**
+ * A section's members as the editor's statement counts them, read off the
+ * drafts. Parsed as `draftToGraph` parses them for Save, except a blank fan-out
+ * is null rather than `Number("")`'s 0, so the statement says "an unstated
+ * number" where Save would refuse the cap by name.
+ */
+export function worstCaseMembers(
+  body: readonly BlockDraft[],
+): WorstCaseMember[] {
+  return body.map((member) => ({
+    kind: member.kind,
+    fanOut: member.fanOut.trim() === "" ? null : Number(member.fanOut),
+    fixRounds: member.kind === "review" ? Number(member.fixRounds) : null,
+  }));
 }
 
 export interface EdgeGeometry {

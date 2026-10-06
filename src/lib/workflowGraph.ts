@@ -1808,18 +1808,30 @@ function loopBodyRefusal(
     const worst = worstCaseRuns(loop.maxPasses, membership);
     if (worst !== null && worst > MAX_LOOP_RUNS) {
       const perPass = worstCaseRuns(1, membership);
-      const deciders = membership
-        .filter((m) => m.kind === "orchestrator")
-        .map(
-          (m) =>
-            `for “${m.name}” the deciding turn plus the ${m.fanOut} runs ` +
-            "its fan-out cap allows, spent again on every pass",
-        )
+      // A review member's rounds are named beside the fan-outs because they
+      // are the other factor in a pass: left out, two run blocks were stated
+      // as "8 run(s) — one for each block that runs", a sum nobody could redo.
+      const extras = membership
+        .flatMap((m) => {
+          if (m.kind === "orchestrator") {
+            return [
+              `for “${m.name}” the deciding turn plus the ${m.fanOut} runs ` +
+                "its fan-out cap allows, spent again on every pass",
+            ];
+          }
+          if (m.kind === "review" && (m.fixRounds ?? 0) > 0) {
+            return [
+              `for “${m.name}” up to ${m.fixRounds} fix run(s) on every ` +
+                "branch the pass cuts, one for each fix round",
+            ];
+          }
+          return [];
+        })
         .join(", ");
       return (
         `“${loop.name}” repeats ${members.size} block(s) up to ${loop.maxPasses} ` +
         `time(s). Each pass is ${perPass} run(s) — one for each block that ` +
-        `runs${deciders ? `, and ${deciders}` : ""} — which is ${worst} runs ` +
+        `runs${extras ? `, and ${extras}` : ""} — which is ${worst} runs ` +
         `from one press of Run. A loop may start at most ${MAX_LOOP_RUNS}.`
       );
     }

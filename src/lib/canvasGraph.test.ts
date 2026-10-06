@@ -23,6 +23,7 @@ import {
   sectionLink,
   sectionLinkStatement,
   sectionOf,
+  worstCaseMembers,
   worstCaseRuns,
   type BlockDraft,
   type CanvasDraft,
@@ -1356,16 +1357,16 @@ test("the worst case counts a review member's fix runs for every branch a pass c
   // rounds as three runs and the bill would say nine.
   assert.equal(
     worstCaseRuns(2, [
-      { kind: "run", fanOut: null },
-      { kind: "orchestrator", fanOut: 2 },
+      { kind: "run", fanOut: null, fixRounds: null },
+      { kind: "orchestrator", fanOut: 2, fixRounds: null },
       { kind: "review", fanOut: null, fixRounds: 2 },
-      { kind: "merge", fanOut: null },
+      { kind: "merge", fanOut: null, fixRounds: null },
     ]),
     2 * (1 + 3 + 2 * 3),
   );
   assert.equal(
     worstCaseRuns(1, [
-      { kind: "run", fanOut: null },
+      { kind: "run", fanOut: null, fixRounds: null },
       { kind: "review", fanOut: null, fixRounds: 0 },
     ]),
     1,
@@ -1378,26 +1379,26 @@ test("the worst case counts a fan-out again on every pass", () => {
   // twenty-four when that block decides — its fan-out of five, and its own
   // deciding turn, which is a spawned and billed child on every pass.
   assert.equal(
-    worstCaseRuns(4, [{ kind: "orchestrator", fanOut: 5 }]),
+    worstCaseRuns(4, [{ kind: "orchestrator", fanOut: 5, fixRounds: null }]),
     24,
   );
   assert.equal(
     worstCaseRuns(3, [
-      { kind: "run", fanOut: null },
-      { kind: "orchestrator", fanOut: 2 },
+      { kind: "run", fanOut: null, fixRounds: null },
+      { kind: "orchestrator", fanOut: 2, fixRounds: null },
       // A merge member starts nothing of its own.
-      { kind: "merge", fanOut: null },
+      { kind: "merge", fanOut: null, fixRounds: null },
     ]),
     12,
   );
   // Both blanks are refused at Save, and a figure that read either as zero
   // would be approving an unbounded press of Run on the operator's behalf.
-  assert.equal(worstCaseRuns(null, [{ kind: "run", fanOut: null }]), null);
+  assert.equal(worstCaseRuns(null, [{ kind: "run", fanOut: null, fixRounds: null }]), null);
   assert.equal(
-    worstCaseRuns(4, [{ kind: "orchestrator", fanOut: null }]),
+    worstCaseRuns(4, [{ kind: "orchestrator", fanOut: null, fixRounds: null }]),
     null,
   );
-  assert.equal(worstCaseRuns(0, [{ kind: "run", fanOut: null }]), null);
+  assert.equal(worstCaseRuns(0, [{ kind: "run", fanOut: null, fixRounds: null }]), null);
 });
 
 test("the worst case the editor states is the one Save refuses at", () => {
@@ -1419,7 +1420,10 @@ test("the worst case the editor states is the one Save refuses at", () => {
     const loopNode = wire.nodes.find((n) => n.id === "l")!;
     const stated = worstCaseRuns(
       loopNode.maxPasses,
-      loopNode.bodyNodeIds.map((id) => wire.nodes.find((n) => n.id === id)!),
+      loopNode.bodyNodeIds.map((id) => {
+        const node = wire.nodes.find((n) => n.id === id)!;
+        return { ...node, fixRounds: node.fixRounds ?? null };
+      }),
     );
     assert.ok(stated !== null, `${passes} pass(es) state no figure`);
 
@@ -1439,6 +1443,38 @@ test("the worst case the editor states is the one Save refuses at", () => {
       assert.ok(saved.ok, saved.ok ? "" : `${passes} pass(es): ${saved.error}`);
     }
   }
+});
+
+test("the editor counts a review member's fix runs, so it states the figure Save refuses at", () => {
+  // The editor reads its members off the drafts rather than off the wire, and
+  // that reading once carried kind and fan-out alone: a review member's fix
+  // rounds were dropped on the way, so this section was stated as up to 20
+  // runs while Save counted 80 and refused it.
+  const blocks = [
+    block("l", { kind: "loop", maxPasses: "10" }),
+    block("a"),
+    block("b"),
+    block("v", { kind: "review", fixRounds: "3" }),
+    block("m", { kind: "merge" }),
+  ];
+  const links = [
+    repeats("l", "a"),
+    chain("a", "b"),
+    link("b", "v", { edge: "on-success" }),
+    link("v", "m", { edge: "on-success" }),
+  ];
+  // The body as the editor's panel builds it.
+  const body = sectionOf("l", blocks, links).map(
+    (id) => blocks.find((b) => b.id === id)!,
+  );
+  assert.equal(worstCaseRuns(10, worstCaseMembers(body)), 80);
+
+  const refused = saved({ blocks, links });
+  assert.ok(!refused.ok, "80 runs is past the limit and must be refused");
+  assert.match(refused.error, /which is 80 runs/);
+  // Every factor named, the fix rounds among them: "8 run(s) — one for each
+  // block that runs" over two run blocks is a sum the operator cannot redo.
+  assert.match(refused.error, /“v” up to 3 fix run\(s\) on every branch/);
 });
 
 test("a link into a frame is refused at the release, naming the frame", () => {

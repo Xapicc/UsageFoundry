@@ -575,7 +575,14 @@ export default function WorkflowPage() {
                               .map((id) =>
                                 workflow.nodes.find((m) => m.id === id),
                               )
-                              .filter((m) => m !== undefined),
+                              .filter((m) => m !== undefined)
+                              // A graph saved before review blocks existed
+                              // has no `fixRounds` on its nodes, and absent
+                              // is no rounds, as the run loop reads it.
+                              .map((m) => ({
+                                ...m,
+                                fixRounds: m.fixRounds ?? null,
+                              })),
                           ) ?? "an unstated number of"}{" "}
                           runs
                           {n.maxLoopCostUSD !== null &&
