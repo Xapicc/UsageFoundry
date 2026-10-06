@@ -1670,16 +1670,9 @@ export async function landRun(
     if (!merge.ok) {
       const conflicts = await conflictedFiles(folder);
       const restored = await unwind(folder, strategy, conflicts.length > 0);
-      const inTheWay = untrackedInTheWay(merge.stderr);
       return {
         ok: false,
-        reason: !restored
-          ? `The merge conflicted and could not be rolled back, so your checkout is part-way through it — look at git status there before anything else. Conflicting: ${conflicts.join(", ")}`
-          : conflicts.length > 0
-            ? `The merge conflicted and was rolled back — your checkout is untouched. Conflicting: ${conflicts.join(", ")}`
-            : inTheWay.length > 0
-              ? overwriteRefusal(branch, inTheWay)
-              : `git refused the merge, and your checkout is as it was: ${merge.stderr.split("\n")[0] || "unknown error"}`,
+        reason: mergeRefusal(branch, merge.stderr, conflicts, restored),
         conflicts,
       };
     }
@@ -1903,6 +1896,63 @@ function untrackedAt(folder: string, added: readonly string[]): string[] {
   return [...found];
 }
 
+/** Why a merge git refused did not land, once `unwind` has said what it put back. */
+function mergeRefusal(
+  branch: string,
+  stderr: string,
+  conflicts: readonly string[],
+  restored: boolean,
+): string {
+  const why = stderr.split("\n")[0] || "unknown error";
+  if (!restored) {
+    // Not "look at git status" when nothing conflicted: what is left is a
+    // MERGE_HEAD over an untouched tree, which status reports as a merge ready
+    // to conclude, and committing it records a merge of work the tree lacks.
+    return conflicts.length > 0
+      ? `The merge conflicted and could not be rolled back, so your checkout is part-way through it — look at git status there before anything else. Conflicting: ${conflicts.join(", ")}`
+      : `git refused the merge and it could not be rolled back, so your checkout may still be mid-merge — run git merge --abort there before committing anything: ${why}`;
+  }
+  if (conflicts.length > 0) {
+    return `The merge conflicted and was rolled back — your checkout is untouched. Conflicting: ${conflicts.join(", ")}`;
+  }
+  const inTheWay = untrackedInTheWay(stderr);
+  if (inTheWay.length > 0) return overwriteRefusal(branch, inTheWay);
+  const lock = heldIndexLock(stderr);
+  if (lock) return indexLockRefusal(lock);
+  return `git refused the merge, and your checkout is as it was: ${why}`;
+}
+
+/**
+ * The `index.lock` git names when it refused because another git process held
+ * it, or null for any other refusal.
+ *
+ * Only the message that says so. A merge that is not a fast-forward reports
+ * the same contention as "Unable to write index.", which a full disk or a
+ * read-only `.git` also print, so that one keeps the plain refusal rather than
+ * telling the operator to wait out a process that is not there. A held ref lock
+ * is not matched either: a fast-forward takes it only after writing the tree,
+ * so "nothing was merged" would not be true of it.
+ */
+function heldIndexLock(stderr: string): string | null {
+  return /Unable to create '(.+index\.lock)': File exists\./.exec(stderr)?.[1] ?? null;
+}
+
+/**
+ * Why a land that met another git process in the checkout did not happen.
+ *
+ * The lock is the operator's to remove and never this app's: a live one belongs
+ * to a git that is writing the index, and taking it from under that process is
+ * how an index is corrupted. Nor is the merge retried in `landRun`, which may
+ * not await between its last read of the checkout and the merge's spawn.
+ */
+function indexLockRefusal(lock: string): string {
+  return (
+    `Another git process was using your checkout when the merge started, so nothing was merged ` +
+    `and your checkout is as it was. Land again and it should go through. If this keeps happening ` +
+    `with no git running, ${lock} was left behind by one that crashed: remove it yourself, then land again.`
+  );
+}
+
 /**
  * Why a land over files the operator's checkout holds but git does not track is
  * refused. Such a file was never in git, so nothing could have restored it.
@@ -1981,7 +2031,15 @@ export async function unwind(
   // operator's own checkout mid-merge.
   if (strategy !== "squash") {
     const abort = await git(folder, ["merge", "--abort"], NO_CLOCK);
-    return abort.ok || !wrote;
+    if (abort.ok || wrote) return abort.ok;
+    // Usually there was nothing to abort: a merge git refused up front writes
+    // no MERGE_HEAD. One that is not a fast-forward and could not take
+    // `index.lock` writes MERGE_HEAD and nothing else, and the abort needs the
+    // lock that is still held — so this said "restored" over a checkout left
+    // mid-merge. Asked, then, and anything but git's "no such ref" counts as a
+    // merge still in progress, `checkoutStateOf`'s rule.
+    const probe = await git(folder, ["rev-parse", "-q", "--verify", "MERGE_HEAD"], NO_CLOCK);
+    return probe.code === 1;
   }
   if (!wrote) return true;
   return (await git(folder, ["reset", "--merge"], NO_CLOCK)).ok;
