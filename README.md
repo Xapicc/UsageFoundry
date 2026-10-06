@@ -251,7 +251,7 @@ point; the *conditions* are the ones that have gone wrong here.
 | Condition | Field | Suggested threshold |
 |---|---|---|
 | The queue is backing up | `queue.depth` | `> 10`, or `> maxConcurrentRuns × 2` |
-| A run has been queued and never started | `queue.oldestQueuedAgeSeconds` | `> 3600` |
+| A run has sat in the queue without starting | `queue.oldestQueuedAgeSeconds` | `> 3600` — counted from when the run last entered `queued`, so a parked run that resumes, or a dependent released, starts again from 0 |
 | An agent hit a wall and asked for a person | `runs["needs-review"]` | `> 0` — this is the one ending whose whole content is that somebody should look |
 | Work was refused before it ever started | `runs.blocked` | `> 0` — nothing was spent, and nothing will be until it is picked up |
 | Parked runs are not being reconsidered | `sweeper.lastTickAgeSeconds` | `> 180` while `runs.paused > 0` |

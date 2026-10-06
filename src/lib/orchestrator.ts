@@ -4479,10 +4479,10 @@ export function createRun(input: CreateRunInput): RunRow {
     db()
       .prepare(
         `INSERT INTO runs
-           (id, folder, prompt, model, provider, status, budget, max_iterations, iterations, created_at, spent_usd, spent_tokens,
+           (id, folder, prompt, model, provider, status, budget, max_iterations, iterations, created_at, queued_at, spent_usd, spent_tokens,
             work_dir, isolation, repo_root, folder_repo, worktree_path, worktree_branch, worktree_base, worktree_base_branch,
             continues_run, agent, file_cost_notice, tmpdir_notice, origin, origin_ref, task_signature)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -4502,6 +4502,7 @@ export function createRun(input: CreateRunInput): RunRow {
         // the list view does not have to parse it.
         policy.maxIterations ?? 0,
         now,
+        waiting ? null : now,
         workDir,
         isolation,
         plan?.repoRoot ?? null,
@@ -5803,11 +5804,12 @@ function admitWaiting(run: RunRow): boolean {
 
   const flip = db()
     .prepare(
-      "UPDATE runs SET status='queued', work_dir=?, isolation=?, repo_root=?, folder_repo=?," +
+      "UPDATE runs SET status='queued', queued_at=?, work_dir=?, isolation=?, repo_root=?, folder_repo=?," +
         " worktree_path=?, worktree_branch=?, worktree_base=?, worktree_base_branch=?" +
         " WHERE id=? AND status='waiting'",
     )
     .run(
+      Date.now(),
       workDir,
       plan.mode,
       plan.repoRoot ?? null,
@@ -12813,12 +12815,13 @@ export async function sweepPaused(): Promise<void> {
           // order, folder reservation and the concurrency cap, and
           // re-implementing any of that here is how a folder claim gets broken.
           // Ordering by `created_at` means a resumed run keeps its place in
-          // line. `AND status='paused'` is what lets a concurrent stop win.
+          // line; `queued_at` is what its wait is measured from (db.ts says
+          // why). `AND status='paused'` is what lets a concurrent stop win.
           const flip = db()
             .prepare(
-              "UPDATE runs SET status='queued', resume_at=NULL WHERE id=? AND status='paused'",
+              "UPDATE runs SET status='queued', queued_at=?, resume_at=NULL WHERE id=? AND status='paused'",
             )
-            .run(run.id);
+            .run(now, run.id);
           if (flip.changes === 1) {
             resumeSlots -= 1;
             freed = true;
@@ -12945,9 +12948,9 @@ export function releaseStackWaits(
     }
     const flip = db()
       .prepare(
-        "UPDATE runs SET status='queued', follow_up=? WHERE id=? AND status='waiting-for-stack'",
+        "UPDATE runs SET status='queued', queued_at=?, follow_up=? WHERE id=? AND status='waiting-for-stack'",
       )
-      .run(withStoppedTasksNotice(id, stackResumeNotice(decision)), id);
+      .run(now, withStoppedTasksNotice(id, stackResumeNotice(decision)), id);
     if (flip.changes !== 1) continue;
     released += 1;
     releaseStackWait(id, now);
@@ -12989,9 +12992,9 @@ export function resumeRun(id: string): ResumeOutcome {
 
   const flip = db()
     .prepare(
-      "UPDATE runs SET status='queued', resume_at=NULL WHERE id=? AND status='paused'",
+      "UPDATE runs SET status='queued', queued_at=?, resume_at=NULL WHERE id=? AND status='paused'",
     )
-    .run(id);
+    .run(Date.now(), id);
   if (flip.changes !== 1) return "not-paused";
 
   emit({
@@ -13502,7 +13505,7 @@ export function reopenRun(
       // must never be sent back into a cycle by a verdict — least of all on the
       // pick-up of the operator who came to answer it. A pick-up stays the
       // fresh segment it has always been.
-      `UPDATE runs SET status=?, budget=?, max_iterations=?, follow_up=?, reopened_at=?,
+      `UPDATE runs SET status=?, queued_at=?, budget=?, max_iterations=?, follow_up=?, reopened_at=?,
          started_at=NULL, finished_at=NULL, exit_code=NULL, stop_reason=NULL,
          needs_review_reason=NULL, paused_ms=0, paused_at=NULL, refusal_pauses=0,
          resume_at=NULL, restart_closed=0, restart_cut_cycle=0, set_aside_at=NULL,
@@ -13511,6 +13514,8 @@ export function reopenRun(
     )
     .run(
       waitingAgain ? "waiting" : "queued",
+      // As `createRun` writes it: a `waiting` row is stamped by its release.
+      waitingAgain ? null : Date.now(),
       blob,
       policy.maxIterations ?? 0,
       firstFollowUp,
