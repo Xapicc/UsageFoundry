@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { after, describe, it } from "node:test";
+// Type-only, so it is erased rather than hoisted above the environment below.
+import type { Interrupt } from "./orchestrator";
 
 /**
  * What a `docker compose restart` does to the work cycles it interrupts.
@@ -65,6 +67,7 @@ const {
   selectPromotable,
   shutdownRuns,
   startRun,
+  stopRun,
   trackAssistChild,
 } =
   require("./orchestrator") as typeof import("./orchestrator");
@@ -79,6 +82,12 @@ const { runVerify } = require("./landGate") as typeof import("./landGate");
 
 const SESSION = "11111111-2222-3333-4444-555555555555";
 const lockFile = path.join(config.DATA_DIR, "server.lock");
+
+/** The run loop's interrupt map, which `checkContextCeilings` writes a prune into. */
+function interrupts(): Map<string, Interrupt> {
+  return (globalThis as unknown as { __ufInterrupts: Map<string, Interrupt> })
+    .__ufInterrupts;
+}
 
 /**
  * The transcript the killed cycle leaves behind.
@@ -908,5 +917,72 @@ describe("shutting down with a run waiting on the one it interrupts", () => {
       "picking A up must put B back to waiting for it, as it does after a crash",
     );
     assert.ok(!selectPromotable(activeRuns(), null).includes(b.id));
+  });
+});
+
+/**
+ * A shutdown or a Stop landing while a context-ceiling prune is pending.
+ *
+ * The ceiling ends a cycle with a `prune` interrupt, the one kind the loop's
+ * post-cycle checkpoint consumes and carries on from. The map kept the first
+ * interrupt it was given, so a shutdown landing between the prune being recorded
+ * and that checkpoint was dropped: the loop pruned, refunded the cycle, found
+ * nothing pending at its pre-scan, and spawned a billed cycle into the grace,
+ * leaving the row `running` for the boot to fail with no word of the shutdown.
+ * An operator's Stop went the same way, answered as a stop and then ignored.
+ */
+describe("a context-ceiling prune pending when the run is told to stop", () => {
+  /** A run mid-cycle with the ceiling's prune recorded and its child still alive. */
+  async function cycleWithPrunePending(prompt: string) {
+    const run = createRun({
+      folder: "project",
+      mountId: null,
+      prompt,
+      budget: { maxIterations: 2 },
+      origin: "form",
+    });
+    const loop = startRun(run.id);
+    await waitFor(
+      () => getRun(run.id)?.active_started_at !== null,
+      "the work cycle to be stamped on the row",
+    );
+    const spawnedBefore = spawned;
+    // What `checkContextCeilings` writes, with the child still alive: its own
+    // signal has not yet taken effect, which is the window this is about.
+    interrupts().set(run.id, {
+      kind: "prune",
+      reason: "This work cycle's context reached 210k tokens, so it was ended here to be pruned.",
+      pause: false,
+      at: Date.now(),
+    });
+    return { run, loop, spawnedBefore };
+  }
+
+  it("does not let the prune swallow the shutdown's interrupt", async () => {
+    const { run, spawnedBefore } = await cycleWithPrunePending("work near the ceiling");
+
+    await shutdownRuns("SIGTERM");
+
+    const settled = getRun(run.id)!;
+    assert.equal(spawned, spawnedBefore, "a work cycle was spawned during the shutdown's grace");
+    assert.equal(settled.status, "stopped");
+    assert.match(settled.stop_reason ?? "", /server shut down/);
+    assert.equal(settled.restart_closed, 1, "the restart notice must offer it");
+  });
+
+  it("does not let it swallow an operator's Stop either", async () => {
+    const { run, loop, spawnedBefore } = await cycleWithPrunePending("work near it again");
+
+    assert.equal(stopRun(run.id), "signalled");
+    // Not `await loop` first: against a swallowed Stop the loop is suspended on
+    // a second child that nothing will ever signal.
+    await waitFor(() => getRun(run.id)!.status !== "running", "the run to settle");
+    await loop;
+
+    const settled = getRun(run.id)!;
+    assert.equal(spawned, spawnedBefore, "a work cycle was spawned after the Stop was answered");
+    assert.equal(settled.status, "stopped");
+    assert.match(settled.stop_reason ?? "", /Stopped by operator/);
+    assert.equal(settled.restart_closed, 0);
   });
 });

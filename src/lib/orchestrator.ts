@@ -714,10 +714,9 @@ export function interruptOutcome(it: Interrupt): {
   // `prune` is deliberately not given a case, and this is the safe direction
   // rather than an omission. The run loop consumes that kind before it reaches
   // here — it is the one interrupt that means "carry on" — so arriving with one
-  // means the loop ended some other way first, most often a shutdown, and the
-  // run really has stopped. A `status` invented for it here would be a run
-  // reported as still going by a function whose whole job is to say how it
-  // ended.
+  // means the loop ended some other way first, and the run really has stopped.
+  // A `status` invented for it here would be a run reported as still going by
+  // a function whose whole job is to say how it ended.
   return {
     status: it.kind === "deadline" ? "failed" : "stopped",
     reason: it.reason,
@@ -11686,7 +11685,20 @@ export type StopOutcome = "signalled" | "cancelled" | "not-active";
 function interruptRun(id: string, it: Interrupt): "signalled" | "cancelled" {
   // First interrupt wins. An operator stop landing just after a guard kill must
   // not rewrite why the run ended, and re-signalling a dying child does nothing.
-  if (!interrupts.has(id)) {
+  //
+  // Except over a pending `prune`, which is not an ending, so there is no "why
+  // the run ended" for a later one to rewrite: the post-cycle checkpoint
+  // consumes it and carries on. An operator's Stop or a shutdown kept out by
+  // one was gone by the next pre-scan, and nothing asks for either again — the
+  // press was answered and the loop spawned another cycle, into the shutdown's
+  // grace for the latter. Only those two: a guard's verdict is re-derived by
+  // the pre-cycle guard, and a deadline is about the cycle the prune is
+  // already ending.
+  const pending = interrupts.get(id);
+  if (
+    !pending ||
+    (pending.kind === "prune" && (it.kind === "operator" || it.kind === "shutdown"))
+  ) {
     interrupts.set(id, it);
     // Announced before the signal, so the log explains the kill even when the
     // child dies instantly and the loop's own checkpoint is the next thing to
