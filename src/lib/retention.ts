@@ -20,6 +20,7 @@ import { getSettings } from "./settings";
 import { forgetDreamingFiles } from "./dreaming";
 import { sweepLedger } from "./intakeFilter";
 import { forgetTranscriptFiles } from "./transcripts";
+import { WEEK_MS } from "./windows";
 
 /**
  * What this app throws away, and what it promises to keep.
@@ -637,6 +638,30 @@ export interface TranscriptFile {
 }
 
 /**
+ * The instant the transcript sweep reaches back to, or null for "keep all".
+ *
+ * The horizon, but never later than seven days ago. With no provider reading
+ * the weekly meter and the `weekly_fraction` guard are summed from these very
+ * files, so a horizon under a week — the settings route accepts 1 — deleted
+ * spend the guard was still counting and let a run it was refusing spend
+ * again. A file's turns are all at or before its mtime, so keeping every file
+ * written since the week opened keeps the whole week.
+ *
+ * Floored at the trailing seven days rather than at `weekStart` because every
+ * week `windows.ts` can open — rolling, on `weeklyAnchor`, or on the provider's
+ * reset — starts inside that span, and the provider's reset is a network
+ * reading this sweep has no business waiting on. The cost is up to six days
+ * more transcripts than an anchored week strictly needs.
+ *
+ * `/api/usage` states the period card's completeness from this too, so the
+ * card never calls a bucket pruned that the sweep was not allowed to touch.
+ */
+export function transcriptCutoff(days: number | null, now: number): number | null {
+  const cutoff = retentionCutoff(days, now);
+  return cutoff === null ? null : Math.min(cutoff, now - WEEK_MS);
+}
+
+/**
  * Which transcripts are past the horizon and belong to nothing that may resume.
  *
  * Pure, for the reason the checkout decision is: it removes files from the
@@ -653,11 +678,11 @@ export function expiredTranscripts(
   files: readonly TranscriptFile[],
   o: {
     now: number;
-    cutoff: number | null;
+    horizonDays: number | null;
     keepSessions: ReadonlySet<string>;
   },
 ): TranscriptFile[] {
-  const { cutoff } = o;
+  const cutoff = transcriptCutoff(o.horizonDays, o.now);
   if (cutoff === null) return [];
   return files.filter(
     (f) => f.mtimeMs < cutoff && !o.keepSessions.has(f.sessionId),
@@ -792,12 +817,12 @@ export async function sweepTranscripts(now = Date.now()): Promise<{
   removed: number;
   bytes: number;
 }> {
-  const cutoff = retentionCutoff(getSettings().transcriptRetentionDays, now);
-  if (cutoff === null) return { removed: 0, bytes: 0 };
+  const horizonDays = getSettings().transcriptRetentionDays;
+  if (transcriptCutoff(horizonDays, now) === null) return { removed: 0, bytes: 0 };
 
   const expired = expiredTranscripts(await listTranscripts(PROJECTS_DIR), {
     now,
-    cutoff,
+    horizonDays,
     keepSessions: resumableSessions(),
   });
   if (expired.length === 0) return { removed: 0, bytes: 0 };

@@ -5365,7 +5365,7 @@ export default function SettingsPage() {
             htmlFor="trret"
             edited={isEdited("transcriptRetentionDays")}
             label="Keep session transcripts for"
-            description="Nothing else prunes the ones Claude Code writes to your home directory. Pruning one ends any chance of resuming it, and shortens the dashboard's calendar history"
+            description="Nothing else prunes the ones Claude Code writes to your home directory. Pruning one ends any chance of resuming it, and shortens the dashboard's calendar history. The last 7 days are always kept, because the weekly window is counted from them"
           >
             <div className="w-32">
               <Input
