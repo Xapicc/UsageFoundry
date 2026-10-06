@@ -314,6 +314,17 @@ export interface PruneSavingsDTO {
    * accuses every other tool of.
    */
   unsettledPrunes: number;
+  /**
+   * Prunes whose removal has not been measured yet — a fork until the first
+   * billed turn of the cycle that resumes it, and for good after a rollback.
+   *
+   * These contribute 0 to `tokensRemoved` and to `cacheSavedUSD`, and there 0
+   * means **unknown**: the token count and the saving are floors, and the net
+   * is one too unless `unsettledPrunes` pulls it the other way. Rendered beside
+   * the figures for `unsettledPrunes`' reason, from the other direction — a
+   * fork nobody has measured must not read as one measured to remove nothing.
+   */
+  unmeasuredPrunes: number;
   tokensRemoved: number;
   /**
    * Total turns the savings are measured over, summed across prunes.
@@ -556,8 +567,12 @@ export interface ContextPruneMarkDTO {
   ts: number;
   /** `boundary` or `early-end`; only the second manufactured its own moment. */
   trigger: string;
-  /** In `contextTokens`, which is **not** the samples' basis — see `tokens`. */
-  tokensRemoved: number;
+  /**
+   * In `contextTokens`, which is **not** the samples' basis — see `tokens`.
+   * `null` for a fork whose removal has not been measured: the cut happened
+   * and belongs on the axis, and how much it took out is unknown, not none.
+   */
+  tokensRemoved: number | null;
 }
 
 /**

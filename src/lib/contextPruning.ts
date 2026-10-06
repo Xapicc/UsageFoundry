@@ -1167,7 +1167,11 @@ export function contextOccupancy(runId: string): ContextOccupancyDTO | undefined
           apiContextBefore: f.api_context_before,
           apiContextAfter: f.api_context_after,
         });
-        return { ts: cut.ts, trigger: cut.trigger, tokensRemoved: cut.tokensRemoved };
+        return {
+          ts: cut.ts,
+          trigger: cut.trigger,
+          tokensRemoved: cut.removalKnown ? cut.tokensRemoved : null,
+        };
       }),
     ]
       .sort((a, b) => b.ts - a.ts)
@@ -4478,6 +4482,18 @@ export interface PruneSavings {
    * is the difference between this and the version that could not report a loss.
    */
   unsettledPrunes: number;
+  /**
+   * Prunes whose removal nobody has measured — `PruneNet.removalKnown` false.
+   *
+   * The other half of `unsettledPrunes`. These contribute 0 to `tokensRemoved`
+   * and `cacheSavedUSD` and that 0 is unknown, so with any here the two are
+   * floors and the net is one too; summed without the count, a fork waiting on
+   * its first resumed turn was this object byte for byte as one measured to
+   * remove nothing. Counted over every prune and not only the priced, because
+   * the token count is over every prune and the removal is unknown whatever
+   * the price table says.
+   */
+  unmeasuredPrunes: number;
   tokensRemoved: number;
   turnsAfter: number;
   cacheSavedUSD: number;
@@ -4489,6 +4505,7 @@ export const NO_PRUNE_SAVINGS: PruneSavings = {
   prunes: 0,
   pricedPrunes: 0,
   unsettledPrunes: 0,
+  unmeasuredPrunes: 0,
   tokensRemoved: 0,
   turnsAfter: 0,
   cacheSavedUSD: 0,
@@ -4518,6 +4535,7 @@ export function sumPruneSavings(priced: readonly PricedReceipt[]): PruneSavings 
       // same omission twice in two different words.
       unsettledPrunes:
         acc.unsettledPrunes + (net.priced && !net.invalidationKnown ? 1 : 0),
+      unmeasuredPrunes: acc.unmeasuredPrunes + (net.removalKnown ? 0 : 1),
       tokensRemoved: acc.tokensRemoved + row.tokensRemoved,
       // Summed rather than maxed: two prunes on one run each saved their own
       // tokens over their own turns, and the second one's turns are a subset of
@@ -4950,6 +4968,7 @@ export function addSavings(a: PruneSavings, b: PruneSavings): PruneSavings {
     prunes: a.prunes + b.prunes,
     pricedPrunes: a.pricedPrunes + b.pricedPrunes,
     unsettledPrunes: a.unsettledPrunes + b.unsettledPrunes,
+    unmeasuredPrunes: a.unmeasuredPrunes + b.unmeasuredPrunes,
     tokensRemoved: a.tokensRemoved + b.tokensRemoved,
     turnsAfter: a.turnsAfter + b.turnsAfter,
     cacheSavedUSD: a.cacheSavedUSD + b.cacheSavedUSD,

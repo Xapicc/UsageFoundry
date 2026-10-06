@@ -9,6 +9,7 @@ import type {
   PruneSavingsDTO,
 } from "../lib/apiTypes";
 import { fmtDate, fmtTokens, fmtUSD, signedUSD } from "../lib/format";
+import { netBound } from "../lib/pruneStatement";
 import { Card, CardTitle, Stat, StatSub } from "./ui/Card";
 import { TBody, Table, Td, Tr } from "./ui/Table";
 
@@ -25,15 +26,17 @@ function spanLabel(totalFrom: number | null): string {
  * charged yet: they are already in the saving and not yet in what buying it
  * cost, so the net can only come down. `PruneSavingsRows` says "Net, at most"
  * on exactly this condition, and a tile printing the same `netUSD` bare is the
- * upper bound wearing a net's clothes that panel exists to refuse.
+ * upper bound wearing a net's clothes that panel exists to refuse. An
+ * unmeasured removal is the same fault the other way up — a saving not yet
+ * credited, so the net can only rise — and `netBound` names both.
  *
  * An *unpriced* prune is a different fault and deliberately not this one — it
  * is missing from both halves, which makes the figure incomplete rather than
  * high, and it gets the coverage line at the foot of the card instead.
  */
 function spanCaption(label: string, pruning: PruneSavingsDTO): string {
-  const ceiling = pruning.prunes > 0 && pruning.unsettledPrunes > 0;
-  return ceiling ? `${label}, at most` : label;
+  const bound = pruning.prunes > 0 ? netBound(pruning) : "exact";
+  return bound === "exact" ? label : `${label}, ${bound}`;
 }
 
 /**

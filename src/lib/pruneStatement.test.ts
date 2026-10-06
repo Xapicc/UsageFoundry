@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import type { ContextPrunerDTO, PruneActivityDTO } from "./apiTypes";
 import {
   PRUNE_ENGINE_LABEL,
+  netBound,
   pruneStatement,
   prunerIsFault,
   prunerLine,
@@ -222,5 +223,27 @@ describe("sumPruneActivity", () => {
 
   it("has no reason to report when every boundary cut", () => {
     assert.equal(sumPruneActivity([decision("cut"), decision("cut")]).lastDetail, null);
+  });
+});
+
+describe("netBound", () => {
+  // Two counts pulling one figure in opposite directions. Any wrong branch
+  // prints a well-formed label — "at most" on a figure that can only rise
+  // tells an operator a losing fork is worse than it is, and "at least" with a
+  // cost still to come tells them a saving is safer than it is.
+  it("is a ceiling when only a cost is still to be charged", () => {
+    assert.equal(netBound({ unsettledPrunes: 2, unmeasuredPrunes: 0 }), "at most");
+  });
+
+  it("is a floor when only a saving is still to be credited", () => {
+    assert.equal(netBound({ unsettledPrunes: 0, unmeasuredPrunes: 1 }), "at least");
+  });
+
+  it("claims no direction when both are outstanding", () => {
+    assert.equal(netBound({ unsettledPrunes: 1, unmeasuredPrunes: 1 }), "not final");
+  });
+
+  it("is unqualified when nothing is outstanding", () => {
+    assert.equal(netBound({ unsettledPrunes: 0, unmeasuredPrunes: 0 }), "exact");
   });
 });

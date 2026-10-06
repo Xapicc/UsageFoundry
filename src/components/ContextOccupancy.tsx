@@ -236,7 +236,11 @@ export function ContextOccupancy({
                 <Tr key={`${p.ts}-${i}`}>
                   <Td>{fmtClock(p.ts)}</Td>
                   <Td>{PRUNE_TRIGGER[p.trigger] ?? p.trigger}</Td>
-                  <Td num>{fmtTokens(p.tokensRemoved)} tokens</Td>
+                  <Td num>
+                    {p.tokensRemoved === null
+                      ? "not measured yet"
+                      : `${fmtTokens(p.tokensRemoved)} tokens`}
+                  </Td>
                 </Tr>
               ))}
             </TBody>

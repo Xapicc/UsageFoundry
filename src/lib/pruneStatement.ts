@@ -1,4 +1,8 @@
-import type { ContextPrunerDTO, PruneActivityDTO } from "./apiTypes";
+import type {
+  ContextPrunerDTO,
+  PruneActivityDTO,
+  PruneSavingsDTO,
+} from "./apiTypes";
 
 /**
  * How the two engines are named on screen.
@@ -13,6 +17,28 @@ export const PRUNE_ENGINE_LABEL: Record<ContextPrunerDTO["engine"], string> = {
   legacy: "Edit in place",
   winnow: "Fork",
 };
+
+/**
+ * Which way a pruning net can still move, which is how it is labelled.
+ *
+ * Two counts, two opposite errors. An unsettled prune's cost has not been
+ * charged, so the net can only come down: `at most`. An unmeasured removal has
+ * credited no saving, so the net can only go up: `at least`. With both
+ * outstanding the figure is bounded on neither side, and it is called not
+ * final rather than given a direction it does not have. Every surface that
+ * prints a pruning net reads this, so that one run's figure is not a ceiling
+ * on one screen and a floor on the next.
+ */
+export type NetBound = "exact" | "at most" | "at least" | "not final";
+
+export function netBound(
+  savings: Pick<PruneSavingsDTO, "unsettledPrunes" | "unmeasuredPrunes">,
+): NetBound {
+  if (savings.unsettledPrunes > 0) {
+    return savings.unmeasuredPrunes > 0 ? "not final" : "at most";
+  }
+  return savings.unmeasuredPrunes > 0 ? "at least" : "exact";
+}
 
 export interface PruneStatement {
   kind: "activity";

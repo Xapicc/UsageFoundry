@@ -568,6 +568,25 @@ describe("what a cut is priced at, and over which turns", () => {
       { inPlace: 2, fork: 2 },
     );
   });
+
+  it("does not sum a fork nobody measured into one measured to remove nothing", async () => {
+    // A fork's removal is read off the first billed turn of the cycle that
+    // resumes it, so for that whole cycle — and for good after a rollback — it
+    // is unknown. Both credit $0 saved, and summed without the flag they were
+    // the same object byte for byte, so every surface printed "0 tokens
+    // removed, Saved +$0.00" as a measured fact.
+    const { pruneSavingsByRun } = await import("./contextPruning.js");
+    await addRun("money-unmeasured", "claude-opus-5", null);
+    await addFork("money-unmeasured", "fk-money-unmeasured", null);
+    await addRun("money-measured0", "claude-opus-5", null);
+    await addFork("money-measured0", "fk-money-measured0", 200_000);
+
+    const byRun = await pruneSavingsByRun(["money-unmeasured", "money-measured0"]);
+    const unmeasured = byRun.get("money-unmeasured");
+    const measured0 = byRun.get("money-measured0");
+    assert.equal(measured0?.tokensRemoved, 0, "the fixture's control removed nothing, measured");
+    assert.notDeepEqual(unmeasured, measured0);
+  });
 });
 
 describe("pricing a page of runs", () => {

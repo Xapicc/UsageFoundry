@@ -20,6 +20,7 @@ function pruning(over: Partial<PruneSavingsDTO> = {}): PruneSavingsDTO {
     prunes: 4,
     pricedPrunes: 4,
     unsettledPrunes: 0,
+    unmeasuredPrunes: 0,
     tokensRemoved: 40_000,
     turnsAfter: 9,
     cacheSavedUSD: 1.2,
@@ -98,6 +99,45 @@ test("no priced prune at all is unknown money and never a zero", () => {
   assert.doesNotMatch(html, /\+\$/);
   assert.match(html, /Saved — /);
   assert.match(html, /Net —/);
+});
+
+test("a fork nobody has measured is not drawn as one that removed nothing", () => {
+  // A fork's removal is read off the first billed turn of the cycle that
+  // resumes it, so for that whole cycle it is unknown and credits $0 saved.
+  // Drawn as "0 tokens removed, Saved +$0.00" it read as a fork measured to
+  // remove nothing, which is a finished verdict on the engine.
+  const html = render(
+    pruning({
+      prunes: 1,
+      pricedPrunes: 1,
+      unmeasuredPrunes: 1,
+      tokensRemoved: 0,
+      turnsAfter: 0,
+      cacheSavedUSD: 0,
+      invalidationUSD: 1.8,
+      netUSD: -1.8,
+    }),
+  );
+  assert.doesNotMatch(html, /0 tokens removed/);
+  assert.doesNotMatch(html, /\+\$0\.00/);
+  assert.match(html, /removal not measured yet over 1 prune so far/);
+  assert.match(html, /Saved — not measured yet/);
+  assert.match(html, /Lost −\$1\.80/, "the restart it paid for is measured");
+  assert.match(html, /Net, at least −\$1\.80/, "the figure prints, as the floor it is");
+});
+
+test("a removal measured on some prunes only is a floor on the tokens and the saving", () => {
+  const html = render(pruning({ unmeasuredPrunes: 1 }));
+  assert.match(html, /at least 40\.0k tokens removed over 4 prunes so far/);
+  assert.match(html, /Saved, at least \+\$1\.20/);
+  assert.match(html, /Net, at least \+\$0\.90/);
+});
+
+test("an unmeasured removal beside an unsettled cost bounds the net on neither side", () => {
+  const html = render(pruning({ unmeasuredPrunes: 1, unsettledPrunes: 1 }));
+  assert.match(html, /Net, not final \+\$0\.90/);
+  assert.doesNotMatch(html, /at most/);
+  assert.doesNotMatch(html, /Net, at least/);
 });
 
 test("it is labelled as not spend in every state", () => {
