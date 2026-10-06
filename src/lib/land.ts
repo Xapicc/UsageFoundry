@@ -2176,6 +2176,8 @@ function resolutionRowRunning(run: RunRow): boolean {
  * `acceptEdits` does not let it run git. This app checks that no marker
  * survived and then makes the commit itself. An agent that reports success
  * having left `<<<<<<<` in a file is the exact failure this ordering prevents.
+ * That check judges only a file git wrote markers into, so a conflict it left
+ * none in — binary, modify/delete, rename/delete — is refused before the spawn.
  */
 export async function resolveConflicts(
   runId: string,
@@ -2334,6 +2336,24 @@ async function startResolution(
       ok: false,
       reason: `git could not merge ${target} into ${branch}: ${merge.stderr.split("\n")[0] || "unknown error"}`,
     };
+  }
+
+  // Before the spawn, because `after` takes a file with no marker left in it as
+  // resolved, and that proves something only about a file git wrote markers
+  // into. A binary clash or a modify/delete leaves one side's version whole, the
+  // resolver can neither write the other's bytes nor delete a file, and the
+  // check passed on an untouched file: the merge was committed, recorded
+  // `completed`, and Land then undid the target's own change on the target.
+  const markerless = await markerlessRefusal(
+    checkout.path,
+    conflicted,
+    branch,
+    target,
+    `${merge.stdout}\n${merge.stderr}`,
+  );
+  if (markerless) {
+    const rollback = await rollBackResolution(repoRoot, checkout, branch, tipBefore.stdout);
+    return { ok: false, reason: `${markerless} ${rollback.sentence}` };
   }
 
   // Only where a toolchain can exist. `resolveCheckout` reuses the run's own
@@ -2575,12 +2595,122 @@ function readIfPossible(file: string): string | null {
 }
 
 /**
+ * Why editing a conflicted path's text cannot settle it, or null when it can.
+ *
+ * `stages` is what `ls-files -u` recorded for it straight after the merge — 1
+ * the base, 2 the branch, 3 the target, since the target is merged into the
+ * branch — and `text` the working file then, before anyone edited it. Only a
+ * path both sides have and git wrote markers into is one where "no marker
+ * left" means somebody decided it.
+ *
+ * Exported for its test. Nothing outside this file calls it.
+ */
+export function unsettleableByEditing(
+  file: { stages: ReadonlySet<number>; text: string | null },
+  branch: string,
+  target: string,
+): string | null {
+  const ours = file.stages.has(2);
+  const theirs = file.stages.has(3);
+  // Ahead of the marker test: the surviving version may hold marker-shaped
+  // lines of its own, and no edit to it decides anything about a side that has
+  // no version at all.
+  if (ours && !theirs) return `${target} has no version of it to merge with ${branch}'s`;
+  if (theirs && !ours) return `${branch} has no version of it to merge with ${target}'s`;
+  if (!ours || file.text === null || !hasConflictMarkers(file.text)) {
+    return "git could not merge it as text";
+  }
+  return null;
+}
+
+/** How many marker-less paths a refusal names before it counts the rest. */
+const MARKERLESS_NAMED = 3;
+
+/**
+ * Why a resolution must not be started on this merge's conflicts, or null.
+ *
+ * Read before anything is staged: `git add` clears the unmerged entries this
+ * reads, which is why the `ls-files -u` check after it in `after` cannot see
+ * these cases. Refused whole rather than resolving the rest, because the merge
+ * commits only once every path is settled, and refused before the spawn
+ * because a resolver handed one of these is paid to do nothing.
+ */
+async function markerlessRefusal(
+  checkoutPath: string,
+  conflicted: readonly string[],
+  branch: string,
+  target: string,
+  mergeOutput: string,
+): Promise<string | null> {
+  const unmerged = await git(checkoutPath, ["ls-files", "-u", "-z"], { ...NO_CLOCK, trim: false });
+  if (!unmerged.ok) {
+    return (
+      "No resolution was started: which conflicts git left could not be read " +
+      `(${gitFailureLine(unmerged.stderr) || "unknown error"}).`
+    );
+  }
+  const stages = unmergedStages(unmerged.stdout);
+  const refused = conflicted.flatMap((file) => {
+    const why = unsettleableByEditing(
+      { stages: stages.get(file) ?? new Set(), text: readIfPossible(path.join(checkoutPath, file)) },
+      branch,
+      target,
+    );
+    return why ? [{ file, why }] : [];
+  });
+  if (refused.length === 0) return null;
+
+  const named = refused.slice(0, MARKERLESS_NAMED).map(({ file, why }) => {
+    const said = gitLinesAbout(mergeOutput, file);
+    return `${file}: ${why}${said.length > 0 ? ` (${said.map((line) => `"${line}"`).join(", ")})` : ""}.`;
+  });
+  const rest = refused.length - named.length;
+  return [
+    "No resolution was started, and nothing was spent: a resolution can only take conflict",
+    `markers out of text, and git left none in ${refused.length} file${refused.length === 1 ? "" : "s"}.`,
+    ...named,
+    ...(rest > 0 ? [`And ${rest} more.`] : []),
+    `Merge ${target} into ${branch} by hand to decide ${refused.length === 1 ? "it" : "them"}.`,
+  ].join(" ");
+}
+
+/** The index stages `ls-files -u -z` recorded for each unmerged path. */
+function unmergedStages(output: string): Map<string, Set<number>> {
+  const stages = new Map<string, Set<number>>();
+  for (const record of output.split("\0")) {
+    const match = /^\d+ [0-9a-f]+ ([123])\t(.+)$/s.exec(record);
+    if (match) stages.set(match[2], (stages.get(match[2]) ?? new Set()).add(Number(match[1])));
+  }
+  return stages;
+}
+
+/**
+ * git's own lines about `file` in a merge's output.
+ *
+ * Annotation only, never what decides: what is refused comes from the stage
+ * records, for the reason `parseMergeTree` trusts those over the messages.
+ */
+function gitLinesAbout(output: string, file: string): string[] {
+  const escaped = file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const names = new RegExp(`(^|\\s)${escaped}($|[\\s.,)])`);
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => /^(CONFLICT|warning:)/.test(line) && names.test(line));
+}
+
+/**
  * `verify` is the tool patterns this invocation was actually granted, so the
  * prompt cannot promise a command the argv did not allow. Naming them rather
  * than saying "run the tests" is what keeps the two in step: an agent told to
  * verify and then refused reports the refusal as a finding about the merge,
  * which is how nineteen resolutions came to carry a limitation in their report
  * text instead of a result.
+ *
+ * "Each one contains conflict markers" is true only because `markerlessRefusal`
+ * turns away every conflict git left none in before this is written. Handing
+ * one here would tell the agent to look for markers that are not there, and
+ * have `after` accept the file it could not change.
  */
 function resolvePrompt(
   branch: string,
