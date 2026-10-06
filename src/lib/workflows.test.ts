@@ -4565,6 +4565,7 @@ function runMember(
     },
     block: null,
     emitted: [],
+    workSetAside: 0,
   };
 }
 
@@ -4588,6 +4589,7 @@ function blockMember(
     run: null,
     block: { status, error: opts.error ?? null },
     emitted: opts.emitted ?? [],
+    workSetAside: 0,
   };
 }
 
@@ -4799,6 +4801,86 @@ describe("planLoopPass — a member left behind", () => {
     ]);
     assert.equal(decision.kind, "stop");
     assert.match(decision.kind === "stop" ? decision.reason : "", /reported the work complete/);
+  });
+});
+
+/** A settled review member, stated as what it approved and what it turned down. */
+function reviewMember(
+  nodeId: string,
+  opts: { approved?: LoopRunState[]; workSetAside?: number } = {},
+): LoopPassMember {
+  return {
+    memberId: passMemberId("loop", 1, nodeId),
+    nodeId,
+    name: nodeId,
+    kind: "review",
+    run: null,
+    block: { status: "emitted", error: null },
+    // `loopPasses`' reading: the approved branches' last links, and nothing
+    // the review set aside.
+    emitted: opts.approved ?? [],
+    workSetAside: opts.workSetAside ?? 0,
+  };
+}
+
+/**
+ * A review member turning work down, as the DONE rung reads it.
+ *
+ * Silent both ways and on the operator's own `on-success` link: a pass whose
+ * review turned the work down that reads as done ends the loop claiming work
+ * nothing landed and starts what follows on a folder without it, and a pass
+ * whose branch merely had nothing in it that does not read as done runs every
+ * reviewed loop to its pass cap, billed, with a stop sentence that is false.
+ */
+describe("planLoopPass — a review member", () => {
+  const reviewed = (review: LoopPassMember): LoopPass => ({
+    pass: 1,
+    members: [
+      runMember("a", "completed", { done: true }),
+      review,
+      blockMember("m", "merge", "emitted"),
+    ],
+  });
+
+  it("takes another pass when the review set the DONE branch aside", () => {
+    // The pass from the report: the run said DONE, the review turned its
+    // branch down, and the merge settled with nothing to land.
+    assert.deepEqual(loopOf([reviewed(reviewMember("v", { workSetAside: 1 }))]), {
+      kind: "pass",
+      pass: 2,
+    });
+  });
+
+  it("takes another pass when the review turned down only some of the work", () => {
+    // Read per pass: the branch set aside need not be traceable to a member.
+    const decision = loopOf([
+      {
+        pass: 1,
+        members: [
+          runMember("a", "completed", { done: true }),
+          runMember("b", "completed", { done: true }),
+          reviewMember("v", {
+            approved: [{ id: "r-1-a", status: "completed", iterations: 1, reportedDone: true }],
+            workSetAside: 1,
+          }),
+          blockMember("m", "merge", "emitted"),
+        ],
+      },
+    ]);
+    assert.deepEqual(decision, { kind: "pass", pass: 2 });
+  });
+
+  it("stops done when the review approved the branch", () => {
+    const approved = { id: "r-1-a", status: "completed" as const, iterations: 1, reportedDone: true };
+    const decision = loopOf([reviewed(reviewMember("v", { approved: [approved] }))]);
+    assert.equal(decision.kind === "stop" && decision.code, "done");
+  });
+
+  it("stops done when the branch it set aside committed nothing", () => {
+    // `loopPasses` leaves such a branch out of `workSetAside`: a run that found
+    // nothing left to do and said so is how a reviewed loop ends.
+    const decision = loopOf([reviewed(reviewMember("v"))]);
+    assert.equal(decision.kind === "stop" && decision.code, "done");
   });
 });
 
