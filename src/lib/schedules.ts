@@ -717,6 +717,21 @@ function claimWindow(schedule: WorkflowSchedule, cursorAt: number): boolean {
   );
 }
 
+/**
+ * Put the cursor back to `cursorAt`, which is where `claimWindow` found it or
+ * the newest window the fire already recorded as missed. Conditional for the
+ * same reason `claimWindow` is: an edit writes its own cursor, and this must
+ * not overwrite one.
+ */
+function releaseWindow(schedule: WorkflowSchedule, cursorAt: number | null): void {
+  db()
+    .prepare(
+      `UPDATE workflow_schedules SET cursor_at=?
+        WHERE id=? AND paused=0 AND updated_at=?`,
+    )
+    .run(cursorAt, schedule.id, schedule.updatedAt);
+}
+
 /** The row still exists, is still running and has not been edited since it was read. */
 function isUnchangedSince(schedule: WorkflowSchedule): boolean {
   const current = getSchedule(schedule.workflowId);
@@ -914,7 +929,8 @@ export async function tickSchedules(): Promise<void> {
  * is claimed only off an unchanged row, the row is read again once the snapshot
  * is in, and a fire the operator overtook starts nothing and records nothing.
  * That loses the window rather than retrying it, which is the direction every
- * other rule here takes.
+ * other rule here takes. The install-wide hold is the same kind of press and
+ * is asked again at the same point, except that it gives the cursor back.
  */
 async function fireIfDue(schedule: WorkflowSchedule, now: number): Promise<void> {
   const workflow = getWorkflow(schedule.workflowId);
@@ -974,6 +990,21 @@ async function fireIfDue(schedule: WorkflowSchedule, now: number): Promise<void>
 
   const snapshot = await currentSnapshot();
   if (!isUnchangedSince(schedule)) return;
+
+  // The install-wide hold is the other press that lands in that gap, and it
+  // wins the same way. `decideSchedule` read it before the snapshot, so a hold
+  // pressed since is not in the decision, and `startWorkflow` writes the
+  // instance's rows under a hold by design — the run would sit queued and be
+  // promoted the moment the hold is lifted, a window made up after the hold
+  // with the card saying it started on time. Unlike a Pause, the hold promises
+  // the window is recorded as missed, which needs the cursor back behind it:
+  // `claimWindow` already moved it. Back to the newest window recorded above,
+  // not to where it started, or the next decision records those twice. Nothing
+  // is awaited between this read of the hold and the start below.
+  if (newWorkPaused()) {
+    releaseWindow(schedule, decision.missed[decision.missed.length - 1] ?? schedule.cursorAt);
+    return;
+  }
 
   // Asked again on a fresh read, because the answer above is as stale as the
   // schedule row and clearing the limits writes the workflow's row, not this
