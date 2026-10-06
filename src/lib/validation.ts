@@ -799,9 +799,9 @@ function runningValidation(runId: string): ReviewRow | null {
  * whether that says `finished`, says nothing, or is still out — sending the run
  * back on the first would be a pushback against a reading already superseded.
  * The other two tests are the ones the run-wide read already had: the verdict
- * finished inside the cycle that just ran (`since`), so it buys a cycle once;
- * and the task is still claimed by this run, so an operator who took it back,
- * dropped it or closed it meanwhile outranks the verdict.
+ * finished since the last boundary that read (`since`), so it buys a cycle
+ * once; and the task is still claimed by this run, so an operator who took it
+ * back, dropped it or closed it meanwhile outranks the verdict.
  */
 export function verdictsToActOn<
   T extends Pick<ReviewRow, "task_id" | "created_at" | "finished_at" | "verdict">,
@@ -924,6 +924,12 @@ const VERDICT_POLL_MS = 2_000;
  * not call `complete_task` again would meet the same standing `not-finished`
  * row at the next boundary and buy another cycle with it, and another, until the
  * grant limit — every one of them billed against a reading nobody re-took.
+ *
+ * Or the instant an earlier cycle began, when the loop left that cycle above its
+ * boundary — a park, a guard, a ceiling cut — and so read nothing there: the
+ * caller carries that start across on `runs.verdicts_unread_since`. A verdict
+ * that landed during the park is otherwise older than every boundary that could
+ * read it, and the run ends `completed` holding a task judged unfinished.
  */
 export async function validationAtBoundary(
   runId: string,

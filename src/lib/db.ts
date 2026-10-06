@@ -1064,6 +1064,12 @@ function migrate(db: Database.Database) {
   // as it was. `MAX_EARLY_ENDS_PER_RUN` bounds the context ceiling's refund for
   // the same reason and is the precedent.
   addColumn(db, "runs", "validation_cycles", "INTEGER NOT NULL DEFAULT 0");
+  // The start of the earliest work cycle whose boundary has not yet read the
+  // task checks' verdicts, carried across a park. On the row because a stack
+  // wait is released by a restart and every park resumes through a new
+  // `startRun`. No backfill: a row parked before this column resumes as it
+  // always did, reading only its resumed cycle's verdicts.
+  addColumn(db, "runs", "verdicts_unread_since", "INTEGER");
   addColumn(db, "runs", "landed_into", "TEXT");
   addColumn(db, "runs", "landed_strategy", "TEXT");
   // The branch tip at the moment it was landed. A squash does not make the
