@@ -3557,8 +3557,10 @@ async function emitHandoff(id: string, run: RunRow, workDir: string): Promise<vo
       uncommitted: leftover.split("\n").filter(Boolean),
       review: [`git log ${base}..${branch}`, `git diff ${base}...${branch}`],
       // Withheld rather than shown-and-caveated: a copyable command is going to
-      // be copied.
-      merge: mainDirty ? null : `git merge ${branch}`,
+      // be copied. `--no-overwrite-ignore` for `landRun`'s reason: the status
+      // read above never lists an ignored file, and a plain `git merge`
+      // replaces one wherever the branch tracks its path.
+      merge: mainDirty ? null : `git merge --no-overwrite-ignore ${branch}`,
       mergeBlocked: mainDirty
         ? mainStatus.ok
           ? "Your checkout has uncommitted changes — commit or stash them before merging."
