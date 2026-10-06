@@ -42,6 +42,9 @@ before(async () => {
   process.env.WORKSPACE_ROOT = path.join(root, "workspace");
   process.env.UF_AUTH_TOKEN = TOKEN;
   process.env.UF_COOKIE_SECURE = "";
+  // One proxy in front: with none declared no request has a source, and the
+  // per-source cases below would have nothing to lock.
+  process.env.UF_TRUSTED_PROXY_HOPS = "1";
 
   const config = await import("../../../lib/config");
   assert.equal(
@@ -51,6 +54,7 @@ before(async () => {
       "to run against the real database",
   );
   assert.equal(config.AUTH_TOKEN, TOKEN);
+  assert.equal(config.TRUSTED_PROXY_HOPS, 1);
 
   route = await import("./route");
   logout = await import("../logout/route");
@@ -558,6 +562,30 @@ test("an unattributable guesser is still held to the install-wide budget", async
   } finally {
     clearAllAttempts();
   }
+});
+
+/**
+ * Behind a proxy that appends (`$proxy_add_x_forwarded_for`), the left of the
+ * header is the client's own writing. Read from the left, it let anybody who
+ * knew the operator's address name it on ten wrong guesses and lock it out of
+ * sign-in for a quarter of an hour, again every quarter of an hour.
+ */
+test("a client cannot charge its guesses to an address it writes in front of the proxy's", async () => {
+  const { DEFAULT_LIMITER } = await import("../../../lib/loginLimiter");
+  clearAllAttempts();
+  const operator = "192.0.2.10";
+  const attacker = newSource();
+  for (let i = 0; i < DEFAULT_LIMITER.maxSourceFailures; i++) {
+    // What the proxy forwards when the client sent `x-forwarded-for: <operator>`.
+    assert.equal((await post("wrong", { source: `${operator}, ${attacker}` })).status, 401);
+  }
+  // The guesses were charged to the address the proxy saw, which is locked now.
+  assert.equal((await post("wrong", { source: attacker })).status, 429);
+
+  const signIn = await post(TOKEN, { source: operator });
+  assert.equal(signIn.status, 200, "the attacker's guesses locked the operator out");
+  assert.ok(signIn.headers.get("set-cookie"));
+  clearAllAttempts();
 });
 
 /**

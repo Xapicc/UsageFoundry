@@ -1,3 +1,4 @@
+import { TRUSTED_PROXY_HOPS } from "./config";
 import { db } from "./db";
 import { opsLog, recordOpsEvent, type OpsFields, type OpsLevel } from "./ops";
 
@@ -14,7 +15,8 @@ import { opsLog, recordOpsEvent, type OpsFields, type OpsLevel } from "./ops";
  *
  * **What a line holds, exhaustively**: the method, the URL's `pathname`, the
  * response status, the id the request named or created, how the caller
- * authenticated, the first-hop source address, and how long it took.
+ * authenticated, the source address `sourceAddress` vouches for, and how long
+ * it took.
  *
  * **What it must never hold, and why each one is named rather than assumed**:
  *
@@ -68,17 +70,39 @@ export interface RequestLogEntry {
 const RETENTION_ROWS = 20_000;
 
 /**
- * The first hop of `x-forwarded-for`, or `x-real-ip`.
+ * The client's address as the outermost trusted proxy saw it, or `null` when
+ * no proxy this install was told about vouches for one.
  *
- * The first hop is the client as the nearest proxy saw it; the rest of that
- * header is whatever the client felt like sending and is not evidence of
- * anything. Truncated, because the header is attacker-controlled and this is a
- * column, not a parser.
+ * Read from the **right**, `trustedHops` entries in. A proxy that appends
+ * (`$proxy_add_x_forwarded_for`) keeps whatever the client wrote on the left
+ * and puts the peer it saw at the end, so the first hop — what this used to
+ * read — is the one entry the client always chooses. Sign-in keys its
+ * per-source lockout on this value, so reading the left let anybody who knew
+ * the operator's address lock it out, and it put a client-chosen address in
+ * the audit trail's `address` column for the same reason. One reader for both,
+ * so the line that records a refusal names the bucket that was charged.
+ *
+ * At zero hops nothing in front was declared, so both headers are the
+ * client's own writing and neither is read. `x-real-ip` is a proxy's
+ * overwrite rather than an append, so it is read only behind one and only
+ * when there is no `x-forwarded-for` to read instead. A header shorter than
+ * the declared chain did not come through it, and is unattributable too.
+ * Truncated, because the header is attacker-controlled and this is a column,
+ * not a parser.
  */
-export function sourceAddress(headers: Headers): string | null {
+export function sourceAddress(
+  headers: Headers,
+  trustedHops: number = TRUSTED_PROXY_HOPS,
+): string | null {
+  if (trustedHops <= 0) return null;
   const forwarded = headers.get("x-forwarded-for");
-  const first = forwarded?.split(",")[0]?.trim();
-  const address = first || headers.get("x-real-ip")?.trim() || "";
+  let address: string | undefined;
+  if (forwarded === null) {
+    address = headers.get("x-real-ip")?.trim();
+  } else {
+    const hops = forwarded.split(",");
+    address = hops[hops.length - trustedHops]?.trim();
+  }
   return address ? address.slice(0, 64) : null;
 }
 
@@ -155,7 +179,7 @@ export function recordRequest(entry: RequestLogEntry): void {
  * only next door would lose the rotation.
  *
  * **Who, as far as this install has one.** There is a single credential and no
- * user model, so the honest answer is the credential *class* and the first hop —
+ * user model, so the honest answer is the credential *class* and the address —
  * the same two fields the request line carries, computed by the same two
  * functions, and for the same reason stated at the top of this file: an audit
  * needs to know which credential was used and must never record which secret.

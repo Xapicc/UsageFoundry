@@ -32,7 +32,9 @@ export async function register() {
       // refusal exists to make unreachable.
       process.exit(1);
     }
-    if (signal.kind === "unauthenticated") console.warn(signal.message);
+    if (signal.kind === "unauthenticated" || signal.kind === "short") {
+      console.warn(signal.message);
+    }
 
     const g = globalThis as unknown as { __ufReconciled?: boolean };
     if (g.__ufReconciled) return;

@@ -98,6 +98,10 @@ services:
       # follows the request, which is right behind a terminator that sets
       # X-Forwarded-Proto and right on loopback HTTP.
       UF_COOKIE_SECURE: "${UF_COOKIE_SECURE:-}"
+      # How many reverse proxies in front of this container append to
+      # X-Forwarded-For. Blank is 0, which is right with nothing in front: the
+      # header is then the client's own writing and is not read at all.
+      UF_TRUSTED_PROXY_HOPS: "${UF_TRUSTED_PROXY_HOPS:-}"
       # Optional: enables the API-account panel. Needs an org Admin key.
       ANTHROPIC_ADMIN_KEY: "${ANTHROPIC_ADMIN_KEY:-}"
       # Optional: bill runs to the API rather than to the mounted subscription

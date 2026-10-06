@@ -143,6 +143,9 @@ before(async () => {
   const stubs = writeStubs(root);
   process.env.DATA_DIR = path.join(root, "data");
   process.env.CLAUDE_HOME = path.join(root, "claude");
+  // One proxy in front, so `post`'s header names an address: with none
+  // declared, `sourceAddress` reads no forwarding header at all.
+  process.env.UF_TRUSTED_PROXY_HOPS = "1";
   process.env.CODEX_HOME = path.join(root, "codex");
   process.env.WORKSPACE_ROOT = path.join(root, "workspace");
   process.env.CLAUDE_BIN = stubs.claude;
@@ -215,7 +218,8 @@ function post(url: string, body?: unknown): Request {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "x-forwarded-for": "203.0.113.9, 10.0.0.1",
+      // The left is what the client claimed; the right is what the proxy saw.
+      "x-forwarded-for": "10.0.0.1, 203.0.113.9",
       cookie: "uf_session=v1.abc.123.def",
     },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -247,8 +251,9 @@ describe("a provider credential that changed leaves a durable row", () => {
     assert.equal(signedIn.event, "auth.provider_signed_in");
     assert.equal(signedIn.detail.provider, "claude");
     assert.equal(signedIn.detail.method, "claude.ai");
-    // Who, as far as this install has one: the credential class and the first
-    // hop, never the credential and never an invented account.
+    // Who, as far as this install has one: the credential class and the
+    // address the proxy vouches for, never the credential and never an
+    // invented account.
     assert.equal(signedIn.detail.actor, "session");
     assert.equal(signedIn.detail.address, "203.0.113.9");
   });
