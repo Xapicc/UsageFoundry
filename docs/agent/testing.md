@@ -260,7 +260,6 @@ Units that are about no test file in the tree:
 |---|---|
 | `agentRegistry.test.ts` |  |
 | `agents.test.ts` |  |
-| `cliPath.test.ts` |  |
 | `fileCostNotice.test.ts` |  |
 | `plugins.test.ts` |  |
 | `privsep.test.ts` | [knowledge] |
@@ -270,6 +269,12 @@ Units that are about no test file in the tree:
 | `serverLock.test.ts` | [data-dir] |
 | `src/app/api/agents/route.test.ts` |  |
 | `tmpdirNotice.test.ts` |  |
+
+## [Names a dropped child runs, and what the chat child loads](testing/chat-child-lookups-and-config.md)
+
+| Test file | Also in |
+|---|---|
+| `cliPath.test.ts` |  |
 
 ## [The sandbox, Codex's rules file and the read guard](testing/sandbox-and-read-guard.md)
 
@@ -463,6 +468,7 @@ It prints nothing as this is written. Whoever owns a file it names owes that fil
 [merge-queue]: testing/merge-queue-and-resolution.md
 [run-page]: testing/run-page-panels-and-file-maps.md
 [argv]: testing/spawn-argv-and-child-env.md
+[chat-child]: testing/chat-child-lookups-and-config.md
 [sandbox]: testing/sandbox-and-read-guard.md
 [parsers]: testing/stream-parsers-and-webhook.md
 [auth]: testing/auth-config-and-status-routes.md

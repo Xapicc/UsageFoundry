@@ -7112,19 +7112,21 @@ function gitConfigEnv(
  * callers, and the excludes file's own failure to be written. No token and no
  * file is an empty environment, exactly as before.
  *
- * `extra` is a third contributor's pairs, appended last: the chat's, which
- * clears the git settings a repository's `.git/config` can point at a command
- * (`CHAT_GIT_CONFIG` in `chat.ts`).
+ * `extra` is a third contributor's pairs, put first: the chat's, which pins
+ * the git settings a repository's `.git/config` can point at a command
+ * (`CHAT_GIT_CONFIG` in `chat.ts`). First because git applies the pairs in
+ * order and one of them, an empty `credential.helper`, empties the helper
+ * list: after the GitHub pairs it took the GitHub helper away too (measured,
+ * git 2.39).
  */
 export function agentGitEnv(
   token: string,
   excludesFile: string | null,
   extra: ReadonlyArray<readonly [string, string]> = [],
 ): Record<string, string> {
-  const pairs: Array<readonly [string, string]> = [];
+  const pairs: Array<readonly [string, string]> = [...extra];
   if (token) pairs.push(...GITHUB_GIT_CONFIG);
   if (excludesFile) pairs.push(["core.excludesFile", excludesFile]);
-  pairs.push(...extra);
   if (pairs.length === 0) return {};
 
   return {
