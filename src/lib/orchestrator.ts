@@ -19,7 +19,7 @@ import {
   spawnCommand,
   type WorkspaceMount,
 } from "./config";
-import { git, gitSync } from "./git";
+import { git, gitSync, headBranchOf } from "./git";
 import { runningVerifyChildren } from "./landGate";
 import { withRepoAdmin } from "./repoLock";
 import { checkoutWriter, type CheckoutOwner } from "./checkoutClaim";
@@ -3738,13 +3738,49 @@ export function seedReport(
 }
 
 /**
+ * Why the handoff offers no merge of `branch` because its history carries a
+ * file seeding copied in — `seededRefusal`'s land sentence — or null.
+ *
+ * The third door beside Land and Deliver: git refuses the copyable merge only
+ * because the operator's own ignored copy is in the way, and moving it aside,
+ * the obvious next step, merges their credential into the branch they have
+ * out. Read against that branch, since it is what the command merges into, and
+ * against the run's recorded target when the checkout is detached. With
+ * neither there is no branch whose own files to leave out, and it refuses
+ * rather than guess, as an unreadable history does.
+ *
+ * `land.ts` is imported here rather than at the top of the file because it
+ * imports this module, and a static import back would make the pair a cycle.
+ */
+async function handoffSeededRefusal(run: RunRow, branch: string): Promise<string | null> {
+  const { seedGlobsOf, seededOnBranch, seededRefusal } = await import("./land");
+  const globs = seedGlobsOf(run);
+  if (globs.length === 0) return null;
+  const target = (await headBranchOf(run.folder)).branch ?? run.worktree_base_branch;
+  if (!target) {
+    return (
+      `Your checkout has no branch checked out and this run recorded none it started from, so ` +
+      `there is no branch to read ${branch} against for a file copied in from your checkout, and ` +
+      `no merge command is offered. Its Land card reads it again once you check one out.`
+    );
+  }
+  return seededRefusal(
+    await seededOnBranch(run.folder, `refs/heads/${branch}`, target, run.worktree_base, globs),
+    { branch, target, exit: "land" },
+  );
+}
+
+/**
  * Tell the operator where the work landed and how to look at it.
  *
  * Never a `git merge` command while their own checkout is dirty — a merge
  * suggested into a tree with uncommitted changes is the one instruction here
- * that can lose work if followed literally.
+ * that can lose work if followed literally — nor for a branch carrying a file
+ * seeding copied in (`handoffSeededRefusal`).
+ *
+ * Exported for its test. Nothing outside this file calls it.
  */
-async function emitHandoff(id: string, run: RunRow, workDir: string): Promise<void> {
+export async function emitHandoff(id: string, run: RunRow, workDir: string): Promise<void> {
   const branch = run.worktree_branch ?? "";
   const base = run.worktree_base ?? "";
   const commits = (await git(workDir, ["log", "--oneline", `${base}..HEAD`])).stdout;
@@ -3760,6 +3796,16 @@ async function emitHandoff(id: string, run: RunRow, workDir: string): Promise<vo
   // publish the merge command precisely when it is least safe to run.
   const mainStatus = await git(run.folder, ["status", "--porcelain"]);
   const mainDirty = !mainStatus.ok || mainStatus.stdout !== "";
+  // The seeded file ahead of the dirty checkout, because this card is written
+  // once and never read again: told only to commit their changes, the operator
+  // would then merge the file in.
+  const mergeBlocked =
+    (await handoffSeededRefusal(run, branch)) ??
+    (mainDirty
+      ? mainStatus.ok
+        ? "Your checkout has uncommitted changes — commit or stash them before merging."
+        : "Could not read your checkout's status, so no merge command is offered. Check it by hand."
+      : null);
 
   emit({
     runId: id,
@@ -3776,12 +3822,8 @@ async function emitHandoff(id: string, run: RunRow, workDir: string): Promise<vo
       // be copied. `--no-overwrite-ignore` for `landRun`'s reason: the status
       // read above never lists an ignored file, and a plain `git merge`
       // replaces one wherever the branch tracks its path.
-      merge: mainDirty ? null : `git merge --no-overwrite-ignore ${branch}`,
-      mergeBlocked: mainDirty
-        ? mainStatus.ok
-          ? "Your checkout has uncommitted changes — commit or stash them before merging."
-          : "Could not read your checkout's status, so no merge command is offered. Check it by hand."
-        : null,
+      merge: mergeBlocked ? null : `git merge --no-overwrite-ignore ${branch}`,
+      mergeBlocked,
     },
   });
 }
