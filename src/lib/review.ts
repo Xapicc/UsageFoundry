@@ -164,7 +164,8 @@ export interface ReviewRow {
    * no verdict, and every reader must render that as its own state rather than
    * folding it into either answer — `validation.ts` closes the task on all of
    * them, so a null here reads as "closed unchecked" and not as "checked and
-   * passed".
+   * passed". The one null that closed nothing is a validation its run's Stop
+   * reached, which is written `failed` with an `error` that says so.
    */
   verdict: string | null;
   /** The task a validation was judging. Null for the other two kinds. */
@@ -1165,8 +1166,10 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
 
     // The only handle a shutdown has on it. Undone in `done`, after the row is
     // written and a resolution's `after` has run, so a shutdown waiting on it
-    // waits for the merge to be aborted rather than only for the exit.
-    const untrack = trackAssistChild(child);
+    // waits for the merge to be aborted rather than only for the exit. A
+    // validation is also filed under its run, which is how that run's Stop
+    // reaches it.
+    const untrack = trackAssistChild(child, kind === "validate" ? run.id : undefined);
     assistChildren.set(id, child);
 
     // The whole of stdout is still kept: `parseReviewOutput` reads the result

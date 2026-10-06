@@ -69,6 +69,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - The sentinel is taught on every prompt but the operator's own, and it is not gated on `endsOnDone`.
 - `continueAfterDone` sends the agent back in after `DONE`, with a different prompt.
 - A cycle boundary can now be held open by a verdict, and where that test sits in the ending ladder is the whole of its safety.
+- An operator's Stop also reaches the validation, and the task it leaves is claimed by the stopped run.
 - The cycle a verdict buys carries the evidence, not a scolding, and `nextPrompt` ranks it above both standing prompts and below the operator's own words.
 
 ## [A cycle's CLI, argv and appended notices](run-lifecycle/cycle-argv-and-notices.md)
