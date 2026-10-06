@@ -303,8 +303,9 @@ on may do nothing whatever. `docs/verification.md` carries what would settle it.
 - Set `UF_AUTH_TOKEN` (`openssl rand -hex 32`). Leaving it blank makes the
   server refuse to start; the only way past that is `UF_ALLOW_NO_AUTH=1`, which
   runs with no authentication and puts a banner on every page saying so. A
-  token shorter than 32 characters starts, with a warning at every boot: the
-  limits below bound how fast it can be guessed, not whether.
+  token shorter than 32 characters starts, with a warning at every boot and
+  above the dashboard's meters once signed in: the limits below bound how fast
+  it can be guessed, not whether.
 - **`/api/login` is rate-limited.** Ten consecutive failures from one address
   lock that address out for 15 minutes; 100 failures across every address lock
   sign-in install-wide for 60 seconds, which is what still bounds an attacker

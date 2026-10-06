@@ -49,7 +49,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Security and sandboxing | [security-and-sandboxing-cli-sandbox.md](verification/security-and-sandboxing-cli-sandbox.md) — the CLI's sandbox, bwrap, seccomp, mount points and the write set | 17 | 12 |
 | Security and sandboxing | [security-and-sandboxing-privilege-and-auth.md](verification/security-and-sandboxing-privilege-and-auth.md) — the privilege split, credentials, auth and containment | 11 | 10 |
 | Security and sandboxing | [security-and-sandboxing-stacks.md](verification/security-and-sandboxing-stacks.md) — a stack's tool grants and permissions | 9 | 2 |
-| Security and sandboxing | [security-and-sandboxing-sign-in-and-bearer.md](verification/security-and-sandboxing-sign-in-and-bearer.md) — the sign-in limiter and the gate's bearer budget | 1 | 1 |
+| Security and sandboxing | [security-and-sandboxing-sign-in-and-bearer.md](verification/security-and-sandboxing-sign-in-and-bearer.md) — the sign-in limiter and the gate's bearer budget | 2 | 1 |
 | Security and sandboxing | [security-and-sandboxing-cross-origin.md](verification/security-and-sandboxing-cross-origin.md) — which browser requests the session cookie authorises | 1 | 1 |
 | Security and sandboxing | [security-and-sandboxing-name-lookup.md](verification/security-and-sandboxing-name-lookup.md) — root's `PATH`, the agents' `PATH` and what a dropped process runs by name | 5 | 4 |
 | Security and sandboxing | [security-and-sandboxing-chat-config.md](verification/security-and-sandboxing-chat-config.md) — what the chat child loads from files a work cycle writes | 7 | 3 |
@@ -63,4 +63,4 @@ measurement under *Verified* and cut the item down to what is still open.
 | Interface | [interface-narrow-viewports.md](verification/interface-narrow-viewports.md) — pages at 390px, layout sweeps and smoke-pages | 15 | 9 |
 | Interface | [interface-canvases.md](verification/interface-canvases.md) — the graph canvases, touched map and replay | 5 | 2 |
 | Interface | [interface-pages-and-api.md](verification/interface-pages-and-api.md) — pages, panels and API payloads | 20 | 12 |
-| **Total** | | **433** | **271** |
+| **Total** | | **434** | **271** |

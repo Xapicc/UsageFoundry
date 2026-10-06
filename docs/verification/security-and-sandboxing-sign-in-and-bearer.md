@@ -17,6 +17,20 @@
   `middleware()` in plain Node. Caveat: one process, never restarted, not under
   `docker compose`, and sequential rather than concurrent requests.
 
+- **A short `UF_AUTH_TOKEN` is said above the dashboard's meters, and only to
+  a caller holding it, 2026-10-06.** `npm run build` (Next 15.5.24) on d9fae7c9
+  plus the change adding the warning to `configCheck.ts`, then
+  `.next/standalone/server.js` on a throwaway `DATA_DIR`, `CLAUDE_HOME` and
+  workspace, driven by Playwright over a bearer. With an 18-character token,
+  `/` at 1280px and at 390px showed one warn notice naming `UF_AUTH_TOKEN` and
+  `openssl rand -hex 32` and no console error; stdout carried the boot block
+  and one `Configuration:` line; neither named a length other than the 32
+  bound. Anonymous `/login` HTML carried none of that text and anonymous
+  `/api/usage` answered 401. With a 64-character token nothing was shown or
+  logged. `npm run smoke-pages` on the same build: standalone, 96/96 clean.
+  Caveat: not under `docker compose`, and only the bearer was driven, not a
+  cookie session.
+
 ## Not yet verified by hand
 
 - **That the bearer budget survives a dev-server reload of `middleware.ts`.**
