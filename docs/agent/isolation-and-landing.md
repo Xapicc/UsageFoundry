@@ -53,6 +53,7 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - The repository is the unit of serialisation, not the process. (was line 36)
 - Every outstanding batch is on the page, because the worker has never known what a batch is. (was line 38)
 - A queue tells a branch's problem apart from the checkout's. (was line 40)
+- A checkout something else holds is waited for, and never recorded against the row.
 - Auto-resolution is authorised per batch and recorded per row. (was line 42)
 - The worker answers the row it took, including when this app is the thing that broke. (was line 44)
 - `git()` never rejects, and that is a contract rather than an observation. (was line 46)

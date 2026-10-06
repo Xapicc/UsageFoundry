@@ -262,6 +262,9 @@ export interface LandState {
 const landing = ((globalThis as unknown as { __ufLanding?: Set<string> })
   .__ufLanding ??= new Set<string>());
 
+/** What a land or a delivery is told when `landing` already holds its folder. */
+const LANDING_HELD = "Another branch is being landed into this folder.";
+
 /* ------------------------------------------------------------------ */
 /* Reading the state                                                   */
 /* ------------------------------------------------------------------ */
@@ -1473,6 +1476,31 @@ function folderBusyRefusal(runId: string): string {
 }
 
 /**
+ * The active run working in `folder`, or in anything above or below it.
+ *
+ * `conflictKey`/`overlaps` is the same comparison the folder claim uses, so
+ * "the same folder" means the same thing here as it does there.
+ */
+function runWorkingIn(folder: string): RunRow | undefined {
+  const key = conflictKey(folder);
+  return activeRuns().find((r) => overlaps(key, conflictKey(workDirOf(r))));
+}
+
+/**
+ * Whether `folder` is held by something other than the branch in hand: a land
+ * or a delivery already in it, or a run working in it.
+ *
+ * What the merge queue waits on after `landRun` answers `heldCheckout`. Both
+ * clear by themselves and neither is about the branch, so a worker that
+ * recorded them as the branch's failure failed every row in the repository
+ * against the one hold. Synchronous and free of git, because it is asked
+ * once a second for as long as the hold lasts.
+ */
+export function checkoutHeld(folder: string): boolean {
+  return landing.has(folder) || runWorkingIn(folder) !== undefined;
+}
+
+/**
  * Why the merge must not happen after all, from a read taken immediately
  * before it, or null when it may.
  *
@@ -1511,7 +1539,19 @@ export type LandOutcome =
        */
       assistId?: string;
     }
-  | { ok: false; reason: string; conflicts?: string[] };
+  | {
+      ok: false;
+      reason: string;
+      conflicts?: string[];
+      /**
+       * The checkout, when what refused is that something else holds it — a
+       * land or delivery already in it, or a run working in it — and nothing
+       * about this branch. The merge queue waits for `checkoutHeld` to clear
+       * rather than failing the row; the reason is still the sentence a person
+       * pressing Land is shown.
+       */
+      heldCheckout?: string;
+    };
 
 /**
  * What `landRun` says once the process is going down, before anything moves.
@@ -1550,12 +1590,9 @@ export async function landRun(
   const branch = state.branch;
 
   // A run working in this folder — or in anything above or below it — makes the
-  // tree move under the merge. `conflictKey`/`overlaps` is the same comparison
-  // the folder claim uses, so "the same folder" means the same thing here as it
-  // does there.
-  const key = conflictKey(folder);
-  const busy = activeRuns().find((r) => overlaps(key, conflictKey(workDirOf(r))));
-  if (busy) return { ok: false, reason: folderBusyRefusal(busy.id) };
+  // tree move under the merge.
+  const busy = runWorkingIn(folder);
+  if (busy) return { ok: false, reason: folderBusyRefusal(busy.id), heldCheckout: folder };
 
   // Read after `landState`, the last `await` before the registration, so a
   // land this lets through is one the shutdown will find and wait for. Refused
@@ -1563,9 +1600,7 @@ export async function landRun(
   // in a process that is exiting: nothing tracks that child.
   if (isShuttingDown()) return { ok: false, reason: LAND_SHUTDOWN_REFUSAL };
 
-  if (landing.has(folder)) {
-    return { ok: false, reason: "Another branch is being landed into this folder." };
-  }
+  if (landing.has(folder)) return { ok: false, reason: LANDING_HELD, heldCheckout: folder };
   landing.add(folder);
   const untrack = trackLand();
 
@@ -1611,13 +1646,13 @@ export async function landRun(
     // `landRecheck`. The status read is the last `await` before the merge, so
     // the overlap check below and the merge's spawn share one turn.
     const checkout = await checkoutStateOf(folder);
-    const refusal = landRecheck({
-      target,
-      checkout,
-      busyRunId:
-        activeRuns().find((r) => overlaps(key, conflictKey(workDirOf(r))))?.id ?? null,
-    });
-    if (refusal) return { ok: false, reason: refusal };
+    const busyRunId = runWorkingIn(folder)?.id ?? null;
+    const refusal = landRecheck({ target, checkout, busyRunId });
+    // `landRecheck` names a working run ahead of the checkout, so with one
+    // present the refusal is that run's hold rather than the checkout's state.
+    if (refusal) {
+      return { ok: false, reason: refusal, ...(busyRunId ? { heldCheckout: folder } : {}) };
+    }
 
     // The run half of `landState`'s verdict, asked again for `deliverRun`'s
     // reason: the check may have run for `VERIFY_TIMEOUT_MS`, long enough for
@@ -4964,8 +4999,7 @@ export async function deliverRun(
   // deliberately not changed here: they are keyed on the repository root rather
   // than on this folder, so covering them is a decision about what the claim is
   // *for* rather than an extra line. See `B1` in `proposals/GapRegister/`.
-  const key = conflictKey(folder);
-  const busy = activeRuns().find((r) => overlaps(key, conflictKey(workDirOf(r))));
+  const busy = runWorkingIn(folder);
   if (busy) {
     return {
       ok: false,
@@ -4980,9 +5014,7 @@ export async function deliverRun(
   // shutdown waits for, and no check is started in a process that is exiting.
   if (isShuttingDown()) return { ok: false, reason: DELIVER_SHUTDOWN_REFUSAL };
 
-  if (landing.has(folder)) {
-    return { ok: false, reason: "Another branch is being landed into this folder." };
-  }
+  if (landing.has(folder)) return { ok: false, reason: LANDING_HELD };
   landing.add(folder);
   // Held to the row write rather than to the push: a process that exits
   // between the two leaves a published branch with no pull request and nothing

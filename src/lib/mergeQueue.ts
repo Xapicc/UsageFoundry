@@ -4,6 +4,7 @@ import {
   abortInterruptedResolutions,
   alreadyOnTargetRefusal,
   branchOwnerOf,
+  checkoutHeld,
   landRun,
   landState,
   resolveConflicts,
@@ -114,6 +115,16 @@ export const isQueueActive = (status: QueueStatus): boolean =>
  * one running. `resolutionBudgetUSD` bounds what it can spend meanwhile.
  */
 const RESOLVE_POLL_MS = 2_000;
+
+/**
+ * How often a worker waiting on a held checkout looks again (`waitForCheckout`).
+ *
+ * No deadline beside it either, `RESOLVE_POLL_MS`'s reason from the other
+ * side: what it waits on is a person's own Land or Deliver, verify command
+ * included, or a run working in the checkout, and each of those ends by itself.
+ * A look is one `Set` read and two queries, and no git.
+ */
+const HELD_POLL_MS = 1_000;
 
 /* ------------------------------------------------------------------ */
 /* Deciding what to do with one item — pure, and tested                */
@@ -767,18 +778,60 @@ function setStatus(
   const done = status !== "landing" && status !== "resolving";
   db()
     .prepare(
-      "UPDATE merge_queue SET status=?, message=COALESCE(?, message)," +
-        " started_at=COALESCE(started_at, ?), finished_at=?, resolve_cost=COALESCE(?, resolve_cost)" +
+      // A row leaving `queued` keeps nothing it said there: the only message a
+      // queued row carries is the hold it was last waiting on (`requeue`), and
+      // left in place it would stand beside a merge that is under way. The cost
+      // adds rather than replaces because a resolution paid for before a
+      // requeue is still spent when the row lands on its next turn.
+      "UPDATE merge_queue SET status=?," +
+        " message=CASE WHEN status='queued' THEN ? ELSE COALESCE(?, message) END," +
+        " started_at=COALESCE(started_at, ?), finished_at=?, resolve_cost=resolve_cost + ?" +
         " WHERE id=?",
     )
     .run(
       status,
       fields.message ?? null,
+      fields.message ?? null,
       Date.now(),
       done ? Date.now() : null,
-      fields.resolveCost ?? null,
+      fields.resolveCost ?? 0,
       id,
     );
+}
+
+/**
+ * Put a row the worker took back at the head of its line, saying what holds it.
+ *
+ * `queued` rather than left `landing`, so that everything that reaches a row
+ * waiting its turn reaches this one: `cancelBatch` cancels it, a shutdown
+ * leaves it for the boot to cancel instead of waiting out somebody else's land
+ * inside its grace, and `nextQueuedIn` hands it out first again, since its
+ * `created_at` and `position` are unchanged. `started_at` is cleared because
+ * nothing was started.
+ */
+function requeue(id: string, waitingOn: string, resolveCost: number): void {
+  db()
+    .prepare(
+      "UPDATE merge_queue SET status='queued', message=?, started_at=NULL," +
+        " resolve_cost=resolve_cost + ? WHERE id=?",
+    )
+    .run(`Waiting — ${waitingOn}`, resolveCost, id);
+}
+
+/**
+ * Until `folder` is no longer held, the repository has nothing queued, or the
+ * process is going down — whichever is first.
+ *
+ * The two reads `drainRepo` takes before each row, taken on every look, so a
+ * Cancel or a SIGTERM during somebody else's fifteen-minute verify command is
+ * answered within a look rather than at its end. A batch cancelled while
+ * another is still queued here keeps the wait going, because the other batch's
+ * head row would meet the same hold.
+ */
+async function waitForCheckout(repo: string, folder: string): Promise<void> {
+  while (!isShuttingDown() && nextQueuedIn(repo) && checkoutHeld(folder)) {
+    await new Promise((resolve) => setTimeout(resolve, HELD_POLL_MS));
+  }
 }
 
 /**
@@ -871,6 +924,19 @@ export function startWorker(): void {
  * signal whatever the merge was doing. Only a grace that runs out first leaves
  * the row for the boot, which fails it with the sentence it gives any row
  * caught mid-merge.
+ *
+ * **A checkout something else holds is waited for, and is never the row's
+ * answer.** A person's own Land or Deliver into the same folder holds
+ * `landing` for its whole verify command, merge, push and pull request, and a
+ * run working in the folder holds it for as long as it works; `landRun`
+ * refuses a row meeting either. That refusal used to be recorded as the
+ * branch's failure, and the next row met the same hold, so a repository's
+ * whole queue failed within milliseconds — each row with a sentence that read
+ * as its own fault, and a merge block over it counting failed landings for
+ * branches nobody had tried to merge. It is the checkout's problem and clears
+ * by itself, which is neither `fail` nor `halt`: the row goes back in line and
+ * the worker waits for the hold, with no clock on the wait, by the landing
+ * path's rule.
  */
 async function drainRepo(repo: string): Promise<void> {
   /** Why this repository was given up on, if it was. */
@@ -898,6 +964,8 @@ async function drainRepo(repo: string): Promise<void> {
       // and given up after the row's own ending is written, whichever branch
       // wrote it.
       const untrack = trackLand();
+      /** The checkout this row found held by something other than its branch. */
+      let held: string | undefined;
       try {
         setStatus(row.id, "landing");
         const outcome = await processOne(row, {
@@ -910,6 +978,11 @@ async function drainRepo(repo: string): Promise<void> {
           resolutionsRefused: workers.resolutionsRefused,
         });
 
+        if (outcome.heldCheckout) {
+          requeue(row.id, outcome.message, outcome.resolveCost ?? 0);
+          held = outcome.heldCheckout;
+          continue;
+        }
         if (outcome.halt) halt = outcome.message;
         if (outcome.refusedResolutions) workers.resolutionsRefused = outcome.refusedResolutions;
         setStatus(row.id, outcome.status, {
@@ -930,6 +1003,9 @@ async function drainRepo(repo: string): Promise<void> {
         });
       } finally {
         untrack();
+        // After the row is back in line and out of `trackLand`'s set, so a
+        // shutdown neither waits for this nor finds the row `landing`.
+        if (held) await waitForCheckout(repo, held);
       }
     }
   } finally {
@@ -946,8 +1022,9 @@ async function drainRepo(repo: string): Promise<void> {
   // alternative is a queue that stalls for no visible reason.
   //
   // Deliberately still *after* the `finally`, so a throw skips it. What can
-  // still throw past the row-level catch above is `nextQueuedIn` or the catch's
-  // own `setStatus` — both of them the database itself, and both of them still
+  // still throw past the row-level catch above is `nextQueuedIn` (at the loop's
+  // head or in `waitForCheckout`, beside `checkoutHeld`'s read of the runs) or
+  // the catch's own `setStatus` — all of them the database itself, and all still
   // true a microsecond later against a row this drain has not moved. Re-arming
   // there is an unbounded loop on one row rather than a recovery, and it would
   // be a synchronous one: `drainRepo` throwing before its first `await` runs
@@ -959,6 +1036,8 @@ interface ItemOutcome {
   status: QueueStatus;
   message: string;
   halt?: boolean;
+  /** `landRun`'s `heldCheckout`: the row is not answered, it waits. */
+  heldCheckout?: string;
   refusedResolutions?: string;
   resolveCost?: number;
 }
@@ -1007,7 +1086,19 @@ async function processOne(
     return {
       status: "landed",
       message:
-        resolveCost > 0 ? `${landed.message} Conflicts were resolved first.` : landed.message,
+        // A resolution paid for on a turn that found the checkout held is on
+        // the row already, and it is still why this land is a clean one.
+        row.resolve_cost + resolveCost > 0
+          ? `${landed.message} Conflicts were resolved first.`
+          : landed.message,
+      resolveCost,
+    };
+  }
+  if (landed.heldCheckout) {
+    return {
+      status: "queued",
+      message: landed.reason,
+      heldCheckout: landed.heldCheckout,
       resolveCost,
     };
   }
