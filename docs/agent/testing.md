@@ -156,6 +156,7 @@ Units that are about no test file in the tree:
 | `chatThread.test.ts` | [proposals] |
 | `chatTurn.test.ts` |  |
 | `jsonRequest.test.ts` |  |
+| `poll.test.ts` |  |
 | `src/app/api/chat/[id]/route.test.ts` |  |
 
 ## [Chat proposals, questions and search](testing/chat-proposals.md)

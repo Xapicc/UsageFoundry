@@ -2,7 +2,7 @@
 
 [← testing index](../testing.md)
 
-Read before adding or editing tests of `chat.ts`' turn claim, `settleOnExit`, `chatStream.ts`, `chatThread.ts`, `/api/chat/[id]`, and `jsonRequest.ts`/`chatRequest`.
+Read before adding or editing tests of `chat.ts`' turn claim, `settleOnExit`, `chatStream.ts`, `chatThread.ts`, `/api/chat/[id]`, `jsonRequest.ts`/`chatRequest`, and `poll.ts`.
 
 Three of the entries on the list of what `npm test` covers are not pure functions, and each earns the exception on its own terms.
 
@@ -15,6 +15,8 @@ Three of the entries on the list of what `npm test` covers are not pure function
 The status it carries is the other half — `null` is nobody answered and a number is somebody refused, which is the split between `pollFailureMessage` on a poll and `actionFailureMessage` beside a press that may or may not have landed.
 
 `chatRequest` (`chatRequest.test.ts`) is a caller of it and keeps its own test, because the chat page reads a thread off the answer and that shape is its own.
+
+`startPoll` (`poll.test.ts`) is the clock those requests ride on a page, driven with `node:test`'s mocked `setTimeout`, and it pins the two ways a poll is wrong while the page looks right. A second request sent while the first is out lands in whichever order the server finishes, and the page draws the older reading over the newer one — `/runs/live` did, behind a first transcript scan that outlasts its 5 s period several times over — so the first case holds an answer back for ten periods and asserts one request, then that the next is a whole period after the answer. The other is the stop: the obvious self-rescheduling shape clears the pending timer and misses the re-arm a load still in flight is about to make, which keeps an unmounted page polling for the life of the tab and shows nowhere but the network panel. Both cases were seen failing against the shape they guard — `setInterval` fails the first, a stop that only clears the timer fails the second.
 
 `src/app/api/chat/[id]/route.test.ts`, which opens the database, names a throwaway `DATA_DIR` and calls the handler, because what it pins is a *payload key*: the chat page polls that one route, so a list left out of its answer is frozen on screen until a reload, which is exactly what it did for as long as a comment claimed otherwise.
 
