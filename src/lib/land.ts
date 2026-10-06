@@ -2133,6 +2133,19 @@ export async function resolveCheckout(
       }
       return { path: own, temporary: false };
     }
+    // A rebase or bisect of the branch detaches the slot, and git keeps the
+    // branch for it all the same, so the `worktree add` below is refused as
+    // already checked out — at the checkout that read as holding nothing.
+    if (head.ok && head.stdout === "HEAD") {
+      const mid = await slotMidOperation(own, branch);
+      if (mid.ok && mid.operation) {
+        throw new Error(
+          `${path.basename(own)} is part-way through a ${mid.operation} of ${branch}, and git ` +
+            "will not check the branch out anywhere else until that ends. Run " +
+            `\`${OPERATION_ENDED_BY[mid.operation]}\` there, or finish it, then resolve again.`,
+        );
+      }
+    }
   }
 
   // Named for the run, not for the repository. The store is shared by every run
@@ -2925,6 +2938,11 @@ interface SlotState {
   files: PendingChange[];
   /** `MERGE_HEAD` exists there. Always false when `readable` is. */
   mergeInProgress: boolean;
+  /**
+   * Part-way through a rebase or bisect of the run's branch. Either detaches
+   * HEAD, so `checkedOutBranch` is null while the slot is still this run's.
+   */
+  operation: BranchInOperation["operation"] | null;
 }
 
 /**
@@ -2960,10 +2978,25 @@ async function slotState(run: RunRow): Promise<SlotState> {
       readable: false,
       files: [],
       mergeInProgress: false,
+      operation: null,
     };
   }
 
   const { readable: headReadable, branch: checkedOutBranch } = await headBranchOf(slot, NO_CLOCK);
+  // Detached is also what a rebase or bisect of this run's branch looks like,
+  // and that slot is still this run's: reading it as holding nothing had Commit
+  // call it gone and the verify gate call it taken over.
+  if (headReadable && !checkedOutBranch && run.worktree_branch) {
+    const mid = await slotMidOperation(slot, run.worktree_branch);
+    return {
+      path: slot,
+      checkedOutBranch: null,
+      readable: mid.ok,
+      files: [],
+      mergeInProgress: false,
+      operation: mid.ok ? mid.operation : null,
+    };
+  }
   // Status is read only once the slot is proved to still hold this run's
   // branch. Anything uncommitted under a different branch is a later run's, and
   // reporting it here would offer to commit one run's work onto another's.
@@ -2974,6 +3007,7 @@ async function slotState(run: RunRow): Promise<SlotState> {
       readable: headReadable,
       files: [],
       mergeInProgress: false,
+      operation: null,
     };
   }
 
@@ -2988,6 +3022,7 @@ async function slotState(run: RunRow): Promise<SlotState> {
     readable,
     files: status.ok ? parseStatusZ(status.stdout) : [],
     mergeInProgress: readable && merging === true,
+    operation: null,
   };
 }
 
@@ -3057,6 +3092,8 @@ export function verifyTreeVerdict(s: {
   checkedOutBranch: string | null;
   /** The branch recorded for this run. */
   runBranch: string | null;
+  /** That checkout is part-way through a rebase or bisect of `runBranch`. */
+  operation: BranchInOperation["operation"] | null;
   /**
    * Uncommitted paths in that checkout, or null when its status could not be
    * read — which is not the same as clean.
@@ -3071,6 +3108,18 @@ export function verifyTreeVerdict(s: {
         "own to run it in, so nothing here can tell whether its branch is " +
         "good. Nothing was landed. Clear the command in Settings to land " +
         "without a check.",
+    };
+  }
+  // Ahead of the comparison below, which it fails only because the operation
+  // detached HEAD: nobody took the checkout over, and the way out is there.
+  if (s.operation) {
+    return {
+      ok: false,
+      reason:
+        `A verify command is configured, but ${s.slotPath} is part-way through a ` +
+        `${s.operation} of ${s.runBranch ?? "this run's branch"}, which leaves it on no ` +
+        `branch, so there is nothing there to run the check against. Nothing was landed. ` +
+        `Run \`${OPERATION_ENDED_BY[s.operation]}\` there, or finish it, and land again.`,
     };
   }
   if (!s.runBranch || s.checkedOutBranch !== s.runBranch) {
@@ -3123,6 +3172,7 @@ async function verifyTree(run: RunRow): Promise<VerifyTree> {
     slotPath: slot.path,
     checkedOutBranch: slot.checkedOutBranch,
     runBranch: run.worktree_branch,
+    operation: slot.operation,
     uncommitted: slot.readable ? slot.files.map((f) => f.path) : null,
   });
 }
@@ -3213,6 +3263,8 @@ export function commitRefusal(s: {
   branch: string | null;
   /** The branch its checkout holds now — not necessarily the same one. */
   checkedOutBranch: string | null;
+  /** That checkout is part-way through a rebase or bisect of `branch`. */
+  operation: BranchInOperation["operation"] | null;
   readable: boolean;
   /** Every uncommitted path in that checkout, with git's status letters. */
   pending: readonly Pick<PendingChange, "path" | "code">[];
@@ -3254,6 +3306,15 @@ export function commitRefusal(s: {
     );
   }
 
+  // Ahead of the missing branch below, which is only missing because the
+  // operation detached HEAD: the checkout is still there, and still this run's.
+  if (s.operation) {
+    return (
+      `That checkout is part-way through a ${s.operation} of ${s.branch}, which leaves it ` +
+      `on no branch, so there is nothing to commit to. Run \`${OPERATION_ENDED_BY[s.operation]}\` ` +
+      "there, or finish it, and commit again."
+    );
+  }
   if (!s.checkedOutBranch) {
     return (
       `The checkout this run worked in is gone. Its commits are still on ${s.branch}; ` +
@@ -3327,6 +3388,7 @@ export async function commitPending(
     isolated: run.isolation === "worktree",
     branch: run.worktree_branch,
     checkedOutBranch: slot.checkedOutBranch,
+    operation: slot.operation,
     readable: slot.readable,
     pending: slot.files,
     mergeInProgress: slot.mergeInProgress,
@@ -3694,6 +3756,42 @@ const BRANCH_IN_OPERATION: ReadonlyArray<readonly [string, BranchInOperation["op
   ["BISECT_START", "bisect"],
 ];
 
+/** What ends each operation and gives the checkout its branch back. */
+const OPERATION_ENDED_BY: Record<BranchInOperation["operation"], string> = {
+  rebase: "git rebase --abort",
+  bisect: "git bisect reset",
+};
+
+/**
+ * The operation one checkout's git directory is part-way through on this
+ * branch, or null. Throws on anything but absence, for `worktreeMidOperation`'s
+ * reason.
+ */
+function operationOn(gitDir: string, branch: string): BranchInOperation["operation"] | null {
+  for (const [file, operation] of BRANCH_IN_OPERATION) {
+    const named = readIfPresent(() => fs.readFileSync(path.join(gitDir, file), "utf8"));
+    if (named?.trim().replace(/^refs\/heads\//, "") === branch) return operation;
+  }
+  return null;
+}
+
+/**
+ * `worktreeMidOperation`'s reading of one checkout, for the doors that start
+ * from the run's own slot rather than from the registry.
+ */
+async function slotMidOperation(
+  dir: string,
+  branch: string,
+): Promise<{ ok: true; operation: BranchInOperation["operation"] | null } | { ok: false }> {
+  const gitDir = await git(dir, ["rev-parse", "--absolute-git-dir"], NO_CLOCK);
+  if (!gitDir.ok) return { ok: false };
+  try {
+    return { ok: true, operation: operationOn(gitDir.stdout, branch) };
+  } catch {
+    return { ok: false };
+  }
+}
+
 /**
  * A checkout mid-rebase or mid-bisect on this branch, which `worktreeHolding`
  * cannot see.
@@ -3733,12 +3831,8 @@ async function worktreeMidOperation(
     }
 
     for (const { dir, checkout } of gitDirs) {
-      for (const [file, operation] of BRANCH_IN_OPERATION) {
-        const named = readIfPresent(() => fs.readFileSync(path.join(dir, file), "utf8"));
-        if (named?.trim().replace(/^refs\/heads\//, "") === branch) {
-          return { ok: true, found: { checkout, operation } };
-        }
-      }
+      const operation = operationOn(dir, branch);
+      if (operation) return { ok: true, found: { checkout, operation } };
     }
     return { ok: true, found: null };
   } catch (err) {
@@ -3916,7 +4010,17 @@ async function purgeClaimedBranch(
     async (): Promise<
       { ok: true; slot: string | null; discarded: number | null } | { ok: false; reason: string }
     > => {
-      const held = await worktreeHolding(repoRoot, branch);
+      let held = await worktreeHolding(repoRoot, branch);
+      // A rebase or bisect detaches HEAD, so `worktree list` names nobody while
+      // the run's own slot is part-way through one, and `branch -D` below was
+      // refused as checked out at that very slot on every press. Freeing that
+      // slot is what this door is for, and removing it ends the operation.
+      // Anybody else's checkout is left to git's refusal, and so is a registry
+      // that could not be read: git reads the same files before it deletes.
+      if (!held) {
+        const mid = await worktreeMidOperation(repoRoot, branch);
+        if (mid.ok && mid.found?.checkout === run.worktree_path) held = mid.found.checkout;
+      }
       let lost: number | null = 0;
       if (held) {
         const holder = activeRuns().find((r) => r.worktree_path === held);
