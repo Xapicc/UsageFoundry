@@ -24,6 +24,7 @@ import {
   STATUS_LABEL,
 } from "@/lib/format";
 import { jsonRequest, type JsonResult } from "@/lib/jsonRequest";
+import { startPoll } from "@/lib/poll";
 import { FleetControls } from "@/components/FleetControls";
 import { RestartClosed } from "@/components/RestartClosed";
 import { StatusMark } from "@/components/StatusMark";
@@ -994,11 +995,7 @@ function RunsView() {
     setRecentOffset(next);
   }
 
-  useEffect(() => {
-    loadRuns();
-    const poll = setInterval(loadRuns, 4000);
-    return () => clearInterval(poll);
-  }, [loadRuns]);
+  useEffect(() => startPoll(loadRuns, 4000), [loadRuns]);
 
   /**
    * The fold's own page of history, filtered and paged by the server.

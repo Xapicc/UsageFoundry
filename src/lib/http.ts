@@ -36,6 +36,46 @@ export function jsonKind(value: unknown): string {
 }
 
 /**
+ * A text field that may be absent, or the sentence refusing it. Absent and
+ * `null` both read as not given.
+ *
+ * `readJsonObject` checks the top level only, and the line this replaces,
+ * `String(body.x ?? "")`, turned an object into "[object Object]" and an array
+ * into "a,b" — on `POST /api/runs`, a billed run whose task was exactly that.
+ */
+export function optionalStringField(
+  body: Record<string, unknown>,
+  key: string,
+): { ok: true; value: string | undefined } | { ok: false; error: string } {
+  const value = body[key];
+  if (value === undefined || value === null) return { ok: true, value: undefined };
+  if (typeof value !== "string") {
+    return { ok: false, error: `"${key}" has to be a string when it is given; got ${jsonKind(value)}.` };
+  }
+  return { ok: true, value };
+}
+
+/**
+ * An object field that may be absent, or the sentence refusing it. Absent and
+ * `null` both read as not given.
+ *
+ * The line this replaces, `(body.x ?? {}) as Record<string, unknown>`, let a
+ * string or a number through to code that tests it with `in`, which throws: a
+ * 500, audited as one, for the caller's mistake.
+ */
+export function optionalObjectField(
+  body: Record<string, unknown>,
+  key: string,
+): { ok: true; value: Record<string, unknown> | undefined } | { ok: false; error: string } {
+  const value = body[key];
+  if (value === undefined || value === null) return { ok: true, value: undefined };
+  if (!isJsonObject(value)) {
+    return { ok: false, error: `"${key}" has to be an object when it is given; got ${jsonKind(value)}.` };
+  }
+  return { ok: true, value };
+}
+
+/**
  * A request body that is a JSON object, or the 400 refusing it.
  *
  * The pattern this replaces, `(await req.json().catch(() => ({}))) as

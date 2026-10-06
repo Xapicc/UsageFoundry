@@ -72,6 +72,7 @@ import {
   type StopCause,
 } from "@/lib/logLine";
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
+import { startPoll } from "@/lib/poll";
 import { RunAgentCost } from "@/components/RunAgentCost";
 import { RunPruning } from "@/components/RunPruning";
 import { RunDiff } from "@/components/RunDiff";
@@ -981,16 +982,16 @@ export default function RunDetail({
         );
       }
     };
-    void load();
     if (!polling) {
+      void load();
       return () => {
         alive = false;
       };
     }
-    const t = setInterval(() => void load(), 3000);
+    const stop = startPoll(load, 3000);
     return () => {
       alive = false;
-      clearInterval(t);
+      stop();
     };
   }, [id, polling, woken]);
 

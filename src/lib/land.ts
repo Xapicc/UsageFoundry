@@ -40,6 +40,7 @@ import {
   overlaps,
   repoSlug,
   resolveWorkspaceFolder,
+  runsOnBranch,
   trackLand,
   workDirOf,
   worktreeStore,
@@ -1842,9 +1843,21 @@ async function rollBackResolution(
  * is made, and the row from then until `after` has finished or rolled it back.
  * While either holds, the run's own checkout can be mid-merge with a billed
  * agent editing the conflicted files, and nothing else may write to it.
+ *
+ * The row is asked of every run on the branch, because a resolution is
+ * recorded on the run it was started for — the card's, or whichever link the
+ * merge queue was handed — and a chain's links share the checkout it opens its
+ * merge in. The claim is keyed on the branch already. Exported for the land
+ * route, so a link's card stops offering Purge and Resolve while another link
+ * resolves.
  */
-function resolutionHolds(runId: string): boolean {
-  return checkoutWriter(runId) === "resolution" || assistRunning(runId, "resolve");
+export function resolutionHolds(run: RunRow): boolean {
+  return checkoutWriter(run) === "resolution" || resolutionRowRunning(run);
+}
+
+/** The row half of `resolutionHolds`, which a resolution holding the claim asks alone. */
+function resolutionRowRunning(run: RunRow): boolean {
+  return runsOnBranch(run).some((id) => assistRunning(id, "resolve"));
 }
 
 /**
@@ -1873,16 +1886,20 @@ export async function resolveConflicts(
    */
   asker: LandAsker | null = null,
 ): Promise<LandOutcome> {
+  const run = getRun(runId);
+  if (!run) return { ok: false, reason: "No such run." };
+
   // `assistRunning` is the durable guard and stays the one that answers for a
   // resolution already under way, but it reads a row `startAssist` has not
   // inserted yet: two callers for one run — the merge queue draining it while
   // the operator presses the button — both pass it, and the second's checkout
   // setup then deletes the first's. So the checkout is claimed from here, and
   // held only as far as the row, never for the life of the child, so a spawn
-  // that fails cannot lock a run out of resolving.
-  const holder = claimCheckout(runId, "resolution");
+  // that fails cannot lock a run out of resolving. The claim is the branch's,
+  // so the two callers may be on different links of one chain.
+  const holder = claimCheckout(run, "resolution");
   if (holder === "resolution") {
-    return { ok: false, reason: "A resolution for this run is already being started." };
+    return { ok: false, reason: "A resolution for this branch is already being started." };
   }
   if (holder === "commit") {
     return {
@@ -1902,21 +1919,20 @@ export async function resolveConflicts(
     };
   }
   try {
-    return await startResolution(runId, asker);
+    return await startResolution(run, asker);
   } finally {
-    releaseCheckout(runId);
+    releaseCheckout(run);
   }
 }
 
 /** The body of `resolveConflicts`, bracketed by its claim. */
 async function startResolution(
-  runId: string,
+  run: RunRow,
   asker: LandAsker | null,
 ): Promise<LandOutcome> {
-  const run = getRun(runId);
-  if (!run) return { ok: false, reason: "No such run." };
-  if (assistRunning(runId, "resolve")) {
-    return { ok: false, reason: "A resolution for this run is already running." };
+  const runId = run.id;
+  if (resolutionRowRunning(run)) {
+    return { ok: false, reason: "A resolution for this branch is already running." };
   }
 
   const state = await landState(runId, asker);
@@ -2778,7 +2794,7 @@ export async function commitPending(
     mergeInProgress: slot.mergeInProgress,
     // Read after the slot, so a resolution that began while it was being read
     // is still seen.
-    resolutionRunning: resolutionHolds(run.id),
+    resolutionRunning: resolutionHolds(run),
     message: resolved,
   });
   if (refusal) return { ok: false, reason: refusal };
@@ -2805,7 +2821,7 @@ export async function commitPending(
   // resolution is refused for as long as this holds, and so is `reopenRun`.
   // Only a second Commit or a Purge can be holding it here, since a
   // resolution's claim was refused above in this same turn.
-  const writer = claimCheckout(run.id, "commit");
+  const writer = claimCheckout(run, "commit");
   if (writer === "purge") {
     return {
       ok: false,
@@ -2818,7 +2834,7 @@ export async function commitPending(
   try {
     return await commitClaimedSlot(run, dir, resolved, slot.files.length);
   } finally {
-    releaseCheckout(run.id);
+    releaseCheckout(run);
   }
 }
 
@@ -3311,7 +3327,7 @@ export async function purgeBranch(
     // Always a person, for `deleteBranch`'s reason: purging is a button and
     // nothing else reaches it.
     loopBlock: loopStillRepeating(chain, null),
-    resolutionRunning: resolutionHolds(run.id),
+    resolutionRunning: resolutionHolds(run),
   });
   if (refusal) return { ok: false, reason: refusal };
 
@@ -3321,7 +3337,7 @@ export async function purgeBranch(
   // billed child there, for `worktree remove --force` to take the checkout out
   // from under it. A resolution's own claim was refused above in this same
   // turn, so only a Commit or a second Purge can be holding it here.
-  const writer = claimCheckout(run.id, "purge");
+  const writer = claimCheckout(run, "purge");
   if (writer === "commit") {
     return {
       ok: false,
@@ -3332,7 +3348,7 @@ export async function purgeBranch(
   try {
     return await purgeClaimedBranch(run, repoRoot, branch);
   } finally {
-    releaseCheckout(run.id);
+    releaseCheckout(run);
   }
 }
 

@@ -58,7 +58,9 @@ stacks.ts       the read-back over what apply-stacks.mjs installed, and the
                 the agent uid starts from: the server's environment with
                 `stackEnvironment`'s block under it, so the operator's value
                 wins, and `agentPath()` over it. Never `process.env` itself —
-                the server is root, and so is winnow under it.
+                the server is root, and so is winnow under it. `chatPath`
+                narrows that `PATH` for the chat and block child to root's
+                directories and the toolbox, since it holds UF_CHAT_GID.
                 There is **no `stacks` table** and must not be: the receipts
                 are the state and they are per boot, so the one question a
                 monitor asks — what did *this* boot find wrong — is answered by

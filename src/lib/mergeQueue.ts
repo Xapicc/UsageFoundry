@@ -7,6 +7,7 @@ import {
   landRun,
   landState,
   resolveConflicts,
+  unsettledBranchRefusal,
   type LandAsker,
   type LandState,
   type LandStrategy,
@@ -187,7 +188,15 @@ export function planItem(
   }
 
   if (state.preview.outcome === "conflict") {
-    if (!opts.autoResolve) return { action: "fail", reason: state.blocked };
+    // Only when the conflict is why the land is refused. `landRefusal` asks the
+    // run's half first, so a chain link that is not its branch's owner is
+    // refused at the land whatever a resolution does to the branch, and one
+    // bought for it was its cost beside a failed row. A live loop pass, which
+    // that half refuses too, needs the asker this state does not carry, and
+    // `resolveConflicts` refuses it itself before anything is spent.
+    if (!opts.autoResolve || unsettledBranchRefusal(state, "land")) {
+      return { action: "fail", reason: state.blocked };
+    }
     if (opts.resolutionsRefused) {
       return {
         action: "fail",

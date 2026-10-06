@@ -210,6 +210,7 @@ export function RunLand({ run }: { run: RunDTO }) {
   const [state, setState] = useState<LandStateDTO | null>(null);
   const [delivery, setDelivery] = useState<DeliveryStateDTO | null>(null);
   const [resolution, setResolution] = useState<RunReviewDTO | null>(null);
+  const [branchResolving, setBranchResolving] = useState(false);
   // Two separate facts, deliberately not one: what the operator picked, which
   // is null until they pick something, and what the server would do if they
   // never did. Held together in one variable, every re-read of the card
@@ -244,6 +245,7 @@ export function RunLand({ run }: { run: RunDTO }) {
       state: LandStateDTO | null;
       defaultStrategy: MergeStrategyDTO;
       resolution: RunReviewDTO | null;
+      branchResolving: boolean;
       delivery: DeliveryStateDTO | null;
     }>(`/api/runs/${run.id}/land`);
     if (!res.ok) {
@@ -259,6 +261,7 @@ export function RunLand({ run }: { run: RunDTO }) {
     // press of Land put every commit on the target instead of one.
     setDefaultStrategy(res.data.defaultStrategy);
     setResolution(res.data.resolution);
+    setBranchResolving(res.data.branchResolving);
     setReadError(null);
   }, [run.id]);
 
@@ -268,7 +271,9 @@ export function RunLand({ run }: { run: RunDTO }) {
 
   // Only while Claude is working on a conflict. A resolution changes the branch,
   // so the whole card — preview included — has to be re-read when it lands.
-  const resolving = resolution?.status === "running";
+  // Another link's counts: a chain shares the branch and the checkout, so its
+  // merge is open in the one this card's Purge removes and its Commit stages.
+  const resolving = resolution?.status === "running" || branchResolving;
   useEffect(() => {
     if (!resolving) return;
     const t = setInterval(() => void load(), 3000);

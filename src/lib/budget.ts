@@ -2,6 +2,7 @@ import type { UsageSnapshot, WindowState } from "./windows";
 // The provider vocabulary, from the one module both the form and this door may
 // import. Client-safe and pure; the dependency runs the permitted way round.
 import { RUN_PROVIDER_LABEL, type RunProviderDTO } from "./apiTypes";
+import { isJsonObject } from "./http";
 
 /**
  * Budget policy: the rules that decide whether a run may keep working.
@@ -773,7 +774,10 @@ export function evaluateBudget(
 }
 
 export function normalizePolicy(raw: unknown): BudgetPolicy {
-  const o = (raw ?? {}) as Record<string, unknown>;
+  // A string or a number made the `in` test below throw. Read as no fields set
+  // rather than refused, for the totality reason given below; refusing a wrong
+  // type is each door's job, where there is somebody to tell.
+  const o: Record<string, unknown> = isJsonObject(raw) ? raw : {};
   const num = (v: unknown, fallback: number | null): number | null => {
     if (v === null || v === undefined || v === "") return fallback;
     const n = Number(v);

@@ -69,6 +69,7 @@ const {
   getRun,
   MAX_EARLY_ENDS_PER_RUN,
   MAX_PAUSES_PER_RUN,
+  reopenRun,
   resumeRun,
   stopRun,
 } = require("./orchestrator") as typeof import("./orchestrator");
@@ -407,5 +408,64 @@ describe("what bounds the refund of a cycle the context ceiling ended", () => {
     assert.equal(spawned, MAX_EARLY_ENDS_PER_RUN + 2);
     assert.equal(row.iterations, 1, "the crossing past the bound is the cycle the cap counted");
     assert.equal(row.early_ends, MAX_EARLY_ENDS_PER_RUN);
+  });
+});
+
+describe("what a work cycle refused before its spawn is charged", () => {
+  // A `local` run on an install that is signed out of the local provider: the
+  // loop refuses the cycle with no child ever existing. Charged, a one-cycle run
+  // cannot be picked up the way its own stop reason says to, and every pick-up
+  // burns a cycle; with the message cleared, the operator's note is lost
+  // although nothing ever received it.
+  function startLocal(folder: string, maxIterations: number): string {
+    fs.mkdirSync(path.join(tmp, "workspace", folder), { recursive: true });
+    script = [];
+    spawned = 0;
+    const run = createRun({
+      folder,
+      mountId: null,
+      prompt: "do the thing",
+      provider: "local",
+      model: "qwen3",
+      budget: { maxIterations },
+      origin: "form",
+    });
+    scriptedRun = run.id;
+    return run.id;
+  }
+
+  it("charges no work cycle for a spawn that never happened", async () => {
+    const id = startLocal("refused-one-cycle", 1);
+    await settled(id);
+    const row = getRun(id)!;
+    assert.equal(row.status, "failed", `the refusal was not reached: ${row.stop_reason}`);
+    assert.match(row.stop_reason ?? "", /local provider is signed out/);
+    assert.equal(spawned, 0, "precondition: no child was spawned");
+    assert.equal(
+      row.iterations,
+      0,
+      `the row records ${row.iterations} work cycle(s); picking it up as its stop ` +
+        `reason says answers: ${JSON.stringify(reopenRun(id, { maxIterations: 1 }))}`,
+    );
+  });
+
+  it("keeps the pick-up note for the cycle that actually carries it", async () => {
+    const id = startLocal("refused-note", 5);
+    await settled(id);
+    const reopened = reopenRun(id, { maxIterations: 5 }, "Please only touch README.md");
+    assert.equal(reopened.ok, true, JSON.stringify(reopened));
+    assert.equal(getRun(id)!.follow_up, "Please only touch README.md");
+
+    await settled(id);
+    const row = getRun(id)!;
+    assert.equal(row.status, "failed", `the refusal was not reached: ${row.stop_reason}`);
+    assert.match(row.stop_reason ?? "", /signed out/);
+    assert.equal(spawned, 0, "precondition: no child was spawned");
+    assert.equal(
+      row.follow_up,
+      "Please only touch README.md",
+      `the note was cleared although no cycle carried it; iterations now ${row.iterations}`,
+    );
+    assert.equal(row.iterations, 0);
   });
 });

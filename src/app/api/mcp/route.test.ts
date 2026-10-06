@@ -651,6 +651,87 @@ test("a task id that is not shaped like one is refused for its shape, before any
   assert.equal(parentOf(real.text), held.id);
 });
 
+// `complete_task` and `release_task` move only a task the token's run holds, and
+// their refusals were a third read with a wider scope than the two reads: any id
+// on the board came back with its title. An id is no barrier — every run can
+// read its siblings' transcripts — so the refusal itself is what is pinned.
+test("release_task refuses a task this run does not hold without naming it", async () => {
+  const reader = seedRun(HERE);
+  const secret = file(ELSEWHERE, { title: "SECRET open task in another project" });
+  const beside = file(HERE, { title: "SECRET open task in this run's folder" });
+
+  for (const task of [secret, beside]) {
+    const released = await callTool(reader.token, "release_task", {
+      taskId: task.id,
+      reason: "Could not.",
+    });
+    assert.equal(released.isError, true);
+    assert.ok(
+      !released.text.includes(task.title),
+      `release_task handed a run the title of a task it does not hold: ${released.text}`,
+    );
+    assert.equal(tasks.getTask(task.id)?.status, "open");
+    assert.equal(comments.listTaskComments(task.id, 5).total, 0, "no release note was written");
+  }
+});
+
+test("complete_task refuses a task another run closed rather than saying this run did", async () => {
+  const reader = seedRun(HERE);
+  const other = seedRun(ELSEWHERE);
+  const doneElsewhere = file(ELSEWHERE, { title: "SECRET done task in another project" });
+  move(doneElsewhere, "claimed", other.runId);
+  move(doneElsewhere, "done", other.runId);
+
+  const completed = await callTool(reader.token, "complete_task", { taskId: doneElsewhere.id });
+  assert.equal(completed.isError, true, `a task this run never held is refused: ${completed.text}`);
+  assert.ok(!completed.text.includes(doneElsewhere.title), completed.text);
+  assert.doesNotMatch(completed.text, /completed by this run/);
+  assert.equal(tasks.getTask(doneElsewhere.id)?.completedByRunId, other.runId);
+
+  // The holder's own second call is not refused: a run that completed its task
+  // must be able to see that it did.
+  const again = await callTool(other.token, "complete_task", { taskId: doneElsewhere.id });
+  assert.equal(again.isError, false, again.text);
+});
+
+test("board tools refuse non-string text and ids rather than coercing them", async () => {
+  const run = seedRun(HERE);
+  const held = file(HERE);
+  move(held, "claimed", run.runId);
+  const chatToken = chat.mintCapability({ kind: "chat", chatId: chat.createChat().id });
+  const boardSize = () =>
+    (db().prepare("SELECT COUNT(*) AS n FROM tasks").get() as { n: number }).n;
+  const before = boardSize();
+
+  const refusals: [string, string, Record<string, unknown>, RegExp][] = [
+    [run.token, "create_task", { title: { text: "Fix it" }, body: "b" }, /title/],
+    [run.token, "create_task", { title: 42, body: true }, /title/],
+    [run.token, "create_task", { title: "Fix it", body: { why: 1 } }, /body/],
+    [run.token, "create_task", { title: "Fix it", body: "b", parentTaskId: [held.id] }, /parentTaskId/],
+    [chatToken, "create_task", { title: ["Fix", "it"], body: { why: 1 } }, /title/],
+    [chatToken, "create_task", { title: "Fix it", body: "b", parentTaskId: [held.id] }, /parentTaskId/],
+    [run.token, "comment_on_task", { taskId: held.id, body: { text: "a note" } }, /body/],
+    [chatToken, "comment_on_task", { taskId: held.id, body: ["a", "note"] }, /body/],
+    [run.token, "comment_on_task", { taskId: [held.id], body: "a note" }, /taskId/],
+    [run.token, "get_my_task", { taskId: [held.id] }, /taskId/],
+    [run.token, "complete_task", { taskId: [held.id] }, /taskId/],
+    [run.token, "release_task", { taskId: [held.id], reason: "Could not." }, /taskId/],
+    [run.token, "add_task_dependency", { taskId: [held.id], dependsOnTaskId: held.id }, /taskId/],
+    [run.token, "list_my_tasks", { query: { words: "flake" } }, /query/],
+    [chatToken, "get_task", { taskId: [held.id] }, /taskId/],
+  ];
+  for (const [token, name, args, field] of refusals) {
+    const result = await callTool(token, name, args);
+    assert.equal(result.isError, true, `${name} ${JSON.stringify(args)} was acted on: ${result.text.slice(0, 80)}`);
+    assert.match(result.text, field, `${name} names the field it refused`);
+    assert.doesNotMatch(result.text, /\[object Object\]/, name);
+  }
+
+  assert.equal(boardSize(), before, "nothing was filed");
+  assert.equal(comments.listTaskComments(held.id, 5).total, 0, "no note was written");
+  assert.equal(tasks.getTask(held.id)?.status, "claimed", "the held task did not move");
+});
+
 test("no refusal a run can receive names a tool the run does not have", async () => {
   const run = seedRun(HERE);
   const held = file(HERE, { title: "Held by the tester" });
@@ -679,6 +760,10 @@ test("no refusal a run can receive names a tool the run does not have", async ()
     ["add_task_dependency", { taskId: held.id, dependsOnTaskId: held.id }],
     ["create_task", { title: "", body: "" }],
     ["create_task", { title: "Found", body: "Where.", parentTaskId: missing.slice(0, 8) }],
+    ["create_task", { title: { text: "Found" }, body: "Where." }],
+    ["get_my_task", { taskId: [held.id] }],
+    ["complete_task", { taskId: [held.id] }],
+    ["list_my_tasks", { query: { words: "flake" } }],
   ];
   for (const [name, args] of calls) {
     const result = await callTool(run.token, name, args);

@@ -1060,7 +1060,9 @@ function readText(
   field: "title" | "body",
   raw: unknown,
 ): { ok: true; value: string } | { ok: false; error: string } {
-  const value = String(raw ?? "").trim();
+  const notText = notTextRefusal(field, raw);
+  if (notText) return { ok: false, error: `A task ${notText}` };
+  const value = (typeof raw === "string" ? raw : "").trim();
   const max = field === "title" ? MAX_TASK_TITLE : MAX_TASK_BODY;
 
   if (!value) {
@@ -1201,10 +1203,9 @@ export function normalizeTaskInput(
   const folder = resolveTaskFolder(o.mountId, o.folder);
   if (!folder.ok) return { ok: false, error: folder.error };
 
-  const parentTaskId =
-    o.parentTaskId === undefined || o.parentTaskId === null
-      ? null
-      : String(o.parentTaskId).trim() || null;
+  const notTextParent = notTextRefusal("parentTaskId", o.parentTaskId);
+  if (notTextParent) return { ok: false, error: notTextParent };
+  const parentTaskId = typeof o.parentTaskId === "string" ? o.parentTaskId.trim() || null : null;
 
   // Absent is agent work, which is what every task filed before the flag
   // existed was. Who may file one marked is `operatorOnlyRefusal`, asked by
@@ -1229,6 +1230,26 @@ export function normalizeTaskInput(
       operatorOnly,
     },
   };
+}
+
+/**
+ * Why a field that has to be text is not, or null when it is text or absent.
+ *
+ * Refused rather than coerced, `notAFlag`'s rule for a string: `String()` reads
+ * an object as "[object Object]" and an array as its items joined by commas, so
+ * the board filed a task under that title, signed a permanent note reading it,
+ * and looked up `["<id>"]` as the id inside it — and a caller whose argument
+ * was rewritten believes it took effect. The value is described rather than
+ * echoed, since the object a model sent as a title can be a brief's length.
+ */
+export function notTextRefusal(field: string, raw: unknown): string | null {
+  if (raw === undefined || raw === null || typeof raw === "string") return null;
+  const seen = Array.isArray(raw)
+    ? "an array"
+    : typeof raw === "object"
+      ? "an object"
+      : `the ${typeof raw} ${String(raw)}`;
+  return `${field} must be a string; got ${seen}.`;
 }
 
 /**

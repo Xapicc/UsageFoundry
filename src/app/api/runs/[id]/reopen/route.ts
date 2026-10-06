@@ -6,7 +6,11 @@ import {
   normalizePolicy,
   windowGuardRefusal,
 } from "../../../../../lib/budget";
-import { readJsonObject } from "../../../../../lib/http";
+import {
+  optionalObjectField,
+  optionalStringField,
+  readJsonObject,
+} from "../../../../../lib/http";
 import { auditMutation } from "../../../../../lib/requestLog";
 
 export const runtime = "nodejs";
@@ -40,7 +44,17 @@ async function postHandler(req: Request, ctx: Ctx) {
   const read = await readJsonObject(req);
   if (!read.ok) return read.response;
   const body = read.body;
-  const rawBudget = (body.budget ?? {}) as Record<string, unknown>;
+  const budgetField = optionalObjectField(body, "budget");
+  if (!budgetField.ok) {
+    return NextResponse.json({ error: budgetField.error }, { status: 400 });
+  }
+  const rawBudget = budgetField.value ?? {};
+  // What the reopened run is told next, so refused for the reason a prompt is
+  // in `POST /api/runs` rather than sent to the agent as "[object Object]".
+  const followUp = optionalStringField(body, "followUp");
+  if (!followUp.ok) {
+    return NextResponse.json({ error: followUp.error }, { status: 400 });
+  }
 
   // Narrowed rather than trusted, for the reason given in `POST /api/runs`:
   // this decides whether a running agent is killed part-way through a cycle.
@@ -78,7 +92,7 @@ async function postHandler(req: Request, ctx: Ctx) {
     if (refusal) return NextResponse.json({ error: refusal }, { status: 400 });
   }
 
-  const outcome = reopenRun(id, policy, String(body.followUp ?? ""));
+  const outcome = reopenRun(id, policy, followUp.value ?? "");
   if (!outcome.ok) {
     return NextResponse.json({ error: outcome.reason }, { status: 400 });
   }

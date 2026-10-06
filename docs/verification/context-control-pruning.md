@@ -179,6 +179,18 @@
   Caveat: the tile is 40px taller once a run has pruned than before, so a run's
   first prune moves what is below it on that tile.
 
+- **The three runs pages keep one poll request out behind a slow answer,
+  2026-10-06**, the standalone bundle built from `50d60d8` plus this change,
+  headless Chromium, a scratch `DATA_DIR`, every poll answer held by a
+  Playwright route for longer than the page's period. `/runs` (recent-band
+  request, 9 s held, 4 s period, 30 s watched) sent 3 and had at most 1 out;
+  `/runs/[id]` (row read as running, 7 s held, 3 s period, 25 s) 3 and 1;
+  `/runs/live` (stream answered with one `join`, 12 s held, 5 s period, 30 s)
+  2 and 1. A control on the same harness, two overlapping fetches from the
+  page, read 2 out at once. Caveat: no before-run was built; the pre-change
+  `setInterval` shape was seen failing `poll.test.ts` instead, and an action's
+  own reload on `/runs` is a request beside the poll and was not measured.
+
 ## Not yet verified by hand
 
 - **The mark clears in `pruneAtBoundary` and the fresh-start branch have not

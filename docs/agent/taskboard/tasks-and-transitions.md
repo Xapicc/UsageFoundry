@@ -109,7 +109,10 @@ restates the status it is not changing is a no-op rather than a refusal — the
 one exception being a non-operator restating `claimed` on a task the operator
 holds, above. `updateTask` asks the rule whenever a patch carries a status and
 applies a move's effects only when the status actually differs, which is what
-keeps a patch from applying them when nothing moved.
+keeps a patch from applying them when nothing moved. A run's `complete_task`
+and `release_task` never reach this no-op for a task the run does not hold:
+the MCP door refuses those first (`notHeldByRun`, `mcp-surface.md`), so it
+cannot answer a run as though it had closed somebody else's work.
 
 **A write that changes nothing is not written, so `updated_at` does not move.**
 That column means the task moved — `idx_tasks_board` and `listTasks` both sort on
@@ -201,7 +204,11 @@ task is filed **open** — there is no filing work that is already done, and a
 create that could set a terminal status would be a route around
 `taskTransitionRefusal` that no test of that function would ever see. All three
 are refused *by name* rather than dropped, on `normalizeAgentInput`'s grounds: a
-caller whose field was silently ignored believes it took effect.
+caller whose field was silently ignored believes it took effect. A create's
+title, brief or `parentTaskId` that is not a string is refused by name for the
+same reason (`notTextRefusal`), and so is a note's body in `taskComments.ts`:
+`String()` filed an object title as `[object Object]` and an array as its items
+joined by commas, and wrote the same into a note, which cannot be removed.
 
 **Nothing on the board expires**, and the reasoning is in `retention.md` beside
 the sweeps that do not touch it. A task's **comments** expire with it and never on
