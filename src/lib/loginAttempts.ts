@@ -64,12 +64,37 @@ export function checkLoginAllowed(source: string, now = Date.now()): LoginVerdic
 }
 
 /**
+ * Decide and charge in one step, before anything is awaited.
+ *
+ * `/api/login` has to read its body between asking and knowing, and the ask and
+ * the charge used to sit either side of that `await`: every request in a
+ * concurrent burst passed the check before any of them had recorded a failure,
+ * so three hundred wrong tokens at once were three hundred comparisons and both
+ * budgets bounded only a client polite enough to wait for each answer. Charging
+ * here means the attempt is a failure until it proves otherwise, and the
+ * success that proves it refunds the charge through `clearLoginFailures`.
+ *
+ * One transaction with nothing awaited inside it is enough: better-sqlite3 is
+ * synchronous, so no other request runs between the read and the write.
+ */
+export function reserveLoginAttempt(source: string, now = Date.now()): LoginVerdict {
+  return db().transaction((): LoginVerdict => {
+    const verdict = checkLoginAllowed(source, now);
+    if (verdict.allow) recordLoginFailure(source, now);
+    return verdict;
+  })();
+}
+
+/**
  * Count one failure against the source and against the install.
  *
  * A lockout that has just been reached is logged, because the table is where it
  * is recorded and the server log is where somebody watching will see it. The
  * ordinary failure is not: this route is unauthenticated, so a line per attempt
- * is a log an attacker can write.
+ * is a log an attacker can write. Charged through `reserveLoginAttempt`, the
+ * attempt that reaches a lockout has not been compared yet, so the line counts
+ * attempts rather than failures: the last of them may still be the operator,
+ * whose success then lifts the lock it announced.
  */
 export function recordLoginFailure(source: string, now = Date.now()): void {
   const before = { source: read(source), global: read(GLOBAL_SOURCE) };
@@ -93,13 +118,13 @@ export function recordLoginFailure(source: string, now = Date.now()): void {
   if (next.lockedUntil !== null && before.source?.lockedUntil == null) {
     console.warn(
       `[usagefoundry] Sign-in locked out for ${source} after ${next.failures} ` +
-        `failed attempts. See Settings for the running total.`,
+        `attempts. See Settings for the running total.`,
     );
   }
   if (nextGlobal.lockedUntil !== null && before.global?.lockedUntil == null) {
     console.warn(
       `[usagefoundry] Sign-in locked out install-wide after ` +
-        `${nextGlobal.failures} failed attempts across every source.`,
+        `${nextGlobal.failures} attempts across every source.`,
     );
   }
 
@@ -114,7 +139,8 @@ export function recordLoginFailure(source: string, now = Date.now()): void {
 }
 
 /**
- * A correct token clears both buckets.
+ * A correct token clears both buckets, which is also what refunds the charge
+ * `reserveLoginAttempt` made for it.
  *
  * The global one as well as the source's, deliberately: it is the bucket that
  * refuses the operator too, and somebody who just presented the token is the

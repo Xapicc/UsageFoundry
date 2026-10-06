@@ -5,11 +5,7 @@ import { NextResponse } from "next/server";
 // the way src/lib and the chat route already do.
 import { AUTH_TOKEN, COOKIE_SECURE, authEnabled } from "../../../lib/config";
 import { isJsonObject } from "../../../lib/http";
-import {
-  checkLoginAllowed,
-  clearLoginFailures,
-  recordLoginFailure,
-} from "../../../lib/loginAttempts";
+import { clearLoginFailures, reserveLoginAttempt } from "../../../lib/loginAttempts";
 import { auditMutation } from "../../../lib/requestLog";
 import { createSession } from "../../../lib/sessions";
 import {
@@ -79,9 +75,12 @@ async function postHandler(req: Request) {
   }
 
   // Before the body is even read, and long before the token is compared: a
-  // caller inside a lockout must learn nothing at all about their guess.
+  // caller inside a lockout must learn nothing at all about their guess. And
+  // charged as a failure in the same step, with nothing awaited between the two,
+  // because the body read below is an `await` and a check that the charge
+  // trailed across it let a concurrent burst through whole. A success refunds it.
   const source = clientSource(req);
-  const verdict = checkLoginAllowed(source);
+  const verdict = reserveLoginAttempt(source);
   if (!verdict.allow) {
     await uniformDelay();
     // The same body as a wrong token, on purpose — the two must not be
@@ -98,15 +97,13 @@ async function postHandler(req: Request) {
   }
 
   // A body that is not an object carries no token, so it is a wrong guess —
-  // counted and delayed like one — rather than a 400. This door answers every
-  // caller without the token the same way, and a second refusal would be a
-  // path through it that skips the failure count. `null` used to throw here,
-  // which was a 500 and a stack trace in the log for anyone who can reach
-  // the port.
+  // already counted above, and delayed like one — rather than a 400. This door
+  // answers every caller without the token the same way, and a second refusal
+  // would be a second answer to learn from. `null` used to throw here, which
+  // was a 500 and a stack trace in the log for anyone who can reach the port.
   const parsed: unknown = await req.json().catch(() => ({}));
   const offered = isJsonObject(parsed) ? parsed.token : undefined;
   if (!tokenMatches(offered)) {
-    recordLoginFailure(source);
     // Uniform delay keeps a wrong token from being distinguishable by timing.
     // It is not the rate limit and never was: it is an `await` on a timer, so
     // it delays one request and serialises nothing.

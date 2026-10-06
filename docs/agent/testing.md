@@ -295,7 +295,6 @@ Units that are about no test file in the tree:
 | `configCheck.test.ts` |  |
 | `credential-audit.test.ts` |  |
 | `http.test.ts` | [harnesses] |
-| `loginLimiter.test.ts` |  |
 | `otlp.test.ts` |  |
 | `readOnlyBanner.test.ts` |  |
 | `requestLog.test.ts` |  |
@@ -303,11 +302,17 @@ Units that are about no test file in the tree:
 | `settings.test.ts` |  |
 | `src/app/api/jsonObjectBody.test.ts` |  |
 | `src/app/api/health/route.test.ts` |  |
-| `src/app/api/login/route.test.ts` |  |
+| `src/app/api/login/route.test.ts` | [sign-in] |
 | `src/app/api/runs/[id]/stream/route.test.ts` |  |
 | `src/app/api/runs/live/stream/route.test.ts` | [harnesses] |
 | `src/app/api/settings/route.test.ts` | [harnesses] |
 | `src/app/api/status/route.test.ts` |  |
+
+## [Sign-in limits](testing/sign-in-limits.md)
+
+| Test file | Also in |
+|---|---|
+| `loginLimiter.test.ts` |  |
 
 ## [Container, compose and backups](testing/container-and-deployment.md)
 
@@ -428,6 +433,7 @@ It prints nothing as this is written. Whoever owns a file it names owes that fil
 [sandbox]: testing/sandbox-and-read-guard.md
 [parsers]: testing/stream-parsers-and-webhook.md
 [auth]: testing/auth-config-and-status-routes.md
+[sign-in]: testing/sign-in-limits.md
 [container]: testing/container-and-deployment.md
 [knowledge]: testing/knowledge-vault-and-graph.md
 [dreaming]: testing/dreaming.md

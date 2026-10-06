@@ -2,7 +2,7 @@
 
 [← testing index](../testing.md)
 
-Read before adding or editing tests of `authGuard.ts`, `sessionToken.ts`, `loginLimiter.ts`, `/api/login` and `/api/logout`, the credential routes, `requestLog.ts`, `claudeAuth.ts`/`codexAuth.ts`, `config.ts`/`configCheck.ts`, `otlp.ts`' body cap, `http.ts`, `saveSettings` and the settings, stream, health and status routes.
+Read before adding or editing tests of `authGuard.ts`, `sessionToken.ts`, `/api/login` and `/api/logout`, the credential routes, `requestLog.ts`, `claudeAuth.ts`/`codexAuth.ts`, `config.ts`/`configCheck.ts`, `otlp.ts`' body cap, `http.ts`, `saveSettings` and the settings, stream, health and status routes. What bounds guessing at the master token — the limiter, its budgets and its sources — is in [sign-in-limits.md](sign-in-limits.md).
 
 `authBootSignal` (`authGuard.test.ts`) is whether anything at all is said about an install that serves every route to whoever can reach the port.
 
@@ -11,8 +11,6 @@ Read before adding or editing tests of `authGuard.ts`, `sessionToken.ts`, `login
 `configCheck`'s two (`configCheck.test.ts`) decide which configurations boot and which are refused, which is the one decision made before anything else can report.
 
 `sessionToken`'s four (`sessionToken.test.ts`) are the whole of what keeps a captured cookie from being the master credential.
-
-`loginLimiter`'s two (`loginLimiter.test.ts`) fail in opposite directions, one that never fires being bit-for-bit the unbounded route and one that never lets go locking the operator out of an app whose only other credential is an environment variable and a restart.
 
 `src/app/api/login/route.test.ts` pins what `POST /api/login` puts in the browser's jar and what it does with a wrong guess, from the *response* rather than from a pure half, because a `Set-Cookie` value and a status code are the whole of what a browser and an attacker respectively see.
 

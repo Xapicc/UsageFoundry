@@ -259,7 +259,7 @@ test("a wrong token is refused", async () => {
 });
 
 // Not a 400: every caller without the token gets the one answer, and a second
-// refusal would be a way through this door that the failure count never sees.
+// refusal would be a second answer to learn from.
 test("a body that is not an object is a wrong guess, counted as one", async () => {
   const attempts = await import("../../../lib/loginAttempts");
   const failures = attempts.loginFailureSummary().failures;
@@ -440,4 +440,78 @@ test("a successful sign-in clears the install-wide budget", async () => {
   // presented the token must not be left standing behind it.
   assert.equal((await post(TOKEN, { source: newSource() })).status, 200);
   assert.equal(attempts.loginFailureSummary().failures, 0);
+});
+
+/**
+ * A burst rather than a sequence, which is the attack the limiter was added
+ * for. The check and the charge used to sit either side of `await req.json()`,
+ * so every request in a concurrent burst passed the check before any of them
+ * had recorded a failure: three hundred wrong tokens at once were three hundred
+ * comparisons, both lockouts fired *after* the last of them, and the budgets
+ * bounded only a client polite enough to wait for each answer.
+ *
+ * Exact counts rather than "at most": a limiter that refused the whole burst
+ * would pass an upper bound, and it would be locking the operator out early.
+ */
+const wrongFrom = (source: string) =>
+  route.POST(
+    new Request("http://localhost/api/login", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-forwarded-for": source },
+      body: JSON.stringify({ token: "f".repeat(TOKEN.length) }),
+    }),
+  );
+
+const clearAllAttempts = () => dbMod.db().prepare("DELETE FROM login_attempts").run();
+
+async function tally(responses: Response[]) {
+  const statuses = new Map<number, number>();
+  for (const r of responses) {
+    statuses.set(r.status, (statuses.get(r.status) ?? 0) + 1);
+    // Locked or wrong, the body is the same — that is the oracle rule.
+    assert.deepEqual(await r.json(), { error: "Invalid token" });
+  }
+  return { compared: statuses.get(401) ?? 0, refused: statuses.get(429) ?? 0 };
+}
+
+test("one source sending a concurrent burst has only its budget compared", async () => {
+  const { DEFAULT_LIMITER } = await import("../../../lib/loginLimiter");
+  clearAllAttempts();
+  const source = newSource();
+  const burst = 3 * DEFAULT_LIMITER.maxSourceFailures + 7;
+
+  const { compared, refused } = await tally(
+    await Promise.all(Array.from({ length: burst }, () => wrongFrom(source))),
+  );
+  assert.equal(compared, DEFAULT_LIMITER.maxSourceFailures);
+  assert.equal(refused, burst - DEFAULT_LIMITER.maxSourceFailures);
+  clearAllAttempts();
+});
+
+test("a burst across rotating sources has only the install-wide budget compared, every lockout", async (t) => {
+  const { DEFAULT_LIMITER } = await import("../../../lib/loginLimiter");
+  clearAllAttempts();
+  // Wound by hand rather than waited out: the global lock is a minute, and the
+  // case is the burst that arrives the moment it lifts.
+  let clock = Date.now();
+  t.mock.method(Date, "now", () => clock);
+
+  const burst = 2 * DEFAULT_LIMITER.maxGlobalFailures + 50;
+  let rotation = 0;
+  const rotating = () => {
+    const n = ++rotation;
+    return `10.200.${n >> 8}.${n & 255}`;
+  };
+  try {
+    for (const round of ["first", "after the lockout lifts"]) {
+      const { compared, refused } = await tally(
+        await Promise.all(Array.from({ length: burst }, () => wrongFrom(rotating()))),
+      );
+      assert.equal(compared, DEFAULT_LIMITER.maxGlobalFailures, `${round} burst`);
+      assert.equal(refused, burst - DEFAULT_LIMITER.maxGlobalFailures, `${round} burst`);
+      clock += DEFAULT_LIMITER.globalLockoutMs + 1;
+    }
+  } finally {
+    clearAllAttempts();
+  }
 });
