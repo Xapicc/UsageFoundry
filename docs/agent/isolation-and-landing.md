@@ -16,6 +16,7 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - A continued branch takes the chain's base, never the predecessor's tip. (was line 10)
 - The chain claims a branch, not a slot, and that is what makes an unrelated run taking the checkout harmless. (was line 12)
 - A handed-over checkout keeps what the predecessor left uncommitted, and says how much. (was line 14)
+- A checkout on the run's branch is adopted as it stands only once git is known to have finished writing it.
 - A continuing agent is told whose commits it is standing on. (was line 18)
 - A null `isolation` means isolated-but-not-yet-planned, and every reader of the column takes it that way.
 

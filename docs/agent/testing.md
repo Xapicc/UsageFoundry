@@ -23,6 +23,7 @@ Twenty are renderings rather than functions — every `*.test.tsx` in the tree, 
 | Test file | Also in |
 |---|---|
 | `budget.test.ts` | [harnesses] |
+| `cutOffCheckout.test.ts` |  |
 | `diff.test.ts` |  |
 | `land.test.ts` | [landing], [merge-queue], [harnesses] |
 | `orchestrator.test.ts` | [cycle], [argv], [ceiling], [pruning], [parsers], [budgets], [pricing], [landing], [merge-queue], [sandbox], [harnesses] |
