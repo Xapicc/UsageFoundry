@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -386,9 +387,16 @@ export default function TasksPage() {
   // The edge in flight, `id:status`, rather than the row: keyed on the row,
   // pressing Done lit Release and Drop as well, which reads as three presses.
   const [moving, setMoving] = useState<string | null>(null);
+  /** Which board read is allowed to write; see `load`. */
+  const loadRequest = useRef(0);
 
   const load = useCallback(async () => {
+    // Only the newest read may write: `move` re-reads beside the poll's own
+    // request, and an answer read before the press landing after the one read
+    // since would put the task back in the column it was just moved out of.
+    const ticket = ++loadRequest.current;
     const res = await readBoard();
+    if (ticket !== loadRequest.current) return;
     if (!res.ok) {
       setPollError(pollFailureMessage(res.status, res.error));
       setLoaded(true);

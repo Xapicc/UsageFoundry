@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -143,8 +143,16 @@ export default function WorkflowPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState<"run" | "duplicate" | "delete" | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  /** Which read is allowed to write; see `load`. */
+  const loadRequest = useRef(0);
 
   const load = useCallback(async () => {
+    // Only the newest read may write. `act` re-reads beside the poll's own
+    // request, and stepping the history re-arms the poll while the old one's
+    // request is still out — so an earlier answer landing last would draw the
+    // state from before the press, or another page of instances under a pager
+    // describing this one.
+    const ticket = ++loadRequest.current;
     try {
       const res = await fetch(`/api/workflows/${id}?offset=${offset}`, {
         cache: "no-store",
@@ -157,6 +165,7 @@ export default function WorkflowPage() {
         limit?: number;
         error?: string;
       };
+      if (ticket !== loadRequest.current) return;
       if (!res.ok || !data.workflow) {
         setPollError(
           pollFailureMessage(res.status, data.error ?? "no workflow in the response"),
@@ -174,11 +183,14 @@ export default function WorkflowPage() {
       );
       setPollError(null);
     } catch (err) {
+      if (ticket !== loadRequest.current) return;
       setPollError(
         pollFailureMessage(null, err instanceof Error ? err.message : String(err)),
       );
     } finally {
-      setLoaded(true);
+      // Not for a dropped answer, which would end the skeleton on a page with
+      // no workflow on it and draw "No such workflow" until the newer one lands.
+      if (ticket === loadRequest.current) setLoaded(true);
     }
   }, [id, offset]);
 
