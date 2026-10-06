@@ -40,6 +40,7 @@ import {
   createRun,
   dependencyCycle,
   githubEnv,
+  promptArgs,
   sandboxArgsFor,
   SEARCH_TOOLS,
   signalTree,
@@ -3052,7 +3053,6 @@ function launchOrchestratorChild(
   const settings = getSettings();
   const args = [
     "-p",
-    o.prompt,
     // Line-delimited events rather than one object at exit, and the reason is
     // durability rather than presentation. Under `json` the whole turn — the
     // assistant's text, the cost, the session id — existed only in this
@@ -3151,6 +3151,9 @@ function launchOrchestratorChild(
     // read issues and repositories for as long as it likes.
     args.push("--max-budget-usd", String(o.maxBudgetUSD));
   }
+  // Last, after every flag: an operator's message starts with whatever they
+  // typed. See `promptArgs`.
+  args.push(...promptArgs(o.prompt));
 
   // Resolved once rather than inside the spawn call, because the sandbox pass
   // below and the sweep after the child exits both have to name the directory

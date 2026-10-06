@@ -81,7 +81,7 @@ function writeStub(dir: string): string {
     stub,
     `#!/usr/bin/env node
 const args = process.argv.slice(2);
-const prompt = args[args.indexOf("-p") + 1] || "";
+const prompt = args[args.indexOf("--") + 1] || "";
 const verdict = prompt.includes("APPROVE-ME") ? "APPROVE" : "REJECT";
 const asksForVerdict = prompt.includes("## Verdict");
 const result = "## Summary\\nRead it.\\n\\n## Look at this first\\nsrc\\n\\n## Risks\\nnone\\n" +

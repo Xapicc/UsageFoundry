@@ -22,6 +22,7 @@ import {
   emitRunEvent,
   getRun,
   isShuttingDown,
+  promptArgs,
   sandboxArgsFor,
   SEARCH_TOOLS,
   signalTree,
@@ -1016,7 +1017,6 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
   return new Promise((resolve) => {
     const args = [
       "-p",
-      prompt,
       // Line-delimited events rather than one object at exit, `chat.ts`'s
       // reason and one of its own. A validation is the only child this app
       // starts without being asked, and under `json` the whole of what it did
@@ -1093,6 +1093,10 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
     // child. Nothing here has been executed against a sandbox; see
     // `docs/verification.md`.
     args.push(...sandboxArgsFor({ kind: "assist", cwd, permissionMode }));
+
+    // Last, after every flag: a review's prompt quotes the run's task, and a
+    // caller may hand this anything. See `promptArgs`.
+    args.push(...promptArgs(prompt));
 
     // No shell, as everywhere else here: the prompt carries a diff, which is
     // arbitrary repository content full of quotes and backticks.

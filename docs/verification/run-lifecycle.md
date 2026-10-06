@@ -289,3 +289,13 @@
   compare. Whether the sentence removes the misspelled-prefix `Read` misses is
   the vault note's open question (*Reads of Paths That Do Not Exist*), settled by
   a recount of the transcripts weeks after it ships, not by anything here.
+
+- **No real CLI has been handed a prompt after `--`.** Every `claude` spawn now
+  ends its argv `-- <prompt>` (`promptArgs`, 2026-10-06) so a prompt beginning
+  with `-` is not read as an option. That `-p` with `--` reads the operand as the
+  prompt, and that the old shape exited `error: unknown option` before any API
+  call, were read off the pinned 2.1.280 bundle's commander `parseOptions`, not
+  run; `promptArgv.test.ts` holds a stub transcribing that parser. Settle: on a
+  machine allowed to spawn the CLI, `claude -p --output-format stream-json
+  --verbose -- '- say hi'` should answer, and `claude -p '- say hi'` should exit
+  1 naming `- say hi` as an unknown option.

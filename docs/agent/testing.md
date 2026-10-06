@@ -239,6 +239,7 @@ Units that are about no test file in the tree:
 | `fileCostNotice.test.ts` |  |
 | `plugins.test.ts` |  |
 | `privsep.test.ts` | [knowledge] |
+| `promptArgv.test.ts` |  |
 | `sandbox.test.ts` |  |
 | `schedules.test.ts` | [proposals] |
 | `serverLock.test.ts` | [data-dir] |

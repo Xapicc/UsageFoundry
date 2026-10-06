@@ -5596,6 +5596,7 @@ export {
   codexPromptPreamble,
   cycleEnding,
   nextPrompt,
+  promptArgs,
   startsFresh,
 } from "./cycleInvocation";
 export type { CycleAdapter, CycleEnding } from "./cycleInvocation";
@@ -5640,11 +5641,14 @@ export interface WindowInjection {
  * How many values each flag this app emits consumes.
  *
  * The arity is here rather than inferred from "does the next token start with a
- * dash", because two of these flags carry *generated text* as their value —
- * `-p` a whole prompt and `--append-system-prompt` two notices — and a value
- * that happened to begin with a dash would otherwise be read as a flag and
- * reported as unclassified. `many` consumes to the next `--`, which is what the
- * CLI's own variadic options do and what `--allowedTools` and `--add-dir` are.
+ * dash", because `--append-system-prompt` carries *generated text* as its value
+ * — every notice — and a value that happened to begin with a dash would
+ * otherwise be read as a flag and reported as unclassified. `-p` is `--print`,
+ * a switch: the prompt is not its value but the operand after the `--` that
+ * ends the argv (`promptArgs`), and `injectionFates` reads it there. `many`
+ * consumes up to the next token that starts with a dash, which is what the
+ * CLI's own variadic options do — that separator included — and what
+ * `--allowedTools` and `--add-dir` are.
  *
  * **Every flag `buildArgs` and `sandboxArgs` emit must appear here.** That is
  * the whole anti-drift property of `injectionFates`: a flag with no entry is
@@ -5653,7 +5657,7 @@ export interface WindowInjection {
  * instead of quietly falling out of it.
  */
 const ARGV_ARITY: Record<string, "none" | "one" | "many"> = {
-  "-p": "one",
+  "-p": "none",
   "--output-format": "one",
   "--verbose": "none",
   "--model": "one",
@@ -5757,6 +5761,24 @@ export function injectionFates(argv: readonly string[]): WindowInjection[] {
 
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
+
+    // The end of the options, as the CLI reads it: every token after it is an
+    // operand, and the one operand a cycle carries is its prompt. Anything
+    // further would be a flag pushed after `promptArgs`, which the CLI would
+    // take as a second operand and ignore, so it is reported rather than read.
+    if (flag === "--") {
+      prompt = argv[i + 1] ?? "";
+      for (const extra of argv.slice(i + 2)) {
+        unclassified.push({
+          what: `a value this function did not expect: ${extra}`,
+          via: "--",
+          fate: "unclassified",
+          note: "Only the prompt belongs after `--`; the CLI reads anything else there as an operand, not a flag.",
+        });
+      }
+      break;
+    }
+
     const arity = ARGV_ARITY[flag];
 
     if (arity === undefined) {
@@ -5793,10 +5815,11 @@ export function injectionFates(argv: readonly string[]): WindowInjection[] {
       values.push(argv[i + 1] ?? "");
       i += 1;
     } else if (arity === "many") {
-      // Stops at any token starting with a dash, not only at `--`: `-p` is the
-      // one short flag on this argv and a variadic scan that ate it would drop
-      // the prompt from the record. Every variadic value this app emits is a
-      // tool name or an absolute path, so none can be mistaken for a flag.
+      // Stops at any token starting with a dash, as the CLI's own parser does:
+      // the next flag, or the `--` before the prompt, and a scan that ran past
+      // that separator would record the prompt as a tool. Every variadic value
+      // this app emits is a tool name or an absolute path, so none can be
+      // mistaken for a flag.
       while (i + 1 < argv.length && !argv[i + 1].startsWith("-")) {
         values.push(argv[i + 1]);
         i += 1;
@@ -5804,9 +5827,6 @@ export function injectionFates(argv: readonly string[]): WindowInjection[] {
     }
 
     switch (flag) {
-      case "-p":
-        prompt = values[0] ?? "";
-        break;
       case "--append-system-prompt":
         appendedPrompt = values[0] ?? "";
         break;
