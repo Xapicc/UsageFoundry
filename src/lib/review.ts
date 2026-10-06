@@ -1003,6 +1003,24 @@ export function assistModel(
   return run.provider === "codex" || run.provider === "local" ? defaultModel : run.model;
 }
 
+/**
+ * Each assist's child by its row id, for as long as `trackAssistChild` holds it.
+ *
+ * The shutdown's set cannot answer "which child is this row's", and a workflow
+ * halt has to: a review block's reviewers are billed children the halt exists
+ * to stop, and without a handle on them they ran to the end under a page that
+ * already said the workflow was stopped. Its own `globalThis` key for the
+ * reason `__ufAssistProcs` has one.
+ */
+const assistChildren = ((globalThis as unknown as {
+  __ufAssistChildrenById?: Map<string, ChildProcess>;
+}).__ufAssistChildrenById ??= new Map<string, ChildProcess>());
+
+/** The live child behind one `run_reviews` row, if this process still has it. */
+export function assistChild(id: string): ChildProcess | undefined {
+  return assistChildren.get(id);
+}
+
 /** Spawn one, and record what it cost whatever happened. */
 async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
   // Read again here rather than trusted from the door. `assistRefusal` answered
@@ -1126,6 +1144,7 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
     // written and a resolution's `after` has run, so a shutdown waiting on it
     // waits for the merge to be aborted rather than only for the exit.
     const untrack = trackAssistChild(child);
+    assistChildren.set(id, child);
 
     // The whole of stdout is still kept: `parseReviewOutput` reads the result
     // object out of it at the end, and a child killed mid-line leaves whatever
@@ -1190,6 +1209,7 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
       if (timer) clearTimeout(timer);
       stopWatching?.();
       untrack();
+      assistChildren.delete(id);
       resolve();
     };
 

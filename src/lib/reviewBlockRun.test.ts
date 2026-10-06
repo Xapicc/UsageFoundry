@@ -403,6 +403,13 @@ function reviewsOf(runId: string): Array<{
 
 const reviewRunning = (runId: string) => reviewsOf(runId).some((r) => r.status === "running");
 
+function storedInstance(instanceId: string): { status: string; stoppedAt: number | null } {
+  return dbMod
+    .db()
+    .prepare("SELECT status, stopped_at AS stoppedAt FROM workflow_instances WHERE id=?")
+    .get(instanceId) as { status: string; stoppedAt: number | null };
+}
+
 describe("a review block whose workflow is halted", () => {
   it("starts no fix run for a rejection that lands just after the halt", async () => {
     // The reviewer answers at once, so the review is over while the block's
@@ -446,5 +453,36 @@ describe("a review block whose workflow is halted", () => {
     assert.ok(pressed, "the halt landed inside the review's preparation");
     assert.deepEqual(reviewsOf("gap-origin"), [], "a reviewer was spawned into a stopped workflow");
     assert.equal(workflows.getInstance("inst-gap")!.status, "stopped");
+  });
+
+  it("stops the reviews still running, and reads stopping until they end", async () => {
+    reviewScene("inst-halt", {
+      runs: [
+        { id: "halt-good", prompt: "Do it. APPROVE-ME", branch: "uf/repo-good" },
+        { id: "halt-slow", prompt: "Do it. SLOW-ONE", branch: "uf/repo-bad" },
+      ],
+    });
+    const driving = workflows.startReviewBlock("inst-halt", "r", ["halt-good", "halt-slow"]);
+    await until("the fast review to be approved", () =>
+      workflows.reviewItemsOf("inst-halt", "r").some((i) => i.origin_run_id === "halt-good" && i.status === "approved"));
+    await until("the slow review to be running", () => reviewRunning("halt-slow"));
+
+    workflows.stopInstance("inst-halt", { kind: "operator" });
+    const stoppedAt = storedInstance("inst-halt").stoppedAt!;
+    assert.ok(reviewRunning("halt-slow"), "the slow reviewer is still dying at this point");
+    assert.equal(
+      workflows.getInstance("inst-halt")!.status,
+      "stopping",
+      "the instance reads stopped while a reviewer it started is still running",
+    );
+
+    await settledWithin(driving, 30_000, "startReviewBlock");
+    assert.equal(reviewRunning("halt-slow"), false);
+    const slow = reviewsOf("halt-slow")[0];
+    assert.ok(
+      slow.finished_at! - stoppedAt < SLOW_REVIEW_MS - 500,
+      `the slow reviewer ran on to its own answer ${slow.finished_at! - stoppedAt} ms after the halt`,
+    );
+    assert.equal(workflows.getInstance("inst-halt")!.status, "stopped");
   });
 });

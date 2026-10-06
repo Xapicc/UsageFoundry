@@ -1,3 +1,4 @@
+import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { db } from "./db";
@@ -12,7 +13,13 @@ import {
   type ChatProcess,
   type TurnResult,
 } from "./chat";
-import { assistBudgetFull, getAssist, startReview, windowRefusal } from "./review";
+import {
+  assistBudgetFull,
+  assistChild,
+  getAssist,
+  startReview,
+  windowRefusal,
+} from "./review";
 import {
   afterFixRun,
   fixRunPrompt,
@@ -2826,7 +2833,9 @@ export function boardReadings(
  * ledger by `planInstanceStep`. An instance that counted only one of them would
  * report a graph missing its tail as a graph that reached its end.
  * A `looping` block is live for the same reason one step along: it has another
- * pass to start.
+ * pass to start. And a review block's reviewer still running is live for the
+ * first reason over again: a halt writes the block off at once and signals the
+ * child, which takes seconds to die and bills until it does.
  */
 function memberTally(instanceId: string): InstanceMemberTally {
   const runs = db()
@@ -2854,7 +2863,7 @@ function memberTally(instanceId: string): InstanceMemberTally {
     )
     .get(instanceId) as InstanceMemberTally;
   return {
-    live: runs.live + blocks.live,
+    live: runs.live + blocks.live + runningReviewsOf(instanceId).length,
     blocked: runs.blocked + blocks.blocked,
   };
 }
@@ -4132,17 +4141,49 @@ function haltBlocks(instanceId: string, cause: string): number {
   for (const [key, child] of blockTurns) {
     if (!key.startsWith(`${instanceId}:`)) continue;
     blockTurns.delete(key);
-    const running = () => child.exitCode === null && child.signalCode === null;
-    signalTree(child, "SIGINT");
-    setTimeout(() => {
-      if (running()) signalTree(child, "SIGTERM");
-    }, 3_000).unref?.();
-    setTimeout(() => {
-      if (running()) signalTree(child, "SIGKILL");
-    }, 8_000).unref?.();
+    signalLadder(child);
+  }
+
+  // A review block's reviewers too: each is a billed child this instance
+  // started, and left alone it ran to its answer under a page already reading
+  // the workflow as stopped. Its row settles as the child exits, and
+  // `memberTally` counts it live until then.
+  for (const reviewId of runningReviewsOf(instanceId)) {
+    const child = assistChild(reviewId);
+    if (child) signalLadder(child);
   }
 
   return halted;
+}
+
+/** The ladder every child here is stopped with, `SIGINT` first so it may report its cost. */
+function signalLadder(child: ChildProcess): void {
+  const running = () => child.exitCode === null && child.signalCode === null;
+  signalTree(child, "SIGINT");
+  setTimeout(() => {
+    if (running()) signalTree(child, "SIGTERM");
+  }, 3_000).unref?.();
+  setTimeout(() => {
+    if (running()) signalTree(child, "SIGKILL");
+  }, 8_000).unref?.();
+}
+
+/**
+ * The reviews this instance's review blocks have in flight.
+ *
+ * Only an item's current `review_id` can be running: a branch is reviewed one
+ * round at a time, and an earlier round's row settled before the next began.
+ */
+function runningReviewsOf(instanceId: string): string[] {
+  return (
+    db()
+      .prepare(
+        `SELECT rv.id AS id FROM workflow_review_items i
+           JOIN run_reviews rv ON rv.id = i.review_id
+          WHERE i.instance_id = ? AND rv.status = 'running'`,
+      )
+      .all(instanceId) as Array<{ id: string }>
+  ).map((r) => r.id);
 }
 
 /**
@@ -7220,6 +7261,12 @@ async function driveReviewItem(
       return;
     }
     updateReviewItem(instanceId, blockId, originRunId, { review_id: started.id });
+    // A halt in the turn between the gate and the line above found no
+    // `review_id` to signal, so it is signalled here instead.
+    if (!open()) {
+      const child = assistChild(started.id);
+      if (child) signalLadder(child);
+    }
 
 
     let review = getAssist(started.id);
