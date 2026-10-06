@@ -9405,6 +9405,25 @@ export async function startRun(id: string): Promise<void> {
     db().prepare("UPDATE runs SET session_id = ? WHERE id = ?").run(sid, id);
   };
 
+  /**
+   * Go back to a session this cycle's failed resume left, with the figure its
+   * ledger stood at, both on the row in one statement.
+   *
+   * The baseline used to be restored in this frame only, while `adoptSession`
+   * wrote the id — and the post-cycle UPDATE had already stored the failed
+   * cycle's null, because the stream named another ledger. A segment that then
+   * ended before the retry spawned (a guard, Stop, a park, a shutdown) left the
+   * row naming the session with no figure to measure it from, so the next
+   * pick-up banked its whole running total: $3 and $2 of work stored as $8.
+   */
+  const returnToSession = (sid: string | null, costUSD: number | null) => {
+    sessionId = sid;
+    sessionCostUSD = costUSD;
+    db()
+      .prepare("UPDATE runs SET session_id = ?, session_cost_usd = ? WHERE id = ?")
+      .run(sid, costUSD, id);
+  };
+
   const applyInterrupt = (it: Interrupt) => {
     const outcome = interruptOutcome(it);
     stopReason = outcome.reason;
@@ -10766,11 +10785,10 @@ export async function startRun(id: string): Promise<void> {
           if (fork.rowId !== null) markForkResumed(fork.rowId, false);
           iterations -= 1;
           cyclesThisSegment = 0;
-          adoptSession(fork.fallbackSessionId);
           // The fork carried its source's ledger, so the figure from before this
           // cycle is still the one the fallback restores — whatever throwaway
           // session the failed resume named.
-          sessionCostUSD = sessionCostBeforeCycle;
+          returnToSession(fork.fallbackSessionId, sessionCostBeforeCycle);
           log(
             id,
             `The forked conversation would not resume, so this run is back on the ` +
@@ -10788,9 +10806,8 @@ export async function startRun(id: string): Promise<void> {
           // this test did no work at all, so anything the stream named — an
           // empty session the CLI opened before giving up — is worth less than
           // the conversation the retry exists to get back into.
-          adoptSession(resumeTarget);
           // And the figure that session's ledger stood at, for the same reason.
-          sessionCostUSD = sessionCostBeforeCycle;
+          returnToSession(resumeTarget, sessionCostBeforeCycle);
           log(
             id,
             "Resuming the previous session failed before it did any work. Trying once more.",
