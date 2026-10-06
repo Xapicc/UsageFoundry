@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import type { ContextPrunerDTO, PruneActivityDTO } from "./apiTypes";
+import type {
+  ContextPrunerDTO,
+  PruneActivityDTO,
+  PruneSavingsDTO,
+} from "./apiTypes";
 import {
   PRUNE_ENGINE_LABEL,
   netBound,
+  prunedNetCell,
+  prunedNetFields,
   pruneStatement,
   prunerIsFault,
   prunerLine,
@@ -245,5 +251,64 @@ describe("netBound", () => {
 
   it("is unqualified when nothing is outstanding", () => {
     assert.equal(netBound({ unsettledPrunes: 0, unmeasuredPrunes: 0 }), "exact");
+  });
+});
+
+describe("the runs list's Pruning column", () => {
+  // `/api/runs` sent `netUSD` alone, and `sumPruneSavings` adds $0 for every
+  // unpriced receipt and the full gross for every unsettled one. So a run whose
+  // pruning money was unknown printed `+$0.00` — pruning that broke exactly
+  // even — and a ceiling printed as a measurement, on the list an operator
+  // scans to compare runs, while the tile and the run page qualified both.
+  const savings = (over: Partial<PruneSavingsDTO> = {}): PruneSavingsDTO => ({
+    prunes: 2,
+    pricedPrunes: 2,
+    unsettledPrunes: 0,
+    unmeasuredPrunes: 0,
+    tokensRemoved: 50_000,
+    turnsAfter: 6,
+    cacheSavedUSD: 1.5,
+    invalidationUSD: 0.3,
+    netUSD: 1.2,
+    ...over,
+  });
+  const cell = (s: PruneSavingsDTO | undefined) => prunedNetCell(prunedNetFields(s));
+
+  it("does not print unknown money as a zero", () => {
+    const unpriced = savings({
+      pricedPrunes: 0,
+      cacheSavedUSD: 0,
+      invalidationUSD: 0,
+      netUSD: 0,
+    });
+    assert.equal(prunedNetFields(unpriced).prunedNetBound, "unpriced");
+    assert.notEqual(cell(unpriced).text, "+$0.00");
+    assert.equal(cell(unpriced).text, "?");
+    assert.match(cell(unpriced).meaning ?? "", /unknown/);
+  });
+
+  it("marks a net with a cost still to be charged as an upper bound", () => {
+    const unsettled = savings({ unsettledPrunes: 1 });
+    assert.equal(prunedNetFields(unsettled).prunedNetBound, "at most");
+    assert.equal(cell(unsettled).text, "≤ +$1.20");
+    assert.match(cell(unsettled).meaning ?? "", /at most/i);
+  });
+
+  it("marks a net with a removal still to be measured as a lower bound", () => {
+    const unmeasured = savings({ unmeasuredPrunes: 1, netUSD: -1.8 });
+    assert.equal(cell(unmeasured).text, "≥ −$1.80");
+    assert.match(cell(unmeasured).meaning ?? "", /at least/i);
+  });
+
+  it("sends nothing beside a final net, and prints it bare", () => {
+    assert.deepEqual(prunedNetFields(savings()), { prunedNetUSD: 1.2 });
+    assert.deepEqual(cell(savings()), { text: "+$1.20", meaning: null });
+    // A coverage gap is not a bound in either direction.
+    assert.equal(prunedNetFields(savings({ pricedPrunes: 1 })).prunedNetBound, undefined);
+  });
+
+  it("keeps a run that never pruned a dash", () => {
+    assert.deepEqual(prunedNetFields(undefined), {});
+    assert.equal(cell(undefined).text, "—");
   });
 });
