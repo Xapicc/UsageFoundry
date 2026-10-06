@@ -5915,6 +5915,7 @@ const ARGV_ARITY: Record<string, "none" | "one" | "many"> = {
   "--output-format": "one",
   "--verbose": "none",
   "--model": "one",
+  "--effort": "one",
   "--permission-mode": "one",
   "--forward-subagent-text": "none",
   "--agents": "one",
@@ -5933,10 +5934,12 @@ const ARGV_ARITY: Record<string, "none" | "one" | "many"> = {
 
 /** Every flag above that carries no text into the model's context window. */
 const CARRIES_NO_CONTEXT = new Set([
-  // Stream shape and model selection.
+  // Stream shape and model selection. `--effort` is a reasoning budget, not
+  // text: it changes how the model thinks, never what is in its window.
   "--output-format",
   "--verbose",
   "--model",
+  "--effort",
   "--forward-subagent-text",
   // Capabilities and grants, not text: `--allowedTools` names what skips a
   // prompt, `--add-dir` names a directory the session may reach, and neither
