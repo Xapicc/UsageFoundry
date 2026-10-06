@@ -942,7 +942,8 @@ export async function validationAtBoundary(
    * waited for would sit unanswered for up to eleven minutes: the loop's own
    * interrupt checks are at the top of the pass and immediately before the
    * spawn, and this await is between the two. Nothing is lost by returning
-   * early: the loop takes the ending this cycle earned, DONE or the cycle cap,
+   * early: an operator's Stop ends the run `stopped` as soon as this returns,
+   * a shutdown leaves it the ending this cycle earned, DONE or the cycle cap,
    * if it earned one, and otherwise the interrupt ends the run at the next
    * check — either way a verdict this abandons would have bought a cycle that
    * is not going to happen.
