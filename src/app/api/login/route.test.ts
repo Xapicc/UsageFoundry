@@ -515,3 +515,47 @@ test("a burst across rotating sources has only the install-wide budget compared,
     clearAllAttempts();
   }
 });
+
+/**
+ * A request carrying neither `x-forwarded-for` nor `x-real-ip` cannot be told
+ * apart from any other such request — which, behind compose's own port binding
+ * with nothing in front, is every browser including the operator's. They used
+ * to share one per-source bucket named "unknown", so ten wrong guesses from
+ * anybody put the operator behind the fifteen-minute lockout, and ten more
+ * every quarter hour kept them there.
+ */
+const headerless = (token: string) =>
+  route.POST(
+    new Request("http://localhost/api/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token }),
+    }),
+  );
+
+test("guesses nobody can be told apart from do not lock out the operator", async () => {
+  const { DEFAULT_LIMITER } = await import("../../../lib/loginLimiter");
+  clearAllAttempts();
+  for (let i = 0; i < DEFAULT_LIMITER.maxSourceFailures; i++) {
+    assert.equal((await headerless("wrong")).status, 401);
+  }
+  const operator = await headerless(TOKEN);
+  assert.equal(operator.status, 200, "somebody else's guesses locked the operator out");
+  assert.ok(operator.headers.get("set-cookie"));
+});
+
+test("an unattributable guesser is still held to the install-wide budget", async () => {
+  const { DEFAULT_LIMITER } = await import("../../../lib/loginLimiter");
+  clearAllAttempts();
+  try {
+    const { compared, refused } = await tally(
+      await Promise.all(
+        Array.from({ length: DEFAULT_LIMITER.maxGlobalFailures + 20 }, () => headerless("wrong")),
+      ),
+    );
+    assert.equal(compared, DEFAULT_LIMITER.maxGlobalFailures);
+    assert.equal(refused, 20);
+  } finally {
+    clearAllAttempts();
+  }
+});

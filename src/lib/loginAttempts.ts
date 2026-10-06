@@ -54,11 +54,22 @@ function write(source: string, state: AttemptState): void {
     .run(source, state.failures, state.firstAt, state.lastAt, state.lockedUntil);
 }
 
-/** May this attempt be made? Asked before the token is compared, never after. */
-export function checkLoginAllowed(source: string, now = Date.now()): LoginVerdict {
+/**
+ * May this attempt be made? Asked before the token is compared, never after.
+ *
+ * A `null` source is a caller this process cannot tell apart from any other —
+ * no forwarding header at all, which behind compose's own port binding is every
+ * browser, the operator's included. It is held to the install-wide budget and
+ * to no bucket of its own: a shared per-source bucket for everybody put the
+ * operator behind the fifteen-minute lockout on anybody's ten guesses, which
+ * removes sign-in where the two budgets are built to degrade it. Nothing is
+ * given away by it, because a guesser who wanted a fresh bucket could always
+ * write a fresh `x-forwarded-for`; the global bucket is what bounds them.
+ */
+export function checkLoginAllowed(source: string | null, now = Date.now()): LoginVerdict {
   return planLoginAttempt({
     now,
-    source: read(source),
+    source: source === null ? null : read(source),
     global: read(GLOBAL_SOURCE),
   });
 }
@@ -77,7 +88,10 @@ export function checkLoginAllowed(source: string, now = Date.now()): LoginVerdic
  * One transaction with nothing awaited inside it is enough: better-sqlite3 is
  * synchronous, so no other request runs between the read and the write.
  */
-export function reserveLoginAttempt(source: string, now = Date.now()): LoginVerdict {
+export function reserveLoginAttempt(
+  source: string | null,
+  now = Date.now(),
+): LoginVerdict {
   return db().transaction((): LoginVerdict => {
     const verdict = checkLoginAllowed(source, now);
     if (verdict.allow) recordLoginFailure(source, now);
@@ -96,32 +110,19 @@ export function reserveLoginAttempt(source: string, now = Date.now()): LoginVerd
  * attempts rather than failures: the last of them may still be the operator,
  * whose success then lifts the lock it announced.
  */
-export function recordLoginFailure(source: string, now = Date.now()): void {
-  const before = { source: read(source), global: read(GLOBAL_SOURCE) };
+export function recordLoginFailure(source: string | null, now = Date.now()): void {
+  const beforeGlobal = read(GLOBAL_SOURCE);
+  if (source !== null) recordSourceFailure(source, now);
 
-  const next = recordFailure(
-    before.source,
-    now,
-    DEFAULT_LIMITER.maxSourceFailures,
-    DEFAULT_LIMITER.sourceLockoutMs,
-  );
   const nextGlobal = recordFailure(
-    before.global,
+    beforeGlobal,
     now,
     DEFAULT_LIMITER.maxGlobalFailures,
     DEFAULT_LIMITER.globalLockoutMs,
   );
-
-  write(source, next);
   write(GLOBAL_SOURCE, nextGlobal);
 
-  if (next.lockedUntil !== null && before.source?.lockedUntil == null) {
-    console.warn(
-      `[usagefoundry] Sign-in locked out for ${source} after ${next.failures} ` +
-        `attempts. See Settings for the running total.`,
-    );
-  }
-  if (nextGlobal.lockedUntil !== null && before.global?.lockedUntil == null) {
+  if (nextGlobal.lockedUntil !== null && beforeGlobal?.lockedUntil == null) {
     console.warn(
       `[usagefoundry] Sign-in locked out install-wide after ` +
         `${nextGlobal.failures} attempts across every source.`,
@@ -138,6 +139,23 @@ export function recordLoginFailure(source: string, now = Date.now()): void {
     .run(GLOBAL_SOURCE, now - DEFAULT_LIMITER.windowMs, now);
 }
 
+function recordSourceFailure(source: string, now: number): void {
+  const before = read(source);
+  const next = recordFailure(
+    before,
+    now,
+    DEFAULT_LIMITER.maxSourceFailures,
+    DEFAULT_LIMITER.sourceLockoutMs,
+  );
+  write(source, next);
+  if (next.lockedUntil !== null && before?.lockedUntil == null) {
+    console.warn(
+      `[usagefoundry] Sign-in locked out for ${source} after ${next.failures} ` +
+        `attempts. See Settings for the running total.`,
+    );
+  }
+}
+
 /**
  * A correct token clears both buckets, which is also what refunds the charge
  * `reserveLoginAttempt` made for it.
@@ -147,7 +165,7 @@ export function recordLoginFailure(source: string, now = Date.now()): void {
  * operator. Leaving it standing would keep the install locked out on the
  * strength of an attack that has already failed.
  */
-export function clearLoginFailures(source: string): void {
+export function clearLoginFailures(source: string | null): void {
   db()
     .prepare("DELETE FROM login_attempts WHERE source=? OR source=?")
     .run(source, GLOBAL_SOURCE);

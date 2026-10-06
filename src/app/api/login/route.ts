@@ -46,13 +46,19 @@ function tokenMatches(offered: unknown): boolean {
  * rotating the header. That is not a flaw in reading it — there is nothing
  * better available to a Node process behind an arbitrary terminator — it is the
  * reason the install-wide budget in `loginLimiter.ts` exists.
+ *
+ * With neither header the answer is `null`, not a name. This used to be the
+ * literal "unknown", one bucket shared by every client nothing in front of the
+ * app had named — the operator's browser among them — so anybody's ten guesses
+ * locked the operator out for the source lockout's whole fifteen minutes.
+ * `checkLoginAllowed` says what a `null` is held to instead.
  */
-function clientSource(req: Request): string {
+function clientSource(req: Request): string | null {
   const forwarded = req.headers.get("x-forwarded-for") ?? "";
   const first = forwarded.split(",")[0].trim();
   if (first) return first.slice(0, 100);
   const real = (req.headers.get("x-real-ip") ?? "").trim();
-  return real ? real.slice(0, 100) : "unknown";
+  return real ? real.slice(0, 100) : null;
 }
 
 async function postHandler(req: Request) {
