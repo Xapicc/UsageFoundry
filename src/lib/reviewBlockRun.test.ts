@@ -16,13 +16,28 @@ import { after, before, describe, it } from "node:test";
  * of which fails silently, and the first as a merge of work nobody approved.
  *
  * The stub approves a brief carrying `APPROVE-ME` and rejects every other one,
- * printing the `stream-json` result Claude Code ends a review with. Its own
- * `DATA_DIR` before the first import, `loopMergeOwnership.test.ts`' reason.
+ * printing the `stream-json` result Claude Code ends a review with, and answers
+ * a brief carrying `SLOW-ONE` only after `SLOW_REVIEW_MS`. Its own `DATA_DIR`
+ * before the first import, `loopMergeOwnership.test.ts`' reason.
  */
 
 let workflows: typeof import("./workflows");
 let dbMod: typeof import("./db");
+let orch: typeof import("./orchestrator");
 let root: string;
+let base: string;
+
+/** How long the stub takes over a `SLOW-ONE` brief: long enough to halt inside. */
+const SLOW_REVIEW_MS = 3_000;
+
+/**
+ * What the next snapshot read does once it returns, or null.
+ *
+ * Answers true when it acted, and stays armed until it does. A snapshot is the
+ * `await` `startReview`'s own refusal check makes, so this is where an
+ * operator's Stop lands on a slow read.
+ */
+let duringSnapshot: (() => boolean) | null = null;
 
 const MOUNT_DIR = "review-block-mount";
 const INSTANCE = "inst-review-1";
@@ -87,10 +102,12 @@ const asksForVerdict = prompt.includes("## Verdict");
 const result = "## Summary\\nRead it.\\n\\n## Look at this first\\nsrc\\n\\n## Risks\\nnone\\n" +
   (asksForVerdict ? "\\n## Verdict\\n" + verdict + "\\n" : "");
 process.stdout.write(JSON.stringify({ type: "system", subtype: "init" }) + "\\n");
-process.stdout.write(JSON.stringify({
-  type: "result", subtype: "success", is_error: false, result,
-  total_cost_usd: 0.02, usage: { input_tokens: 10, output_tokens: 5 },
-}) + "\\n");
+setTimeout(() => {
+  process.stdout.write(JSON.stringify({
+    type: "result", subtype: "success", is_error: false, result,
+    total_cost_usd: 0.02, usage: { input_tokens: 10, output_tokens: 5 },
+  }) + "\\n");
+}, prompt.includes("SLOW-ONE") ? ${SLOW_REVIEW_MS} : 0);
 `,
     { mode: 0o755 },
   );
@@ -110,7 +127,7 @@ before(async () => {
   fs.writeFileSync(path.join(repoRoot(), "a.txt"), "one\n");
   git(repoRoot(), "add", "-A");
   git(repoRoot(), "commit", "-q", "-m", "first");
-  const base = git(repoRoot(), "rev-parse", "HEAD");
+  base = git(repoRoot(), "rev-parse", "HEAD");
   branchWithCommit("uf/repo-good", "good.txt");
   branchWithCommit("uf/repo-bad", "bad.txt");
 
@@ -123,6 +140,23 @@ before(async () => {
   );
   dbMod = await import("./db");
   workflows = await import("./workflows");
+  orch = await import("./orchestrator");
+  const settings = await import("./settings");
+  // No network here, and a fix run is held in the queue rather than spawned:
+  // what the cases below ask is whether one is *created*. Assists do not read
+  // the hold, so the reviews still run.
+  settings.saveSettings({ planUsageFromApi: false });
+  settings.setNewWorkPaused(true);
+
+  // Replaced on the module object, `scheduleFire.test.ts`' way: `review.ts`
+  // and `workflows.ts` both call it through that object under the test
+  // build's CommonJS emit.
+  const realSnapshot = orch.currentSnapshot;
+  (orch as { currentSnapshot: unknown }).currentSnapshot = async () => {
+    const snapshot = await realSnapshot();
+    if (duringSnapshot?.()) duringSnapshot = null;
+    return snapshot;
+  };
   const db = dbMod.db();
 
   const insertRun = db.prepare(
@@ -267,5 +301,150 @@ describe("a review block with no fix rounds", () => {
         .join("\n");
     assert.match(comment(TASK), /set run run-bad's branch aside.*so this task is open again/);
     assert.match(comment(OTHERS_TASK), /left done because it was closed by the operator or by another run/);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* A review block under a halt and under its instance's limit           */
+/* ------------------------------------------------------------------ */
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Polls on a ref'd timer, which is also what keeps the loop alive meanwhile. */
+async function until(what: string, test: () => boolean, ms = 20_000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!test()) {
+    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    await sleep(5);
+  }
+}
+
+/**
+ * A press of Run whose one block is a review block already claimed `thinking`,
+ * and the finished runs it is handed — fresh ones per case, because a run with
+ * a review running refuses a second.
+ */
+function reviewScene(
+  instanceId: string,
+  opts: {
+    fixRounds?: number;
+    budget?: Record<string, number>;
+    runs: Array<{ id: string; prompt: string; branch: string; spent?: number; member?: boolean }>;
+  },
+): void {
+  const db = dbMod.db();
+  const node = (id: string, kind: string) => ({
+    id,
+    name: id === "r" ? "Review" : "Land",
+    kind,
+    templateId: null,
+    mountId: "",
+    folder: "",
+    task: "",
+    promptOverride: null,
+    agentId: null,
+    fanOut: null,
+    mergeStrategy: kind === "merge" ? "merge" : null,
+    mergeAutoResolve: false,
+    maxPasses: null,
+    maxLoopCostUSD: null,
+    stopWhenTasks: null,
+    bodyNodeIds: [],
+    provider: null,
+    fixRounds: kind === "review" ? (opts.fixRounds ?? 0) : null,
+  });
+  const graph = JSON.stringify({
+    nodes: [node("r", "review"), node("m", "merge")],
+    edges: [{ from: "r", to: "m", edge: "on-success", continueBranch: false }],
+  });
+  const budget = opts.budget ? JSON.stringify(opts.budget) : null;
+  db.prepare(
+    "INSERT INTO workflows (id, name, graph, created_at, updated_at) VALUES (?, ?, ?, 0, 0)",
+  ).run(`wf-${instanceId}`, `Reviewed ${instanceId}`, graph);
+  db.prepare(
+    `INSERT INTO workflow_instances
+       (id, workflow_id, workflow_name, graph, created_at, status, instance_budget)
+     VALUES (?, ?, ?, ?, 0, 'started', ?)`,
+  ).run(instanceId, `wf-${instanceId}`, `Reviewed ${instanceId}`, graph, budget);
+  db.prepare(
+    `INSERT INTO workflow_instance_blocks
+       (instance_id, node_id, node_name, position, kind, status, started_at)
+     VALUES (?, 'r', 'Review', 0, 'review', 'thinking', ?)`,
+  ).run(instanceId, Date.now());
+
+  const insertRun = db.prepare(
+    `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
+       created_at, isolation, worktree_branch, worktree_base, worktree_base_branch,
+       repo_root, provider, spent_usd)
+     VALUES (?, ?, ?, 'completed', '{"maxIterations":1}', 1, 1, ?, 'worktree', ?, ?, 'main', ?,
+             'claude', ?)`,
+  );
+  const insertMember = db.prepare(
+    `INSERT INTO workflow_instance_runs (instance_id, node_id, node_name, position, run_id)
+     VALUES (?, ?, 'Worker', ?, ?)`,
+  );
+  opts.runs.forEach((run, i) => {
+    insertRun.run(run.id, repoRoot(), run.prompt, Date.now(), run.branch, base, repoRoot(), run.spent ?? 0);
+    if (run.member) insertMember.run(instanceId, `w${i}`, i + 1, run.id);
+  });
+}
+
+function reviewsOf(runId: string): Array<{
+  status: string;
+  cost_usd: number;
+  created_at: number;
+  finished_at: number | null;
+}> {
+  return dbMod
+    .db()
+    .prepare("SELECT status, cost_usd, created_at, finished_at FROM run_reviews WHERE run_id=?")
+    .all(runId) as Array<{ status: string; cost_usd: number; created_at: number; finished_at: number | null }>;
+}
+
+const reviewRunning = (runId: string) => reviewsOf(runId).some((r) => r.status === "running");
+
+describe("a review block whose workflow is halted", () => {
+  it("starts no fix run for a rejection that lands just after the halt", async () => {
+    // The reviewer answers at once, so the review is over while the block's
+    // poll is still asleep — the gap the halt has to land in.
+    reviewScene("inst-fix", {
+      fixRounds: 1,
+      runs: [{ id: "fix-origin", prompt: "Do it.", branch: "uf/repo-bad" }],
+    });
+    const driving = workflows.startReviewBlock("inst-fix", "r", ["fix-origin"]);
+    await until("the review to be written", () => reviewsOf("fix-origin").length > 0);
+    await until("the review to finish", () => !reviewRunning("fix-origin"));
+    const halt = workflows.stopInstance("inst-fix", { kind: "operator" });
+    assert.ok(halt.ok && halt.report.acted, "the halt closed the door");
+    await settledWithin(driving, 30_000, "startReviewBlock");
+
+    const members = dbMod
+      .db()
+      .prepare("SELECT node_id AS nodeId FROM workflow_instance_runs WHERE instance_id='inst-fix'")
+      .all() as Array<{ nodeId: string }>;
+    assert.deepEqual(members, [], "a fix run was created into the workflow after its halt");
+    assert.equal(workflows.getInstance("inst-fix")!.status, "stopped");
+  });
+
+  it("spawns no reviewer when the halt lands while the review is being prepared", async () => {
+    // Pressed inside `startReview`'s own snapshot read, once the branches are
+    // seeded and before the child would be spawned.
+    reviewScene("inst-gap", {
+      runs: [{ id: "gap-origin", prompt: "Do it. APPROVE-ME", branch: "uf/repo-good" }],
+    });
+    let pressed = false;
+    duringSnapshot = () => {
+      if (workflows.reviewItemsOf("inst-gap", "r").length === 0) return false;
+      pressed = workflows.stopInstance("inst-gap", { kind: "operator" }).ok;
+      return true;
+    };
+    try {
+      await settledWithin(workflows.startReviewBlock("inst-gap", "r", ["gap-origin"]), 30_000, "startReviewBlock");
+    } finally {
+      duringSnapshot = null;
+    }
+    assert.ok(pressed, "the halt landed inside the review's preparation");
+    assert.deepEqual(reviewsOf("gap-origin"), [], "a reviewer was spawned into a stopped workflow");
+    assert.equal(workflows.getInstance("inst-gap")!.status, "stopped");
   });
 });

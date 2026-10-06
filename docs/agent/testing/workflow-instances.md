@@ -16,6 +16,8 @@ It asks the same question of a `looping` block, whose survivor is the loop's own
 
 It asks it once more of a run `waiting` on another run, which the boot used to stop unconditionally under a sentence saying its dependency had been closed out by the same restart. Three cases: behind a pause the boot kept it stays `waiting`; behind a run the boot failed, on an `on-finish` edge that the ordinary release would read as satisfied, it and the run behind it end `blocked`, each naming the run in front; and behind a completed run while new work is held it stays `waiting` with nothing planned.
 
+`reviewBlockRun.test.ts`' second suite drives a real review block, stub reviewer and all, into a halt, because what it pins happens between a poll and a press, where no pure function can see it. A halt landing just after a rejection, or while `startReview` was still preparing, started a fix run or a reviewer into the stopped workflow. The Stop is pressed from inside a replaced `currentSnapshot` for the second case, the `await` `startReview` makes before its spawn.
+
 `instanceReading.test.ts` opens the database, and it is the half of one word that no pure function can be asked about.
 
 `instanceStatus` decides which of the six readings a stored row is and is tested beside `haltPlan`; what it decides *from* is a count over two tables, because a graph is half runs and half a ledger of blocks that are not runs yet — and both halves can be live, and both can be written off.

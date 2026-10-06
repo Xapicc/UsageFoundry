@@ -282,7 +282,7 @@ Units that are about no test file in the tree:
 | `localLandGate.test.ts` | [harnesses] |
 | `localProvider.test.ts` |  |
 | `reviewBlock.test.ts` |  |
-| `reviewBlockRun.test.ts` | [harnesses] |
+| `reviewBlockRun.test.ts` | [workflows], [harnesses] |
 
 ## [Auth, credentials, config and the status routes](testing/auth-config-and-status-routes.md)
 

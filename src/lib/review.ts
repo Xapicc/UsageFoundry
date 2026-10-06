@@ -292,6 +292,13 @@ export async function startReview(
      * so its reviews ask for one on a Claude branch too.
      */
     requireVerdict?: boolean;
+    /**
+     * Asked after the last `await`, immediately before the row is written and
+     * the child spawned. A workflow's review block passes "am I still running":
+     * a halt that lands while the diff is read or the scans run would otherwise
+     * get a billed reviewer started into a workflow already stopped.
+     */
+    stillWanted?: () => boolean;
   } = {},
 ): Promise<ReviewOutcome> {
   // A review is a billed child and a `run_reviews` row, so it is a write like
@@ -329,6 +336,10 @@ export async function startReview(
       ok: false,
       reason: "This run's checkout and folder are both gone, so there is nowhere to run a review.",
     };
+  }
+
+  if (opts.stillWanted && !opts.stillWanted()) {
+    return { ok: false, reason: "The review was no longer wanted by the time it could start." };
   }
 
   const { text, shown, truncated } = diffAsText(diff, REVIEW_DIFF_BYTES);

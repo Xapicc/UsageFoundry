@@ -4093,19 +4093,20 @@ function haltBlocks(instanceId: string, cause: string): number {
     db()
       .prepare(
         "UPDATE workflow_instance_blocks SET status='blocked', finished_at=?," +
-          " error = CASE kind WHEN 'merge' THEN ? ELSE ? END" +
+          " error = CASE kind WHEN 'merge' THEN ? WHEN 'review' THEN ? ELSE ? END" +
           " WHERE instance_id=? AND status='waiting'",
       )
       .run(
         now,
         `${cause} before it landed anything.`,
+        `${cause} before it reviewed anything.`,
         `${cause} before it started deciding.`,
         instanceId,
       ).changes +
     db()
       .prepare(
         "UPDATE workflow_instance_blocks SET status='failed', finished_at=?," +
-          " error = CASE kind WHEN 'merge' THEN ? ELSE ? END" +
+          " error = CASE kind WHEN 'merge' THEN ? WHEN 'review' THEN ? ELSE ? END" +
           " WHERE instance_id=? AND status='thinking'",
       )
       .run(
@@ -4114,6 +4115,7 @@ function haltBlocks(instanceId: string, cause: string): number {
         // later; one in flight is left to finish, exactly as `cancelBatch` has
         // it, so the batch's own rows stay the record of which branches landed.
         `${cause} while it was landing branches.`,
+        `${cause} while it was reviewing branches.`,
         `${cause} while it was deciding what to start.`,
         instanceId,
       ).changes +
@@ -7167,6 +7169,7 @@ export async function startReviewBlock(
   });
 }
 
+
 /** One branch, from its first review to approved or set aside. */
 async function driveReviewItem(
   instance: WorkflowInstance,
@@ -7178,11 +7181,16 @@ async function driveReviewItem(
   const instanceId = instance.id;
   const item = () =>
     reviewItemsOf(instanceId, blockId).find((i) => i.origin_run_id === originRunId);
+  // Asked after every `await` below, because each one is a moment a halt can
+  // land in, and everything after it starts or judges something. Asked only at
+  // the top of each poll, a rejection read after a halt started a fix run into
+  // the stopped workflow, as a member nothing would ever stop.
+  const open = () => reviewStillOpen(instanceId, blockId);
 
   for (;;) {
     const current = item();
     if (!current || current.status === "approved" || current.status === "set-aside") return;
-    if (!reviewStillOpen(instanceId, blockId)) return;
+    if (!open()) return;
 
     // Waited for rather than refused: a full assist queue is a shortage that
     // clears in minutes, and a branch set aside over it would be judged by the
@@ -7191,8 +7199,14 @@ async function driveReviewItem(
       await pause();
       continue;
     }
-    const started = await startReview(current.run_id, { requireVerdict: true });
+    const started = await startReview(current.run_id, {
+      requireVerdict: true,
+      stillWanted: open,
+    });
     if (!started.ok) {
+      // A halt while the review was being prepared: `stillWanted` refused it
+      // before anything was spawned, and it is no verdict on the branch.
+      if (!open()) return;
       // Nothing committed is a fact about the run — the model did nothing
       // worth merging — and anything else is this app unable to review at this
       // moment. Neither is a frontier verdict, so neither marks the tasks.
@@ -7207,14 +7221,18 @@ async function driveReviewItem(
     }
     updateReviewItem(instanceId, blockId, originRunId, { review_id: started.id });
 
+
     let review = getAssist(started.id);
     while (review && review.status === "running") {
-      if (!reviewStillOpen(instanceId, blockId)) return;
+      if (!open()) return;
       await pause();
       review = getAssist(started.id);
     }
     if (!review) return;
     updateReviewItem(instanceId, blockId, originRunId, { addCost: review.cost_usd });
+    // Nothing awaits between this and `createRun` below, so this is also the
+    // check immediately before the fix run is created.
+    if (!open()) return;
 
     const step = nextReviewStep(
       { status: review.status === "completed" ? "completed" : "failed", text: review.text, error: review.error },
@@ -7279,11 +7297,11 @@ async function driveReviewItem(
 
     let run = getRun(fix.id);
     while (run && !TERMINAL_STATUSES.includes(run.status)) {
-      if (!reviewStillOpen(instanceId, blockId)) return;
+      if (!open()) return;
       await pause();
       run = getRun(fix.id);
     }
-    if (!run) return;
+    if (!run || !open()) return;
     const after = afterFixRun(run.status, run.iterations);
     if (after.kind === "set-aside") {
       setAside(instanceId, blockId, originRunId, run.id, after.reason, after.needsFrontier, node.name);
