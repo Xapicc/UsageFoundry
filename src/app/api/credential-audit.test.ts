@@ -374,6 +374,50 @@ describe("what a credential route records when nothing changed", () => {
   });
 });
 
+/**
+ * A start superseded by a newer one is two presses overlapping, not a CLI that
+ * failed, and the request line is where an operator tells those apart: a 502
+ * there sends them looking for a broken CLI over a double press.
+ */
+describe("two overlapping sign-in starts", () => {
+  for (const [provider, route] of [
+    ["claude", () => claudeLogin],
+    ["codex", () => codexLogin],
+  ] as const) {
+    it(`answer the older ${provider} start with a 409 and the newer with its link`, async () => {
+      const url = `http://localhost/api/${provider}-auth/login`;
+      try {
+        // Not awaited between them: the second start takes the slot while the
+        // first is still waiting on its stub for a link.
+        const [older, newer] = await Promise.all([
+          route().POST(post(url)),
+          route().POST(post(url)),
+        ]);
+        assert.deepEqual([older.status, newer.status], [409, 200]);
+        // The settings page shows this sentence as it stands, so it has to be
+        // the server's own and not the page's fallback.
+        const body = (await older.json()) as { error?: unknown };
+        assert.match(String(body.error), /replaced by a newer one/);
+
+        // The refused press is still a request line — the wrapper's half is
+        // the one that records refusals — and only the start that minted a
+        // link is a durable row.
+        assert.deepEqual(
+          requestRows().map((r) => r.status).sort(),
+          [200, 409],
+        );
+        assert.deepEqual(
+          opsRows().map((r) => [r.event, r.detail.provider]),
+          [["auth.provider_login_started", provider]],
+        );
+      } finally {
+        // The newer start's child is left waiting on its link otherwise.
+        await route().DELETE(new Request(url, { method: "DELETE" }));
+      }
+    });
+  }
+});
+
 describe("every one of the six leaves a request line", () => {
   it("records the method, the path and the outcome for each", async () => {
     process.env.CLAUDE_STUB_LOGGED_IN = "1";

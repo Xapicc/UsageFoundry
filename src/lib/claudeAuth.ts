@@ -427,12 +427,25 @@ export function cancelLogin(): void {
 }
 
 /**
+ * A start either minted a link or did not, and the second case splits the way
+ * the route's status has to.
+ *
+ * `superseded` is a newer start, a cancel or a sign-out taking the start over
+ * while it waited for its link: two presses overlapping, not a CLI failing, so
+ * the route answers it with a 409 rather than a CLI failure's 502. Its
+ * docblock says why the two must not share a status.
+ */
+export type StartOutcome =
+  | { ok: true; value: { url: string } }
+  | { ok: false; error: string; superseded: boolean };
+
+/**
  * Start a login and return the URL to open.
  *
  * The child stays alive afterwards, holding the verifier, until `submitCode`
  * feeds it a line or something cancels it.
  */
-export async function beginLogin(): Promise<ClaudeAuthResult<{ url: string }>> {
+export async function beginLogin(): Promise<StartOutcome> {
   // Any earlier attempt is dead to us the moment a second URL exists: only one
   // of the two verifiers can redeem a code, and the operator is about to be
   // shown the newer one.
@@ -446,6 +459,7 @@ export async function beginLogin(): Promise<ClaudeAuthResult<{ url: string }>> {
     return {
       ok: false,
       error: `Could not run \`${CLAUDE_BIN}\`: ${err instanceof Error ? err.message : String(err)}`,
+      superseded: false,
     };
   }
   // Claimed before the wait for the link, not after it. Two starts that both
@@ -479,12 +493,13 @@ export async function beginLogin(): Promise<ClaudeAuthResult<{ url: string }>> {
     return {
       ok: false,
       error: "This sign-in was replaced by a newer one, or cancelled, before its link arrived.",
+      superseded: true,
     };
   }
   startSlot.__ufClaudeLoginStarting = null;
   if (!url.ok) {
     child.kill("SIGKILL");
-    return url;
+    return { ok: false, error: url.error, superseded: false };
   }
 
   // Expires only the login it was armed for. One that called `cancelLogin`
