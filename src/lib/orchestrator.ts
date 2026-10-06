@@ -33,6 +33,7 @@ import {
   releaseStackWait,
   stackResumeNotice,
   stackWaitOf,
+  type StackWaitRequest,
 } from "./stackRequests";
 import {
   ensureSandboxExcludesFile,
@@ -9424,6 +9425,34 @@ export async function startRun(id: string): Promise<void> {
       .run(sid, costUSD, id);
   };
 
+  /**
+   * Park on the stacks this run is waiting to be answered about.
+   *
+   * Two boundaries reach it: a cycle that ended on its own, and one the context
+   * ceiling cut, which has already been refunded on `early_ends`' bound when
+   * that had room. `refunded` says so, because one cycle is refunded once.
+   *
+   * The caller sets `finalStatus`, where the compiler can see it: TypeScript
+   * does not widen a narrowed `let` for an assignment inside a closure, so the
+   * ending's `waiting-for-stack` branches would no longer typecheck.
+   */
+  const parkForStack = (asked: StackWaitRequest[], refunded: boolean) => {
+    // `reportedDone`'s trap from the `needs-review` branch: hydrated from the
+    // row, so a break that does not clear it writes a stale DONE.
+    reportedDone = false;
+    // Refunded on `guard_refunds`' terms and for the default cap's sake —
+    // see `MAX_STACK_WAITS_PER_RUN`. `request_stack` refuses at the bound,
+    // so a charged park is reachable only for a run attached before it.
+    if (!refunded && stackWaits < MAX_STACK_WAITS_PER_RUN) iterations -= 1;
+    stackWaits += 1;
+    // The fact and nothing else: the run page's card already says what
+    // the wait means, and the log and the lists need which stack.
+    stopReason = `Asked for ${asked
+      .map((wait) => `${wait.name} (${wait.binaries.join(", ")})`)
+      .join("; ")}.`;
+    log(id, stopReason);
+  };
+
   const applyInterrupt = (it: Interrupt) => {
     const outcome = interruptOutcome(it);
     stopReason = outcome.reason;
@@ -10472,7 +10501,8 @@ export async function startRun(id: string): Promise<void> {
         // buys; but an unbounded refund is a run with no terminus, which
         // `budgets-and-guards.md` forbids. Past the cap the crossing still
         // prunes and simply counts.
-        if (earlyEnds < MAX_EARLY_ENDS_PER_RUN) {
+        const earlyEndRefunded = earlyEnds < MAX_EARLY_ENDS_PER_RUN;
+        if (earlyEndRefunded) {
           earlyEnds += 1;
           iterations -= 1;
           // Written straight back to the row, which the pause path above does
@@ -10521,6 +10551,19 @@ export async function startRun(id: string): Promise<void> {
           earlyEndOutcome !== null,
           boundaryContextTokens,
         );
+        // A run that asked for a stack in the cycle the ceiling cut parks here,
+        // read off the record as at a natural boundary. The `continue` used to
+        // be the whole of this ending, so it spawned another cycle — billed,
+        // refunded as well, and worked without the tool it had just asked for —
+        // and parked only at that one's end. After the prune rather than before
+        // it, because the resume continues this conversation and would open at
+        // the ceiling it was cut at.
+        const asked = stackWaitOf(id);
+        if (asked.length > 0) {
+          parkForStack(asked, earlyEndRefunded);
+          finalStatus = "waiting-for-stack";
+          break;
+        }
         continue;
       }
       if (postCycle) {
@@ -10838,20 +10881,7 @@ export async function startRun(id: string): Promise<void> {
       // one that only says it needs a tool does not.
       const asked = stackWaitOf(id);
       if (asked.length > 0) {
-        // `reportedDone`'s trap from the branch below: hydrated from the row,
-        // so a break that does not clear it writes a stale DONE.
-        reportedDone = false;
-        // Refunded on `guard_refunds`' terms and for the default cap's sake —
-        // see `MAX_STACK_WAITS_PER_RUN`. `request_stack` refuses at the bound,
-        // so a charged park is reachable only for a run attached before it.
-        if (stackWaits < MAX_STACK_WAITS_PER_RUN) iterations -= 1;
-        stackWaits += 1;
-        // The fact and nothing else: the run page's card already says what
-        // the wait means, and the log and the lists need which stack.
-        stopReason = `Asked for ${asked
-          .map((wait) => `${wait.name} (${wait.binaries.join(", ")})`)
-          .join("; ")}.`;
-        log(id, stopReason);
+        parkForStack(asked, false);
         finalStatus = "waiting-for-stack";
         break;
       }

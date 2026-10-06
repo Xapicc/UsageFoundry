@@ -61,6 +61,9 @@ const { readReceipts, stackGrants } = require("./stacks") as typeof import("./st
 const { declineStackRequest, recordStackRequest, stackRequestsOfRun, stackWaitOf } =
   require("./stackRequests") as typeof import("./stackRequests");
 const { db } = require("./db") as typeof import("./db");
+const interrupts = (globalThis as unknown as {
+  __ufInterrupts: Map<string, import("./orchestrator").Interrupt>;
+}).__ufInterrupts;
 
 const receiptsDir = path.join(tmp, "receipts");
 fs.mkdirSync(receiptsDir, { recursive: true });
@@ -96,6 +99,8 @@ restartReadsReceipts();
  */
 interface Cycle {
   ask?: { name: string; binaries: string[] };
+  /** Anything else that lands while the child runs, after the request does. */
+  during?: () => void;
   reply: string;
 }
 
@@ -120,6 +125,7 @@ childProcess.spawn = (command: unknown, ...rest: unknown[]) => {
     });
     assert.equal(outcome.kind, "filed", `the stub's request was not filed: ${outcome.kind}`);
   }
+  step.during?.();
 
   const stdout = new PassThrough();
   const child = Object.assign(new EventEmitter(), {
@@ -281,6 +287,39 @@ describe("a run that asks for a stack", () => {
     const kept = getRun(id)!;
     assert.equal(kept.status, "waiting-for-stack", kept.stop_reason ?? "");
     assert.equal(kept.restart_closed, 0);
+    stopRun(id);
+  });
+
+  it("parks at a cycle the context ceiling cut, refunded once, without spawning another", async () => {
+    const id = start("asks-at-the-ceiling", [
+      {
+        ask: { name: "zig-ceiling", binaries: ["zig"] },
+        // What `checkContextCeilings` leaves for the boundary when the cycle
+        // that asked also crossed the ceiling. The ceiling ends cycles about
+        // fifty times for every two natural boundaries on this install, so this
+        // is the common way a request meets the end of its cycle.
+        during: () =>
+          interrupts.set(scriptedRun, {
+            kind: "prune",
+            reason: "This work cycle's context reached the ceiling.",
+            pause: false,
+            at: Date.now(),
+          }),
+        reply: "Asked for zig; stopping here until it is installed.",
+      },
+      { reply: "Carried on without zig, in a cycle that should never have been spawned." },
+    ]);
+
+    const parked = await settled(id);
+    assert.equal(parked.status, "waiting-for-stack", parked.stop_reason ?? "");
+    // The early end used to `continue` past the park: a second billed cycle,
+    // spent without the tool and refunded too, so invisible against the cap.
+    assert.equal(argvs.length, 1, "the run was spawned again before it parked");
+    // One cycle, one refund. Refunded by both rungs it reads -1, and charged
+    // it ends the resume on the default cap.
+    assert.equal(parked.iterations, 0);
+    assert.equal(parked.early_ends, 1);
+    assert.equal(parked.stack_waits, 1);
     stopRun(id);
   });
 });
