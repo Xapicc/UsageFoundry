@@ -2,7 +2,7 @@ import { db } from "./db";
 import { diffAsText, runDiff, type RunDiff } from "./diff";
 import { getSettings } from "./settings";
 import { getTask, updateTask, type Task } from "./tasks";
-import { emitRunEvent, getRun, type RunRow } from "./orchestrator";
+import { emitRunEvent, getRun, validationStoppedWithRun, type RunRow } from "./orchestrator";
 import {
   assistRefusal,
   assistRunning,
@@ -69,7 +69,9 @@ import {
  *    on — a gate that fails closed converts a shortage of assist slots, or a
  *    model's shrug, into billed work nobody asked for, which is the failure
  *    this feature is supposed to prevent rather than a stricter version of
- *    preventing it.
+ *    preventing it. The operator's Stop is not a way of having no verdict but
+ *    a person's decision, and a task it leaves claimed buys nothing: the run
+ *    has ended. So a check its run's Stop reached closes nothing.
  *
  * ## What the literature says about the shape, and what it does not
  *
@@ -644,6 +646,9 @@ function closeNow(
   return { kind: "closed", task: done.task, note: skip };
 }
 
+/** A stopped check's `error`, which is what tells its null verdict from a close. */
+const VALIDATION_STOPPED = "Stopped with its run, and nothing was closed.";
+
 /**
  * Read the verdict, and act on it — the one place a verdict becomes anything.
  *
@@ -656,7 +661,8 @@ function closeNow(
  * assist, which is the correct handling of a resolution that could not commit
  * and the wrong handling here: the failure would be recorded and the task would
  * be left claimed for ever by a run that has finished with it. Every path out of
- * this either closes the task or records a hold that the run loop can act on.
+ * this either closes the task, records a hold that the run loop can act on, or
+ * leaves the task with a run its operator stopped.
  */
 function settleValidation(
   taskId: string,
@@ -664,6 +670,19 @@ function settleValidation(
   result: AssistResult,
 ): Partial<AssistResult> {
   try {
+    // First, and whatever came back: a child that answers on its SIGINT has
+    // a verdict here, and acting on it is the run acting after its Stop. The
+    // task is left as every stopped run's task is left, claimed for the
+    // operator to close or release, and a pick-up can ask again. `failed`
+    // with the reason, so the row does not draw as "closed unchecked".
+    if (validationStoppedWithRun(runId)) {
+      logRun(
+        runId,
+        "The run was stopped while this task was being checked, so the check was stopped too and the task was not closed. It stays claimed by this run.",
+      );
+      return { status: "failed", error: VALIDATION_STOPPED };
+    }
+
     const parsed =
       result.status === "completed" && result.text ? parseVerdict(result.text) : null;
 

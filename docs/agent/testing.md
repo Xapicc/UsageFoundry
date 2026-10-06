@@ -186,7 +186,7 @@ Units that are about no test file in the tree:
 |---|---|
 | `tasks.test.ts` | [argv] |
 
-## [Task comments, dependencies, the validator and the board's MCP surface](testing/taskboard-comments-deps-and-mcp.md)
+## [Task comments, dependencies and the board's MCP surface](testing/taskboard-comments-deps-and-mcp.md)
 
 | Test file | Also in |
 |---|---|
@@ -194,8 +194,14 @@ Units that are about no test file in the tree:
 | `taskComments.test.ts` |  |
 | `taskDepGraph.test.ts` |  |
 | `taskDeps.test.ts` |  |
+
+## [The completion validator](testing/completion-validation.md)
+
+| Test file | Also in |
+|---|---|
 | `validation.test.ts` |  |
 | `validationSettle.test.ts` |  |
+| `validationStop.test.ts` |  |
 
 ## [The git this app runs](testing/git-children.md)
 

@@ -634,19 +634,53 @@ const assistProcs = ((globalThis as unknown as {
 }).__ufAssistProcs ??= new Set<SignalTarget>());
 
 /**
+ * Each run's validation child, and whether that run's Stop has reached it.
+ *
+ * `assistProcs` cannot say which child is which run's, and an operator's Stop
+ * has to: a validation outlives the cycle that called `complete_task`, so a
+ * Stop that signalled only `procs` left it reading on its own ten-minute clock,
+ * billed, and its settle then closed the task in the name of a run the operator
+ * had stopped. `stopped` is what `settleValidation` reads to refuse that close,
+ * and it is kept here rather than in `validation.ts` because `stopRun` has to
+ * set it synchronously and that module imports this one.
+ *
+ * Keyed by run because a run has one validation in flight at a time: a claim
+ * on a second task while one is reading is closed unchecked
+ * (`validationSkipReason`). Its own key for `__ufAssistProcs`' reason.
+ */
+const validationProcs = ((globalThis as unknown as {
+  __ufValidationProcs?: Map<string, { child: SignalTarget; stopped: boolean }>;
+}).__ufValidationProcs ??= new Map<string, { child: SignalTarget; stopped: boolean }>());
+
+/**
  * Put a child that is not a work cycle where shutdown will find it, and return
  * what takes it off again.
  *
  * Call it at the spawn and undo it at the settle, the lifetime `procs` gives a
  * cycle's child: the shutdown waits for this set to empty, so that is a wait for
  * the row the child's ending writes (and, for a resolution, for its merge to be
- * aborted) rather than only for the exit.
+ * aborted) rather than only for the exit. `validationOf` names the run a
+ * validation is checking, which is what lets that run's Stop reach it.
  */
-export function trackAssistChild(child: SignalTarget): () => void {
+export function trackAssistChild(child: SignalTarget, validationOf?: string): () => void {
   assistProcs.add(child);
+  if (validationOf !== undefined) validationProcs.set(validationOf, { child, stopped: false });
   return () => {
     assistProcs.delete(child);
+    if (validationOf !== undefined && validationProcs.get(validationOf)?.child === child) {
+      validationProcs.delete(validationOf);
+    }
   };
+}
+
+/**
+ * Whether this run's Stop reached the validation now settling.
+ *
+ * Read by `settleValidation`, which runs before the child is untracked, so the
+ * entry it asks about is its own.
+ */
+export function validationStoppedWithRun(runId: string): boolean {
+  return validationProcs.get(runId)?.stopped === true;
 }
 
 /**
@@ -11922,6 +11956,29 @@ function interruptRun(id: string, it: Interrupt): "signalled" | "cancelled" {
 }
 
 /**
+ * Stop the validation this run's Stop has to reach, if one is reading.
+ *
+ * Marked before it is signalled, so a child that answers on its SIGINT — the
+ * CLI may print its `result` on the way out — still settles as stopped rather
+ * than closing the task on that answer. The ladder is `interruptRun`'s, each
+ * step testing that this child is still the one registered.
+ */
+function stopValidationOf(id: string): void {
+  const entry = validationProcs.get(id);
+  if (!entry) return;
+  entry.stopped = true;
+  const { child } = entry;
+  const alive = () => validationProcs.get(id)?.child === child;
+  signalTree(child, "SIGINT");
+  setTimeout(() => {
+    if (alive()) signalTree(child, "SIGTERM");
+  }, 3_000).unref?.();
+  setTimeout(() => {
+    if (alive()) signalTree(child, "SIGKILL");
+  }, 8_000).unref?.();
+}
+
+/**
  * What a stop is recorded as when the caller says nothing: this run, this
  * button. Every branch below appends its own clause to it, which is why it is a
  * fragment with no full stop rather than a sentence.
@@ -11949,6 +12006,14 @@ const OPERATOR_CAUSE = "Stopped by operator";
 export function stopRun(id: string, cause: string = OPERATOR_CAUSE): StopOutcome {
   const run = getRun(id);
   if (!run) return "not-active";
+
+  // Ahead of every branch, because a completion check outlives each of them:
+  // it is still reading after the cycle that called `complete_task` has ended,
+  // through the verdict wait and through a park, and its settle closes the task
+  // in this run's name. A Stop means the run stops spending and stops acting,
+  // and a close the operator did not make is the run acting. A guard's stop
+  // does not come through here, and its check settles as it always has.
+  if (!TERMINAL_STATUSES.includes(run.status)) stopValidationOf(id);
 
   // Nothing has spawned yet, so there is no loop to notice the flag. Both of
   // these are terminal transitions and both release: a run whose dependency the
