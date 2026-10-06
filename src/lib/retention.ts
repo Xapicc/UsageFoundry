@@ -605,7 +605,7 @@ async function branchIsSettled(
     const tip = await git(repoRoot, ["rev-parse", `refs/heads/${branch}`]);
     if (
       tip.ok &&
-      (await isLandedTip(repoRoot, row.worktree_base_branch, chainRuns(run), tip.stdout))
+      (await isLandedTip(repoRoot, row.worktree_base_branch, chainRuns(run), tip.stdout, {}))
     ) {
       return true;
     }

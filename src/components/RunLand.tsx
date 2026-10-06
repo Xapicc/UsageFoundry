@@ -372,10 +372,15 @@ export function RunLand({ run }: { run: RunDTO }) {
   // would leave it undeletable for ever.
   const canDelete =
     (state.merged || state.landedUnchanged) && state.branchExists && settled;
-  // Offered only for a real conflict on a run that has stopped committing.
+  // Offered only for a real conflict on a run that has stopped committing, and
+  // never on a branch already in its target, which `resolveConflicts` refuses.
   // The merge happens the other way round, in an isolated checkout — see
   // `resolveConflicts`.
-  const canResolve = state.preview.outcome === "conflict" && settled;
+  const canResolve =
+    state.preview.outcome === "conflict" &&
+    settled &&
+    !state.merged &&
+    !state.landedUnchanged;
   // The other door out of a branch, for everything `canDelete` refuses. Not
   // offered beside Delete: when git can see the work is safe, that is the
   // button, and two destructive controls side by side is how the wrong one

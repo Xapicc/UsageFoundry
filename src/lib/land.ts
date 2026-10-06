@@ -632,6 +632,7 @@ export async function landState(
   ).ok;
 
   const landedUnchanged = await isLandedTip(repoRoot, target.branch, links, tip);
+  const squashedAt = await squashBase(repoRoot, target.branch, links, tip);
 
   // Not previewed while the run can still commit: the answer would be stale
   // before it rendered, and `merge-tree` writes objects to work it out.
@@ -639,7 +640,11 @@ export async function landState(
   // becomes the reason shown.
   const active = ["running", "queued", "paused", "waiting-for-stack"].includes(run.status);
 
-  const preview = merged
+  // A squash still in the target with nothing after it has nothing left to
+  // merge, which is the answer: a three-way merge from the chain's base would
+  // report the target's later edits to the squashed lines as conflicts, and
+  // the card offered a billed resolution of a branch that had nothing to land.
+  const preview = merged || landedUnchanged
     ? ({ outcome: "already-merged" } as const)
     : active
       ? ({ outcome: "unknown", reason: "This run can still commit to it." } as const)
@@ -651,14 +656,18 @@ export async function landState(
             )
           ).ok
         ? ({ outcome: "fast-forward" } as const)
-        : await previewMerge(repoRoot, target.branch, branch);
+        : squashedAt
+          ? await previewPastSquash(repoRoot, squashedAt, target.branch, branch)
+          : await previewMerge(repoRoot, target.branch, branch);
 
   const state: LandState = {
     ...base,
     branchExists: true,
     target: target.branch,
     targetInferred: target.inferred,
-    ahead: parseCount(ahead),
+    ahead: squashedAt
+      ? await countPastSquash(repoRoot, squashedAt, target.branch, branch)
+      : parseCount(ahead),
     behind: Number(behind) || 0,
     merged,
     landedUnchanged,
@@ -743,11 +752,13 @@ export async function isLandedTip(
   target: string | null,
   chain: readonly RunRow[],
   tip: string | undefined,
+  /** `NO_CLOCK` where this decides a land or a delete; the page reads keep git's default. */
+  clock: GitClock = NO_CLOCK,
 ): Promise<boolean> {
   if (!target || !tip) return false;
   for (const run of squashesOnChain(chain)) {
     if (run.landed_tip !== tip) continue;
-    if (await isAncestor(repoRoot, run.landed_commit, `refs/heads/${target}`)) return true;
+    if (await isAncestor(repoRoot, run.landed_commit, `refs/heads/${target}`, clock)) return true;
   }
   return false;
 }
@@ -769,13 +780,81 @@ function squashesOnChain(
     .sort((a, b) => (b.landed_at ?? 0) - (a.landed_at ?? 0));
 }
 
+/** A `git()` timeout: `NO_CLOCK` on the landing path, the default on a page read. */
+type GitClock = { timeoutMs?: number };
+
 /**
  * Whether `commit` is `ref` or one of its ancestors. Any failure — including a
- * commit gc took after the land was undone — reads as no, which every caller
- * takes as "not landed", the reading that keeps the branch.
+ * commit gc took after the land was undone, or a page read's clock running
+ * out — reads as no, which every caller takes as "not landed", the reading
+ * that keeps the branch.
  */
-async function isAncestor(repoRoot: string, commit: string, ref: string): Promise<boolean> {
-  return (await git(repoRoot, ["merge-base", "--is-ancestor", commit, ref], NO_CLOCK)).ok;
+async function isAncestor(
+  repoRoot: string,
+  commit: string,
+  ref: string,
+  clock: GitClock,
+): Promise<boolean> {
+  return (await git(repoRoot, ["merge-base", "--is-ancestor", commit, ref], clock)).ok;
+}
+
+/**
+ * The tip the newest squash on this chain landed, when that is where the next
+ * land of `tip` has to be measured from; null when git's own merge-base is.
+ *
+ * A squash leaves no ancestry, so git's merge-base between the target and a
+ * squash-landed branch stays where the chain started, and everything measured
+ * from it takes the squashed work a second time. Landing the next link that way
+ * put back a change the operator had reverted on the target since, with a
+ * clean preview and a success message; it refused the link for a conflict in a
+ * file only the squashed link touched, once the target had edited those lines;
+ * and it counted the squashed commits as unlanded. The chain-base rule
+ * (`resolveIsolation`) is about what a link's review and diff show, and holds
+ * only for links that have not landed.
+ *
+ * Three conditions, each a reason the recorded tip stops being the right base.
+ * The squash's commit must still be in the target, for `isLandedTip`'s reason —
+ * an undone squash is work that has to land again whole. The tip must still be
+ * in the branch, which a rewritten branch need not be. And the tip must not be
+ * in the target, because then a later merge carried it there and git's own
+ * merge-base is already past it.
+ */
+async function squashBase(
+  repoRoot: string,
+  target: string | null,
+  chain: readonly RunRow[],
+  tip: string | undefined,
+  /** See `isLandedTip`. */
+  clock: GitClock = NO_CLOCK,
+): Promise<string | null> {
+  if (!target || !tip) return null;
+  const ref = `refs/heads/${target}`;
+  for (const run of squashesOnChain(chain)) {
+    if (!(await isAncestor(repoRoot, run.landed_commit, ref, clock))) continue;
+    if (!(await isAncestor(repoRoot, run.landed_tip, tip, clock))) continue;
+    return (await isAncestor(repoRoot, run.landed_tip, ref, clock)) ? null : run.landed_tip;
+  }
+  return null;
+}
+
+/**
+ * Commits on `branch` that neither the squash at `squashedAt` took nor the
+ * target already has — the second exclusion for a branch that merged the
+ * target in since, whose merged-in commits are not its own.
+ */
+async function countPastSquash(
+  repoRoot: string,
+  squashedAt: string,
+  target: string,
+  branch: string,
+  clock: GitClock = NO_CLOCK,
+): Promise<number | null> {
+  const res = await git(
+    repoRoot,
+    ["rev-list", "--count", branch, `^${squashedAt}`, `^refs/heads/${target}`],
+    clock,
+  );
+  return parseCount(res.ok ? res.stdout : null);
 }
 
 /**
@@ -854,20 +933,88 @@ async function previewMerge(
   target: string,
   branch: string,
 ): Promise<MergePreview> {
+  const { preview, tree } = await writeMergeTree(repoRoot, target, branch);
+  if (preview.outcome !== "conflict") return preview;
+  return { outcome: "conflict", files: await withRegions(repoRoot, tree, preview.files) };
+}
+
+/** `merge-tree --write-tree` of two commits: the verdict, and the tree it wrote. */
+async function writeMergeTree(
+  repoRoot: string,
+  ours: string,
+  theirs: string,
+): Promise<{ preview: MergePreview; tree: string }> {
   // No `--name-only`: it lands the conflict list in a simpler shape but arrived
   // two releases after `--write-tree` itself, and this has to work on whatever
   // git the host mounted.
-  const res = await git(
-    repoRoot,
-    ["merge-tree", "--write-tree", "-z", target, branch],
-    NO_CLOCK,
-  );
-  const preview = parseMergeTree(res.stdout, res.stderr, res.code);
-  if (preview.outcome !== "conflict") return preview;
+  const res = await git(repoRoot, ["merge-tree", "--write-tree", "-z", ours, theirs], NO_CLOCK);
+  return {
+    preview: parseMergeTree(res.stdout, res.stderr, res.code),
+    // Field 0 of that same output, per the format `parseMergeTree` documents.
+    tree: res.stdout.split("\0", 1)[0] ?? "",
+  };
+}
 
-  // Field 0 of that same output, per the format `parseMergeTree` documents.
-  const tree = res.stdout.split("\0", 1)[0] ?? "";
-  return { outcome: "conflict", files: await withRegions(repoRoot, tree, preview.files) };
+/**
+ * What `branch` would merge into `target` as, measured from `squashedAt`
+ * rather than from git's merge-base. See `squashBase` for why.
+ */
+async function previewPastSquash(
+  repoRoot: string,
+  squashedAt: string,
+  target: string,
+  branch: string,
+): Promise<MergePreview> {
+  const pair = await overBase(repoRoot, squashedAt, `refs/heads/${target}`, branch);
+  if (!pair) {
+    return {
+      outcome: "unknown",
+      reason: `git could not set up a merge from where ${branch} was last squashed into ${target}.`,
+    };
+  }
+  return previewMerge(repoRoot, pair.ours, pair.theirs);
+}
+
+/**
+ * Two commits holding `ours`'s and `theirs`'s trees over one parentless commit
+ * holding `base`'s, so that the merge-base `merge-tree` finds between them is
+ * `base`'s content.
+ *
+ * `merge-tree --merge-base` says that directly, but it arrived in git 2.40 and
+ * the image ships Debian bookworm's 2.39, where `--write-tree` alone exists.
+ * The commits are written to the object store and named by no ref, as the
+ * trees `merge-tree` writes already are, so gc takes them. The identity is
+ * named on the command line because one the repository may not configure must
+ * not be what fails a preview, and signing is off because a configured
+ * `commit.gpgSign` would otherwise ask a key for commits nobody sees.
+ */
+async function overBase(
+  repoRoot: string,
+  base: string,
+  ours: string,
+  theirs: string,
+): Promise<{ ours: string; theirs: string } | null> {
+  const commit = (tree: string, parent: string | null) =>
+    git(
+      repoRoot,
+      [
+        "-c",
+        "user.name=UsageFoundry",
+        "-c",
+        "user.email=usagefoundry@localhost",
+        "commit-tree",
+        "--no-gpg-sign",
+        `${tree}^{tree}`,
+        ...(parent ? ["-p", parent] : []),
+        "-m",
+        "UsageFoundry merge preview",
+      ],
+      NO_CLOCK,
+    );
+  const root = await commit(base, null);
+  if (!root.ok) return null;
+  const [o, t] = await Promise.all([commit(ours, root.stdout), commit(theirs, root.stdout)]);
+  return o.ok && t.ok ? { ours: o.stdout, theirs: t.stdout } : null;
 }
 
 /**
@@ -1448,6 +1595,15 @@ export async function landRun(
     // identifiable afterwards.
     const tip = (await git(folder, ["rev-parse", branch], NO_CLOCK)).stdout;
 
+    // Worked out before the recheck below, because nothing may await between
+    // that read and the first write into the checkout — and worked out in the
+    // object store alone, so a conflict here refuses with the checkout never
+    // touched. Null for every branch no squash on its chain still holds back.
+    const pastSquash = await mergePastSquash(folder, target, branch, tip, chainRuns(run));
+    if (pastSquash && !pastSquash.ok) {
+      return { ok: false, reason: pastSquash.reason, conflicts: pastSquash.conflicts };
+    }
+
     // Re-proved here rather than trusted from `landState`, which was read
     // before the operator's check and may be fifteen minutes old — see
     // `landRecheck`. The status read is the last `await` before the merge, so
@@ -1491,8 +1647,9 @@ export async function landRun(
     // a merge killed part-way through reads here exactly like git refusing one,
     // so a repository large enough to take a while was told its work could not
     // be merged and had it rolled back.
-    const merge =
-      strategy === "squash"
+    const merge = pastSquash
+      ? await applyMergedTree(folder, strategy, branch, pastSquash)
+      : strategy === "squash"
         ? await git(folder, ["merge", "--squash", branch], NO_CLOCK)
         : await git(folder, ["merge", "--no-edit", branch], NO_CLOCK);
 
@@ -1511,30 +1668,36 @@ export async function landRun(
     }
 
     let squashCommit: string | null = null;
-    if (strategy === "squash") {
-      // `--squash` stages the change and stops. Without this the operator is
-      // left holding a staged merge that the app claims to have landed.
+    if (strategy === "squash" || pastSquash) {
+      // `--squash` stages the change and stops, and so does a merge applied
+      // past a squash. Without this the operator is left holding a staged merge
+      // that the app claims to have landed.
       const commit = await git(
         folder,
-        [
-          "commit",
-          "-m",
-          taskSubject(run),
-          "-m",
-          `Squashed from ${branch} (UsageFoundry run ${run.id}).`,
-        ],
+        strategy === "squash"
+          ? [
+              "commit",
+              "-m",
+              taskSubject(run),
+              "-m",
+              `Squashed from ${branch} (UsageFoundry run ${run.id}).`,
+            ]
+          : ["commit", "--no-edit"],
         NO_CLOCK,
       );
       if (!commit.ok) {
         const restored = await unwind(folder, strategy, true);
         const why = commit.stderr.split("\n")[0] || "unknown error";
+        const what = strategy === "squash" ? "squash" : "merge";
         return {
           ok: false,
           reason: restored
-            ? `The squash could not be committed and was rolled back: ${why}`
-            : `The squash could not be committed and could not be rolled back, so it is still staged in your checkout — look at git status there before anything else: ${why}`,
+            ? `The ${what} could not be committed and was rolled back: ${why}`
+            : `The ${what} could not be committed and could not be rolled back, so it is still staged in your checkout — look at git status there before anything else: ${why}`,
         };
       }
+    }
+    if (strategy === "squash") {
       // What `isLandedTip` asks the target for. Unreadable leaves it null, which
       // reads as not landed: a branch kept that could have gone, never the
       // other way round.
@@ -1567,6 +1730,91 @@ export async function landRun(
     landing.delete(folder);
     untrack();
   }
+}
+
+/** A merge `mergePastSquash` worked out: the target it read, and the tree it came to. */
+interface MergedTree {
+  ok: true;
+  ours: string;
+  tree: string;
+}
+
+/**
+ * What landing `branch` comes to when it has to be measured from where its
+ * chain was last squashed into `target` (`squashBase`), or null when git's own
+ * merge measures it correctly — which includes a branch that already has the
+ * target in it, a fast-forward or a merge git bases past the squash by itself.
+ */
+async function mergePastSquash(
+  folder: string,
+  target: string,
+  branch: string,
+  tip: string,
+  chain: readonly RunRow[],
+): Promise<MergedTree | { ok: false; reason: string; conflicts?: string[] } | null> {
+  const squashedAt = await squashBase(folder, target, chain, tip);
+  if (!squashedAt) return null;
+  if (await isAncestor(folder, `refs/heads/${target}`, tip, NO_CLOCK)) return null;
+
+  const ours = await git(folder, ["rev-parse", "--verify", `refs/heads/${target}`], NO_CLOCK);
+  if (!ours.ok) {
+    return {
+      ok: false,
+      reason: `Could not read where ${target} stands, so nothing was merged: ${gitFailureLine(ours.stderr) || "unknown error"}`,
+    };
+  }
+  const pair = await overBase(folder, squashedAt, ours.stdout, tip);
+  const merged = pair ? await writeMergeTree(folder, pair.ours, pair.theirs) : null;
+  if (merged?.preview.outcome === "conflict") {
+    const conflicts = merged.preview.files.map((f) => f.path);
+    return {
+      ok: false,
+      reason: `Merging into ${target} conflicts, so nothing was merged — your checkout is untouched. Conflicting: ${conflicts.join(", ")}`,
+      conflicts,
+    };
+  }
+  if (merged?.preview.outcome !== "clean" || !merged.tree) {
+    return {
+      ok: false,
+      reason:
+        merged?.preview.outcome === "unknown"
+          ? merged.preview.reason
+          : `git could not merge ${branch} from where it was last squashed into ${target}, so nothing was merged.`,
+    };
+  }
+  return { ok: true, ours: ours.stdout, tree: merged.tree };
+}
+
+/**
+ * Put `merged`'s tree into the operator's checkout, staged and uncommitted,
+ * the state `merge --squash` leaves — and for a merge, with `MERGE_HEAD` naming
+ * the branch, so the commit that follows has it as its second parent.
+ *
+ * `-s ours` records the merge and takes nothing from it, so the content is the
+ * tree worked out past the squash and nothing git's own merge-base would add.
+ * The two-tree `read-tree` moves the index from the target as it was read to
+ * that tree: a commit the operator made to the target since is carried forward,
+ * and one that touches a path the merge changes is refused with nothing
+ * written, as `git checkout` refuses to overwrite a change. The refresh first
+ * because `read-tree -u` trusts the index's stat data, and a stale entry is a
+ * refusal of a clean checkout.
+ */
+async function applyMergedTree(
+  folder: string,
+  strategy: LandStrategy,
+  branch: string,
+  merged: MergedTree,
+) {
+  if (strategy !== "squash") {
+    const record = await git(
+      folder,
+      ["merge", "-s", "ours", "--no-ff", "--no-commit", branch],
+      NO_CLOCK,
+    );
+    if (!record.ok) return record;
+  }
+  await git(folder, ["update-index", "-q", "--refresh"], NO_CLOCK);
+  return git(folder, ["read-tree", "-m", "-u", merged.ours, merged.tree], NO_CLOCK);
 }
 
 /**
@@ -2023,6 +2271,12 @@ async function startResolution(
       ),
     };
   }
+  // Whatever the preview says, before it: a branch whose work is already in its
+  // target has nothing to land, so a resolution bought for it is paid for
+  // nothing — and its commit moves the tip off the one that landed, after
+  // which the branch reads as unlanded and offers its stale side for landing.
+  const onTarget = alreadyOnTargetRefusal({ ...state, target: state.target });
+  if (onTarget) return { ok: false, reason: onTarget };
   if (state.preview.outcome !== "conflict") {
     return {
       ok: false,
@@ -4167,12 +4421,21 @@ export async function branchInventory(
     // One call per row whatever it answers — `MAX_INVENTORY` bounds these — so
     // a target renamed away is a null here. The Land card, with one branch to
     // pay for, counts that case against the base instead.
-    mapWithLimit(pending, BRANCH_GIT_CONCURRENCY, (p) => countAhead(p.repoRoot, p.aheadRange)),
-    // A call only for a row some squash on its chain recorded this tip for;
-    // `isLandedTip` answers every other row without asking git.
+    // Past the newest squash still in the target where there is one, for
+    // `squashBase`'s reason; that and `isLandedTip` below ask git nothing about
+    // a row whose chain recorded no squash.
+    mapWithLimit(pending, BRANCH_GIT_CONCURRENCY, async (p) => {
+      const target = p.summary.target;
+      const squashedAt = p.landed
+        ? await squashBase(p.repoRoot, target, p.landed.chain, p.landed.tip, {})
+        : null;
+      return squashedAt && target
+        ? countPastSquash(p.repoRoot, squashedAt, target, p.summary.branch, {})
+        : countAhead(p.repoRoot, p.aheadRange);
+    }),
     mapWithLimit(pending, BRANCH_GIT_CONCURRENCY, async (p) =>
       p.landed
-        ? isLandedTip(p.repoRoot, p.summary.target, p.landed.chain, p.landed.tip)
+        ? isLandedTip(p.repoRoot, p.summary.target, p.landed.chain, p.landed.tip, {})
         : false,
     ),
     mapWithLimit(probeTargets, BRANCH_GIT_CONCURRENCY, async (i) => {

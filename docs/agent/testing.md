@@ -193,6 +193,7 @@ Units that are about no test file in the tree:
 | `delivery.test.ts` |  |
 | `git.test.ts` |  |
 | `landGate.test.ts` |  |
+| `landAfterSquash.test.ts` |  |
 | `landAfterVerify.test.ts` |  |
 | `landUnwind.test.ts` |  |
 | `landView.test.ts` | [cards] |
