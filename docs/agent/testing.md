@@ -29,6 +29,7 @@ Twenty are renderings rather than functions — every `*.test.tsx` in the tree, 
 | `patch.test.ts` |  |
 | `planUsage.test.ts` |  |
 | `queueOrder.test.ts` |  |
+| `repoSpendAdmission.test.ts` |  |
 | `runOrigin.test.ts` |  |
 | `slotProbes.test.ts` |  |
 | `windows.test.ts` | [harnesses] |

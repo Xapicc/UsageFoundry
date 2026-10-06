@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   groupRunSpend,
   NO_REPOSITORY_LABEL,
+  type RepoPlace,
   type RunSpendRow,
 } from "./repoSpend";
 import type { ConflictKey } from "./orchestrator";
@@ -37,7 +38,7 @@ function identify(p: string): ConflictKey {
   return { rootKey, segs: rest.filter(Boolean) };
 }
 
-const describeFolder = (p: string) => p;
+const describeFolder = (p: string): RepoPlace => ({ mountLabel: null, relPath: p });
 
 const run = (
   id: string,
@@ -91,6 +92,26 @@ describe("groupRunSpend", () => {
     );
     assert.equal(rows.length, 1);
     assert.equal(rows[0].spentUSD, 8);
+  });
+
+  it("names two repositories with one mount-relative path apart, and only those", () => {
+    // `/w1/api` and `/w2/api` are two repositories, each `api` within its mount.
+    // The card used to label both rows "api", which apportions nothing; `web`
+    // shares its name with no one and keeps the short form. A repository that is
+    // its mount's root has an empty relative path and takes the mount's label.
+    const place = (p: string): RepoPlace => {
+      const [, root, ...rest] = p.split("/");
+      return { mountLabel: root.toUpperCase(), relPath: rest.join("/") };
+    };
+    const { rows } = groupRunSpend(
+      [run("a", "/w1/api", 3), run("b", "/w2/api", 5), run("c", "/w1/web", 1), run("d", "/w4", 2)],
+      identify,
+      place,
+    );
+    assert.deepEqual(
+      rows.map((r) => r.label),
+      ["W2 / api", "W1 / api", "W4", "web"],
+    );
   });
 
   it("puts a run that was not in a repository in a bucket of its own", () => {

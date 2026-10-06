@@ -18,6 +18,7 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - A handed-over checkout keeps what the predecessor left uncommitted, and says how much. (was line 14)
 - A continuing agent is told whose commits it is standing on. (was line 18)
 - A null `isolation` means isolated-but-not-yet-planned, and every reader of the column takes it that way.
+- `repo_root` is the repository a checkout was cut from, and is null on a run that was not given one.
 
 ## [Land, the verify gate and Deliver](isolation-and-landing/land-verify-and-deliver.md)
 

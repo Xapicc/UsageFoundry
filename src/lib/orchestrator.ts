@@ -297,7 +297,15 @@ export interface RunRow {
   /** Where the agent actually runs — the worktree when isolated, else `folder`. */
   work_dir: string | null;
   isolation: "none" | "worktree" | null;
+  /** The repository a checkout was cut from; null unless the run was given one. */
   repo_root: string | null;
+  /**
+   * The repository `folder` is in, checkout or not. Read by repository spend
+   * alone, and never in `repo_root`'s place: a run with isolation off has one
+   * of these and no checkout. Null before the plan is made, and on rows older
+   * than the column.
+   */
+  folder_repo: string | null;
   worktree_path: string | null;
   worktree_branch: string | null;
   /**
@@ -2437,7 +2445,15 @@ export interface IsolationPlan {
   mode: "worktree" | "none";
   /** Why isolation was not used. Surfaced so a silent downgrade is impossible. */
   reason?: string;
+  /** The repository a checkout is cut from. Set only in `mode: "worktree"`. */
   repoRoot?: string;
+  /**
+   * The repository the folder is in, in either mode, whenever git could say.
+   * Separate from `repoRoot` because most refusals are made *about* a
+   * repository — a subfolder of one, one at the mount root — and the run is
+   * still in it, which is what repository spend files it under.
+   */
+  repository?: string;
   base?: string;
   /** Branch the base commit was taken from — where this work lands. */
   baseBranch?: string;
@@ -2688,28 +2704,9 @@ function usesSubmodules(repoRoot: string): boolean {
  * the one outcome that would surprise in the dangerous direction.
  */
 export function probeIsolation(folder: string): IsolationPlan {
-  const top = gitSync(folder, ["rev-parse", "--show-toplevel"]);
-  if (!top.ok || !top.stdout) {
-    // git's own words when it has any, because "not a git repository" is a
-    // conclusion this call cannot actually reach. A checkout made on the host
-    // records an absolute host gitdir that does not exist under the mount, and
-    // git reports exactly that — while the directory is plainly a repository
-    // to the operator looking at it.
-    const detail = top.stderr.split("\n")[0]?.replace(/^fatal:\s*/, "") ?? "";
-    return {
-      mode: "none",
-      reason: detail
-        ? `git cannot use this folder (${detail}) — runs here are serialised.`
-        : "Not a git repository — runs here are serialised.",
-    };
-  }
-
-  let repoRoot: string;
-  try {
-    repoRoot = fs.realpathSync(top.stdout);
-  } catch {
-    return { mode: "none", reason: "Repository root could not be resolved." };
-  }
+  const found = findRepository(folder);
+  if ("reason" in found) return { mode: "none", reason: found.reason };
+  const repoRoot = found.root;
 
   // Anything but an exact match means the operator picked a subdirectory (or a
   // path inside someone else's repo). Branching the whole enclosing repository
@@ -2718,28 +2715,45 @@ export function probeIsolation(folder: string): IsolationPlan {
   if (repoRoot !== folder) {
     return {
       mode: "none",
+      repository: repoRoot,
       reason: `Folder is inside the repository at ${repoRoot}, not its root.`,
     };
   }
 
   if (gitSync(folder, ["rev-parse", "--is-bare-repository"]).stdout === "true") {
-    return { mode: "none", reason: "Bare repository — nothing to check out." };
+    return {
+      mode: "none",
+      repository: repoRoot,
+      reason: "Bare repository — nothing to check out.",
+    };
   }
 
   // git's own documentation warns against multiple checkouts of a superproject.
   if (usesSubmodules(repoRoot)) {
-    return { mode: "none", reason: "Repository uses submodules." };
+    return {
+      mode: "none",
+      repository: repoRoot,
+      reason: "Repository uses submodules.",
+    };
   }
 
   const head = gitSync(folder, ["rev-parse", "HEAD"]);
   if (!head.ok || !head.stdout) {
-    return { mode: "none", reason: "Repository has no commits yet." };
+    return {
+      mode: "none",
+      repository: repoRoot,
+      reason: "Repository has no commits yet.",
+    };
   }
 
   const { mountId } = describeFolder(folder);
   const mount = mountId ? mountById(mountId) : null;
   if (!mount) {
-    return { mode: "none", reason: "Folder is not inside a configured workspace." };
+    return {
+      mode: "none",
+      repository: repoRoot,
+      reason: "Folder is not inside a configured workspace.",
+    };
   }
   const mountRoot = realMountPath(mount);
 
@@ -2748,6 +2762,7 @@ export function probeIsolation(folder: string): IsolationPlan {
   if (repoRoot === mountRoot) {
     return {
       mode: "none",
+      repository: repoRoot,
       reason: "Repository is the workspace root — no place to put a checkout inside it.",
     };
   }
@@ -2762,7 +2777,44 @@ export function probeIsolation(folder: string): IsolationPlan {
       ? headBranch.stdout
       : undefined;
 
-  return { mode: "worktree", repoRoot, base: head.stdout, baseBranch };
+  return {
+    mode: "worktree",
+    repoRoot,
+    repository: repoRoot,
+    base: head.stdout,
+    baseBranch,
+  };
+}
+
+/**
+ * The repository `folder` is in, as git sees it, or why that cannot be said.
+ *
+ * Its own function because a run with isolation off asks it too, and asks
+ * nothing else: the run is in its repository whether or not it gets a checkout,
+ * and one `rev-parse` is the whole of what that costs inside `createRun`'s
+ * no-`await` window.
+ */
+function findRepository(folder: string): { root: string } | { reason: string } {
+  const top = gitSync(folder, ["rev-parse", "--show-toplevel"]);
+  if (!top.ok || !top.stdout) {
+    // git's own words when it has any, because "not a git repository" is a
+    // conclusion this call cannot actually reach. A checkout made on the host
+    // records an absolute host gitdir that does not exist under the mount, and
+    // git reports exactly that — while the directory is plainly a repository
+    // to the operator looking at it.
+    const detail = top.stderr.split("\n")[0]?.replace(/^fatal:\s*/, "") ?? "";
+    return {
+      reason: detail
+        ? `git cannot use this folder (${detail}) — runs here are serialised.`
+        : "Not a git repository — runs here are serialised.",
+    };
+  }
+
+  try {
+    return { root: fs.realpathSync(top.stdout) };
+  } catch {
+    return { reason: "Repository root could not be resolved." };
+  }
 }
 
 /**
@@ -3930,11 +3982,11 @@ function planWorkspace(
   folder: string,
   isolate: boolean,
   continueFrom: RunRow | null,
-): { plan: IsolationPlan; workDir: string } {
+): { plan: IsolationPlan; workDir: string; repository: string | null } {
   // An isolated run gets its own subtree, so it contends with nothing but a run
   // started on the workspace root — which does contain the checkout store, and
   // correctly blocks.
-  const probe = isolate ? probeIsolation(folder) : { mode: "none" as const };
+  const probe: IsolationPlan = isolate ? probeIsolation(folder) : repositoryOnly(folder);
   const repoRoot = probe.mode === "worktree" ? probe.repoRoot : null;
 
   // What a chain claims is the **branch**, not the slot, and that is what makes
@@ -3981,7 +4033,16 @@ function planWorkspace(
     plan,
     workDir:
       plan.mode === "worktree" && plan.worktreePath ? plan.worktreePath : folder,
+    // Off the probe rather than the plan, which `resolveIsolation` rebuilds for
+    // a continuation and does not consult at all with isolation off.
+    repository: probe.repository ?? null,
   };
+}
+
+/** The probe a run with isolation off gets: which repository, and nothing else. */
+function repositoryOnly(folder: string): IsolationPlan {
+  const found = findRepository(folder);
+  return "root" in found ? { mode: "none", repository: found.root } : { mode: "none" };
 }
 
 /**
@@ -4276,8 +4337,8 @@ export function createRun(input: CreateRunInput): RunRow {
   // `continues_run` is the exception and is written either way: it is an id and
   // a statement of intent rather than a claim on anything, and the landing
   // rules have to be able to see a chain coming before its branch exists.
-  const { plan, workDir } = waiting
-    ? { plan: null, workDir: null }
+  const { plan, workDir, repository } = waiting
+    ? { plan: null, workDir: null, repository: null }
     : planWorkspace(
         id,
         folder,
@@ -4293,9 +4354,9 @@ export function createRun(input: CreateRunInput): RunRow {
       .prepare(
         `INSERT INTO runs
            (id, folder, prompt, model, provider, status, budget, max_iterations, iterations, created_at, spent_usd, spent_tokens,
-            work_dir, isolation, repo_root, worktree_path, worktree_branch, worktree_base, worktree_base_branch,
+            work_dir, isolation, repo_root, folder_repo, worktree_path, worktree_branch, worktree_base, worktree_base_branch,
             continues_run, agent, file_cost_notice, tmpdir_notice, origin, origin_ref, task_signature)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -4318,6 +4379,7 @@ export function createRun(input: CreateRunInput): RunRow {
         workDir,
         isolation,
         plan?.repoRoot ?? null,
+        repository,
         plan?.worktreePath ?? null,
         plan?.branch ?? null,
         plan?.base ?? null,
@@ -5517,6 +5579,7 @@ export function reviveBlockedDependents(roots: readonly string[]): number {
 function admitWaiting(run: RunRow): boolean {
   let plan: IsolationPlan;
   let workDir: string;
+  let repository: string | null;
   try {
     // `isolation === 'none'` on a waiting row is the operator's own answer,
     // recorded at creation; anything else means the question was deferred.
@@ -5524,7 +5587,7 @@ function admitWaiting(run: RunRow): boolean {
     // The predecessor is read *now* rather than at admission because this is
     // the first moment its branch exists: it may itself have been waiting, and
     // its whole isolation plan was deferred for the same reason this one was.
-    ({ plan, workDir } = planWorkspace(
+    ({ plan, workDir, repository } = planWorkspace(
       run.id,
       run.folder,
       run.isolation !== "none",
@@ -5551,7 +5614,7 @@ function admitWaiting(run: RunRow): boolean {
 
   const flip = db()
     .prepare(
-      "UPDATE runs SET status='queued', work_dir=?, isolation=?, repo_root=?," +
+      "UPDATE runs SET status='queued', work_dir=?, isolation=?, repo_root=?, folder_repo=?," +
         " worktree_path=?, worktree_branch=?, worktree_base=?, worktree_base_branch=?" +
         " WHERE id=? AND status='waiting'",
     )
@@ -5559,6 +5622,7 @@ function admitWaiting(run: RunRow): boolean {
       workDir,
       plan.mode,
       plan.repoRoot ?? null,
+      repository,
       plan.worktreePath ?? null,
       plan.branch ?? null,
       plan.base ?? null,

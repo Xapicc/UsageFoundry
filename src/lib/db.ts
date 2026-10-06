@@ -952,6 +952,13 @@ function migrate(db: Database.Database) {
   addColumn(db, "runs", "work_dir", "TEXT");
   addColumn(db, "runs", "isolation", "TEXT");
   addColumn(db, "runs", "repo_root", "TEXT");
+  // The repository the run's folder is in, whether or not it got a checkout.
+  // Not `repo_root`, which every landing, claim and sandbox reader takes to mean
+  // "the repository a checkout was cut from"; repository spend is its one
+  // reader. Not backfilled: older rows keep `repo_root`, which `repoSpend` falls
+  // back to, and an older run with no checkout stays in "(not a repository)"
+  // rather than being filed by a guess made from `folder` today.
+  addColumn(db, "runs", "folder_repo", "TEXT");
   addColumn(db, "runs", "worktree_path", "TEXT");
   addColumn(db, "runs", "worktree_branch", "TEXT");
   addColumn(db, "runs", "worktree_base", "TEXT");
