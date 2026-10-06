@@ -61,6 +61,21 @@ before(async () => {
   saveSettings({ planUsageFromApi: false });
 });
 
+/**
+ * A real ENOENT, whose message names the worktree it was asked to read — the
+ * shape of what a sweep throws when a checkout is removed under it.
+ */
+function folderNamingFailure(): unknown {
+  try {
+    fs.readdirSync(
+      path.join(root, "workspace", "secret-project", ".uf-worktrees", "secret-project-3"),
+    );
+  } catch (err) {
+    return err;
+  }
+  throw new Error("expected the made-up folder to be missing");
+}
+
 async function get(headers: Record<string, string> = {}) {
   const { GET } = await import("./route");
   const res = await GET(new Request("http://localhost/api/status", { headers }));
@@ -223,6 +238,11 @@ test("carries no prompt, no folder path, no setting and no credential", async ()
   // string it had never heard of.
   process.env.UF_PY_TOOLS = "a-declared-python-tool==1.0";
   process.env.UF_GH_EXTENSIONS = "an-owner/gh-a-declared-extension";
+  // The two fields whose content a thrower wrote rather than this file. Their
+  // class is the reading, and is asserted so the absence below is not vacuous.
+  const { noteLiveTickFailure, noteSweepFailure } = await import("../../../lib/ops");
+  noteSweepFailure(folderNamingFailure());
+  noteLiveTickFailure(folderNamingFailure());
   try {
     const { body } = await get({ authorization: "Bearer monitor-token-value" });
     const serialised = JSON.stringify(body);
@@ -243,6 +263,8 @@ test("carries no prompt, no folder path, no setting and no credential", async ()
         `the status payload must not carry "${forbidden}"`,
       );
     }
+    assert.equal(body.sweeper.lastError, "ENOENT");
+    assert.equal(body.liveGuard.lastError, "ENOENT");
   } finally {
     delete process.env.UF_AUTH_TOKEN;
     delete process.env.UF_STATUS_TOKEN;
