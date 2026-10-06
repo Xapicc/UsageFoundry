@@ -130,7 +130,12 @@ read — reaches something that is not this run's business.
   handed to work cycles (and the chat), because `git push` and `gh` cannot work
   without it. An unattended agent can use everything that token can, which is
   why the advice to scope it to the repositories you actually run agents against
-  is in `.env.example` rather than here.
+  is in `.env.example` rather than here. That includes publishing the files
+  *Files copied into a new checkout* puts in its checkout — your `.env`, by
+  default — with a `git push` of its own. This app's two exits, Land and
+  Deliver, refuse a branch whose history carries a path that list names; an
+  agent's own push goes through neither, and the refusal reads paths, not
+  contents, so a key pasted into some other file is not caught either.
 - **What a stolen capability would open, if one could be stolen.** This is the
   one in this list that is now closed rather than sized, and it is here because
   the shape of it matters: the config file is no longer in `/tmp`, and it is no
@@ -344,9 +349,12 @@ on may do nothing whatever. `docs/verification.md` carries what would settle it.
 - `UF_GITHUB_TOKEN` is handed to the agent's work cycles and to nothing else.
   The reviewer does not get it (it cannot write), and neither does the git this
   app runs itself — `worktree add` and `merge` execute hooks the repository
-  controls, and this app's own git never touches the network. The credential
-  helper is scoped to `https://github.com`, so another host asking for
-  credentials gets none.
+  controls — with one exception: Deliver's `git push`, the only git this app
+  runs that reaches the network, is handed the repository's token for that call
+  alone, on a person's press. It publishes the run's branch, and refuses one
+  whose history carries a file seeding copied in from your checkout. The
+  credential helper is scoped to `https://github.com`, so another host asking
+  for credentials gets none.
 - *Which* token a work cycle gets is chosen from the repository it is working
   in. `UF_GITHUB_TOKENS` maps a folder to a credential; a run in that folder
   gets that one and no other, and a folder no entry names falls back to

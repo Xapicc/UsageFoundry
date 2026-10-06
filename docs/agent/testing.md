@@ -207,8 +207,6 @@ Units that are about no test file in the tree:
 | Test file | Also in |
 |---|---|
 | `deleteBranch.test.ts` |  |
-| `deliverRun.test.ts` |  |
-| `delivery.test.ts` |  |
 | `diffSlotReuse.test.ts` |  |
 | `landGate.test.ts` |  |
 | `landAfterSquash.test.ts` |  |
@@ -216,6 +214,13 @@ Units that are about no test file in the tree:
 | `landUnwind.test.ts` |  |
 | `landView.test.ts` | [cards] |
 | `repoLock.test.ts` |  |
+
+## [Deliver](testing/delivery.md)
+
+| Test file | Also in |
+|---|---|
+| `deliverRun.test.ts` |  |
+| `delivery.test.ts` |  |
 
 ## [The merge queue and conflict resolution](testing/merge-queue-and-resolution.md)
 

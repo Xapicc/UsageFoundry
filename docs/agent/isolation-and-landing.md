@@ -21,15 +21,20 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - A null `isolation` means isolated-but-not-yet-planned, and every reader of the column takes it that way.
 - `repo_root` is the repository a checkout was cut from, and is null on a run that was not given one.
 
-## [Land, the verify gate and Deliver](isolation-and-landing/land-verify-and-deliver.md)
+## [Land and the verify gate](isolation-and-landing/land-verify-and-deliver.md)
 
 - The tool does now merge, and every protection the old "never merges" rule bought is a check in `land.ts` rather than a caveat. (was line 22)
 - One branch, one Land button: the last run on it, and only once nothing behind it can still commit. (was line 16)
 - A branch a live pass of a workflow loop is working on may be landed by that pass's own merge block and by nothing else, and every other refusal names the pass. (was line 52)
 - The check in front of Land, and what an empty one means. (was lines 69–81)
 - Which tree the check runs in is the whole of whether it checks anything. (was lines 83–97)
+
+## [Deliver, and what may leave](isolation-and-landing/deliver.md)
+
 - The other exit. `deliverRun` pushes a run's branch and opens a pull request on the checkout's GitHub remote. (was lines 99–124)
+- Deliver refuses a branch that can still move, in Land's own words.
 - The Land card offers it once, and states every refusal instead of discovering one. (was lines 149–165)
+- A branch whose history carries a file seeding copied in leaves by neither exit.
 
 ## [Merge previews, the conflicts map and conflict resolution](isolation-and-landing/conflicts-and-resolution.md)
 
