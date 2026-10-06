@@ -180,7 +180,10 @@ another run closed came back as completed by this one, and `releaseTask`
 refused an open task by quoting its title, both for any id on the board — two
 writes answering as a read wider than `get_my_task`'s. An id on no row and a
 task another holder has claimed still reach the rule's sentences, which name
-the holder and never the title. **No tool on this surface takes a run id**, and that is not an
+the holder and never the title. A task the run *does* hold that is already
+`done` is answered from its row before any close is tried — completed by this
+run, or closed by the operator, whose close leaves the run column set — since
+the same no-op would report a close the call never made, and the run repeats it. **No tool on this surface takes a run id**, and that is not an
 omission to be tidied: an argument would be a work cycle able to close every task
 on the board by guessing an id out of a list, and `list_my_tasks` hands it a list.
 `create_task` places what it files the same way — `origin: "run"`,

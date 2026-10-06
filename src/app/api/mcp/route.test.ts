@@ -694,6 +694,28 @@ test("complete_task refuses a task another run closed rather than saying this ru
   assert.equal(again.isError, false, again.text);
 });
 
+test("complete_task on a held task the operator closed does not say this run completed it", async () => {
+  const run = seedRun(HERE);
+  const held = file(HERE);
+  move(held, "claimed", run.runId);
+  const closed = tasks.updateTask(held.id, { status: "done" }, { kind: "operator" });
+  assert.ok(closed.ok, "the operator closes it from the board");
+
+  const completed = await callTool(run.token, "complete_task", { taskId: held.id });
+  assert.equal(completed.isError, false, completed.text);
+  assert.doesNotMatch(completed.text, /completed by this run|Marked/);
+  assert.match(completed.text, /the operator closed it/);
+  assert.equal(tasks.getTask(held.id)?.completedByRunId, null, "the operator's close stands");
+
+  // The run's own repeat is still answered as its own.
+  const own = file(HERE);
+  move(own, "claimed", run.runId);
+  move(own, "done", run.runId);
+  const again = await callTool(run.token, "complete_task", { taskId: own.id });
+  assert.equal(again.isError, false, again.text);
+  assert.match(again.text, /already done, and it is recorded as completed by this run/);
+});
+
 test("board tools refuse non-string text and ids rather than coercing them", async () => {
   const run = seedRun(HERE);
   const held = file(HERE);
