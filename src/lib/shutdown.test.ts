@@ -85,11 +85,15 @@ const lockFile = path.join(config.DATA_DIR, "server.lock");
  * turns forward carrying their original timestamps, so a record written before
  * the spawn is one this deliberately does not count.
  */
-function appendTranscript(messageId: string, requestId: string): void {
+function appendTranscript(
+  messageId: string,
+  requestId: string,
+  sessionId: string = SESSION,
+): void {
   const record = {
     type: "assistant",
     cwd: path.join(tmp, "workspace", "project"),
-    sessionId: SESSION,
+    sessionId,
     requestId,
     timestamp: new Date().toISOString(),
     message: {
@@ -103,7 +107,7 @@ function appendTranscript(messageId: string, requestId: string): void {
     },
   };
   fs.appendFileSync(
-    path.join(projects, "session.jsonl"),
+    path.join(projects, `${sessionId}.jsonl`),
     `${JSON.stringify(record)}\n`,
   );
 }
@@ -306,6 +310,9 @@ describe("shutting down with a work cycle in flight", () => {
 
     const row = getRun("orphaned-cycle")!;
     assert.ok(row.spent_usd_est > 0);
+    // The cycle was spawned and billed, so the cap has to have it: the loop
+    // that would have written `iterations` is the one that never finished.
+    assert.equal(row.iterations, 2);
     assert.equal(row.active_iteration, null);
     assert.equal(row.active_started_at, null);
 
@@ -326,7 +333,7 @@ describe("shutting down with a work cycle in flight", () => {
     assert.equal(getRun("orphaned-cycle")!.spent_usd_est, before);
   });
 
-  it("leaves no run claiming an open cycle after a boot reconcile", () => {
+  it("leaves no run claiming an open cycle after a boot reconcile", async () => {
     // The other half of the same criterion, for the endings the shutdown handler
     // never reaches — a SIGKILL, an OOM, a host that lost power. Nothing else
     // clears these columns, and `instanceSpend` reads `active_started_at` for a
@@ -359,7 +366,7 @@ describe("shutting down with a work cycle in flight", () => {
       );
     assert.equal(crashed.changes, 1);
 
-    reconcileOnBoot();
+    await reconcileOnBoot();
 
     const row = getRun("crashed-mid-cycle")!;
     assert.equal(row.active_iteration, null);
@@ -369,6 +376,57 @@ describe("shutting down with a work cycle in flight", () => {
     // No shutdown reached it to record a child, so `failed` is what says so.
     assert.equal(row.restart_cut_cycle, 0);
     assert.equal(cycleCutByRestart(row), true);
+  });
+
+  it("recovers at the next boot what a cycle cut off by a hard stop spent, and counts it", async () => {
+    // The state a SIGKILL, an OOM kill or a lost host leaves: a `running` row
+    // with its cycle open and the cycle's transcript on disk, and no shutdown
+    // handler having run at all. The boot used to null the two columns first,
+    // which made the spend unrecoverable for good and left the cycle off the
+    // cap, so a run picked up on `maxIterations: 1` was handed it again.
+    const session = "bbbbbbbb-0000-0000-0000-000000000002";
+    const startedAt = Date.now() - 1_000;
+    db()
+      .prepare(
+        "INSERT INTO runs (id, folder, prompt, model, status, budget, max_iterations," +
+          " iterations, created_at, spent_usd, spent_tokens, session_id," +
+          " active_iteration, active_started_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      )
+      .run(
+        "killed-hard",
+        path.join(tmp, "workspace", "project"),
+        "task",
+        null,
+        "running",
+        JSON.stringify({ maxIterations: 1, maxRunCostUSD: 5 }),
+        1,
+        0,
+        startedAt,
+        0,
+        0,
+        session,
+        1,
+        startedAt,
+      );
+    appendTranscript("msg_hard_kill", "req_hard_kill", session);
+
+    await reconcileOnBoot();
+
+    const row = getRun("killed-hard")!;
+    assert.equal(row.status, "failed");
+    assert.ok(
+      row.spent_usd_est > 0,
+      `the killed cycle's spend must be recovered at boot, got ${row.spent_usd_est}`,
+    );
+    assert.ok(row.spent_tokens_est > 0);
+    assert.equal(row.iterations, 1, "the killed cycle must count against the cycle cap");
+    assert.equal(row.active_iteration, null);
+    assert.equal(row.active_started_at, null);
+    const said = runEvents("killed-hard").events.map((e) => JSON.stringify(e.payload));
+    assert.ok(
+      said.some((t) => /\$\d+\.\d\d is reconciled from this session's transcripts/.test(t)),
+      "the recovered spend has to be named in the run's log",
+    );
   });
 });
 
@@ -647,3 +705,4 @@ describe("shutting down with a child that is not a work cycle", () => {
     assert.equal(row.error, SHUTDOWN_REFUSAL);
   });
 });
+

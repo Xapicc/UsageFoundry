@@ -172,7 +172,7 @@ export async function register() {
         });
       }
 
-      reconcileOnBoot();
+      await reconcileOnBoot();
 
       // Same problem, different table: a review is a child process too, and a
       // row left saying `running` would spin a progress indicator for ever.

@@ -277,7 +277,7 @@ describe("a run that asks for a stack", () => {
     // waiting for, so its age is not a reason to close it out.
     db().prepare("UPDATE runs SET paused_at = ? WHERE id = ?").run(Date.now() - 7 * 86_400_000, id);
 
-    reconcileOnBoot();
+    await reconcileOnBoot();
     const kept = getRun(id)!;
     assert.equal(kept.status, "waiting-for-stack", kept.stop_reason ?? "");
     assert.equal(kept.restart_closed, 0);

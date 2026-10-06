@@ -35,3 +35,4 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
   - And all of it is the owner's to do
   - `deliverRun` is gated and waited on as `landRun` is
 - A restart must close out its own runs, except a recent pause. (was line 20)
+  - Before it decides anything it reconciles the cycles a hard stop left open

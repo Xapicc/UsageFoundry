@@ -161,6 +161,15 @@
   starts, so no half-written `MERGE_HEAD` was produced; the harness is not in
   the tree.
 
+- **The boot recovers what a hard-killed cycle spent, and counts it,
+  2026-10-06**, `shutdown.test.ts`'s fifth case, a `running` row with its
+  cycle open and its transcript on disk inserted by hand: at `50d60d8`
+  `reconcileOnBoot` left it `failed` with `iterations` 0, `spent_usd_est` 0
+  and nothing on its log; with the reconciliation ahead of the UPDATE that
+  nulls the pair, `spent_usd_est` above zero, `iterations` 1 and a log line
+  naming the dollars. The task's own reproduction, given an `await`, passed
+  too. Caveat: no process was killed; see the open item below.
+
 ## Not yet verified by hand
 
 - **The `chat_proposals` rebuild on a real upgraded volume**, in a running
@@ -198,3 +207,12 @@
   `docker compose restart app`, and `GET /api/status`'s `.schemaFaults` should
   hold one `downgrade` naming 99, its line in `docker compose logs`; a second
   restart clears it.
+
+- **The boot's reconciliation after a real hard death (2026-10-06).** The
+  fifth `shutdown.test.ts` case inserts the row a `SIGKILL` leaves; nothing
+  has killed a container mid-cycle and read the row back, or timed the boot's
+  transcript scan on a large `~/.claude`. Settle: start a run, `docker kill
+  usagefoundry` during its first cycle, `docker compose up -d`, then the
+  run's log should say the server stopped "without shutting down cleanly"
+  with a dollar figure, its work cycles should read 1, and `docker compose
+  logs usagefoundry | grep 'Reconciled the spend'` should print one line.

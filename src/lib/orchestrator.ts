@@ -13238,39 +13238,57 @@ function cyclesInFlight(): RunRow[] {
  * restart, so a run picked up afterwards carries a guard reading that is a
  * floor — the same understatement that existed before the split, now confined
  * to a run whose model is unpriced *and* whose cycle died in a restart.
+ *
+ * The cycle is charged to `iterations` in the same statement. The loop counts
+ * a cycle into its local before the spawn and writes it to the row only after
+ * the cycle returns, so a cycle no loop came back for was billed and never
+ * counted: a run picked up on `maxIterations: 1` was handed that cycle again.
+ *
+ * `crash` is the boot's call, for a process that never reached its shutdown —
+ * a `SIGKILL`, an OOM kill, a host that lost power — and differs only in what
+ * the run's log says happened.
  */
-export async function reconcileInterruptedCycles(): Promise<number> {
+export async function reconcileInterruptedCycles(
+  cause: "shutdown" | "crash" = "shutdown",
+): Promise<number> {
   let recovered = 0;
 
   for (const run of cyclesInFlight()) {
     const est = await reconcileKilledCycle(run.session_id, run.active_started_at!);
 
     // Relative, and guarded on the column the loop clears: whichever of the two
-    // writes lands second is a no-op rather than a second charge.
+    // writes lands second is a no-op rather than a second charge. The loop's
+    // own write of `iterations` is absolute and its local already holds this
+    // cycle, so landing after this one it writes the same count.
     const wrote = db()
       .prepare(
         "UPDATE runs SET spent_usd_est = spent_usd_est + ?," +
           " spent_tokens_est = spent_tokens_est + ?," +
+          " iterations = MAX(iterations, COALESCE(active_iteration, iterations))," +
           " active_iteration = NULL, active_started_at = NULL" +
           " WHERE id = ? AND active_started_at IS NOT NULL",
       )
       .run(est?.costUSD ?? 0, est?.tokens ?? 0, run.id);
     if (wrote.changes !== 1) continue;
 
+    const what =
+      cause === "shutdown"
+        ? `The server shut down during work cycle ${run.active_iteration ?? "?"}`
+        : `The server stopped during work cycle ${run.active_iteration ?? "?"} ` +
+          "without shutting down cleanly";
     if (est) {
       recovered += 1;
       log(
         run.id,
-        `The server shut down during work cycle ${run.active_iteration ?? "?"}. ` +
-          `Claude Code never reported what it cost, so $${est.costUSD.toFixed(2)} ` +
-          "is reconciled from this session's transcripts rather than measured.",
+        `${what}. Claude Code never reported what it cost, so ` +
+          `$${est.costUSD.toFixed(2)} is reconciled from this session's ` +
+          "transcripts rather than measured.",
       );
     } else {
       log(
         run.id,
-        `The server shut down during work cycle ${run.active_iteration ?? "?"} and ` +
-          "no transcript records for it could be read, so whatever that cycle " +
-          "spent is missing from this run's total.",
+        `${what} and no transcript records for it could be read, so whatever ` +
+          "that cycle spent is missing from this run's total.",
       );
     }
   }
@@ -13717,12 +13735,25 @@ export function isRunning(id: string): boolean {
  * not call `releaseDependents`, because nothing a boot does may put work in the
  * queue.
  */
-export function reconcileOnBoot(): void {
+export async function reconcileOnBoot(): Promise<void> {
+  // What those cycles spent, while the columns that bound the transcript read
+  // still say where each began. The shutdown handler's mop-up does this for
+  // the runs it reached; these are the rest, and nulling the pair first made
+  // their spend unrecoverable for good. The one `await` in this function, and
+  // ahead of everything it decides: the transcripts are still on disk, and
+  // nothing else runs at a boot to need the rows in the meantime.
+  const recovered = await reconcileInterruptedCycles("crash");
+  if (recovered > 0) {
+    console.warn(
+      `[usagefoundry] Reconciled the spend of ${recovered} work cycle(s) the last ` +
+        "server stopped in without shutting down.",
+    );
+  }
+
   // No cycle is in flight at a boot, on any path: this process has just
   // started, and a non-null pair here names a cycle that died with the previous
-  // one. The shutdown handler clears them for the runs it reached; this covers
-  // the rest — a `SIGKILL`, an OOM, a host that lost power — where nothing ran
-  // at all. Before the early return below, because a row can be left claiming
+  // one. The pass above clears it for every `running` row; this covers the
+  // rest. Before the early return below, because a row can be left claiming
   // an open cycle without being one this pass would otherwise touch.
   db()
     .prepare(

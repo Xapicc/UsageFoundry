@@ -279,19 +279,19 @@ function blockOf(
 }
 
 /** The boot, in `src/instrumentation.ts`'s order. */
-function boot(): void {
-  orch.reconcileOnBoot();
+async function boot(): Promise<void> {
+  await orch.reconcileOnBoot();
   workflows.reconcileBlocksOnBoot();
 }
 
 describe("a waiting block whose workflow kept a run across the restart", () => {
-  it("is left waiting rather than written off", () => {
+  it("is left waiting rather than written off", async () => {
     const { instanceId, runId } = scene("Nightly build", {
       status: "paused",
       pausedAt: Date.now() - HOUR,
     });
 
-    boot();
+    await boot();
 
     // The exception `reconcileOnBoot` makes, unchanged: the head survives.
     assert.equal(orch.getRun(runId)!.status, "paused");
@@ -302,13 +302,13 @@ describe("a waiting block whose workflow kept a run across the restart", () => {
     assert.equal(block.finishedAt, null);
   });
 
-  it("is decided by the next advance pass, on what is true then", () => {
+  it("is decided by the next advance pass, on what is true then", async () => {
     const { instanceId, runId } = scene("Release train", {
       status: "paused",
       pausedAt: Date.now() - HOUR,
     });
 
-    boot();
+    await boot();
     // While the run is parked there is still nothing to decide: a live
     // predecessor is `pending`, not a verdict.
     workflows.advanceInstances();
@@ -338,10 +338,10 @@ describe("a waiting block whose workflow kept a run across the restart", () => {
 });
 
 describe("a waiting block with nothing left of its workflow", () => {
-  it("is closed out when the boot failed the run in front of it", () => {
+  it("is closed out when the boot failed the run in front of it", async () => {
     const { instanceId, runId } = scene("Broken build", { status: "running" });
 
-    boot();
+    await boot();
 
     assert.equal(orch.getRun(runId)!.status, "failed");
     const block = blockOf(instanceId);
@@ -350,14 +350,14 @@ describe("a waiting block with nothing left of its workflow", () => {
     assert.match(block.error ?? "", /closed out by the same restart/);
   });
 
-  it("is closed out when the pause was too stale to keep", () => {
+  it("is closed out when the pause was too stale to keep", async () => {
     const { instanceId, runId } = scene("Stale pause", {
       status: "paused",
       // Past `resumeGraceHours`, which defaults to 24.
       pausedAt: Date.now() - 48 * HOUR,
     });
 
-    boot();
+    await boot();
 
     assert.equal(orch.getRun(runId)!.status, "stopped");
     const block = blockOf(instanceId);
@@ -365,7 +365,7 @@ describe("a waiting block with nothing left of its workflow", () => {
     assert.match(block.error ?? "", /closed out by the same restart/);
   });
 
-  it("is closed out when the restart caught a halt half way through", () => {
+  it("is closed out when the restart caught a halt half way through", async () => {
     // The one instance whose blocks must come down however live its members
     // are: `stopInstance` had already decided this workflow was over.
     const { instanceId, runId } = scene(
@@ -374,7 +374,7 @@ describe("a waiting block with nothing left of its workflow", () => {
       "stopping",
     );
 
-    boot();
+    await boot();
 
     assert.equal(orch.getRun(runId)!.status, "paused");
     const block = blockOf(instanceId);
@@ -384,13 +384,13 @@ describe("a waiting block with nothing left of its workflow", () => {
 });
 
 describe("a looping block whose workflow kept its pass across the restart", () => {
-  it("is left looping rather than failed", () => {
+  it("is left looping rather than failed", async () => {
     const { instanceId, runId } = loopScene("Docs sweep", {
       status: "paused",
       pausedAt: Date.now() - HOUR,
     });
 
-    boot();
+    await boot();
 
     assert.equal(orch.getRun(runId)!.status, "paused");
     const loop = blockOf(instanceId, "L");
@@ -407,13 +407,13 @@ describe("a looping block whose workflow kept its pass across the restart", () =
     assert.equal(loop.finishedAt, null);
   });
 
-  it("holds the blocks behind it rather than writing them off", () => {
+  it("holds the blocks behind it rather than writing them off", async () => {
     const { instanceId } = loopScene("Release notes", {
       status: "paused",
       pausedAt: Date.now() - HOUR,
     });
 
-    boot();
+    await boot();
     // The verdict a live loop gives its successors is `pending`; a failed one
     // gives them "could not repeat its task", which is what a restart used to
     // decide here while the pass was still committing to their branch.
@@ -427,12 +427,12 @@ describe("a looping block whose workflow kept its pass across the restart", () =
 });
 
 describe("a looping block with nothing left of its workflow", () => {
-  it("is closed out when the boot failed the pass it was on", () => {
+  it("is closed out when the boot failed the pass it was on", async () => {
     const { instanceId, runId } = loopScene("Abandoned sweep", {
       status: "running",
     });
 
-    boot();
+    await boot();
 
     assert.equal(orch.getRun(runId)!.status, "failed");
     const loop = blockOf(instanceId, "L");
@@ -442,7 +442,7 @@ describe("a looping block with nothing left of its workflow", () => {
     assert.match(loop.error ?? "", /closed out by the same restart/);
   });
 
-  it("is closed out when the restart caught a halt half way through", () => {
+  it("is closed out when the restart caught a halt half way through", async () => {
     // A live pass does not spare a loop whose workflow was already coming
     // down: `stopInstance` had decided this graph was over before the boot.
     const { instanceId, runId } = loopScene(
@@ -451,7 +451,7 @@ describe("a looping block with nothing left of its workflow", () => {
       "stopping",
     );
 
-    boot();
+    await boot();
 
     assert.equal(orch.getRun(runId)!.status, "paused");
     const loop = blockOf(instanceId, "L");
@@ -553,12 +553,12 @@ describe("a run waiting on another run across the restart", () => {
       .run(runId, dependsOn, edge, Date.now());
   }
 
-  it("stays waiting behind a run the boot kept paused", () => {
+  it("stays waiting behind a run the boot kept paused", async () => {
     const a = runRow("paused", { pausedAt: Date.now() - HOUR });
     const b = runRow("waiting");
     dependOn(b, a);
 
-    boot();
+    await boot();
 
     assert.equal(orch.getRun(a)!.status, "paused");
     const row = orch.getRun(b)!;
@@ -567,14 +567,14 @@ describe("a run waiting on another run across the restart", () => {
     assert.equal(row.finished_at, null);
   });
 
-  it("ends naming the run the boot closed out, and so does everything behind it", () => {
+  it("ends naming the run the boot closed out, and so does everything behind it", async () => {
     const a = runRow("running", { iterations: 1 });
     const b = runRow("waiting");
     const c = runRow("waiting");
     dependOn(b, a, "on-finish");
     dependOn(c, b);
 
-    boot();
+    await boot();
 
     assert.equal(orch.getRun(a)!.status, "failed");
     const behindA = orch.getRun(b)!;
@@ -599,14 +599,14 @@ describe("a run waiting on another run across the restart", () => {
     );
   });
 
-  it("stays waiting behind a completed run while new work is held", () => {
+  it("stays waiting behind a completed run while new work is held", async () => {
     const a = runRow("completed", { iterations: 1 });
     const b = runRow("waiting");
     dependOn(b, a);
 
     settings.setNewWorkPaused(true);
     try {
-      boot();
+      await boot();
 
       const row = orch.getRun(b)!;
       assert.equal(row.status, "waiting", "the restart closed nothing it waits for");
