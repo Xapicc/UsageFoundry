@@ -109,6 +109,27 @@ describe("normalizeAgentInput", () => {
     });
   }
 
+  // `String()` read `{}` as "[object Object]", so the agent a run was started
+  // *as* carried that as its entire system prompt — non-empty, so none of the
+  // refusals above fired.
+  for (const prompt of [{ text: "You review code." }, ["You review", "code."], 42, true]) {
+    it(`refuses a prompt of ${JSON.stringify(prompt)} by name instead of reading it as text`, () => {
+      const parsed = normalizeAgentInput({ ...valid, prompt });
+      assert.equal(parsed.ok, false);
+      assert(!parsed.ok);
+      assert.match(parsed.error, /"prompt" has to be a string when it is given/);
+      assert.doesNotMatch(parsed.error, /\[object Object\]/);
+    });
+  }
+
+  it("reads a null or missing prompt as the empty one it always was", () => {
+    for (const prompt of [null, undefined]) {
+      const parsed = normalizeAgentInput({ ...valid, prompt });
+      assert(!parsed.ok);
+      assert.match(parsed.error, /agent needs a prompt/);
+    }
+  });
+
   /**
    * Measured: a `--agents` member named `general-purpose` does not appear as a
    * second entry in what `claude --agent <unknown>` lists. So `--agent Explore`
@@ -428,6 +449,13 @@ describe("parseRunAgent / runAgentDefinitions", () => {
       assert.equal(parseRunAgent(JSON.stringify(damaged)), null);
     });
   }
+
+  it("reads a stored prompt that is not text as no agent, not as \"[object Object]\"", () => {
+    for (const prompt of [{ text: "You review code." }, ["You review code."], 42]) {
+      const damaged = { ...JSON.parse(frozen), prompt };
+      assert.equal(parseRunAgent(JSON.stringify(damaged)), null, JSON.stringify(prompt));
+    }
+  });
 
   it("collapses a blank stored model to null, the spelling of inherit", () => {
     const noModel = JSON.stringify({ ...JSON.parse(frozen), model: "" });

@@ -4891,6 +4891,8 @@ function pendingLimitMessage(count: number): string {
  * template weeks later and wondering when it changed.
  */
 function saveTemplate(args: Record<string, unknown>, chatId: string) {
+  const notString = nonStringArg(args, "prompt");
+  if (notString) return notString;
   const prompt = String(args.prompt ?? "").trim();
   if (!prompt) return text("A template needs a prompt.", true);
 
@@ -5344,6 +5346,8 @@ function proposeRun(args: Record<string, unknown>, chatId: string, decision: Mod
     }
   }
 
+  const notPrompt = nonStringArg(args, "promptOverride");
+  if (notPrompt) return notPrompt;
   const promptOverride = String(args.promptOverride ?? "").trim() || null;
 
   // Checked against a list of models, unlike every version of this route before

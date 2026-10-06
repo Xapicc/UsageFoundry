@@ -974,6 +974,47 @@ test("the chat's read tools refuse a non-string filter by name rather than searc
   assert.equal(all.isError, false, all.text);
 });
 
+test("save_template and propose_run refuse a prompt that is not a string and write nothing", async () => {
+  const { token, proposals } = proposingChat();
+  const templates = () =>
+    (db().prepare("SELECT COUNT(*) AS n FROM run_templates").get() as { n: number }).n;
+  const before = templates();
+
+  for (const prompt of [{ text: "Review the diff." }, ["Review", "the diff."], 42]) {
+    const saved = await callTool(token, "save_template", { name: "Reviewer", prompt });
+    assert.equal(saved.isError, true, `save_template took ${JSON.stringify(prompt)}: ${saved.text}`);
+    assert.match(saved.text, /"prompt" has to be a string/);
+    assert.doesNotMatch(saved.text, /\[object Object\]/);
+  }
+  assert.equal(templates(), before, "no template was saved");
+
+  for (const promptOverride of [{ text: "Be brief." }, ["Be", "brief."], true]) {
+    const proposed = await callTool(token, "propose_run", {
+      mountId: MOUNT,
+      folder: "RepoOne",
+      title: "Overridden",
+      task: "Do a thing.",
+      promptOverride,
+    });
+    assert.equal(proposed.isError, true, `propose_run took ${JSON.stringify(promptOverride)}: ${proposed.text}`);
+    assert.match(proposed.text, /"promptOverride" has to be a string/);
+  }
+  assert.equal(proposals(), 0, "no card was written");
+
+  // A string still saves and still proposes: the refusal is the type, not the field.
+  const saved = await callTool(token, "save_template", { name: "Reviewer", prompt: "Review the diff." });
+  assert.equal(saved.isError, false, saved.text);
+  assert.equal(templates(), before + 1);
+  const ok = await callTool(token, "propose_run", {
+    mountId: MOUNT,
+    folder: "RepoOne",
+    title: "Overridden",
+    task: "Do a thing.",
+    promptOverride: "Be brief.",
+  });
+  assert.equal(ok.isError, false, ok.text);
+});
+
 /**
  * A chat to propose into, and a count of the rows it holds, because what the
  * proposal refusals below pin is that nothing reached the operator's panel:

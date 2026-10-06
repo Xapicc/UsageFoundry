@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { db } from "./db";
 import { CLAUDE_CONFIG_DIR } from "./config";
+import { notStringRefusal } from "./http";
 import {
   MAX_AGENT_DESCRIPTION,
   MAX_AGENT_NAME,
@@ -319,6 +320,11 @@ export function normalizeAgentInput(raw: unknown): AgentNormalization {
     };
   }
 
+  // Refused rather than read through `String()`: this is the system prompt a
+  // run is started *as*, and an object sent here was saved as the agent whose
+  // whole instructions are "[object Object]".
+  const notString = notStringRefusal("prompt", o.prompt);
+  if (notString) return { ok: false, error: notString };
   const prompt = String(o.prompt ?? "").trim();
   if (!prompt) {
     return {
@@ -560,6 +566,9 @@ export function parseRunAgent(raw: string | null | undefined): AgentDefinition |
   if (typeof parsed !== "object" || parsed === null) return null;
 
   const o = parsed as Record<string, unknown>;
+  // No agent rather than one instructed by "[object Object]": this reader is
+  // total, so a prompt that is not text is read as a definition that is not one.
+  if (notStringRefusal("prompt", o.prompt)) return null;
   const name = String(o.name ?? "").trim();
   const description = String(o.description ?? "").trim();
   const prompt = String(o.prompt ?? "").trim();
