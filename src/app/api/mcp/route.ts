@@ -2049,7 +2049,7 @@ function subjectRefusal(subject: CapabilitySubject, name: string): string {
  * everything past the 20,000-row cap, so auditing a credential-free refusal
  * hands any caller who can reach this path a lever on the audit table itself —
  * twenty thousand correctly-refused requests, and every line naming a run that
- * was started, a setting that was changed or a sign-in that failed is gone.
+ * was started, a setting that was changed or a sign-in that succeeded is gone.
  *
  * Only the handler that already has a subject is wrapped, which keeps the case
  * the table exists for: a real capability whose tool call is refused — a

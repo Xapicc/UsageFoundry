@@ -559,3 +559,74 @@ test("an unattributable guesser is still held to the install-wide budget", async
     clearAllAttempts();
   }
 });
+
+/**
+ * What a refusal may write, on the one write path anybody can reach. Every
+ * answer this route gave used to go through `auditMutation` into `request_log`,
+ * which is trimmed to its newest 20,000 rows on every insert, so twenty
+ * thousand junk sign-ins — eighteen thousand of them 429s answered to an address
+ * already locked out — pushed out every line an authenticated request had
+ * written, in about six seconds and with no credential. `/api/mcp` and
+ * `/api/logout` had already been taken out of that table for the same lever.
+ */
+test("refused sign-ins cannot evict an audited mutation, and leave their trace on stdout", async () => {
+  const { recordRequest } = await import("../../../lib/requestLog");
+  clearAllAttempts();
+  dbMod.db().prepare("DELETE FROM request_log").run();
+  recordRequest({
+    ts: Date.now(),
+    method: "POST",
+    path: "/api/runs",
+    status: 201,
+    subject: "run-that-matters",
+    actor: "session",
+    address: "10.0.0.250",
+    durationMs: 5,
+  });
+
+  const refusals: string[] = [];
+  const warn = console.warn;
+  console.warn = (line: unknown) => {
+    if (typeof line === "string" && line.includes('"login.refused"')) refusals.push(line);
+  };
+
+  const source = "198.51.100.9";
+  let sent = 0;
+  try {
+    for (let batch = 0; batch < 10; batch++) {
+      const answers = await Promise.all(Array.from({ length: 2_001 }, () => wrongFrom(source)));
+      sent += answers.length;
+      assert.ok(answers.every((r) => r.status === 401 || r.status === 429));
+    }
+  } finally {
+    console.warn = warn;
+    clearAllAttempts();
+  }
+
+  // Counted rather than compared whole: on a failure `deepEqual` diffs twenty
+  // thousand rows against one, and on the unfixed route that diff took this
+  // container past its memory limit and was killed.
+  const { n } = dbMod.db().prepare("SELECT COUNT(*) AS n FROM request_log").get() as {
+    n: number;
+  };
+  const kept = dbMod
+    .db()
+    .prepare("SELECT 1 FROM request_log WHERE subject = 'run-that-matters'")
+    .get();
+  assert.ok(kept, `${sent} refused sign-ins evicted an authenticated mutation's audit row`);
+  assert.equal(n, 1, `${sent} credential-free refusals must add nothing to the capped audit table`);
+  // Visible without being able to push anything out: one line per refusal on
+  // stdout, which nothing caps, naming the address and never the token.
+  assert.equal(refusals.length, sent);
+  assert.equal(refusals.some((line) => line.includes("f".repeat(TOKEN.length))), false);
+  assert.ok(refusals.every((line) => line.includes(source)));
+});
+
+test("a sign-in that succeeds is still audited", async () => {
+  dbMod.db().prepare("DELETE FROM request_log").run();
+  assert.equal((await post(TOKEN)).status, 200);
+  assert.deepEqual(
+    dbMod.db().prepare("SELECT method, path, status, actor FROM request_log").all(),
+    [{ method: "POST", path: "/api/login", status: 200, actor: "open" }],
+  );
+});

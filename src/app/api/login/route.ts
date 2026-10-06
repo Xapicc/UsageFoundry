@@ -6,7 +6,8 @@ import { NextResponse } from "next/server";
 import { AUTH_TOKEN, COOKIE_SECURE, authEnabled } from "../../../lib/config";
 import { isJsonObject } from "../../../lib/http";
 import { clearLoginFailures, reserveLoginAttempt } from "../../../lib/loginAttempts";
-import { auditMutation } from "../../../lib/requestLog";
+import { opsLog } from "../../../lib/ops";
+import { auditMutation, sourceAddress } from "../../../lib/requestLog";
 import { createSession } from "../../../lib/sessions";
 import {
   SESSION_COOKIE,
@@ -61,7 +62,23 @@ function clientSource(req: Request): string | null {
   return real ? real.slice(0, 100) : null;
 }
 
-async function postHandler(req: Request) {
+/**
+ * Only a sign-in that worked is audited, and every other answer goes to stdout.
+ *
+ * The path is exempt from the edge gate, so whoever reaches it has proved
+ * nothing, and it used to be wrapped in `auditMutation` whole — for the
+ * failures, as the earliest evidence of somebody trying tokens. But
+ * `request_log` is trimmed to its newest 20,000 rows on every insert, so that
+ * made every refusal a lever on the audit trail: twenty thousand junk sign-ins,
+ * most of them 429s answered to an address already locked out, pushed out every
+ * line an authenticated request had written, in seconds. That is the lever
+ * `/api/mcp` and `/api/logout` were already closed against, and the rule is the
+ * same: an exempted path's own refusal must not be written into a capped table.
+ * Bounding the 401s by the limiter would not do, because the budget refills
+ * every minute, and the evidence they were kept for is in `login_attempts`
+ * already, which is what the Settings page reports.
+ */
+export async function POST(req: Request): Promise<Response> {
   if (!authEnabled()) {
     // Deliberately not a success. This used to answer `{ ok: true }` with an
     // `authDisabled` flag nothing read, so signing in with any string at all
@@ -69,14 +86,17 @@ async function postHandler(req: Request) {
     // subject is the credential said nothing about there not being one. There
     // is no session to issue either: with no token there is nothing to sign a
     // cookie with, so a cookie here would be theatre.
-    return NextResponse.json(
-      {
-        authDisabled: true,
-        error:
-          "Authentication is disabled on this server: UF_AUTH_TOKEN is unset, " +
-          "so no token is required and none is being checked.",
-      },
-      { status: 409 },
+    return refused(
+      req,
+      NextResponse.json(
+        {
+          authDisabled: true,
+          error:
+            "Authentication is disabled on this server: UF_AUTH_TOKEN is unset, " +
+            "so no token is required and none is being checked.",
+        },
+        { status: 409 },
+      ),
     );
   }
 
@@ -93,12 +113,15 @@ async function postHandler(req: Request) {
     // distinguishable by what an attacker can read out of the response. The
     // status differs because a caller who *is* the operator needs to know that
     // waiting will help, and Retry-After is what says how long.
-    return NextResponse.json(
-      { error: "Invalid token" },
-      {
-        status: 429,
-        headers: { "retry-after": String(Math.ceil(verdict.retryAfterMs / 1000)) },
-      },
+    return refused(
+      req,
+      NextResponse.json(
+        { error: "Invalid token" },
+        {
+          status: 429,
+          headers: { "retry-after": String(Math.ceil(verdict.retryAfterMs / 1000)) },
+        },
+      ),
     );
   }
 
@@ -114,11 +137,23 @@ async function postHandler(req: Request) {
     // It is not the rate limit and never was: it is an `await` on a timer, so
     // it delays one request and serialises nothing.
     await uniformDelay();
-    return NextResponse.json({ error: "Invalid token" }, { status: 401 });
+    return refused(req, NextResponse.json({ error: "Invalid token" }, { status: 401 }));
   }
 
   clearLoginFailures(source);
+  return auditMutation(signIn)(req);
+}
 
+/** The refusal's trace, on the one channel nothing caps. Never the body. */
+function refused(req: Request, res: Response): Response {
+  opsLog("warn", "login.refused", {
+    status: res.status,
+    address: sourceAddress(req.headers),
+  });
+  return res;
+}
+
+async function signIn(req: Request): Promise<Response> {
   // A handle, not the secret. The cookie used to be UF_AUTH_TOKEN byte for
   // byte, so the browser jar held a thirty-day copy of the credential that
   // opens every route as a bearer header — and the only way to invalidate it
@@ -147,11 +182,3 @@ async function postHandler(req: Request) {
   });
   return res;
 }
-
-/**
- * Wrapped for the *failures*. A burst of 401s from one address is the earliest
- * evidence of somebody trying tokens, and it was recorded nowhere. The wrapper
- * logs the status and the source address and never the body, which on this one
- * route is the token itself.
- */
-export const POST = auditMutation(postHandler);
