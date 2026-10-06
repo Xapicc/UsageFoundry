@@ -4147,7 +4147,8 @@ function haltBlocks(instanceId: string, cause: string): number {
   // A review block's reviewers too: each is a billed child this instance
   // started, and left alone it ran to its answer under a page already reading
   // the workflow as stopped. Its row settles as the child exits, and
-  // `memberTally` counts it live until then.
+  // `memberTally` counts it live until then. `driveReviewItem` banks whatever
+  // it reported on the way out.
   for (const reviewId of runningReviewsOf(instanceId)) {
     const child = assistChild(reviewId);
     if (child) signalLadder(child);
@@ -6284,10 +6285,15 @@ function passState(
 async function startBlockTurn(instanceId: string, nodeId: string): Promise<void> {
   const instance = getInstance(instanceId);
   const node = instance ? blockNode(instance, nodeId) : undefined;
+  // Every refusal below settles with `costUSD: 0`, because nothing has been
+  // spawned and $0 is a fact rather than a gap: left out, `blockTurnSpend`
+  // reads it as a turn that died without reporting, and the block's Spent cell
+  // and the instance total both lose the word "measured" over a turn never paid.
   if (!instance || !node || node.kind !== "orchestrator" || node.fanOut === null) {
     settleBlock(instanceId, nodeId, {
       status: "failed",
       error: "This block is no longer in the workflow this run was started from.",
+      costUSD: 0,
     });
     return;
   }
@@ -6301,7 +6307,7 @@ async function startBlockTurn(instanceId: string, nodeId: string): Promise<void>
   if (node.agentId) {
     const missing = agentRefusal(node.agentId, agentKnowledgeOf(own));
     if (missing) {
-      settleBlock(instanceId, nodeId, { status: "failed", error: missing });
+      settleBlock(instanceId, nodeId, { status: "failed", error: missing, costUSD: 0 });
       return;
     }
   }
@@ -6317,7 +6323,7 @@ async function startBlockTurn(instanceId: string, nodeId: string): Promise<void>
     );
     const terminus = providerTerminusRefusal(node.provider, guards.budget);
     if (terminus) {
-      settleBlock(instanceId, nodeId, { status: "failed", error: terminus });
+      settleBlock(instanceId, nodeId, { status: "failed", error: terminus, costUSD: 0 });
       return;
     }
     if (node.provider === "local" && !getLocalSignIn()) {
@@ -6326,6 +6332,7 @@ async function startBlockTurn(instanceId: string, nodeId: string): Promise<void>
         error:
           "The runs this block emits go to the local model, and the local " +
           "provider is signed out. Sign in under Settings and start it again.",
+        costUSD: 0,
       });
       return;
     }
@@ -6342,7 +6349,7 @@ async function startBlockTurn(instanceId: string, nodeId: string): Promise<void>
   // block's behalf and a block holding its slot must still be refused by it.
   const refusal = (await windowRefusal()) ?? installBudgetRefusal();
   if (refusal) {
-    settleBlock(instanceId, nodeId, { status: "failed", error: refusal });
+    settleBlock(instanceId, nodeId, { status: "failed", error: refusal, costUSD: 0 });
     return;
   }
 
@@ -6559,9 +6566,13 @@ export function blockTurnSpend(result: TurnResult): BlockTurnSpend {
  * then have to chase.
  *
  * Latched on `status='thinking'`, so a settle arriving after a halt already
- * wrote the block off changes nothing — the same shape `finishTurn` uses on a
- * chat row, and for the same reason: the answer that got there first is the one
- * the operator was shown.
+ * wrote the block off changes nothing the operator reads — the same shape
+ * `finishTurn` uses on a chat row, and for the same reason: the answer that got
+ * there first is the one the operator was shown. **The money is not latched.**
+ * A halt writes a deciding block `failed` before it signals the child, so the
+ * settle that carries the dying turn's cost always arrives after the latch has
+ * closed; behind it, every halted turn left `$0.00` on its row and the instance
+ * total called that a complete measurement.
  *
  * Exported for `sweepPaused`'s reason and no other: this is the only door to
  * `createEmitted`, and its other end is a real child process exiting. Without a
@@ -6581,30 +6592,42 @@ export function settleBlock(
   // which wiped that guard note on every turn that did not itself fail.
   const settlement = blockSettlement(result, specs.length, splitNotes(row?.notes ?? null));
   const spend = blockTurnSpend(result);
-  const settled =
+  const settled = db().transaction((): boolean => {
     db()
       .prepare(
         `UPDATE workflow_instance_blocks
-            SET status=?, finished_at=?, error=?, session_id=COALESCE(?, session_id),
-                reply=?, notes=?,
-                cost_usd = cost_usd + ?, cost_usd_est = cost_usd_est + ?,
+            SET cost_usd = cost_usd + ?, cost_usd_est = cost_usd_est + ?,
                 cost_unreported = cost_unreported + ?, tokens = tokens + ?
-          WHERE instance_id=? AND node_id=? AND status='thinking'`,
+          WHERE instance_id=? AND node_id=?`,
       )
       .run(
-        settlement.status,
-        Date.now(),
-        settlement.error,
-        result.sessionId ?? null,
-        settlement.reply,
-        settlement.notes.join("\n") || null,
         spend.costUSD,
         spend.costGuardUSD,
         spend.unreported,
         result.tokens ?? 0,
         instanceId,
         nodeId,
-      ).changes > 0;
+      );
+    return (
+      db()
+        .prepare(
+          `UPDATE workflow_instance_blocks
+              SET status=?, finished_at=?, error=?, session_id=COALESCE(?, session_id),
+                  reply=?, notes=?
+            WHERE instance_id=? AND node_id=? AND status='thinking'`,
+        )
+        .run(
+          settlement.status,
+          Date.now(),
+          settlement.error,
+          result.sessionId ?? null,
+          settlement.reply,
+          settlement.notes.join("\n") || null,
+          instanceId,
+          nodeId,
+        ).changes > 0
+    );
+  })();
   if (!settled) return;
 
   // `instanceIsOpen` rather than a test for `started`, and the difference is
@@ -6962,9 +6985,11 @@ function branchLabel(runId: string): string {
  * Two ways out, and neither of them is a clock. Every row terminal is the merge
  * having finished, which is the answer this exists to wait for however long it
  * takes. The block no longer `thinking` is a halt, which has already written
- * the row and whose answer wins — `finishMergeBlock`'s guarded UPDATE would
- * refuse ours anyway, and returning here saves reading git for a workflow being
- * taken down.
+ * the row and whose answer wins — `finishMergeBlock`'s guarded status write
+ * would refuse ours anyway. A halt still waits out the one row in flight,
+ * because the halt leaves that merge to finish and its resolution is billed:
+ * returning before it reports would leave its cost off the block, which is the
+ * only place the instance total reads it from.
  */
 async function awaitBatch(
   batchId: string,
@@ -6974,7 +6999,12 @@ async function awaitBatch(
   for (;;) {
     const rows = batchRows(batchId);
     if (!rows.some((r) => isQueueActive(r.status))) return rows;
-    if (getBlock(instanceId, nodeId)?.status !== "thinking") return rows;
+    if (
+      getBlock(instanceId, nodeId)?.status !== "thinking" &&
+      !rows.some((r) => r.status === "landing" || r.status === "resolving")
+    ) {
+      return rows;
+    }
     await new Promise((resolve) => setTimeout(resolve, MERGE_POLL_MS).unref?.());
   }
 }
@@ -6986,27 +7016,31 @@ async function awaitBatch(
  * that wrote the block off while the queue was draining keeps its own wording.
  * `emitted` for a success and `failed` for anything else, reusing the vocabulary
  * every liveness query and every reconciler already reads — see `BlockStatus`.
+ * The cost is outside the latch for `settleBlock`'s reason: a resolution billed
+ * before the halt was still billed.
  */
 function finishMergeBlock(
   instanceId: string,
   nodeId: string,
   result: { ok: boolean; note: string | null; costUSD?: number },
 ): void {
-  const settled =
+  const settled = db().transaction((): boolean => {
     db()
       .prepare(
-        `UPDATE workflow_instance_blocks
-            SET status=?, finished_at=?, error=?, cost_usd = cost_usd + ?
-          WHERE instance_id=? AND node_id=? AND status='thinking'`,
+        "UPDATE workflow_instance_blocks SET cost_usd = cost_usd + ?" +
+          " WHERE instance_id=? AND node_id=?",
       )
-      .run(
-        result.ok ? "emitted" : "failed",
-        Date.now(),
-        result.note,
-        result.costUSD ?? 0,
-        instanceId,
-        nodeId,
-      ).changes > 0;
+      .run(result.costUSD ?? 0, instanceId, nodeId);
+    return (
+      db()
+        .prepare(
+          `UPDATE workflow_instance_blocks SET status=?, finished_at=?, error=?
+            WHERE instance_id=? AND node_id=? AND status='thinking'`,
+        )
+        .run(result.ok ? "emitted" : "failed", Date.now(), result.note, instanceId, nodeId)
+        .changes > 0
+    );
+  })();
   if (!settled) return;
 
   promoteQueued();
@@ -7149,8 +7183,9 @@ const pause = () =>
  * reviews of the others.
  *
  * Its fix runs are this instance's runs — registered under this block — so the
- * instance budget, a halt and the page all cover them with no new code, and its
- * reviews' cost lands on the block's own row, which the instance total reads.
+ * instance budget, a halt and the page all cover them with no new code, and
+ * each review's cost lands on the block's own row as the review ends, which is
+ * what the instance total and its guard read.
  */
 // Exported for `reviewBlockRun.test.ts` and nothing else: the scheduler is
 // the only caller, and the alternative seam is a whole instance of billed runs.
@@ -7197,6 +7232,7 @@ export async function startReviewBlock(
 
   if (!reviewStillOpen(instanceId, nodeId)) return;
   const items = reviewItemsOf(instanceId, nodeId);
+  // No cost here: `bankReviewSpend` put each review's on the row as it ended.
   finishMergeBlock(instanceId, nodeId, {
     ok: true,
     note: reviewBlockSummary(
@@ -7206,10 +7242,48 @@ export async function startReviewBlock(
         note: item.note,
       })),
     ),
-    costUSD: items.reduce((sum, item) => sum + item.cost_usd, 0),
   });
 }
 
+/**
+ * Put one settled review's cost on its block's row, the moment it is known.
+ *
+ * As it lands rather than when the block ends, because the block row is all
+ * the instance total and its guard read: a review counted only at the end was
+ * invisible to both for as long as the block worked, so fix runs and blocks
+ * started meanwhile were guarded against a figure missing it — and lost
+ * outright when a halt ended the block first. Unlatched, for `settleBlock`'s
+ * reason. A failed review that reported nothing is a gap and not a zero, so it
+ * is counted in `cost_unreported`, as a deciding turn that died silent is.
+ */
+function bankReviewSpend(
+  instanceId: string,
+  blockId: string,
+  review: { status: string; cost_usd: number },
+): void {
+  db()
+    .prepare(
+      `UPDATE workflow_instance_blocks
+          SET cost_usd = cost_usd + ?, cost_unreported = cost_unreported + ?
+        WHERE instance_id=? AND node_id=?`,
+    )
+    .run(
+      review.cost_usd,
+      review.status === "failed" && review.cost_usd === 0 ? 1 : 0,
+      instanceId,
+      blockId,
+    );
+}
+
+/** One review's row once it has stopped running, or null if it is gone. */
+async function reviewSettled(reviewId: string): Promise<ReturnType<typeof getAssist>> {
+  let review = getAssist(reviewId);
+  while (review?.status === "running") {
+    await pause();
+    review = getAssist(reviewId);
+  }
+  return review;
+}
 
 /** One branch, from its first review to approved or set aside. */
 async function driveReviewItem(
@@ -7268,15 +7342,13 @@ async function driveReviewItem(
       if (child) signalLadder(child);
     }
 
-
-    let review = getAssist(started.id);
-    while (review && review.status === "running") {
-      if (!open()) return;
-      await pause();
-      review = getAssist(started.id);
-    }
+    // Waited out whatever the block's state, halted or not: the halt signals
+    // the reviewer rather than abandoning it, and what it reports on its way
+    // out is still this instance's money.
+    const review = await reviewSettled(started.id);
     if (!review) return;
     updateReviewItem(instanceId, blockId, originRunId, { addCost: review.cost_usd });
+    bankReviewSpend(instanceId, blockId, review);
     // Nothing awaits between this and `createRun` below, so this is also the
     // check immediately before the fix run is created.
     if (!open()) return;
@@ -8071,7 +8143,21 @@ export function reconcileBlocksOnBoot(): void {
   const thinking = db()
     .prepare(
       "UPDATE workflow_instance_blocks SET status='failed', finished_at=?," +
-        " error = CASE kind WHEN 'merge' THEN ? WHEN 'review' THEN ? ELSE ? END" +
+        " error = CASE kind WHEN 'merge' THEN ? WHEN 'review' THEN ? ELSE ? END," +
+        // A turn the restart killed was billed and never reported, so it is
+        // counted the way `blockTurnSpend` counts one killed any other way: a
+        // deciding block's own child always, and a review block's when a
+        // review of its was still unsettled — `driveReviewItem` banks each one
+        // only as it lands, and this one never will. A merge's resolution is
+        // a queue row's, which `reconcileMergeQueueOnBoot` answers for.
+        " cost_unreported = cost_unreported + CASE" +
+        " WHEN kind = 'orchestrator' THEN 1" +
+        " WHEN kind = 'review' AND EXISTS (SELECT 1 FROM workflow_review_items i" +
+        "   JOIN run_reviews rv ON rv.id = i.review_id" +
+        "  WHERE i.instance_id = workflow_instance_blocks.instance_id" +
+        "    AND i.block_id = workflow_instance_blocks.node_id" +
+        "    AND i.status = 'reviewing' AND rv.status <> 'completed') THEN 1" +
+        " ELSE 0 END" +
         " WHERE status='thinking'",
     )
     .run(

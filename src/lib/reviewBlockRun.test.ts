@@ -485,4 +485,29 @@ describe("a review block whose workflow is halted", () => {
     );
     assert.equal(workflows.getInstance("inst-halt")!.status, "stopped");
   });
+
+  it("keeps what its reviews billed in the instance total", async () => {
+    reviewScene("inst-total", {
+      runs: [
+        { id: "total-good", prompt: "Do it. APPROVE-ME", branch: "uf/repo-good" },
+        { id: "total-slow", prompt: "Do it. SLOW-ONE", branch: "uf/repo-bad" },
+      ],
+    });
+    const driving = workflows.startReviewBlock("inst-total", "r", ["total-good", "total-slow"]);
+    await until("the fast review to be approved", () =>
+      workflows.reviewItemsOf("inst-total", "r").some((i) => i.origin_run_id === "total-good" && i.status === "approved"));
+    await until("the slow review to be running", () => reviewRunning("total-slow"));
+    workflows.stopInstance("inst-total", { kind: "operator" });
+    await settledWithin(driving, 30_000, "startReviewBlock");
+    await until("the slow review to end", () => !reviewRunning("total-slow"));
+
+    const reviews = [...reviewsOf("total-good"), ...reviewsOf("total-slow")];
+    const billed = reviews.reduce((sum, r) => sum + r.cost_usd, 0);
+    // A review that ended with nothing reported is a gap, not a measured zero.
+    const silent = reviews.filter((r) => r.status === "failed" && r.cost_usd === 0).length;
+    const spend = workflows.instanceSpend("inst-total");
+    assert.ok(billed >= 0.02);
+    assert.equal(spend.spentUSD.toFixed(4), billed.toFixed(4), "the halted block's reviews are missing from the total");
+    assert.equal(spend.unmeasured, silent, "a reviewer killed before it reported reads as a measured $0.00");
+  });
 });
