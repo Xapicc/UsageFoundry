@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -27,9 +28,15 @@ import { after, describe, it } from "node:test";
  * `[value]` optional, none boolean — read from the same bundle. The root
  * command has no `.allowUnknownOption()` and no `.passThroughOptions()`, so an
  * unknown option is commander's `error: unknown option '<token>'` and exit 1,
- * which is what the stub does. It declares no subcommands, so it does not
- * model `enablePositionalOptions` stopping at one: that is a separate hazard,
- * and `--` does not change it.
+ * which is what the stub does.
+ *
+ * The stub also carries the root's subcommands, because `--` does not stop
+ * commander dispatching to one: `_parseCommand` appends every operand, the ones
+ * after the separator included, and runs `_dispatchSubcommand` when
+ * `_findCommand(operands[0])` names one. What keeps a prompt of exactly
+ * `update` a prompt is the order the CLI builds itself in, transcribed below as
+ * `printFastPath`: with `-p` ahead of any `--`, `pl` parses before it registers
+ * a single subcommand, so the root it dispatches from has none.
  *
  * The children are real processes started by the real spawn sites, with
  * `CLAUDE_BIN` pointing at the stub, because two of the three argvs are built
@@ -107,11 +114,55 @@ function parseOptions(argv) {
   }
   return { operands, unknown };
 }
-const parsed = parseOptions(process.argv.slice(2));
-const error = parsed.error || (parsed.unknown.length > 0 ? "unknown option '" + parsed.unknown[0] + "'" : null);
-fs.appendFileSync(${JSON.stringify(receivedFile)}, JSON.stringify(error ? { error } : { operands: parsed.operands }) + "\\n");
+// Every subcommand and alias the root has once \`pl\` has registered them, read
+// off the pinned 2.1.280 bundle: its own \`O.command(...)\` calls and those of
+// the four helpers it hands \`O\` to (\`mcp\`, \`edit-hook\`, \`plugin\`, and the
+// six hidden editors), \`grep -a -b -o -E '[A-Za-z_$]{1,4}\\.command\\("[^"]*"'\`.
+const SUBCOMMANDS = new Set([
+  "gateway", "auth", "project", "setup-token", "agents", "ultrareview",
+  "auto-mode", "remote-control", "rc", "doctor", "sandbox", "update", "upgrade",
+  "install", "import", "import-conversations", "mcp", "edit-hook", "plugin",
+  "plugins", "edit-permission-rules", "edit-memory-settings",
+  "edit-skill-overrides", "edit-sandbox-settings", "design-login",
+  "edit-chrome-settings",
+]);
+// \`pl\`'s \`if(T&&!U)return await O.parseAsync(process.argv)\`, which runs ahead
+// of every registration above: \`-p\` or \`--print\`, and no \`cc://\` token, each
+// looked for by \`oHn\` up to the first \`--\` with option values stepped over.
+function printFastPath(argv) {
+  let print = false;
+  let link = false;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--") break;
+    if (arg === "-p" || arg === "--print") print = true;
+    if (arg.startsWith("cc://") || arg.startsWith("cc+unix://")) link = true;
+    const kind = OPTIONS[arg];
+    if (kind === "required") i++;
+    else if (kind === "optional" && i + 1 < argv.length && !maybeOption(argv[i + 1])) i++;
+    else if (kind === "variadic") {
+      i++;
+      while (i + 1 < argv.length && !maybeOption(argv[i + 1])) i++;
+    }
+  }
+  return print && !link;
+}
+const argv = process.argv.slice(2);
+const parsed = parseOptions(argv);
+const subcommand =
+  !parsed.error && !printFastPath(argv) && SUBCOMMANDS.has(parsed.operands[0]) ? parsed.operands[0] : null;
+const error =
+  parsed.error || (!subcommand && parsed.unknown.length > 0 ? "unknown option '" + parsed.unknown[0] + "'" : null);
+fs.appendFileSync(
+  ${JSON.stringify(receivedFile)},
+  JSON.stringify(error ? { error } : subcommand ? { subcommand } : { operands: parsed.operands }) + "\\n",
+);
 if (error) {
   process.stderr.write("error: " + error + "\\n");
+  process.exit(1);
+}
+if (subcommand) {
+  process.stderr.write("ran the " + subcommand + " subcommand instead of a turn\\n");
   process.exit(1);
 }
 const session = "stub-session";
@@ -251,5 +302,65 @@ describe("a prompt that begins with a dash", () => {
     );
 
     assert.deepEqual(received().slice(before), [{ operands: [BULLETS] }]);
+  });
+});
+
+describe("a prompt that is exactly a subcommand's name", () => {
+  let runId = "";
+
+  // Without this the three cases below would pass against a stub that never
+  // dispatches at all.
+  it("is dispatched by the stub when the argv carries no -p", () => {
+    const before = received().length;
+    const child = spawnSync(process.execPath, [stub, "--", "update"]);
+    assert.equal(child.status, 1);
+    assert.deepEqual(received().slice(before), [{ subcommand: "update" }]);
+  });
+
+  it("reaches a work cycle as its follow-up", async () => {
+    saveSettings({ freshStartContextTokens: null });
+    const run = createRun({
+      folder: "project",
+      mountId: null,
+      prompt: "Read the tree.",
+      budget: { maxIterations: 1 },
+      origin: "form",
+    });
+    runId = run.id;
+    await settledRun(run.id);
+
+    const before = received().length;
+    const reopened = reopenRun(run.id, { maxIterations: 2 }, "update");
+    assert.ok(reopened.ok, JSON.stringify(reopened));
+    await settledRun(run.id);
+    assert.deepEqual(received().slice(before), [{ operands: ["update"] }]);
+  });
+
+  it("reaches a chat turn as its message, after the trim", async () => {
+    const before = received().length;
+    const chat = createChat();
+    const sent = await sendChatMessage(chat.id, " update ");
+    assert.ok(sent.ok, JSON.stringify(sent));
+    await until(`chat ${chat.id}`, () => getChat(chat.id)?.status !== "thinking");
+
+    assert.deepEqual(received().slice(before), [{ operands: ["update"] }]);
+  });
+
+  it("reaches a review or validation child as its prompt", async () => {
+    const before = received().length;
+    const run = getRun(runId)!;
+    const started = startAssist({
+      run,
+      kind: "review",
+      cwd: project,
+      permissionMode: "plan",
+      prompt: "doctor",
+    });
+    assert.ok(started.ok, JSON.stringify(started));
+    await until("the review", () =>
+      listReviews(run.id, "review").every((r) => r.status !== "running"),
+    );
+
+    assert.deepEqual(received().slice(before), [{ operands: ["doctor"] }]);
   });
 });

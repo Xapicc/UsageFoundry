@@ -1050,9 +1050,12 @@ const TASKBOARD_NOTICE =
  * its argv, because a flag pushed after it would reach the CLI as a second
  * operand and be ignored, which fails nothing. Passing the prompt on stdin
  * would avoid the separator, but changes how all three children are started
- * for a defect this closes on its own. What `--` does not cover is a prompt
- * that is exactly a subcommand's name: commander dispatches the first operand
- * to a subcommand whichever side of the separator it came from.
+ * for a defect this closes on its own. A prompt that is exactly a subcommand's
+ * name — `update`, `doctor` — is a prompt too, though not because of the
+ * separator: commander dispatches the first operand whichever side of `--` it
+ * came from, but with `-p` ahead of the `--` the pinned CLI parses before it
+ * registers any subcommand, so there is none to dispatch to. That leans on `-p`
+ * opening every one of these argvs; `promptArgv.test.ts` transcribes the gate.
  */
 export function promptArgs(prompt: string): string[] {
   return ["--", prompt];

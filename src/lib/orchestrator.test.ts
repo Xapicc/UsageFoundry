@@ -4630,6 +4630,7 @@ describe("injectionFates", () => {
       forwardSubAgentText: true,
       maxRunCostUSD: 10,
       spentGuardUSD: 1,
+      effort: "xhigh",
       pluginDirs: ["/workspace/plug"],
       vaultSkill: { pluginDir: "/run/uf-skills/vault", vaultPath: "/workspace2" },
       taskboard: { mcpConfigPath: "/run/uf-mcp/run-1/config.json" },
