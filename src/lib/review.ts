@@ -275,6 +275,15 @@ export type ReviewOutcome =
        * answers differently from a full assist queue.
        */
       nothingToReview?: true;
+      /**
+       * Set when the refusal is the process budget alone — a slot somebody else
+       * holds for a few minutes, which a review block waits out where every
+       * other refusal is an answer. Reported by the door that refused rather
+       * than inferred after it: asked again afterwards, `assistBudgetFull()`
+       * reads a later moment, and a slot taken during the window scan would turn
+       * a spent window into a wait.
+       */
+      busy?: true;
     };
 
 /**
@@ -328,8 +337,9 @@ export async function startReview(
 
   // The whole door, not just the window: this call has taken no slot yet, and
   // the row `startAssist` is about to write is what fills one.
-  const refusal = await assistRefusal();
-  if (refusal) return { ok: false, reason: refusal };
+  const refusal = await assistDoor();
+  if (refusal?.busy) return { ok: false, reason: refusal.reason, busy: true };
+  if (refusal) return { ok: false, reason: refusal.reason };
 
   const cwd = await reviewCwd(run);
   if (!cwd) {
@@ -667,18 +677,27 @@ export const SHUTDOWN_REFUSAL =
  * exact anyway, because `advanceInstance` claims synchronously.
  */
 export async function assistRefusal(): Promise<string | null> {
-  const refusal =
-    assistBudgetRefusal(liveAssistChildren(), getSettings().maxConcurrentAssists) ??
-    installBudgetRefusal() ??
-    (await windowRefusal());
+  return (await assistDoor())?.reason ?? null;
+}
+
+/**
+ * `assistRefusal`'s answer, saying whether it was the process budget that
+ * refused — the one refusal a review block waits out rather than reports.
+ */
+async function assistDoor(): Promise<{ reason: string; busy: boolean } | null> {
+  const busy = assistBudgetRefusal(liveAssistChildren(), getSettings().maxConcurrentAssists);
+  const refusal = busy ?? installBudgetRefusal() ?? (await windowRefusal());
   // The shutdown is read after the scan rather than first, because the scan is
   // the one `await` here: a shutdown that began during it would otherwise be let
   // through, and for a chat turn and a validation nothing else stands between
   // this answer and the spawn. A review and a resolution still await after it,
   // which is why `spawnAssist` reads it again. It outranks whatever the others
   // found because it is the one refusal that holds for every later caller in
-  // this process, which is what the merge queue reads it for.
-  return isShuttingDown() ? SHUTDOWN_REFUSAL : refusal;
+  // this process, which is what the merge queue reads it for — and it is never
+  // `busy`, because no slot freeing in a process that is exiting lets anything
+  // through, so a caller waiting it out would be waiting on nothing.
+  if (isShuttingDown()) return { reason: SHUTDOWN_REFUSAL, busy: false };
+  return refusal === null ? null : { reason: refusal, busy: busy !== null };
 }
 
 /**

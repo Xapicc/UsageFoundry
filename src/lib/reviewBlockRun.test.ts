@@ -419,6 +419,55 @@ function storedInstance(instanceId: string): { status: string; stoppedAt: number
     .get(instanceId) as { status: string; stoppedAt: number | null };
 }
 
+describe("a review block handed more branches than there are assist slots", () => {
+  it("waits for a slot rather than setting a branch aside over it", async () => {
+    // The siblings all pass the block's own budget check before any of them has
+    // written the row that fills a slot, so all but the first few are refused at
+    // `startReview`'s door — by the queue, not by a review.
+    const settings = await import("./settings");
+    assert.equal(settings.getSettings().maxConcurrentAssists, 2, "the default slot count this case is about");
+    const ids = ["four-a", "four-b", "four-c", "four-d"];
+    reviewScene("inst-four", {
+      runs: ids.map((id) => ({ id, prompt: "Do it. APPROVE-ME", branch: "uf/repo-good" })),
+    });
+    await settledWithin(workflows.startReviewBlock("inst-four", "r", ids), 30_000, "startReviewBlock");
+
+    assert.deepEqual(
+      workflows.reviewItemsOf("inst-four", "r").map((i) => [i.origin_run_id, i.status, i.note]),
+      ids.map((id) => [id, "approved", null]),
+    );
+    assert.deepEqual(
+      ids.map((id) => reviewsOf(id).length),
+      [1, 1, 1, 1],
+      "each branch was reviewed exactly once",
+    );
+  });
+
+  it("still sets a branch aside over a spent install limit, which no wait would clear", async () => {
+    // A run the block is not handed has spent past the limit on its own.
+    const settings = await import("./settings");
+    settings.saveSettings({ installDailyCostLimitUSD: 0.5 });
+    try {
+      reviewScene("inst-capped", {
+        runs: [
+          { id: "capped-good", prompt: "Do it. APPROVE-ME", branch: "uf/repo-good" },
+          { id: "capped-spender", prompt: "spent", branch: "uf/repo-good", spent: 1 },
+        ],
+      });
+      await settledWithin(workflows.startReviewBlock("inst-capped", "r", ["capped-good"]), 30_000, "startReviewBlock");
+      const refusal = installBudget.installBudgetRefusal();
+      assert.ok(refusal, "the install limit is spent");
+      assert.deepEqual(
+        workflows.reviewItemsOf("inst-capped", "r").map((i) => [i.status, i.note]),
+        [["set-aside", `it could not be reviewed: ${refusal}`]],
+      );
+      assert.deepEqual(reviewsOf("capped-good"), []);
+    } finally {
+      settings.saveSettings({ installDailyCostLimitUSD: null });
+    }
+  });
+});
+
 describe("a review block whose workflow is halted", () => {
   it("starts no fix run for a rejection that lands just after the halt", async () => {
     // The reviewer answers at once, so the review is over while the block's
