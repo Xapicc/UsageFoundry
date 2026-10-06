@@ -24,7 +24,9 @@ import {
  * box left blank, which `normalizePolicy` would store as no limit at all; a
  * window guard above 1, which it would divide by a hundred a second time; and
  * a folder whose "not recorded" collapses into "the whole workspace", which is
- * the one selection that blocks every other run in the tree.
+ * the one selection that blocks every other run in the tree. And a prompt or a
+ * budget of the wrong type, which `String()` saved as "[object Object]" and
+ * `normalizePolicy` either threw on or would read as the default policy.
  */
 
 const OK = {
@@ -88,6 +90,19 @@ describe("normalizeTemplateInput — name and prompt", () => {
   it("requires a prompt — it is the part worth saving", () => {
     assert.match(error({ ...OK, prompt: "" }), /needs a task/);
     assert.match(error({ ...OK, prompt: "\n \t " }), /needs a task/);
+  });
+
+  // `String()` would save "[object Object]" or "a,b" as the task every run
+  // started from this template is given.
+  it("refuses a prompt that is not a string rather than saving its String()", () => {
+    assert.match(
+      error({ ...OK, prompt: { task: "fix the bug" } }),
+      /"prompt" has to be a string when it is given; got an object/,
+    );
+    assert.match(
+      error({ ...OK, prompt: ["a", "b"] }),
+      /"prompt" has to be a string when it is given; got an array/,
+    );
   });
 });
 
@@ -173,6 +188,23 @@ describe("normalizeTemplateInput — budget", () => {
     assert.equal(v.budget.maxRunCostUSD, null);
     assert.equal(v.budget.maxDurationMinutes, null);
     assert.equal(v.budget.maxIterations, 5);
+  });
+
+  // `normalizePolicy` threw on these, which the route answered as a 500; a
+  // total one would read them as the default policy and save a template the
+  // operator never asked for.
+  it("refuses a budget that is not an object, naming the field", () => {
+    for (const [budget, kind] of [
+      ["lots", "a string"],
+      [5, "a number"],
+      [true, "a boolean"],
+      [[], "an array"],
+    ] as const) {
+      assert.match(
+        error({ ...OK, budget }),
+        new RegExp(`"budget" has to be an object when it is given; got ${kind}`),
+      );
+    }
   });
 
   it("refuses an unrecognised enforcement mode rather than downgrading it", () => {

@@ -16,8 +16,15 @@ import { after, before, test } from "node:test";
  * one that did not until somebody sends it `null`.
  *
  * `DATA_DIR` and the Claude paths are read at module load, so they are set
- * before anything is imported, and nothing here reaches a spawn: every request
- * below is refused before the handler looks at anything but its body.
+ * before anything is imported, and nothing here reaches a spawn: the fleet is
+ * paused, so even a run that a regression lets through is never promoted.
+ *
+ * The run doors get a second half, because `readJsonObject` checks the top level
+ * only. A `budget` that is not an object reached `normalizePolicy`, whose `in`
+ * test threw — the same 500 one level down — and a `prompt` that is not a string
+ * went through `String()` and started a billed run whose task was
+ * "[object Object]". Those cases need a body that passes every other check, so
+ * they post against a real mount and folder.
  *
  * Not every such door is here. `POST /api/tasks`, `POST /api/tasks/[id]/comments`,
  * `POST /api/agents`, `PUT /api/agents/[id]`, `POST /api/templates`,
@@ -29,7 +36,7 @@ import { after, before, test } from "node:test";
  */
 
 const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-json-body-")));
-fs.mkdirSync(path.join(root, "ws"), { recursive: true });
+fs.mkdirSync(path.join(root, "ws", "project"), { recursive: true });
 
 process.env.WORKSPACE_ROOTS = `Main=${path.join(root, "ws")}`;
 process.env.DATA_DIR = path.join(root, "data");
@@ -58,6 +65,7 @@ before(async () => {
   );
   const chat = await import("../../lib/chat");
   const tasks = await import("../../lib/tasks");
+  (await import("../../lib/fleet")).setFleetPaused(true);
 
   // Real rows, so a refusal below cannot be a 404 that happened to arrive first.
   chatId = chat.createChat().id;
@@ -259,4 +267,90 @@ test("PATCH /api/tasks/[id] refuses a body that does not parse rather than readi
 
   assert.equal(reply.status, 400);
   assert.match(String(reply.error), /has to be a JSON object; this one did not parse/);
+});
+
+/** A start request every check in `POST /api/runs` passes. */
+const START = {
+  mountId: "main",
+  folder: "project",
+  prompt: "do it",
+  budget: { maxIterations: 1 },
+};
+
+async function runCount(): Promise<number> {
+  const { db } = await import("../../lib/db");
+  return (db().prepare("SELECT COUNT(*) AS n FROM runs").get() as { n: number }).n;
+}
+
+async function runStatus(id: string): Promise<string> {
+  const { db } = await import("../../lib/db");
+  return (db().prepare("SELECT status FROM runs WHERE id = ?").get(id) as { status: string })
+    .status;
+}
+
+test("POST /api/runs admits the start request the cases below each break one field of", async () => {
+  const { POST } = await import("./runs/route");
+  const reply = await send(POST, "POST", "/api/runs", "", JSON.stringify(START));
+
+  assert.equal(reply.status, 200, String(reply.error));
+});
+
+const WRONG_FIELDS: { field: string; got: string; body: Record<string, unknown> }[] = [
+  { field: "budget", got: "a string", body: { ...START, budget: "lots" } },
+  { field: "budget", got: "a number", body: { ...START, budget: 5 } },
+  { field: "budget", got: "an array", body: { ...START, budget: [] } },
+  { field: "prompt", got: "an object", body: { ...START, prompt: { task: "fix the bug" } } },
+  { field: "prompt", got: "an array", body: { ...START, prompt: ["fix", "the bug"] } },
+  { field: "folder", got: "an object", body: { ...START, folder: { path: "project" } } },
+  { field: "mountId", got: "a number", body: { ...START, mountId: 5 } },
+  // Codex, because its model ids are not checked against a list: `String()`
+  // made this `-m [object Object]` on a run that was admitted.
+  {
+    field: "model",
+    got: "an object",
+    body: { ...START, provider: "codex", model: { id: "gpt-5" } },
+  },
+];
+
+for (const { field, got, body } of WRONG_FIELDS) {
+  test(`POST /api/runs refuses a ${field} that is ${got}, and writes no run`, async () => {
+    const { POST } = await import("./runs/route");
+    const before = await runCount();
+    const reply = await send(POST, "POST", "/api/runs", "", JSON.stringify(body));
+
+    assert.equal(reply.status, 400, String(reply.error));
+    assert.match(String(reply.error), new RegExp(`"${field}" has to be .*; got ${got}`));
+    assert.equal(await runCount(), before, "a refused start wrote a run row anyway");
+  });
+}
+
+test("POST /api/runs/[id]/reopen refuses a budget that is not an object", async () => {
+  const { POST } = await import("./runs/[id]/reopen/route");
+  const reply = await send(
+    POST,
+    "POST",
+    `/api/runs/${runId}/reopen`,
+    runId,
+    JSON.stringify({ budget: 5 }),
+  );
+
+  assert.equal(reply.status, 400, String(reply.error));
+  assert.match(String(reply.error), /"budget" has to be an object when it is given; got a number/);
+  assert.equal(await runStatus(runId), "stopped");
+});
+
+// The follow-up is what the reopened run is told next, so it is a prompt.
+test("POST /api/runs/[id]/reopen refuses a follow-up that is not a string", async () => {
+  const { POST } = await import("./runs/[id]/reopen/route");
+  const reply = await send(
+    POST,
+    "POST",
+    `/api/runs/${runId}/reopen`,
+    runId,
+    JSON.stringify({ budget: { maxIterations: 1 }, followUp: { note: "keep going" } }),
+  );
+
+  assert.equal(reply.status, 400, String(reply.error));
+  assert.match(String(reply.error), /"followUp" has to be a string when it is given; got an object/);
+  assert.equal(await runStatus(runId), "stopped");
 });

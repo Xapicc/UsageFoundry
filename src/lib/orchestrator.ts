@@ -166,6 +166,7 @@ import { clipToolInput, MAX_LOG_CHARS, toolArgs } from "./logLine";
 // Same direction, same reason: the cycle deadline says how long it waited in
 // the words the run page already uses for every other span.
 import { fmtDuration, fmtTokens, shortId } from "./format";
+import { jsonKind } from "./http";
 import {
   RUN_PROVIDER_LABEL,
   pausedMsAt,
@@ -4191,7 +4192,14 @@ export function createRun(input: CreateRunInput): RunRow {
   requireDataDir();
 
   const folder = resolveWorkspaceFolder(input.folder, input.mountId);
-  const prompt = String(input.prompt ?? "").trim();
+  // Checked although the type says string, because every door ends here and
+  // `String()` admitted an object that got past one of them as a billed run
+  // whose task was "[object Object]".
+  const rawPrompt: unknown = input.prompt ?? "";
+  if (typeof rawPrompt !== "string") {
+    throw new Error(`The prompt has to be a string; got ${jsonKind(rawPrompt)}.`);
+  }
+  const prompt = rawPrompt.trim();
   if (!prompt) throw new Error("Prompt is required");
 
   // The install's spend limit, at the one door every run in this app comes
