@@ -92,6 +92,18 @@
   by hand, so this is the render and not `landState` producing them, and
   neither skin but the standard light one was looked at.
 
+- **A chain link's Land card draws no Purge, Commit or live Resolve while the
+  other link resolves, 2026-10-06**, a standalone build of this change on main
+  `50d60d8` served against a scratch `DATA_DIR`: two completed links of one
+  branch in one slot, conflicting with `main`, a `running` `resolve` row on
+  the later link and its merge left open in the slot after boot. The earlier
+  link's `GET …/land` answered `branchResolving: true`; both cards, at 390px
+  and 1280px, drew only a disabled "Resolving…" beside `UU README.md` and the
+  resolving hint. Without the row, both drew Resolve with Claude and Purge
+  branch. No console error. Caveat: the resolution was staged by hand, not
+  started by a child (one seeded before boot is rolled back by the boot's
+  reconciler, as it should be), and only the standard light skin was seen.
+
 ## Not yet verified by hand
 
 - **The Land verify field was never saved**, so its check covers the form, not

@@ -349,3 +349,142 @@ describe("the other writers of a run's checkout while a resolution is set up", (
     assert.throws(() => fixtureGit(repo, ["rev-parse", "--verify", `refs/heads/${branch}`]));
   });
 });
+
+/**
+ * Two finished links of one `continueBranch` chain in one slot, which is what
+ * `planWorkspace` leaves: the second inherited the first's checkout and carries
+ * its branch on, so both rows name the same `worktree_path` and
+ * `worktree_branch`, and that branch conflicts with `main` as
+ * `conflictingRunInSlot`'s does.
+ */
+function conflictingChainInSlot(name: string) {
+  const { runId: first, repo, slot, branch } = conflictingRunInSlot(name, "completed");
+  fs.writeFileSync(path.join(slot, "second.txt"), "the second link's work\n");
+  fixtureGit(slot, ["add", "-A"]);
+  fixtureGit(slot, ["commit", "-q", "-m", "second link"]);
+  const second = `${first}-next`;
+  db()
+    .prepare(
+      `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
+                         created_at, finished_at, work_dir, isolation, repo_root, worktree_path,
+                         worktree_branch, worktree_base, worktree_base_branch, continues_run)
+       SELECT ?, folder, prompt, status, budget, max_iterations, iterations, created_at + 1,
+              finished_at, work_dir, isolation, repo_root, worktree_path, worktree_branch,
+              worktree_base, worktree_base_branch, id
+         FROM runs WHERE id = ?`,
+    )
+    .run(second, first);
+  return { first, second, repo, slot, branch };
+}
+
+/**
+ * A resolution as it stands while its agent works: its row `running`, and its
+ * merge open in the slot with `README.md` unmerged. Returns the undo, which
+ * settles the row so no later case reads it as running.
+ */
+function resolutionWorking(runId: string, slot: string): () => void {
+  const id = `resolve-${runId}`;
+  db()
+    .prepare(
+      "INSERT INTO run_reviews (id, run_id, created_at, status, kind) VALUES (?, ?, ?, 'running', 'resolve')",
+    )
+    .run(id, runId, Date.now());
+  assert.throws(
+    () => fixtureGit(slot, ["merge", "--no-edit", "main"]),
+    "the fixture merge did not conflict",
+  );
+  return () => {
+    db().prepare("UPDATE run_reviews SET status = 'failed' WHERE id = ?").run(id);
+  };
+}
+
+/**
+ * The same doors asked from the other link of a chain.
+ *
+ * What the claim and the `run_reviews` row protect is a checkout and a branch,
+ * and a chain's links share both, so a hold read off the pressed run's id alone
+ * let the other link's card Purge the slot from under a billed agent, Pick up a
+ * work cycle into a merge with `UU` files open, and tell the operator to
+ * `git merge --abort` a live resolution. Both directions, because the merge
+ * queue resolves on whichever link it was handed — an earlier one included —
+ * while Resolve on a card resolves on that card's run.
+ */
+describe("the other link of a chain while one link holds the checkout they share", () => {
+  for (const [holding, asking] of [
+    ["second", "first"],
+    ["first", "second"],
+  ] as const) {
+    it(`refuses the ${asking} link's Commit, Pick up and Purge while the ${holding} link resolves`, async () => {
+      const chain = conflictingChainInSlot(`chain-resolve-${holding}`);
+      const door = chain[asking];
+      const settle = resolutionWorking(chain[holding], chain.slot);
+      try {
+        // What the land route answers as `branchResolving`, which is what stops
+        // the other link's card drawing Purge and Resolve at all.
+        assert.equal(land.resolutionHolds(getRun(door)!), true);
+
+        // Untracked, so the only thing between it and `add -A` is the hold.
+        fs.writeFileSync(path.join(chain.slot, "notes.txt"), "the run's last notes\n");
+        const committed = await land.commitPending(door, "Keep the run's notes");
+        assert.equal(committed.ok, false, "committed the open merge of a live resolution");
+        assert.match(committed.ok ? "" : committed.reason, /resolving a conflict/);
+        assert.doesNotMatch(
+          committed.ok ? "" : committed.reason,
+          /git merge --abort/,
+          "told the operator to abort a resolution that is still running",
+        );
+
+        const picked = reopenRun(door, { maxIterations: 5, maxDurationMinutes: 60 });
+        assert.equal(picked.ok, false, "picked up into a checkout with a merge open in it");
+        assert.match(picked.ok ? "" : picked.reason, /resolving a conflict/);
+        assert.equal(getRun(door)!.status, "completed");
+
+        const purged = await land.purgeBranch(door, chain.branch);
+        assert.equal(purged.ok, false, "purged the checkout a resolution is editing");
+        assert.match(purged.ok ? "" : purged.reason, /resolving a conflict/);
+        assert.ok(fs.existsSync(chain.slot), "the slot went from under the resolution");
+        assert.ok(fixtureGit(chain.slot, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]));
+        assert.ok(fixtureGit(chain.repo, ["rev-parse", "--verify", `refs/heads/${chain.branch}`]));
+      } finally {
+        settle();
+      }
+    });
+
+    it(`refuses the ${asking} link's Pick up and Resolve while the ${holding} link commits`, async (t) => {
+      const chain = conflictingChainInSlot(`chain-commit-${holding}`);
+      const door = chain[asking];
+      fs.writeFileSync(path.join(chain.slot, "notes.txt"), "the run's last notes\n");
+
+      const realGit = gitModule.git;
+      let picked = null as ReturnType<typeof reopenRun> | null;
+      let resolution = null as Promise<Outcome> | null;
+      t.mock.method(gitModule, "git", async (...call: Parameters<typeof realGit>) => {
+        const [cwd, args] = call;
+        // Both pressed on the other card while the Commit's `add -A` is on its
+        // way to git, which is the stretch only the claim answers for.
+        if (picked === null && cwd === chain.slot && args[0] === "add" && args[1] === "-A") {
+          picked = reopenRun(door, { maxIterations: 5, maxDurationMinutes: 60 });
+          resolution = land.resolveConflicts(door);
+        }
+        return realGit(...call);
+      });
+
+      const committed = await land.commitPending(chain[holding], "Keep the run's notes");
+      const resolved = await resolution;
+      await settledResolution(door);
+
+      assert.ok(picked && resolved, "the fixture never pressed the other card, so this proves nothing");
+      assert.equal(picked.ok, false, "picked up into a checkout a Commit is writing");
+      assert.match(picked.ok ? "" : picked.reason, /being committed/);
+      assert.equal(getRun(door)!.status, "completed");
+      assert.equal(resolved.ok, false, "a resolution opened its merge under a commit");
+      assert.match(resolved.ok ? "" : resolved.reason, /commit is being made/);
+      assert.equal(committed.ok, true, committed.ok ? "" : committed.reason);
+      assert.doesNotMatch(
+        fixtureGit(chain.repo, ["show", `${chain.branch}:README.md`]),
+        /^<<<<<<< /m,
+        "the conflict markers reached the branch",
+      );
+    });
+  }
+});

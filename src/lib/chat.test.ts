@@ -187,6 +187,7 @@ const {
   MCP_CONFIG_BASE,
 } = require("./chat") as typeof import("./chat");
 const { githubSlug } = require("./workspace") as typeof import("./workspace");
+const { chatPath } = require("./stacks") as typeof import("./stacks");
 const { db } = require("./db") as typeof import("./db");
 
 /**
@@ -2522,13 +2523,16 @@ describe("mintRunCapability", () => {
  * `agentEnvironment`) rather than this server's, which is root's and carries
  * no toolbox: `proposals/CustomStacks/01c-reach-and-permission.md` §2 argues
  * that a toolbox the `Dockerfile` puts there reaches every agent child, and the
- * chat child is one of the children that claim rests on. An edit that added `PATH` here would have to be made in six places and
- * nothing fails if it is made in one: the chat would simply stop finding a
- * tool, inside a tool call nobody reads, with no page and no log in this app
- * mentioning it.
+ * chat child is one of the children that claim rests on. Since board task
+ * `6f85c72a` the chat's is `chatPath()`, which keeps the toolbox and drops
+ * every directory root's `PATH` does not have, the pytools volume among them;
+ * `cliPath.test.ts` plants names there and asserts the chat child does not run
+ * them. What is pinned here is the half that must survive that: a `PATH` line
+ * that lost the toolbox would make the chat simply stop finding a tool, inside
+ * a tool call nobody reads, with no page and no log in this app mentioning it.
  *
  * The assertion is over a *planted* directory rather than over equality alone,
- * for the reason `childEnv`'s is: what §2 claims is that a directory on the
+ * for the reason `childEnv`'s is: what §2 claims is that the toolbox on the
  * agents' `PATH` arrives, in the position it was put at.
  *
  * And it is over `chatEnv()` rather than over a bare strip, because that is
@@ -2554,7 +2558,7 @@ describe("chatEnv — the PATH the chat's tools are resolved on", () => {
     process.env.PATH = ROOT_PATH;
     process.env.UF_AGENT_PATH = `${TOOLBOX}:${ROOT_PATH}`;
     const env = chatEnv();
-    assert.equal(env.PATH, process.env.UF_AGENT_PATH, "the chat child got the server's PATH rather than the agents'");
+    assert.equal(env.PATH, chatPath(), "the chat child's PATH is not chatPath()'s");
     assert.equal(
       env.PATH?.split(path.delimiter)[0],
       TOOLBOX,
@@ -2573,6 +2577,6 @@ describe("chatEnv — the PATH the chat's tools are resolved on", () => {
       Object.keys(env).some((k) => k.startsWith("GIT_CONFIG_")),
       "githubEnv() contributed nothing, so the composition above is untested",
     );
-    assert.equal(env.PATH, process.env.UF_AGENT_PATH);
+    assert.equal(env.PATH, chatPath());
   });
 });

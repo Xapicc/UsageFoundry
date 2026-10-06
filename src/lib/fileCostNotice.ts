@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { db } from "./db";
+import { WORKTREE_STORE_DIR } from "./worktreeStoreDir";
 
 /**
  * What a `Read` of this repository's largest files costs, told to the agent
@@ -127,10 +128,14 @@ export const READ_HISTORY_DAYS = 30;
  * Not a gitignore reader: this is a price list, and a dependency tree or a build
  * output is not something an agent should be *invited* to read whole by seeing
  * it priced. `.git` is the one that matters for cost — it is usually the largest
- * thing under the folder and none of it is a file anybody reads.
+ * thing under the folder and none of it is a file anybody reads. The worktree
+ * store is under a run whose folder is a mount root, and every checkout in it is
+ * another run's work in progress — not this run's to read, and a duplicate of a
+ * real path taking a place on the capped list from one of the run's own files.
  */
 const SKIP_DIRS: ReadonlySet<string> = new Set([
   ".git",
+  WORKTREE_STORE_DIR,
   ".next",
   ".turbo",
   ".cache",

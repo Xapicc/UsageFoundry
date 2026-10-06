@@ -8,6 +8,7 @@ import {
 import { PERMISSION_MODES, type PermissionMode } from "./settings";
 import { agentRefusal, type AgentKnowledge } from "./agents";
 import { MAX_TEMPLATE_NAME } from "./apiTypes";
+import { optionalObjectField, optionalStringField } from "./http";
 
 /**
  * Named run templates: a saved task prompt and the guards it should run under.
@@ -192,7 +193,11 @@ export function normalizeTemplateInput(
     };
   }
 
-  const prompt = String(o.prompt ?? "").trim();
+  // `String()` would save "[object Object]" as the task every run started from
+  // this template is given.
+  const promptField = optionalStringField(o, "prompt");
+  if (!promptField.ok) return { ok: false, error: promptField.error };
+  const prompt = (promptField.value ?? "").trim();
   if (!prompt) {
     return {
       ok: false,
@@ -211,7 +216,9 @@ export function normalizeTemplateInput(
     return { ok: false, error: `Unknown permission mode: ${permissionMode}` };
   }
 
-  const rawBudget = (o.budget ?? {}) as Record<string, unknown>;
+  const budgetField = optionalObjectField(o, "budget");
+  if (!budgetField.ok) return { ok: false, error: budgetField.error };
+  const rawBudget = budgetField.value ?? {};
 
   // Same narrowing as the run route: this decides whether a running agent is
   // killed part-way through a work cycle, so an unrecognised mode is reported

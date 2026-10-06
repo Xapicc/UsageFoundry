@@ -11,19 +11,21 @@ import type Database from "better-sqlite3";
  * The two halves of the install-wide control, and both are database subjects.
  *
  * **The stop** has to take down every live run in one pass, whatever status each
- * is in, and it has to block the ones that have not started *before* it signals
+ * is in, and it has to close out the ones that have not started *before* it signals
  * anything — because stopping a run releases its dependents, and a dependent
  * released a moment before the walk reached it would be admitted, promoted and
  * spawned. A run starting *because* the fleet was stopped is the failure this
  * ordering exists to have none of, and nothing about it throws: the operator
  * gets a page saying everything stopped and an agent working underneath it.
  *
- * **The hold** is read by four separate call sites — `promoteQueued`,
- * `releaseDependents`, `tickSchedules` and `emitBlockRuns` — and a fix that
- * misses one is silent in exactly the same way: work starts while a banner says
- * new work is held. So there is a case per site, each driving the real entry
- * point rather than the pure decision underneath it, and each proving the
- * *difference* the flag makes by running the same call with it clear.
+ * **The hold** is read by six separate call sites — `promoteQueued`,
+ * `releaseDependents`, `tickSchedules` and `emitBlockRuns`, and the sweeper's
+ * `sweepPaused` and `releaseStackWaits` — and a fix that misses one is silent in
+ * exactly the same way: work starts while a banner says new work is held, or a
+ * park the restart would have kept is closed out by it. So there is a case per
+ * site, each driving the real entry point rather than the pure decision
+ * underneath it, and each proving the *difference* the flag makes — by running
+ * the same call with it clear, or beside a row the same restart keeps.
  *
  * Its own file, and `DATA_DIR` set before the first import, for the reason
  * `haltedMembers.test.ts` gives: `config.ts` reads that variable at module load
@@ -48,8 +50,12 @@ before(async () => {
   root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-fleet-")));
   workspace = path.join(root, "workspace");
   fs.mkdirSync(workspace, { recursive: true });
+  fs.mkdirSync(path.join(root, "claude", "projects"), { recursive: true });
   process.env.DATA_DIR = path.join(root, "data");
   process.env.CLAUDE_HOME = path.join(root, "claude");
+  // Pinned rather than left to fall back to CLAUDE_HOME: the sweeper's cases
+  // reach `planUsage()`, which sends a request when it finds an OAuth token.
+  process.env.CLAUDE_CONFIG_DIR = path.join(root, "claude");
   process.env.WORKSPACE_ROOT = workspace;
   // Cleared, not overridden: `WORKSPACE_ROOTS` wins whenever it is set and this
   // repository's own `.env` sets it, so a run that reached `createRun` would
@@ -117,6 +123,36 @@ function run(
   return id;
 }
 
+/**
+ * A run behind `on`, exactly as `createRun` leaves one with a dependency:
+ * `waiting`, with nothing about its workspace decided — which is the shape
+ * `reviveBlockedDependents` selects once a release pass has blocked it.
+ */
+function dependent(
+  id: string,
+  on: string,
+  edge: "on-success" | "on-finish" = "on-success",
+): string {
+  const folder = path.join(workspace, id);
+  fs.mkdirSync(folder, { recursive: true });
+  const now = Date.now() + seq++;
+  const db = dbMod.db();
+  db.prepare(
+    `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations,
+                       iterations, created_at, work_dir)
+     VALUES (?, ?, 'then this', 'waiting', '{"maxIterations":1,"permissionMode":"acceptEdits"}',
+             1, 0, ?, NULL)`,
+  ).run(id, folder, now);
+  db.prepare(
+    "INSERT INTO run_deps (run_id, depends_on, edge, continue_branch, created_at)" +
+      " VALUES (?, ?, ?, 0, ?)",
+  ).run(id, on, edge, now);
+  return id;
+}
+
+/** A stored budget with work cycles left after the first. */
+const ROOMY = '{"maxIterations":5,"permissionMode":"acceptEdits"}';
+
 function statusOf(id: string): string {
   return orch.getRun(id)!.status;
 }
@@ -164,7 +200,7 @@ describe("stopFleet", () => {
     assert.equal(statusOf(queued), "stopped");
     assert.equal(statusOf(paused), "stopped");
     assert.equal(statusOf(forStack), "stopped");
-    assert.equal(statusOf(waiting), "blocked");
+    assert.equal(statusOf(waiting), "stopped");
     assert.match(orch.getRun(waiting)!.stop_reason ?? "", /every run in flight/);
 
     // Untouched, and still saying what they said.
@@ -177,7 +213,7 @@ describe("stopFleet", () => {
     }
   });
 
-  it("blocks a waiting run before stopping the run it waits on", () => {
+  it("closes a waiting run out before stopping the run it waits on", () => {
     // The ordering rule. `stopRun` on a queued row releases its dependents and
     // promotes, so a dependent still `waiting` when its dependency was stopped
     // would be admitted — a run starting because the fleet was stopped.
@@ -195,7 +231,7 @@ describe("stopFleet", () => {
 
     assert.equal(
       statusOf(tail),
-      "blocked",
+      "stopped",
       "the dependent must be closed out by the stop, not released by it",
     );
     assert.deepEqual(report.blocked, [tail]);
@@ -242,6 +278,41 @@ describe("stopFleet", () => {
     assert.match(orch.getRun(member)!.stop_reason ?? "", /Nightly sweep/);
     // Halted by its instance, so the standalone pass must not claim it too.
     assert.equal(report.cancelled.includes(member), false);
+  });
+
+  it("ends a waiting run the way its own Stop would, so picking up the run in front does not wake it", () => {
+    // Held, so the pick-ups below queue and nothing is promoted to a spawn.
+    settings.setNewWorkPaused(true);
+    const head = run("fleet-revive-head", "paused", { iterations: 1 });
+    const tail = dependent("fleet-revive-tail", head, "on-finish");
+    try {
+      fleet.stopFleet();
+      const ended = orch.getRun(tail)!;
+
+      // The run in front, picked up by name on its own page. That is a decision
+      // about that run, and the one behind it was stopped by the same press.
+      assert.deepEqual(orch.reopenRun(head, { maxIterations: 5 }), { ok: true });
+      const after = orch.getRun(tail)!;
+      assert.equal(
+        after.status,
+        ended.status,
+        "picking up the run in front undid the fleet's stop of the run behind it",
+      );
+      assert.equal(after.stop_reason, ended.stop_reason);
+
+      // What Stop on its own page writes for a waiting run, which nothing
+      // revives — and which the fleet's own pick-up offers, so a fleet stopped
+      // and picked up again does not strand the run behind.
+      assert.equal(ended.status, "stopped");
+      assert.match(ended.stop_reason ?? "", /every run in flight while it was waiting/);
+      assert.deepEqual(fleet.reopenFleet([tail], { maxIterations: 5 }).reopened, [tail]);
+      assert.equal(statusOf(tail), "waiting", "back behind the run in front");
+    } finally {
+      // Ended while still held: the next describe clears the hold and promotes.
+      orch.stopRun(tail);
+      orch.stopRun(head);
+      settings.setNewWorkPaused(false);
+    }
   });
 });
 
@@ -480,6 +551,56 @@ describe("a run set aside", () => {
       null,
       "a run picked up by hand is not still held back from the next bulk press",
     );
+  });
+
+  // The side door: neither pick-up names the run set aside, but each picks up
+  // the run it waits on, and `reopenRun` revives what that run's ending blocked.
+  // A dependent beside it that nobody set aside is the control — it is woken by
+  // the same press, so the revive ran and the mark is the whole difference.
+  function blockedBehind(name: string, head: string) {
+    const aside = dependent(`${name}-aside`, head);
+    const beside = dependent(`${name}-beside`, head);
+    // Behind the one set aside, so a walk that went through it would reach this.
+    const further = dependent(`${name}-further`, aside);
+    // A failed run satisfies no `on-success` edge, held or not.
+    orch.releaseDependents();
+    for (const id of [aside, beside, further]) assert.equal(statusOf(id), "blocked");
+    assert.equal(orch.setRunAside(aside, true).ok, true);
+    return { aside, beside, further };
+  }
+
+  function assertLeftAlone(aside: string, further: string): void {
+    assert.equal(
+      statusOf(aside),
+      "blocked",
+      "a run set aside was brought back by a bulk pick-up of the run it waits on",
+    );
+    assert.notEqual(orch.getRun(aside)!.set_aside_at, null);
+    assert.equal(statusOf(further), "blocked", "the revive walked on through it");
+  }
+
+  it("is not brought back by the fleet's pick-up of the run it waits on", () => {
+    const head = run("aside-fleet-head", "failed", { iterations: 1 });
+    const { aside, beside, further } = blockedBehind("aside-fleet", head);
+
+    const report = fleet.reopenFleet([head], { maxIterations: 3 });
+
+    assert.deepEqual(report.reopened, [head]);
+    assert.equal(statusOf(beside), "waiting");
+    assertLeftAlone(aside, further);
+  });
+
+  it("is not brought back by the restart notice's pick-up of the run it waits on", () => {
+    // Picked up on its own stored budget, so it needs cycles left under it.
+    const head = run("aside-notice-head", "failed", { iterations: 1, budget: ROOMY });
+    dbMod.db().prepare("UPDATE runs SET restart_closed = 1 WHERE id = ?").run(head);
+    const { aside, beside, further } = blockedBehind("aside-notice", head);
+
+    orch.reopenRestartClosed();
+
+    assert.equal(statusOf(head), "queued");
+    assert.equal(statusOf(beside), "waiting");
+    assertLeftAlone(aside, further);
   });
 });
 
@@ -745,5 +866,116 @@ describe("a run picked up before it ever had a workspace", () => {
 
     complete(a);
     assertAdmitted(b, repo);
+  });
+});
+
+/**
+ * The two parks a restart keeps, and what the hold must not turn them into.
+ *
+ * Holding new work before a planned restart is the hold's main use, and a
+ * restart keeps a `paused` run inside its grace and a `waiting-for-stack` run
+ * whatever its age — but closes every `queued` row out as `stopped`. So a park
+ * whose wait ended while new work was held, re-queued by the sweeper and kept
+ * there by the hold, was ended by the restart the operator held the fleet for,
+ * and dropped into the restart notice instead of resuming. Nothing throws: the
+ * page says the run was stopped because the server restarted, which is true.
+ *
+ * Last in the file because `reconcileOnBoot` closes out every row it finds.
+ * The cap is 0 so that lifting the hold queues what it kept and starts none of
+ * it.
+ */
+describe("the parks a restart keeps, under the hold", () => {
+  let cap: number | null;
+
+  before(() => {
+    settings.setNewWorkPaused(true);
+    cap = settings.getSettings().maxConcurrentRuns;
+    settings.saveSettings({ maxConcurrentRuns: 0 });
+  });
+  after(() => {
+    settings.setNewWorkPaused(false);
+    settings.saveSettings({ maxConcurrentRuns: cap });
+  });
+
+  /** A run parked a minute ago, inside any restart grace, due at `resumeAt`. */
+  function parked(id: string, resumeAt: number): string {
+    // Cycles left, or the sweeper ends it on its cap instead of resuming it.
+    run(id, "paused", { iterations: 1, budget: ROOMY });
+    dbMod
+      .db()
+      .prepare("UPDATE runs SET session_id='s', paused_at=?, resume_at=? WHERE id=?")
+      .run(Date.now() - 60_000, resumeAt, id);
+    return id;
+  }
+
+  /**
+   * A run waiting for a stack, with no request attached — which
+   * `decideStackWait` reads as a request that has gone, and releases.
+   */
+  function answeredStackWait(id: string): string {
+    run(id, "waiting-for-stack", { iterations: 1, budget: ROOMY });
+    dbMod
+      .db()
+      .prepare("UPDATE runs SET session_id='s', paused_at=? WHERE id=?")
+      .run(Date.now() - 60_000, id);
+    return id;
+  }
+
+  it("keeps a parked run whose window clears paused, so a restart keeps it", async () => {
+    const due = parked("held-park-due", Date.now() - 1_000);
+    // The control: a park still inside its window is kept by the same restart.
+    const notDue = parked("held-park-not-due", Date.now() + 3_600_000);
+
+    await orch.sweepPaused();
+    assert.equal(statusOf(due), "paused", "the sweeper put a held run in the queue");
+
+    orch.reconcileOnBoot();
+    assert.equal(statusOf(notDue), "paused");
+    const kept = orch.getRun(due)!;
+    assert.equal(
+      kept.status,
+      "paused",
+      "a parked run the hold kept from resuming was closed out by the restart",
+    );
+    assert.equal(kept.restart_closed, 0);
+  });
+
+  it("keeps an answered stack wait waiting, so a restart keeps it", () => {
+    const id = answeredStackWait("held-stack-answered");
+
+    // Still counted as waiting, which is what keeps the sweeper's timer alive
+    // to release it once the hold is lifted.
+    assert.deepEqual(orch.releaseStackWaits([]), { released: 0, waiting: 1 });
+    assert.equal(statusOf(id), "waiting-for-stack");
+
+    orch.reconcileOnBoot();
+    assert.equal(
+      statusOf(id),
+      "waiting-for-stack",
+      "a stack wait the hold kept from resuming was closed out by the restart",
+    );
+  });
+
+  it("puts what it kept back in the queue the moment it is lifted", async () => {
+    const due = parked("lifted-park-due", Date.now() - 1_000);
+    const stack = answeredStackWait("lifted-stack-answered");
+    await orch.sweepPaused();
+    assert.equal(statusOf(due), "paused");
+    assert.equal(statusOf(stack), "waiting-for-stack");
+
+    fleet.setFleetPaused(false);
+
+    // Decided without a snapshot, so it is back before the call returns.
+    assert.equal(statusOf(stack), "queued");
+    // A parked run needs the usage snapshot first. The sweeper's own timer is a
+    // minute, so a run still parked after this wait was not kicked.
+    for (let i = 0; i < 500 && statusOf(due) === "paused"; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(
+      statusOf(due),
+      "queued",
+      "lifting the hold left a run whose window had cleared waiting for the next sweep",
+    );
   });
 });

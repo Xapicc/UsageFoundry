@@ -1,12 +1,13 @@
 import { db } from "./db";
 import { newWorkPaused, setNewWorkPaused } from "./settings";
 import {
-  blockWaitingRun,
   getRun,
   promoteQueued,
   releaseDependents,
   reopenRun,
   stopRun,
+  stopWaitingRun,
+  sweepPaused,
   topologicalOrder,
   type RunRow,
   type RunStatus,
@@ -26,10 +27,10 @@ import { haltSteps, stopInstance, type HaltReport } from "./workflows";
  *
  *   - `stopFleet` walks workflow instances through the one door they already
  *     have (`stopInstance`) and the runs outside them through `stopRun` and
- *     `blockWaitingRun`, choosing between the two with the very same
+ *     `stopWaitingRun`, choosing between the two with the very same
  *     `haltSteps` a workflow halt uses. There is no new status, no new signal
  *     path and no second answer to "which rows does this take down".
- *   - The hold on new work is `settings.newWorkPaused`, read by the four places
+ *   - The hold on new work is `settings.newWorkPaused`, read by the six places
  *     that start work and by nothing else. It is documented beside the flag.
  *   - `reopenFleet` is `reopenRun` in a loop over an explicit list of ids, with
  *     one budget laid over each run's own rather than in place of it.
@@ -64,7 +65,10 @@ export interface FleetStopReport {
   signalled: string[];
   /** Runs closed out before they could spawn. */
   cancelled: string[];
-  /** Runs that were still waiting, now `blocked`. */
+  /**
+   * Runs that were still waiting — `haltSteps`' `block` step, whose name the
+   * wire keeps — now `stopped` as their own Stop would leave them.
+   */
   blocked: string[];
   /** Rows that moved between the decision and the write. */
   untouched: string[];
@@ -109,6 +113,12 @@ function startedInstances(): string[] {
  * whole walk is synchronous from the first instance to the last run, so nothing
  * can interleave with it.
  *
+ * Those rows are written `stopped`, as Stop on each one's page would write
+ * them, and not `blocked` as a workflow halt writes its members. A halted
+ * member is kept from revival by its instance's `stopping`; a run outside one
+ * has nothing like it, so a `blocked` row was woken by picking up the run in
+ * front of it — undoing the fleet's stop of a run nobody had picked up.
+ *
  * The one exposure this shares with a workflow halt is a queued run promoted by
  * an earlier stop inside the same turn: `promoteQueued` claims the row
  * synchronously, so the pass below sees it as `running` and `stopRun` reaches
@@ -140,7 +150,7 @@ export function stopFleet(): FleetStopReport {
 
   for (const step of steps) {
     if (step.action !== "block") continue;
-    if (blockWaitingRun(step.id, step.reason)) report.blocked.push(step.id);
+    if (stopWaitingRun(step.id, step.reason)) report.blocked.push(step.id);
     else report.untouched.push(step.id);
   }
 
@@ -165,6 +175,12 @@ export function stopFleet(): FleetStopReport {
  * this pair the queue would sit still until the next terminal transition
  * happened to wake it, which on a fleet that has just been stopped is never.
  *
+ * Then the sweeper, because the hold kept every park whose wait ended under it
+ * parked rather than queued — a restart closes the queue out — and its own
+ * timer is a minute. It promotes what it re-queues itself, and a run parked on
+ * a window needs a usage snapshot first, so it rejoins a moment after this
+ * returns rather than inside it.
+ *
  * `tickSchedules` needs nothing here: its timer keeps running throughout and
  * decides again on its own cadence. Deliberately so — a schedule's missed
  * windows are recorded and not made up, and resuming the fleet is not a reason
@@ -175,6 +191,7 @@ export function setFleetPaused(paused: boolean): void {
   if (!paused) {
     releaseDependents();
     promoteQueued();
+    void sweepPaused();
   }
 }
 

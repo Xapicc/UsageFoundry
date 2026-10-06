@@ -58,7 +58,9 @@ stacks.ts       the read-back over what apply-stacks.mjs installed, and the
                 the agent uid starts from: the server's environment with
                 `stackEnvironment`'s block under it, so the operator's value
                 wins, and `agentPath()` over it. Never `process.env` itself —
-                the server is root, and so is winnow under it.
+                the server is root, and so is winnow under it. `chatPath`
+                narrows that `PATH` for the chat and block child to root's
+                directories and the toolbox, since it holds UF_CHAT_GID.
                 There is **no `stacks` table** and must not be: the receipts
                 are the state and they are per boot, so the one question a
                 monitor asks — what did *this* boot find wrong — is answered by
@@ -235,8 +237,8 @@ repoSpend.ts    what each repository cost, over a span — a rollup of
 fleet.ts        the three controls that act on the whole install — stop
                 everything, hold new work, pick several runs back up. It owns no
                 transition of its own: it composes stopInstance, stopRun,
-                blockWaitingRun and reopenRun, and the hold is one settings row
-                four creation sites read
+                stopWaitingRun and reopenRun, and the hold is one settings row
+                six sites that start work read
 workspace.ts    the folder walk, shared by /api/folders and the chat's tools
 tasks.ts        the taskboard: one board across every mount, and the only
                 module that touches the tasks table. A task is not a run — it

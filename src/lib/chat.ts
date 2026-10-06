@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import type { Readable } from "node:stream";
 import { CLAUDE_BIN, MCP_SELF_URL, WORKSPACE_MOUNTS, spawnCommand } from "./config";
-import { agentEnvironment } from "./stacks";
+import { agentEnvironment, chatPath } from "./stacks";
 import { db } from "./db";
 import {
   chatGuards,
@@ -4292,17 +4292,22 @@ function chatCwd(): string {
  * compared against a run's own spend, and a chat's requests in that comparison
  * would make an accounted-for run look unaccounted-for.
  *
+ * `PATH` is `chatPath()` rather than the agents' whole `PATH`, and this is the
+ * one builder where it differs. This child holds `UF_CHAT_GID`, so nothing it
+ * runs by name may resolve in the pytools volume every work cycle writes (board
+ * task `6f85c72a`); the stacks' toolbox, which root owns, stays.
+ *
  * Exported for a test and nothing else, on `childEnv`'s grounds rather than as
  * an exception to them: `PATH` is not on the strip list, and
  * `proposals/CustomStacks/01c-reach-and-permission.md` §2 rests on that — the
- * toolbox the `Dockerfile` puts on the agents' `PATH`, which `agentEnvironment`
- * sets, reaches every agent child, and this child is one. A copy that grew a `PATH` line would
- * take the toolbox away from the chat and from nothing else, which no page and
- * no log in this app reports. The list moves by hand in six places
+ * toolbox the `Dockerfile` puts on the agents' `PATH` reaches every agent
+ * child, and this child is one. A `PATH` line that dropped the toolbox would
+ * take it away from the chat and from nothing else, which no page and no log
+ * in this app reports. The list moves by hand in six places
  * (`docs/agent/security.md`); the export is what stops it moving here unseen.
  */
 export function chatEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...agentEnvironment(), FORCE_COLOR: "0" };
+  const env: NodeJS.ProcessEnv = { ...agentEnvironment(), PATH: chatPath(), FORCE_COLOR: "0" };
   for (const key of Object.keys(env)) {
     if (
       key.startsWith("UF_") ||

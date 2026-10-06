@@ -106,9 +106,10 @@ src/lib/
                    it waits rather than refusing, because the run loop is one
                    of the four callers; `landing` in land.ts is the other
                    claim, over the operator's checkout, and it refuses
-  checkoutClaim.ts who is writing to a finished run's own checkout from outside
-                   a work cycle — a resolution being set up, or a Commit — so
-                   that neither opens under the other; imports nothing, so
+  checkoutClaim.ts who is writing to a finished run's checkout from outside a
+                   work cycle — a resolution being set up, a Commit or a
+                   Purge — so that none opens under another; keyed on the
+                   branch, which a chain's links share; imports nothing, so
                    `reopenRun` in orchestrator.ts can read what land.ts takes
   verifyCommand.ts what an operator's Land check may be, and nothing that runs
                    one — split from landGate.ts, which spawns, so the Settings

@@ -215,6 +215,25 @@ test("degrades to empty rather than throwing when the folder is unreadable", () 
   assert.doesNotMatch(notice, /dangling/);
 });
 
+test("does not price sibling runs' isolated checkouts in .uf-worktrees", () => {
+  // A run whose folder is a mount root has the app's worktree store under it,
+  // and every checkout in there is another run's work in progress. Priced, it is
+  // an invitation to read somebody else's half-written files, and each one is a
+  // duplicate of a real path that pushes the run's own files off a capped list.
+  const mount = path.join(tmp, "mountroot");
+  const big = "x".repeat(bytesFor(56_000));
+  fs.mkdirSync(path.join(mount, "repo", "src"), { recursive: true });
+  fs.writeFileSync(path.join(mount, "repo", "src", "own.ts"), big);
+  fs.mkdirSync(path.join(mount, ".uf-worktrees", "repo-abc-1", "src"), { recursive: true });
+  fs.writeFileSync(path.join(mount, ".uf-worktrees", "repo-abc-1", "src", "own.ts"), big);
+  const notice = fileCostNotice(mount);
+  assert.ok(notice.includes("repo/src/own.ts"), notice);
+  assert.ok(
+    !notice.includes(".uf-worktrees"),
+    `a sibling run's checkout is on this run's price list:\n${notice}`,
+  );
+});
+
 test("asks the event log a question it can answer", () => {
   // The read history is the half of the ranking that is SQL rather than
   // arithmetic, and a malformed query fails the way everything else here fails:

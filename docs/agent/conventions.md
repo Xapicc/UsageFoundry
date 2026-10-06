@@ -21,6 +21,7 @@ Each rule is in one topic file under `docs/agent/conventions/`; the lines below 
 ## [Polling, list DTOs, filters and Settings saves](conventions/polling-dtos-and-settings-save.md)
 
 - Pages are client components that poll their API route (dashboard 120s, run detail 3s for the row while SSE carries the log).
+- A poll keeps one request of its own out at a time, so it re-arms on the answer rather than on a clock.
 - A page holds one `EventSource` whatever it shows, and a page that follows several runs follows them through one multiplexed stream.
 - A list route ships the list's own DTO, and both readers of a list move together.
 - A payload may carry a position into its own answer, and it is turned back into an id at the fetch boundary.

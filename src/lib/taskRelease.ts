@@ -102,13 +102,17 @@ export function releaseTask(
   const release = db().transaction((): TaskReleaseResult => {
     const task = getTask(taskId);
     if (!task) return { ok: false, kind: "missing", error: "No such task." };
+    // No title: this answers for whatever id it is handed, and the title of a
+    // task the run does not hold is a read past what a run token is bounded to.
+    // The MCP door refuses those first (`notHeldByRun`); this keeps the next
+    // caller from reopening it.
     if (task.status === "open") {
       return {
         ok: false,
         kind: "refused",
         error:
-          `“${task.title}” is already open and held by no run, so there is ` +
-          "nothing to release. Only a task this run holds can be released.",
+          "This task is already open and held by no run, so there is nothing " +
+          "to release. Only a task this run holds can be released.",
       };
     }
 

@@ -99,7 +99,9 @@ module because this is the one write across both tables, and `tasks.ts` must not
 import `taskComments.ts` while `taskComments.ts` must not call `updateTask`. It
 refuses a task that is already `open`, which is the one check it adds: `open →
 open` is not a move and the transition rule allows it for anybody, so without it
-any run could sign a release note on any open task. The reason is bounded at
+any run could sign a release note on any open task. That refusal names no
+title, because it answers for whatever id it is handed — the MCP door refuses a
+task the run does not hold before it gets here (`mcp-surface.md`). The reason is bounded at
 `MAX_RELEASE_REASON`, which keeps the note it becomes — a fixed first line saying
 it was a release, and whether it was marked, then the run's words — inside
 `MAX_TASK_COMMENT`, so a reason the tool took is never refused by the store for a

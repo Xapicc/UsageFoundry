@@ -325,7 +325,9 @@ export function decideStackWait(
  * What a run resumed from `waiting-for-stack` is told, as its next turn.
  *
  * Written into `runs.follow_up`, the door `reopenPrompt`'s notices already use,
- * so it is consumed at the spawn and is the whole of the resumed turn. It says
+ * so it is consumed at the spawn and is the resumed turn, behind the
+ * stopped-tasks note when the cycle that asked left background tasks stopped
+ * (`releaseStackWaits` puts it there). It says
  * what changed and names the binaries, because the agent's last turn was "I am
  * waiting for cargo" and the useful first act is to check `cargo --version`
  * rather than to re-derive where it was.

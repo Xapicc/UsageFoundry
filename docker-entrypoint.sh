@@ -172,11 +172,23 @@ fi
 # agents unable to remove or upgrade what they run. That is root only where
 # UF_AGENT_UID is unset, which is the arrangement whose children are root
 # anyway, the same condition the chown above is skipped under.
+#
+# Dropped, the environment is an allowlist, for the reason
+# `winnow_filter_as_agent` gives: at the agents' own uid this process's
+# /proc/<pid>/environ is theirs to read, so the UF_AUTH_TOKEN,
+# ANTHROPIC_ADMIN_KEY and UF_WEBHOOK_SECRET this script holds would be handed
+# over by the drop itself (board task 7e2073d5). GH_TOKEN is the one credential
+# gh needs, and every work cycle is handed the same token anyway. Root's PATH is
+# the one gh resolved `git` on before, and `gh` is named by path, as `uv` is
+# below. The root branch keeps the inherited environment for both helpers: with
+# UF_AGENT_UID unset every agent child is root as well, so there is no uid for
+# the credentials to be kept from.
 gh_as_agent() {
   if [ -n "${UF_AGENT_UID:-}" ]; then
     setpriv --reuid="$UF_AGENT_UID" --regid="${UF_AGENT_GID:-$UF_AGENT_UID}" \
             --clear-groups \
-      env HOME=/home/node GH_TOKEN="$UF_GITHUB_TOKEN" gh "$@"
+      env -i HOME=/home/node PATH="$PATH" GH_TOKEN="$UF_GITHUB_TOKEN" \
+        /usr/local/bin/gh "$@"
   else
     env HOME=/home/node GH_TOKEN="$UF_GITHUB_TOKEN" gh "$@"
   fi
@@ -246,13 +258,26 @@ fi
 #
 # The agents' PATH as well, which is the one their launchers are on: under
 # root's, uv warns on every install that the directory it just wrote to is not
-# on PATH. Only once the uid is dropped, because `env` looks `uv` up on the PATH
-# it was just given.
+# on PATH. It is the PATH uv's own children see and never the one `uv` is found
+# on. `env` looked `uv` up on the PATH it was just given, whose second entry is
+# /home/node/pytools/bin, so a `uv` any work cycle left there ran at every later
+# boot (board task 7e2073d5), and the image's is named by path instead.
+#
+# And the environment is an allowlist, for `gh_as_agent`'s reason, with more
+# riding on it here: `uv tool install` runs whatever build backend an sdist
+# names, with this environment in hand. The four UV_* are the image's, and they
+# are the whole of uv's configuration, so a UV_* or proxy variable added to
+# compose has to be added here as well or it arrives nowhere.
 uv_as_agent() {
   if [ -n "${UF_AGENT_UID:-}" ]; then
     setpriv --reuid="$UF_AGENT_UID" --regid="${UF_AGENT_GID:-$UF_AGENT_UID}" \
             --clear-groups \
-      env HOME=/home/node PATH="${UF_AGENT_PATH:-$PATH}" uv "$@"
+      env -i HOME=/home/node PATH="${UF_AGENT_PATH:-$PATH}" \
+        UV_TOOL_DIR="$UV_TOOL_DIR" \
+        UV_TOOL_BIN_DIR="$UV_TOOL_BIN_DIR" \
+        UV_PYTHON_INSTALL_DIR="$UV_PYTHON_INSTALL_DIR" \
+        UV_PYTHON_PREFERENCE="$UV_PYTHON_PREFERENCE" \
+        /usr/local/bin/uv "$@"
   else
     env HOME=/home/node uv "$@"
   fi

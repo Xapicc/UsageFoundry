@@ -160,6 +160,20 @@ describe("normalizePolicy", () => {
     assert.equal(normalizePolicy({ maxIterations: -4 }).maxIterations, 1);
   });
 
+  it("reads a policy that is not an object as the default rather than throwing", () => {
+    // It runs again over the stored policy at startRun, so a throw here is a
+    // run that was admitted and then cannot start. The doors refuse a
+    // non-object budget with a 400 before it gets this far; this is the half
+    // that keeps the function total for whatever reaches it anyway.
+    for (const raw of ["lots", 5, true, [], null, undefined]) {
+      assert.deepEqual(
+        normalizePolicy(raw),
+        normalizePolicy({}),
+        `for ${JSON.stringify(raw)}`,
+      );
+    }
+  });
+
   it("reads a non-boolean continueAfterDone as off", () => {
     // This flag makes a run refuse to stop when the agent says it is finished,
     // so a string off the wire must fail safe rather than fail consistent.

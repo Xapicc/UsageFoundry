@@ -27,9 +27,9 @@ measurement under *Verified* and cut the item down to what is still open.
 |---|---|--:|--:|
 | Metering and cost | [metering-and-cost.md](verification/metering-and-cost.md) | 23 | 12 |
 | Budgets and guards | [budgets-and-guards.md](verification/budgets-and-guards.md) | 9 | 4 |
-| Run lifecycle | [run-lifecycle.md](verification/run-lifecycle.md) | 24 | 31 |
+| Run lifecycle | [run-lifecycle.md](verification/run-lifecycle.md) | 24 | 32 |
 | Run lifecycle | [run-lifecycle-background-work.md](verification/run-lifecycle-background-work.md) — a work cycle's wait for background tasks, and what stopping one tells the next cycle | 4 | 3 |
-| Context control | [context-control-pruning.md](verification/context-control-pruning.md) — pruning, compaction and the context ceiling | 23 | 13 |
+| Context control | [context-control-pruning.md](verification/context-control-pruning.md) — pruning, compaction and the context ceiling | 24 | 13 |
 | Context control | [context-control-intake-filter.md](verification/context-control-intake-filter.md) — the intake filter and its ledger | 8 | 4 |
 | Context control | [context-control-occupancy-and-composition.md](verification/context-control-occupancy-and-composition.md) — the occupancy and composition series | 8 | 5 |
 | Orchestrator chat | [orchestrator-chat.md](verification/orchestrator-chat.md) | 12 | 22 |
@@ -39,7 +39,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Workflows and schedules | [workflows-and-schedules-loop-sections.md](verification/workflows-and-schedules-loop-sections.md) — a loop's repeated section: frames, marking, passes and pick-ups | 18 | 4 |
 | Workflows and schedules | [workflows-and-schedules-general.md](verification/workflows-and-schedules-general.md) — the canvas, instances, schedules, and a loop's region, link and board stop, review blocks | 13 | 12 |
 | Concurrency and ownership | [concurrency-and-ownership.md](verification/concurrency-and-ownership.md) | 19 | 8 |
-| Isolation and landing | [isolation-and-landing.md](verification/isolation-and-landing.md) | 12 | 11 |
+| Isolation and landing | [isolation-and-landing.md](verification/isolation-and-landing.md) | 13 | 11 |
 | Git and review | [git-and-review.md](verification/git-and-review.md) | 11 | 9 |
 | Agents, templates and models | [agents-templates-and-models.md](verification/agents-templates-and-models.md) | 20 | 9 |
 | Other providers | [other-providers.md](verification/other-providers.md) — Codex, and the local provider | 14 | 8 |
@@ -48,7 +48,8 @@ measurement under *Verified* and cut the item down to what is still open.
 | Retention | [retention.md](verification/retention.md) | 2 | 2 |
 | Security and sandboxing | [security-and-sandboxing-cli-sandbox.md](verification/security-and-sandboxing-cli-sandbox.md) — the CLI's sandbox, bwrap, seccomp, mount points and the write set | 17 | 12 |
 | Security and sandboxing | [security-and-sandboxing-privilege-and-auth.md](verification/security-and-sandboxing-privilege-and-auth.md) — the privilege split, credentials, auth and containment | 11 | 10 |
-| Security and sandboxing | [security-and-sandboxing-stacks.md](verification/security-and-sandboxing-stacks.md) — a stack's tool grants and permissions | 12 | 4 |
+| Security and sandboxing | [security-and-sandboxing-stacks.md](verification/security-and-sandboxing-stacks.md) — a stack's tool grants and permissions | 9 | 2 |
+| Security and sandboxing | [security-and-sandboxing-name-lookup.md](verification/security-and-sandboxing-name-lookup.md) — root's `PATH`, the agents' `PATH` and what a dropped process runs by name | 5 | 4 |
 | Container and environment | [container-and-environment-resources.md](verification/container-and-environment-resources.md) — memory, CPU, cgroup limits, OOM and the filter launcher | 6 | 5 |
 | Container and environment | [container-and-environment-stacks.md](verification/container-and-environment-stacks.md) — the stacks carrier, its installs, receipts and invocation counts | 20 | 7 |
 | Container and environment | [container-and-environment-deployment.md](verification/container-and-environment-deployment.md) — the image, network, volumes, backup and health | 9 | 13 |
@@ -59,4 +60,4 @@ measurement under *Verified* and cut the item down to what is still open.
 | Interface | [interface-narrow-viewports.md](verification/interface-narrow-viewports.md) — pages at 390px, layout sweeps and smoke-pages | 15 | 9 |
 | Interface | [interface-canvases.md](verification/interface-canvases.md) — the graph canvases, touched map and replay | 5 | 2 |
 | Interface | [interface-pages-and-api.md](verification/interface-pages-and-api.md) — pages, panels and API payloads | 20 | 12 |
-| **Total** | | **412** | **261** |
+| **Total** | | **416** | **264** |

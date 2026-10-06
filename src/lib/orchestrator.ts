@@ -22,7 +22,7 @@ import {
 import { git, gitSync } from "./git";
 import { runningVerifyChildren } from "./landGate";
 import { withRepoAdmin } from "./repoLock";
-import { checkoutWriter } from "./checkoutClaim";
+import { checkoutWriter, type CheckoutOwner } from "./checkoutClaim";
 import { dataDirRefusal, mayWriteDataDir, requireDataDir } from "./serverLock";
 import { childCredentials, chownForChild, deprioritiseChildForOom } from "./privsep";
 import { currentSandbox, sandboxRefusal } from "./sandbox";
@@ -132,6 +132,7 @@ import {
 } from "./contextPruning";
 import { BYTES_PER_TOKEN, fileCostNotice } from "./fileCostNotice";
 import { tmpdirNotice } from "./tmpdirNotice";
+import { WORKTREE_STORE_DIR } from "./worktreeStoreDir";
 import { prepareReadGuard } from "./readGuard";
 // The `pkill`/`killall` denial for the provider that cannot carry one on an
 // argv. Beside the read guard because it is the same kind of thing — something
@@ -165,6 +166,7 @@ import { clipToolInput, MAX_LOG_CHARS, toolArgs } from "./logLine";
 // Same direction, same reason: the cycle deadline says how long it waited in
 // the words the run page already uses for every other span.
 import { fmtDuration, fmtTokens, shortId } from "./format";
+import { jsonKind } from "./http";
 import {
   RUN_PROVIDER_LABEL,
   pausedMsAt,
@@ -1472,6 +1474,33 @@ export function previousCycleStoppedTasksNotice(runId: string): string | null {
   return stoppedTasksNotice(events);
 }
 
+/**
+ * A follow-up this app wrote, with the previous cycle's stopped-tasks note
+ * ahead of it.
+ *
+ * `nextPrompt` sends a follow-up alone. That is right for the operator's own
+ * words, which are promised verbatim and were typed by somebody who picked the
+ * run up from a log that names the tasks, and wrong for text nobody typed: a
+ * pick-up with no note and a stack resume both open a resumed turn into a
+ * conversation that still believes its tasks are running, and the `iteration`
+ * event that turn writes moves the boundary, so no later cycle is told either.
+ * Resolved at the door that writes the text, `reopenRun`'s rule for the rest of
+ * that message, and the boundary is the one the spawn would have read: nothing
+ * writes an `iteration` event between a cycle's end and its pick-up.
+ *
+ * Not without a session, where `nextPrompt` sends the task, the follow-up after
+ * it and the note after both, so prepending it here would say it twice. Not for
+ * Codex, whose stream has no such events — the loop's own rule.
+ */
+function withStoppedTasksNotice(runId: string, followUp: string): string {
+  const run = db()
+    .prepare("SELECT provider, session_id FROM runs WHERE id = ?")
+    .get(runId) as Pick<RunRow, "provider" | "session_id"> | undefined;
+  if (!run?.session_id || run.provider === "codex") return followUp;
+  const note = previousCycleStoppedTasksNotice(runId);
+  return note ? `${note}\n\n${followUp}` : followUp;
+}
+
 export function subscribe(
   runId: string,
   fn: (e: PersistedRunEvent) => void,
@@ -2724,16 +2753,6 @@ export function probeIsolation(folder: string): IsolationPlan {
 
   return { mode: "worktree", repoRoot, base: head.stdout, baseBranch };
 }
-
-/**
- * The store's own directory name, as a value.
- *
- * One spelling, because the retention sweep and the size figure beside it both
- * name this directory from the mount rather than from a repository — and a
- * second copy of the literal is a directory this app would create and never
- * find again.
- */
-export const WORKTREE_STORE_DIR = ".uf-worktrees";
 
 /**
  * Where a repo's isolated checkouts live: a hidden sibling inside the mount.
@@ -4173,7 +4192,14 @@ export function createRun(input: CreateRunInput): RunRow {
   requireDataDir();
 
   const folder = resolveWorkspaceFolder(input.folder, input.mountId);
-  const prompt = String(input.prompt ?? "").trim();
+  // Checked although the type says string, because every door ends here and
+  // `String()` admitted an object that got past one of them as a billed run
+  // whose task was "[object Object]".
+  const rawPrompt: unknown = input.prompt ?? "";
+  if (typeof rawPrompt !== "string") {
+    throw new Error(`The prompt has to be a string; got ${jsonKind(rawPrompt)}.`);
+  }
+  const prompt = rawPrompt.trim();
   if (!prompt) throw new Error("Prompt is required");
 
   // The install's spend limit, at the one door every run in this app comes
@@ -5277,6 +5303,39 @@ export function blockWaitingRun(id: string, reason: string): boolean {
 }
 
 /**
+ * End a run that has not started because an operator stopped it, the way Stop
+ * on its own page does — and release nothing.
+ *
+ * `stopped` rather than `blocked`, and the difference is who may bring it back.
+ * `reviveBlockedDependents` wakes any `blocked` row that never reached a
+ * workspace, so a waiting run the fleet's stop wrote `blocked` was put back to
+ * work by picking up the run in front of it, which is a decision about that
+ * run. A `stopped` row is never revived, and is picked up by name or by the
+ * fleet's pick-up, like any run somebody stopped.
+ *
+ * It leaves the release to the caller: `stopFleet` closes every waiting row
+ * before it signals anything, and a release in the middle of that walk would
+ * admit what it had not reached yet. Guarded on `status='waiting'` for
+ * `blockWaitingRun`'s reason.
+ */
+export function stopWaitingRun(id: string, reason: string): boolean {
+  const at = Date.now();
+  const done = db()
+    .prepare(
+      "UPDATE runs SET status='stopped', finished_at=?, stop_reason=? WHERE id=? AND status='waiting'",
+    )
+    .run(at, reason, id);
+  if (done.changes !== 1) return false;
+  emit({
+    runId: id,
+    ts: at,
+    kind: "status",
+    payload: { status: "stopped", finished_at: at, stop_reason: reason },
+  });
+  return true;
+}
+
+/**
  * Runs belonging to a workflow run somebody halted, and the workflow's name.
  *
  * One condition rather than one per caller, because the two that read it — the
@@ -5335,6 +5394,13 @@ export function haltedWorkflowOf(runId: string): string | null {
  * work under an instance the page reports as stopped, where the instance budget
  * guard — which acts only on a `started` instance — could no longer stop it.
  *
+ * A run set aside is the third, and for the same reason it is a fact about the
+ * row. Both bulk pick-ups reach this through `reopenRun`, so without it a run
+ * the operator said to leave alone was put back to work by a press that never
+ * named it, because it named the run in front. Left out of the candidate set,
+ * so the walk stops at it and does not reach what is behind it either. Picking
+ * it up by name clears the mark first, so that door still revives.
+ *
  * The count is of *runs*, and the blocks are counted by the function that
  * reopens them: half a workflow's graph is not runs at all — a node deferred
  * behind an orchestrator or a merge block holds a row in
@@ -5349,6 +5415,7 @@ export function reviveBlockedDependents(roots: readonly string[]): number {
     db()
       .prepare(
         "SELECT id FROM runs WHERE status='blocked' AND work_dir IS NULL AND iterations = 0" +
+          " AND set_aside_at IS NULL" +
           ` AND id NOT IN (SELECT runId FROM (${HALTED_MEMBERS}))`,
       )
       .all() as Array<{ id: string }>
@@ -9744,6 +9811,59 @@ export async function startRun(id: string): Promise<void> {
         break;
       }
 
+      // Every refusal that can stop a cycle before its child exists is taken
+      // here, above the increment and the clears of `followUp` and
+      // `pendingPushback` below. A cycle refused here was never spawned, so it
+      // is charged no work cycle and its message is still undelivered: below
+      // them, a one-cycle run refused at its first spawn could not be picked up
+      // the way its own stop reason says to, and a pick-up's note was cleared
+      // although nothing ever received it.
+      //
+      // A run can last hours, and the working directory was validated once when
+      // it was created. Re-checking before every spawn means a folder that has
+      // since been replaced by a symlink out of the mount cannot be handed to a
+      // process that writes files.
+      const stillContained = resolveWorkspaceFolder(
+        workDir,
+        describeFolder(workDir).mountId,
+      );
+      if (stillContained !== workDir) {
+        throw new Error(`Working directory changed underneath the run: ${workDir}`);
+      }
+
+      // The `pkill`/`killall` denial, for the provider that cannot carry it on
+      // an argv. **The cycle is refused rather than degraded when it is not
+      // there**, which is the one place this differs from the read guard and the
+      // vault skill below: those degrade to a cycle that reads more or knows
+      // less, and this would degrade to a cycle that can kill the server
+      // supervising every run in flight. `codexRules.ts` carries what the file
+      // is, why it is a file rather than a flag, and what it does not cover.
+      if (run.provider === "codex") {
+        const rules = prepareCodexRules();
+        if (rules.kind === "unavailable") {
+          throw new Error(
+            `Refusing to spawn a Codex work cycle with no process-kill denial: ${rules.reason}`,
+          );
+        }
+      }
+
+      // Read per cycle, so a sign-out reaches a parked run before its next cycle
+      // rather than after it. Refused rather than degraded: without the sign-in
+      // the only thing this cycle could do is go to Anthropic under a model id
+      // Anthropic does not have, or under the operator's plan, which is the one
+      // thing a local run exists not to spend.
+      let local: { signIn: LocalSignIn; model: string } | null = null;
+      if (run.provider === "local") {
+        const signIn = getLocalSignIn();
+        if (!signIn) {
+          throw new Error(
+            "Refusing to spawn a local-model work cycle: the local provider is signed out. Sign in under Settings and reopen the run.",
+          );
+        }
+        ensureLocalConfigDir();
+        local = { signIn, model: run.model ?? signIn.model };
+      }
+
       // Read before the increment below: what the next prompt needs to know is
       // how much this run had already been charged for *before* the cycle it is
       // about to open, which is what says whether opening with the task again
@@ -9959,18 +10079,6 @@ export async function startRun(id: string): Promise<void> {
         );
       }
 
-      // A run can last hours, and the working directory was validated once when
-      // it was created. Re-checking before every spawn means a folder that has
-      // since been replaced by a symlink out of the mount cannot be handed to a
-      // process that writes files.
-      const stillContained = resolveWorkspaceFolder(
-        workDir,
-        describeFolder(workDir).mountId,
-      );
-      if (stillContained !== workDir) {
-        throw new Error(`Working directory changed underneath the run: ${workDir}`);
-      }
-
       // What this cycle may write, if anything confines it at all. Read per
       // cycle rather than per run for the reason the containment check above is:
       // a run outlives the policy it started under, and an operator who has
@@ -9999,39 +10107,6 @@ export async function startRun(id: string): Promise<void> {
       // Read off the row rather than off anything in this segment's own state,
       // so a run picked up after a restart is spawned as what it was created as.
       const adapter = selectCycleAdapter(run.provider);
-
-      // The `pkill`/`killall` denial, for the provider that cannot carry it on
-      // an argv. **The cycle is refused rather than degraded when it is not
-      // there**, which is the one place this differs from the read guard and the
-      // vault skill above: those degrade to a cycle that reads more or knows
-      // less, and this would degrade to a cycle that can kill the server
-      // supervising every run in flight. `codexRules.ts` carries what the file
-      // is, why it is a file rather than a flag, and what it does not cover.
-      if (run.provider === "codex") {
-        const rules = prepareCodexRules();
-        if (rules.kind === "unavailable") {
-          throw new Error(
-            `Refusing to spawn a Codex work cycle with no process-kill denial: ${rules.reason}`,
-          );
-        }
-      }
-
-      // Read per cycle, so a sign-out reaches a parked run before its next cycle
-      // rather than after it. Refused rather than degraded: without the sign-in
-      // the only thing this cycle could do is go to Anthropic under a model id
-      // Anthropic does not have, or under the operator's plan, which is the one
-      // thing a local run exists not to spend.
-      let local: { signIn: LocalSignIn; model: string } | null = null;
-      if (run.provider === "local") {
-        const signIn = getLocalSignIn();
-        if (!signIn) {
-          throw new Error(
-            "Refusing to spawn a local-model work cycle: the local provider is signed out. Sign in under Settings and reopen the run.",
-          );
-        }
-        ensureLocalConfigDir();
-        local = { signIn, model: run.model ?? signIn.model };
-      }
 
       const args = adapter.buildArgs({
         prompt,
@@ -11299,10 +11374,7 @@ export function stopRun(id: string, cause: string = OPERATOR_CAUSE): StopOutcome
   // ends with its own reason rather than starting on top of work that never
   // happened.
   if (run.status === "waiting") {
-    setStatus(id, "stopped", {
-      finished_at: Date.now(),
-      stop_reason: `${cause} while it was waiting for another run.`,
-    });
+    stopWaitingRun(id, `${cause} while it was waiting for another run.`);
     releaseDependents();
     promoteQueued();
     return "cancelled";
@@ -12256,6 +12328,7 @@ export async function sweepPaused(): Promise<void> {
       return;
     }
     const now = Date.now();
+    const held = newWorkPaused();
     let freed = false;
     let resumeSlots = MAX_RESUMES_PER_SWEEP - forStack.released;
 
@@ -12316,6 +12389,13 @@ export async function sweepPaused(): Promise<void> {
         }
 
         case "resume": {
+          // Left `paused` while new work is held, for the folder hold's
+          // reason: `paused` is what `reconcileOnBoot`'s grace keys on, and a
+          // queued row is closed out by a restart — which is the usual reason
+          // the hold gets set. The walk would keep it in the queue anyway, so
+          // flipping it buys nothing but that. `setFleetPaused(false)` sweeps
+          // again rather than leaving it to the next tick.
+          if (held) break;
           // Only so many per tick, for `MAX_RESUMES_PER_SWEEP`'s reason. The
           // rest keep their `paused` row and a `resume_at` already in the past,
           // so the next tick reconsiders them from a fresh snapshot — which is
@@ -12426,7 +12506,8 @@ export async function sweepPaused(): Promise<void> {
  * spread. The rest keep their row and are taken next tick.
  *
  * What the run is told travels in `follow_up`, the door a pick-up's notices
- * use, so it is consumed at the spawn and the resumed turn is the notice. The
+ * use, so it is consumed at the spawn and the resumed turn is the notice —
+ * behind the stopped-tasks note when the cycle that asked left one. The
  * grant needs nothing here: `stackGrants()` is read per cycle, from receipts a
  * restart has just rewritten, and `buildArgs` puts it on a resumed cycle's
  * argv as on any other.
@@ -12441,6 +12522,10 @@ export function releaseStackWaits(
   const waiting = db()
     .prepare("SELECT id FROM runs WHERE status = 'waiting-for-stack' ORDER BY created_at")
     .all() as { id: string }[];
+  // `sweepPaused`'s hold rule, and for its reason: a restart keeps this status
+  // whatever its age and closes out the queue it would be released into. All
+  // still waiting, so the sweeper keeps ticking until the hold is lifted.
+  if (newWorkPaused()) return { released: 0, waiting: waiting.length };
 
   let released = 0;
   let still = 0;
@@ -12455,7 +12540,7 @@ export function releaseStackWaits(
       .prepare(
         "UPDATE runs SET status='queued', follow_up=? WHERE id=? AND status='waiting-for-stack'",
       )
-      .run(stackResumeNotice(decision), id);
+      .run(withStoppedTasksNotice(id, stackResumeNotice(decision)), id);
     if (flip.changes !== 1) continue;
     released += 1;
     releaseStackWait(id, now);
@@ -12672,6 +12757,25 @@ const RESTART_KILLED_NOTICE =
   "whole. Then continue the task from there.";
 
 /**
+ * Every run recorded on this run's branch, itself included: each id a holder
+ * of the checkout they share can be recorded under.
+ *
+ * Selected on the branch, which is the key `checkoutClaim.ts` takes, rather
+ * than walked over `continues_run` as `chainRuns` is. That walk exists for a
+ * dependent not yet released, which has no branch recorded — and such a run
+ * cannot hold a checkout, so for this question the two agree, and asking the
+ * claim's own key keeps the claim and the rows from disagreeing about what the
+ * same checkout is.
+ */
+export function runsOnBranch(run: CheckoutOwner): string[] {
+  if (!run.repo_root || !run.worktree_branch) return [run.id];
+  const rows = db()
+    .prepare("SELECT id FROM runs WHERE repo_root = ? AND worktree_branch = ?")
+    .all(run.repo_root, run.worktree_branch) as { id: string }[];
+  return rows.map((r) => r.id);
+}
+
+/**
  * Why a conflict resolution, a Commit, a Purge or the merge queue holds this
  * run's branch, or null.
  *
@@ -12681,21 +12785,27 @@ const RESTART_KILLED_NOTICE =
  * Purge for the whole of its write. It is read here in the same turn that
  * queues the run, so a resolution entering afterwards finds the run active and
  * refuses itself.
+ *
+ * Asked of every run on the branch, not of this one: a chain's links share the
+ * checkout, so a resolution, a Commit or a land on any of them is the merge
+ * this run's next cycle would be committing into.
  */
-function branchHolderRefusal(runId: string): string | null {
-  const writer = checkoutWriter(runId);
+function branchHolderRefusal(run: RunRow): string | null {
+  const writer = checkoutWriter(run);
+  const ids = runsOnBranch(run);
+  const among = ids.map(() => "?").join(",");
   const resolution =
     writer === "resolution" ||
     db()
       .prepare(
-        "SELECT 1 FROM run_reviews WHERE run_id = ? AND kind = 'resolve' AND status = 'running' LIMIT 1",
+        `SELECT 1 FROM run_reviews WHERE run_id IN (${among}) AND kind = 'resolve' AND status = 'running' LIMIT 1`,
       )
-      .get(runId);
+      .get(...ids);
   const queued = db()
     .prepare(
-      "SELECT status FROM merge_queue WHERE run_id = ? AND status IN ('landing','resolving') LIMIT 1",
+      `SELECT status FROM merge_queue WHERE run_id IN (${among}) AND status IN ('landing','resolving') LIMIT 1`,
     )
-    .get(runId) as { status: "landing" | "resolving" } | undefined;
+    .get(...ids) as { status: "landing" | "resolving" } | undefined;
   if (resolution || queued?.status === "resolving") {
     return (
       "Claude is resolving a conflict on its branch, with the merge open in the " +
@@ -12841,7 +12951,7 @@ export function reopenRun(
   // open in this run's own slot with the conflicted files still marked, and the
   // cycle this would start is granted `git add` and `git commit` there; a land
   // is part-way through merging the branch this run would go on committing to.
-  const branchHeld = branchHolderRefusal(id);
+  const branchHeld = branchHolderRefusal(run);
   if (branchHeld) return { ok: false, reason: branchHeld };
 
   const policy = normalizePolicy(budget);
@@ -12932,6 +13042,13 @@ export function reopenRun(
     // in the same statement that queues the run.
     restartKilled: cycleCutByRestart(run),
   });
+  // Text this app chose carries the stopped-tasks note; the operator's own
+  // words go as typed.
+  const firstFollowUp = !firstPrompt
+    ? null
+    : note
+      ? firstPrompt
+      : withStoppedTasksNotice(id, firstPrompt);
 
   const flip = db()
     .prepare(
@@ -12981,7 +13098,7 @@ export function reopenRun(
       waitingAgain ? "waiting" : "queued",
       blob,
       policy.maxIterations ?? 0,
-      firstPrompt || null,
+      firstFollowUp,
       // `origin` is deliberately untouched: it says which route *created* this
       // run, and rewriting it here would lose that while `created_at` went on
       // pointing at the original creation. A pick-up is its own act and gets its
