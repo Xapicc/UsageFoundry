@@ -5,7 +5,7 @@ import { DB_PATH, PROJECTS_DIR, WORKSPACE_MOUNTS } from "./config";
 import { type SchemaFault, db, schemaFaultsThisBoot } from "./db";
 import { webhookHealth } from "./notify";
 import { opsCounters, recentOpsEvents } from "./ops";
-import { currentSnapshot, restartClosedCount } from "./orchestrator";
+import { conflictKey, currentSnapshot, restartClosedCount } from "./orchestrator";
 import { backupStore } from "./retention";
 import { ownsDataDir } from "./serverLock";
 import { toolCounts } from "./toolInventory";
@@ -35,7 +35,7 @@ export type RunStatusCounts = Record<string, number>;
 export interface StoreUsage {
   /** The SQLite file plus its WAL and shm siblings. */
   databaseBytes: number;
-  /** Every mount's `.uf-worktrees` checkout store, added together. */
+  /** Every distinct `.uf-worktrees` checkout store, added together; slots aliasing one directory count once. */
   checkoutsBytes: number;
   /** The transcript tree this install parses. */
   transcriptsBytes: number;
@@ -295,8 +295,21 @@ const storeCache = ((globalThis as unknown as { __ufStoreUsage?: StoreCache })
 async function measureStores(now: number): Promise<StoreUsage> {
   let checkouts = 0;
   let partial = false;
+  // `conflictKey` is the identity the folder claim already uses for "the same
+  // directory", so two slots over one host directory — compose defaults
+  // `UF_WORKSPACE_2..4` to `${UF_WORKSPACE}` — are measured once rather than
+  // once per slot, which would read a monitor's disk threshold at a multiple of
+  // the real size. It is keyed on the store path rather than the mount so a
+  // mount nested inside another still has a store of its own, and it needs the
+  // directory to exist for nothing.
+  const measured = new Set<string>();
   for (const mount of WORKSPACE_MOUNTS) {
-    const res = await treeBytes(path.join(mount.path, ".uf-worktrees"));
+    const store = path.join(mount.path, ".uf-worktrees");
+    const { rootKey, segs } = conflictKey(store);
+    const identity = JSON.stringify([rootKey, segs]);
+    if (measured.has(identity)) continue;
+    measured.add(identity);
+    const res = await treeBytes(store);
     checkouts += res.bytes;
     partial = partial || res.partial;
   }

@@ -34,7 +34,19 @@ process.env.WORKSPACE_ROOT = path.join(root, "workspace");
 // `WORKSPACE_ROOT`, and a shell that has it set — which is any container this
 // app ships in — would point the checkout-store walk at the real mounts and
 // measure the machine this test is running on.
-process.env.WORKSPACE_ROOTS = `Scratch=${path.join(root, "workspace")}`;
+//
+// Three slots, because `docker-compose.yml` defaults `UF_WORKSPACE_2..4` to
+// `${UF_WORKSPACE}` and so one host directory can sit behind several slots:
+// `Alias` is `Scratch` through a symlink, and `Nested` is a different directory
+// inside the same tree, whose store is a store of its own. Created here rather
+// than in `before`, because `WORKSPACE_MOUNTS` is fixed when `config` loads.
+fs.mkdirSync(path.join(root, "workspace", "nested"), { recursive: true });
+fs.symlinkSync(path.join(root, "workspace"), path.join(root, "workspace-alias"));
+process.env.WORKSPACE_ROOTS = [
+  `Scratch=${path.join(root, "workspace")}`,
+  `Alias=${path.join(root, "workspace-alias")}`,
+  `Nested=${path.join(root, "workspace", "nested")}`,
+].join("|");
 
 after(() => {
   delete process.env.UF_STATUS_TOKEN;
@@ -189,6 +201,27 @@ test("measures a checkout store's bytes, and says when it stopped early", async 
     "the checkout store's own bytes, walked and added up",
   );
   assert.equal(body.stores.partial, false);
+});
+
+test("measures one checkout store once however many slots name its directory", async () => {
+  const { statusReport } = await import("../../../lib/status");
+  const store = path.join(root, "workspace", ".uf-worktrees");
+  // Self-contained, so the figure below is this fixture's and not the sum of
+  // whatever an earlier case left in the same directory.
+  fs.rmSync(store, { recursive: true, force: true });
+  fs.mkdirSync(path.join(store, "repo-1"), { recursive: true });
+  fs.writeFileSync(path.join(store, "repo-1", "a.bin"), Buffer.alloc(10_000));
+  const nestedStore = path.join(root, "workspace", "nested", ".uf-worktrees", "repo-1");
+  fs.mkdirSync(nestedStore, { recursive: true });
+  fs.writeFileSync(path.join(nestedStore, "b.bin"), Buffer.alloc(300));
+
+  const body = await statusReport(Date.now() + 20 * 60_000);
+
+  // `Scratch` and `Alias` are one directory, so 10,000 and not 20,000; a monitor
+  // thresholding this field fires at half the real size otherwise. `Nested` is
+  // inside the same tree but its store is another directory, so it is added —
+  // the opposite error, a store dropped, understates and reads as headroom.
+  assert.equal(body.stores.checkoutsBytes, 10_300);
 });
 
 test("counts the delivery attempts since the webhook last succeeded", async () => {
