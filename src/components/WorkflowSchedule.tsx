@@ -80,9 +80,28 @@ function minutesOf(value: string): number | null {
     : null;
 }
 
+/** The server's `MAX_EVERY_HOURS`: a week. */
+const MAX_EVERY_HOURS = 168;
+
+/**
+ * `"6"` → `6`, and null for anything that is not a whole number of hours in
+ * range — `""` included, which `Number` reads as 0.
+ *
+ * The box is a `type="number"` input, which takes `1.5` as readily as `2`, and
+ * the server used to truncate that to "every hour": half as often again as was
+ * typed, with nobody present. The server now refuses it; this is so the form
+ * says so before Save rather than after.
+ */
+function hoursOf(value: string): number | null {
+  const hours = Number(value);
+  return value.trim() !== "" && Number.isInteger(hours) && hours >= 1 && hours <= MAX_EVERY_HOURS
+    ? hours
+    : null;
+}
+
 type Draft = {
   kind: ScheduleSpecDTO["kind"];
-  hours: number;
+  hours: string;
   time: string;
   weekday: number;
   timeZone: string;
@@ -92,7 +111,7 @@ function draftOf(schedule: WorkflowScheduleDTO | null, browserZone: string): Dra
   const spec = schedule?.spec;
   return {
     kind: spec?.kind ?? "daily",
-    hours: spec?.kind === "everyHours" ? spec.hours : 6,
+    hours: spec?.kind === "everyHours" ? String(spec.hours) : "6",
     time:
       spec && spec.kind !== "everyHours" ? hhmm(spec.minutes) : "09:00",
     weekday: spec?.kind === "weekly" ? spec.weekday : 1,
@@ -164,12 +183,19 @@ export function WorkflowSchedule({
     draft.kind !== "everyHours" && minutes === null
       ? "A schedule needs a time of day"
       : null;
+  const hours = draft.kind === "everyHours" ? hoursOf(draft.hours) : null;
+  const hoursError =
+    draft.kind === "everyHours" && hours === null
+      ? `A whole number of hours from 1 to ${MAX_EVERY_HOURS}`
+      : null;
 
   function save() {
     if (draft.kind === "everyHours") {
+      // Guarded for the missing time's reason below.
+      if (hours === null) return;
       return send("PUT", {
         kind: draft.kind,
-        hours: draft.hours,
+        hours,
         timeZone: draft.timeZone.trim(),
       });
     }
@@ -406,19 +432,30 @@ export function WorkflowSchedule({
                 <ListRow
                   label="Interval"
                   htmlFor="sched-hours"
-                  description="counted from the moment you save, so it does not move when the clocks do"
+                  // `role="alert"` for the time row's reason above.
+                  description={
+                    hoursError ? (
+                      <span role="alert" className="text-danger">
+                        {hoursError}
+                      </span>
+                    ) : (
+                      "counted from the moment you save, so it does not move when the clocks do"
+                    )
+                  }
                 >
                   <div className="w-36">
                     <Input
                       id="sched-hours"
                       type="number"
                       min={1}
-                      max={168}
+                      max={MAX_EVERY_HOURS}
+                      step={1}
                       className="tabular-nums"
+                      aria-invalid={hoursError !== null || undefined}
                       value={draft.hours}
                       unit="hours"
                       onChange={(e) =>
-                        setDraft({ ...draft, hours: Number(e.target.value) })
+                        setDraft({ ...draft, hours: e.target.value })
                       }
                     />
                   </div>
@@ -450,7 +487,7 @@ export function WorkflowSchedule({
               <Button
                 onClick={save}
                 busy={busy}
-                disabled={busy || timeError !== null}
+                disabled={busy || timeError !== null || hoursError !== null}
               >
                 Save schedule
               </Button>

@@ -532,6 +532,60 @@ describe("normalizeScheduleInput", () => {
     }
   });
 
+  it("refuses a weekday that is missing, rather than reading it as Sunday", () => {
+    // `Number(null)`, `Number("")` and `Number(false)` are all `0`, which is a
+    // legal Sunday — the same coercion the missing time above was refused for.
+    const missing: unknown[] = [
+      { kind: "weekly", minutes: 540, weekday: null, timeZone: BERLIN },
+      { kind: "weekly", minutes: 540, timeZone: BERLIN },
+      { kind: "weekly", minutes: 540, weekday: "", timeZone: BERLIN },
+      { kind: "weekly", minutes: 540, weekday: false, timeZone: BERLIN },
+      { kind: "weekly", minutes: 540, weekday: "1", timeZone: BERLIN },
+      { kind: "weekly", minutes: 540, weekday: 1.5, timeZone: BERLIN },
+    ];
+    for (const raw of missing) {
+      const r = normalizeScheduleInput(raw, NOW);
+      assert.equal(r.ok, false, JSON.stringify(raw));
+      if (r.ok) continue;
+      assert.match(r.error, /day of the week/);
+    }
+  });
+
+  it("refuses an interval that is not a whole number of hours, rather than rounding it", () => {
+    // Truncation read 1.5 as 1, which fires half as often again as was asked,
+    // and `true` as 1: a rule nobody chose, run with nobody present.
+    const bad: unknown[] = [
+      { kind: "everyHours", hours: 2.9, timeZone: "UTC" },
+      { kind: "everyHours", hours: 1.5, timeZone: BERLIN },
+      { kind: "everyHours", hours: true, timeZone: BERLIN },
+      { kind: "everyHours", hours: "6", timeZone: BERLIN },
+      { kind: "everyHours", hours: null, timeZone: BERLIN },
+      { kind: "everyHours", timeZone: BERLIN },
+    ];
+    for (const raw of bad) {
+      const r = normalizeScheduleInput(raw, NOW);
+      assert.equal(r.ok, false, JSON.stringify(raw));
+      if (r.ok) continue;
+      assert.match(r.error, /whole number of hours/);
+    }
+  });
+
+  it("still accepts every whole weekday and the interval bounds", () => {
+    for (let weekday = 0; weekday <= 6; weekday++) {
+      const r = normalizeScheduleInput(
+        { kind: "weekly", minutes: 540, weekday, timeZone: BERLIN },
+        NOW,
+      );
+      assert.equal(r.ok, true, `weekday ${weekday}`);
+      if (!r.ok) continue;
+      assert.deepEqual(r.value.spec, { kind: "weekly", weekday, minutes: 540 });
+    }
+    for (const hours of [1, 168]) {
+      const r = normalizeScheduleInput({ kind: "everyHours", hours, timeZone: BERLIN }, NOW);
+      assert.equal(r.ok, true, `hours ${hours}`);
+    }
+  });
+
   it("still accepts a midnight somebody typed", () => {
     // The other half of the refusal above: 00:00 is a legal time, and a fix
     // that reached it by narrowing the range would have taken it away.

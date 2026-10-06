@@ -169,8 +169,12 @@ export function normalizeScheduleInput(
 
   const kind = o.kind;
   if (kind === "everyHours") {
-    const hours = Math.trunc(Number(o.hours));
-    if (!Number.isFinite(hours) || hours < 1 || hours > MAX_EVERY_HOURS) {
+    // Refused rather than truncated: `Math.trunc` read a typed 1.5 as "every
+    // hour", half as often again as was asked, and `Number(true)` as 1. A
+    // schedule starts agents with nobody present, so it runs on the rule the
+    // operator chose or on none.
+    const hours = o.hours;
+    if (typeof hours !== "number" || !Number.isInteger(hours) || hours < 1 || hours > MAX_EVERY_HOURS) {
       return {
         ok: false,
         error: `“Every N hours” takes a whole number of hours from 1 to ${MAX_EVERY_HOURS}.`,
@@ -203,8 +207,10 @@ export function normalizeScheduleInput(
     if (kind === "daily") {
       return { ok: true, value: { spec: { kind, minutes }, timeZone } };
     }
-    const weekday = Math.trunc(Number(o.weekday));
-    if (!Number.isFinite(weekday) || weekday < 0 || weekday > 6) {
+    // A number is required for the missing time's reason above: `null`, `""`
+    // and `false` all coerce to 0, which is a legal Sunday nobody chose.
+    const weekday = o.weekday;
+    if (typeof weekday !== "number" || !Number.isInteger(weekday) || weekday < 0 || weekday > 6) {
       return { ok: false, error: "The day of the week has to be Sunday through Saturday." };
     }
     return { ok: true, value: { spec: { kind, weekday, minutes }, timeZone } };
