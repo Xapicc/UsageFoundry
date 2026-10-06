@@ -11384,6 +11384,25 @@ export async function startRun(id: string): Promise<void> {
       // input to `reopenPrompt`'s pushback branch. A machine's opinion about
       // the claim is not the claim.
       reportedDone = ending === "done";
+
+      // An operator's Stop that landed during the wait, read before the two
+      // `completed` endings below: the wait returns on it, and without this
+      // read the run ended `completed` saying the agent had finished, under a
+      // press already answered as a stop. Below `reportedDone`, which is still
+      // what the agent replied.
+      //
+      // The operator's kind only. A shutdown during the wait leaves the run
+      // the ending its cycle earned, deliberately: `restart_closed` follows
+      // the shutdown's ending, and a run whose agent said DONE taking it would
+      // be re-queued by the restart notice to work on a task it had finished.
+      // A guard or a prune cannot be written here at all, since both watch a
+      // cycle and their watches went with this one's `finally`.
+      const stoppedDuringWait = interrupts.get(id);
+      if (stoppedDuringWait?.kind === "operator") {
+        applyInterrupt(stoppedDuringWait);
+        break;
+      }
+
       if (reportedDone && !heldBack) {
         if (!policy.continueAfterDone) {
           stopReason =

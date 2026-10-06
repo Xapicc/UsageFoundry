@@ -986,3 +986,58 @@ describe("a context-ceiling prune pending when the run is told to stop", () => {
     assert.equal(settled.restart_closed, 0);
   });
 });
+
+/**
+ * The completion-verdict wait with an operator's Stop in place of the shutdown,
+ * which must end the other way. The wait returns as soon as anything is pending,
+ * and the loop took the DONE without reading what was: the press answered as if
+ * it had stopped the run, and the run ended `completed` saying the agent had
+ * finished. The shutdown's exception, pinned further up, is about the restart
+ * notice, and nothing re-queues a run an operator stopped.
+ */
+describe("stopping a run while it waits for its completion verdict", () => {
+  it("ends it stopped rather than completed", async () => {
+    const validating = getSettings().validateTaskCompletion;
+    saveSettings({ validateTaskCompletion: true });
+    nextChildSaysDone = true;
+    try {
+      const run = createRun({
+        folder: "project",
+        mountId: null,
+        prompt: "finish the task",
+        budget: { maxIterations: 5 },
+        origin: "form",
+      });
+      db()
+        .prepare(
+          "INSERT INTO run_reviews (id, run_id, created_at, status, kind)" +
+            " VALUES (?, ?, ?, 'running', 'validate')",
+        )
+        .run(`validate-${run.id}`, run.id, Date.now());
+      const loop = startRun(run.id);
+      await waitFor(() => {
+        const row = getRun(run.id)!;
+        return row.iterations === 1 && row.active_started_at === null;
+      }, "the cycle to reply DONE");
+      await new Promise((r) => setTimeout(r, 500));
+      assert.equal(getRun(run.id)!.status, "running");
+
+      assert.equal(stopRun(run.id), "cancelled", "between cycles there is no child to signal");
+      await loop;
+
+      const settled = getRun(run.id)!;
+      assert.equal(
+        settled.status,
+        "stopped",
+        "a Stop pressed during the verdict wait was answered and then ignored",
+      );
+      assert.match(settled.stop_reason ?? "", /Stopped by operator/);
+      // Still what the agent replied: the column means that and nothing else.
+      assert.equal(settled.reported_done, 1);
+      assert.equal(settled.restart_closed, 0);
+    } finally {
+      nextChildSaysDone = false;
+      saveSettings({ validateTaskCompletion: validating });
+    }
+  });
+});
