@@ -29,7 +29,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Budgets and guards | [budgets-and-guards.md](verification/budgets-and-guards.md) | 9 | 4 |
 | Run lifecycle | [run-lifecycle.md](verification/run-lifecycle.md) | 24 | 31 |
 | Run lifecycle | [run-lifecycle-background-work.md](verification/run-lifecycle-background-work.md) — a work cycle's wait for background tasks, and what stopping one tells the next cycle | 4 | 3 |
-| Context control | [context-control-pruning.md](verification/context-control-pruning.md) — pruning, compaction and the context ceiling | 23 | 13 |
+| Context control | [context-control-pruning.md](verification/context-control-pruning.md) — pruning, compaction and the context ceiling | 24 | 13 |
 | Context control | [context-control-intake-filter.md](verification/context-control-intake-filter.md) — the intake filter and its ledger | 8 | 4 |
 | Context control | [context-control-occupancy-and-composition.md](verification/context-control-occupancy-and-composition.md) — the occupancy and composition series | 8 | 5 |
 | Orchestrator chat | [orchestrator-chat.md](verification/orchestrator-chat.md) | 12 | 22 |
@@ -48,7 +48,8 @@ measurement under *Verified* and cut the item down to what is still open.
 | Retention | [retention.md](verification/retention.md) | 2 | 2 |
 | Security and sandboxing | [security-and-sandboxing-cli-sandbox.md](verification/security-and-sandboxing-cli-sandbox.md) — the CLI's sandbox, bwrap, seccomp, mount points and the write set | 17 | 12 |
 | Security and sandboxing | [security-and-sandboxing-privilege-and-auth.md](verification/security-and-sandboxing-privilege-and-auth.md) — the privilege split, credentials, auth and containment | 11 | 10 |
-| Security and sandboxing | [security-and-sandboxing-stacks.md](verification/security-and-sandboxing-stacks.md) — a stack's tool grants and permissions | 12 | 4 |
+| Security and sandboxing | [security-and-sandboxing-stacks.md](verification/security-and-sandboxing-stacks.md) — a stack's tool grants and permissions | 9 | 2 |
+| Security and sandboxing | [security-and-sandboxing-name-lookup.md](verification/security-and-sandboxing-name-lookup.md) — root's `PATH`, the agents' `PATH` and what a dropped process runs by name | 5 | 4 |
 | Container and environment | [container-and-environment-resources.md](verification/container-and-environment-resources.md) — memory, CPU, cgroup limits, OOM and the filter launcher | 6 | 5 |
 | Container and environment | [container-and-environment-stacks.md](verification/container-and-environment-stacks.md) — the stacks carrier, its installs, receipts and invocation counts | 20 | 7 |
 | Container and environment | [container-and-environment-deployment.md](verification/container-and-environment-deployment.md) — the image, network, volumes, backup and health | 9 | 13 |
@@ -59,4 +60,4 @@ measurement under *Verified* and cut the item down to what is still open.
 | Interface | [interface-narrow-viewports.md](verification/interface-narrow-viewports.md) — pages at 390px, layout sweeps and smoke-pages | 15 | 9 |
 | Interface | [interface-canvases.md](verification/interface-canvases.md) — the graph canvases, touched map and replay | 5 | 2 |
 | Interface | [interface-pages-and-api.md](verification/interface-pages-and-api.md) — pages, panels and API payloads | 20 | 12 |
-| **Total** | | **411** | **260** |
+| **Total** | | **414** | **262** |

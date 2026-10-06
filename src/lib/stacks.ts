@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { agentPath } from "./config";
+import { SERVER_PATH, agentPath } from "./config";
 
 /**
  * What the stack applier did, read back.
@@ -298,6 +298,37 @@ export function agentEnvironment(
   pathValue: string = agentPath(),
 ): NodeJS.ProcessEnv {
   return { ...stackEnv, ...base, PATH: pathValue };
+}
+
+/**
+ * The `PATH` the chat and block child runs with: the agents', less every
+ * directory that is neither on this server's own `PATH` nor the stacks'
+ * toolbox.
+ *
+ * That child holds `UF_CHAT_GID`, the one thing keeping a work cycle out of the
+ * chat's capability file, so nothing it runs by name may be a file a work cycle
+ * can write. The agents' `PATH` puts `/home/node/pytools/bin` ahead of root's,
+ * and that is a persistent volume every work cycle writes: a `git` left there
+ * ran the next time a chat turn ran `git`, and a `node` there ran every
+ * `#!/usr/bin/env node` hook, under that gid (board task `6f85c72a`).
+ * `spawnCommand` closes the same lookup for the executable itself and cannot
+ * reach what the child runs after it starts. The toolbox stays because the
+ * applier leaves it root-owned and `go-w`, and it is how a stack the operator
+ * declared reaches the chat.
+ *
+ * A filter rather than a list, so a directory added to `UF_AGENT_PATH` later
+ * reaches the chat only if root's `PATH` already has it. What it costs is that
+ * a `UF_PY_TOOLS` launcher does not resolve in a chat turn, a hook in the
+ * operator's own settings included; the same package as a `uv-tool` stack
+ * does. Outside the image both `PATH`s are this process's, and nothing is
+ * dropped.
+ */
+export function chatPath(agents: string = agentPath(), server: string = SERVER_PATH): string {
+  const rootOwn = new Set(server.split(path.delimiter).filter((dir) => path.isAbsolute(dir)));
+  return agents
+    .split(path.delimiter)
+    .filter((dir) => dir === STACKS_BIN_DIR || rootOwn.has(dir))
+    .join(path.delimiter);
 }
 
 function cachedStackEnvironment(): Record<string, string> {

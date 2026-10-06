@@ -6,6 +6,7 @@ import type { LiveCountsDTO, LiveFrameDTO, LiveRunDTO, LiveRunsDTO } from "@/lib
 import { pollFailureMessage } from "@/lib/format";
 import { jsonRequest } from "@/lib/jsonRequest";
 import { EMPTY_LIVE, applyLiveFrame, type LiveState } from "@/lib/liveTiles";
+import { startPoll } from "@/lib/poll";
 import { LiveRunTile } from "@/components/LiveRunTile";
 import { Card, Empty, SkeletonText } from "@/components/ui/Card";
 import { Notice } from "@/components/ui/Notice";
@@ -76,11 +77,12 @@ export default function LiveRunsPage() {
       setPollError(null);
       setFigures(new Map(answer.data.runs.map((r) => [r.id, r])));
     };
-    void load();
-    const poll = setInterval(load, POLL_MS);
+    // Re-armed on settle, never an interval: this route's first transcript scan
+    // in a process can outlast the period several times over. See `startPoll`.
+    const stop = startPoll(load, POLL_MS);
     return () => {
       mounted = false;
-      clearInterval(poll);
+      stop();
     };
   }, [tileKey]);
 

@@ -1470,6 +1470,119 @@ describe("root's PATH names no directory an agent or a stack can write", () => {
 });
 
 /**
+ * What the boot runs at the agent uid, and what it hands that process (board
+ * task `7e2073d5`).
+ *
+ * `gh_as_agent` and `uv_as_agent` drop to UF_AGENT_UID to install what
+ * UF_GH_EXTENSIONS and UF_PY_TOOLS name, and the word after `setpriv` decides
+ * whether the drop takes anything away. `env` without `-i` handed the dropped
+ * process the entrypoint's whole environment — UF_AUTH_TOKEN,
+ * ANTHROPIC_ADMIN_KEY, the GitHub tokens — which a process at the agents' own
+ * uid publishes in /proc/<pid>/environ, and which every build backend an sdist
+ * names then ran holding. And `env PATH=… uv` looked `uv` up on the PATH it had
+ * just been given, the agents', whose second entry is the pytools volume any
+ * work cycle writes: a `uv` left there ran at every later boot with all of it.
+ *
+ * Against 50d60d8 the first two cases fail on the dropped branches of those two
+ * helpers, `docker-entrypoint.sh:179` and `:255`. The branches beside them
+ * (`:181`, `:257`) run without `setpriv` because UF_AGENT_UID is unset, which
+ * is the arrangement where every agent child is root as well, and this reads
+ * none of them. `"$@"` passes as named: it is `winnow_filter_as_agent`, whose
+ * caller names the command and builds the allowlist, and the intake filter's
+ * block below pins that launch.
+ *
+ * Over text, because there is no Docker here. Comment lines are dropped and
+ * continuation lines joined, so what is read is the command the shell runs.
+ */
+describe("what the boot runs at the agent uid holds no credential and is not looked up on the agents' PATH", () => {
+  const entrypoint = fs.readFileSync(path.join(root, "docker-entrypoint.sh"), "utf8");
+
+  /** Every `setpriv … env …`, as the words after `env` and the line `env` is on. */
+  function droppedEnvCommands(): { line: number; words: string[] }[] {
+    const found: { line: number; words: string[] }[] = [];
+    let words: { word: string; line: number }[] = [];
+    entrypoint.split("\n").forEach((text, index) => {
+      if (/^\s*#/.test(text)) return;
+      const continued = /\\\s*$/.test(text);
+      for (const match of text.replace(/\\\s*$/, "").matchAll(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g)) {
+        words.push({ word: match[0], line: index + 1 });
+      }
+      if (continued) return;
+      const setpriv = words.findIndex(({ word }) => word === "setpriv");
+      let next = setpriv + 1;
+      while (setpriv !== -1 && words[next]?.word.startsWith("--")) next++;
+      if (setpriv !== -1 && words[next]?.word === "env") {
+        found.push({ line: words[next].line, words: words.slice(next + 1).map(({ word }) => word) });
+      }
+      words = [];
+    });
+    return found;
+  }
+
+  /** The program `env` runs: the first word that is neither `-i` nor an assignment. */
+  function programOf(words: string[]): string {
+    return words.find((word) => word !== "-i" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) ?? "";
+  }
+
+  const show = ({ line, words }: { line: number; words: string[] }) => `${line}: env ${words.join(" ")}`;
+
+  it("finds the helpers it is about, so the checks below measure something", () => {
+    const programs = droppedEnvCommands().map(({ words }) => path.basename(programOf(words)));
+    for (const tool of ["gh", "uv"]) {
+      assert.ok(
+        programs.includes(tool),
+        `no \`setpriv … env … ${tool}\` was found in docker-entrypoint.sh (found: ${programs.join(", ")}), ` +
+          `so the cases below no longer read the helper that installs with it`,
+      );
+    }
+  });
+
+  it("hands the dropped process an allowlist rather than the entrypoint's environment", () => {
+    const inherited = droppedEnvCommands().filter(({ words }) => words[0] !== "-i");
+    assert.deepEqual(
+      inherited.map(show),
+      [],
+      "docker-entrypoint.sh drops to UF_AGENT_UID with `env` rather than `env -i`, so the process " +
+        "holds UF_AUTH_TOKEN, ANTHROPIC_ADMIN_KEY and the GitHub tokens in an environ the agents' " +
+        "uid can read, and runs whatever an install executes with them",
+    );
+    const credentials = droppedEnvCommands().filter(({ words }) =>
+      words.some((word) => /^(?:UF_\w+|ANTHROPIC_ADMIN_KEY)=/.test(word)),
+    );
+    assert.deepEqual(credentials.map(show), [], "a dropped helper's allowlist names this app's own credential");
+  });
+
+  it("names what it runs by absolute path rather than on the PATH it hands over", () => {
+    const looked = droppedEnvCommands().filter(({ words }) => {
+      const program = programOf(words);
+      return program !== '"$@"' && !program.startsWith("/");
+    });
+    assert.deepEqual(
+      looked.map(show),
+      [],
+      "docker-entrypoint.sh has `env` look a dropped helper's program up by name, on the PATH " +
+        "it was just given — for uv that was the agents', where a file any work cycle left in " +
+        "/home/node/pytools/bin comes first and outlives the restart",
+    );
+  });
+
+  it("names a path the image installs, rather than one nothing puts there", () => {
+    const programs = droppedEnvCommands()
+      .map(({ words }) => programOf(words))
+      .filter((program) => program.startsWith("/"));
+    for (const program of programs) {
+      const escaped = program.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      assert.match(
+        dockerfile,
+        new RegExp(String.raw`^\s*install\b[^\n]*\s${escaped}(?=[;\s]|$)`, "m"),
+        `docker-entrypoint.sh runs ${program} at the agent uid and the Dockerfile installs ` +
+          `nothing there, so every boot reports the install failed and installs nothing`,
+      );
+    }
+  });
+});
+
+/**
  * The sandbox switch, pinned across the four files that have to agree for it to
  * mean anything — and, first, for it to stay *off*.
  *

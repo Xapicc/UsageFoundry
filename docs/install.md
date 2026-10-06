@@ -188,7 +188,10 @@ refused.
 > ```
 >
 > The boot says this once when the variable is set. The rest of this section is
-> what the variable does, which is unchanged.
+> what the variable does, which is unchanged — except that a `UF_PY_TOOLS`
+> command is no longer on the orchestrator chat's `PATH`. The directory it lands
+> in is one any agent can write, and the chat runs with a group the agents do
+> not have. A stack's tool is on the chat's `PATH`.
 
 The same mechanism one language over, and it exists for a plugin rather than for
 an agent. A Claude Code plugin registered through `--plugin-dir` speaks to you

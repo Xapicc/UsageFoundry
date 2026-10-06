@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { after, before, describe, it } from "node:test";
 
 /**
@@ -20,7 +21,8 @@ import { after, before, describe, it } from "node:test";
  * loaded: `claude` is the default's name, found on this server's `PATH` as an
  * `env node` script the way the image's `codex` is, and `uf-absent-codex` is a
  * name this server's `PATH` does not have. The agents' `PATH` has a planted
- * copy of all three names first.
+ * copy of all three names first, and of `git`, which the last block below has
+ * the chat child run by name.
  */
 
 let scratch: string;
@@ -29,6 +31,8 @@ let agentDir: string;
 let config: typeof import("./config");
 let claudeAuth: typeof import("./claudeAuth");
 let codexAuth: typeof import("./codexAuth");
+let chat: typeof import("./chat");
+let stacks: typeof import("./stacks");
 
 const SAVED = ["PATH", "UF_AGENT_PATH", "CLAUDE_BIN", "CODEX_BIN", "CLAUDE_HOME", "CODEX_HOME", "DATA_DIR"].map(
   (key) => [key, process.env[key]] as const,
@@ -61,7 +65,8 @@ require("node:fs").writeFileSync(${JSON.stringify(marker("server-claude"))}, "")
 process.stdout.write(JSON.stringify({ loggedIn: false, authMethod: "none" }) + "\\n");
 `,
   );
-  for (const name of ["claude", "node", "uf-absent-codex"]) {
+  writeExecutable(serverDir, "git", `#!/bin/sh\n: > "${marker("server-git")}"\n`);
+  for (const name of ["claude", "node", "uf-absent-codex", "git"]) {
     writeExecutable(
       agentDir,
       name,
@@ -87,6 +92,8 @@ process.stdout.write(JSON.stringify({ loggedIn: false, authMethod: "none" }) + "
   );
   claudeAuth = await import("./claudeAuth");
   codexAuth = await import("./codexAuth");
+  chat = await import("./chat");
+  stacks = await import("./stacks");
 });
 
 after(() => {
@@ -198,5 +205,50 @@ describe("spawnCommand", () => {
   it("refuses a bare name, naming the variable to set", () => {
     assert.throws(() => config.spawnCommand("claude", [], serverDir), /CLAUDE_BIN is `claude`/);
     assert.throws(() => config.spawnCommand("uf-absent-codex", [], serverDir), /CODEX_BIN is `uf-absent-codex`/);
+  });
+});
+
+/**
+ * What the chat and block child runs by name once it has started, which
+ * `spawnCommand` does not reach (board task `6f85c72a`).
+ *
+ * That child holds `UF_CHAT_GID`, the group the chat's capability file is
+ * handed to, and runs `bypassPermissions`. Its own `Bash` calls run `git`,
+ * `ls` and `python3` by name, and a plugin hook is often an `env node` script,
+ * so a file a work cycle left in a directory on its `PATH` ran as that child,
+ * with that gid, the next time a turn ran it. These spawn through `chatEnv()`,
+ * which is what the spawn site passes, with the same planted directory first
+ * on the agents' `PATH` as above.
+ */
+describe("the chat child's own lookups", () => {
+  it("runs a name from its own Bash on this server's PATH, not one planted first on the agents'", () => {
+    const result = spawnSync("/bin/sh", ["-c", "git"], { env: chat.chatEnv(), encoding: "utf8" });
+    assert.equal(result.error, undefined);
+    assert.equal(fs.existsSync(marker("planted-git")), false, "the chat child ran the git planted on the agents' PATH");
+    assert.equal(fs.existsSync(marker("server-git")), true, "the chat child did not run the git on this server's PATH");
+  });
+
+  it("finds an `env node` hook's interpreter on this server's PATH, not one planted first on the agents'", () => {
+    fs.rmSync(marker("planted-node"), { force: true });
+    const hook = writeExecutable(
+      scratch,
+      "hook.js",
+      `#!/usr/bin/env node\nrequire("node:fs").writeFileSync(${JSON.stringify(marker("hook-ran"))}, "");\n`,
+    );
+    const result = spawnSync(hook, [], { env: chat.chatEnv(), encoding: "utf8" });
+    assert.equal(result.error, undefined);
+    assert.equal(fs.existsSync(marker("planted-node")), false, "`env node` in the chat child found the planted node");
+    assert.equal(fs.existsSync(marker("hook-ran")), true, "the hook did not run under a real node");
+  });
+
+  it("keeps the stacks' toolbox and this server's own directories, in the agents' order", () => {
+    // The toolbox is the one directory kept that root's PATH does not have:
+    // dropping it would take every stack the operator declared away from the
+    // chat. An empty or relative entry is the child's cwd, an operator's
+    // repository, so it goes even when the server's PATH has it too.
+    const toolbox = stacks.STACKS_BIN_DIR;
+    const agents = [toolbox, agentDir, "", "relative", serverDir, "/usr/bin"].join(path.delimiter);
+    const server = ["/usr/bin", "", "relative", serverDir].join(path.delimiter);
+    assert.equal(stacks.chatPath(agents, server), [toolbox, serverDir, "/usr/bin"].join(path.delimiter));
   });
 });

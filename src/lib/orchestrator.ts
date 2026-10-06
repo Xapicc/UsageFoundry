@@ -132,6 +132,7 @@ import {
 } from "./contextPruning";
 import { BYTES_PER_TOKEN, fileCostNotice } from "./fileCostNotice";
 import { tmpdirNotice } from "./tmpdirNotice";
+import { WORKTREE_STORE_DIR } from "./worktreeStoreDir";
 import { prepareReadGuard } from "./readGuard";
 // The `pkill`/`killall` denial for the provider that cannot carry one on an
 // argv. Beside the read guard because it is the same kind of thing — something
@@ -2724,16 +2725,6 @@ export function probeIsolation(folder: string): IsolationPlan {
 
   return { mode: "worktree", repoRoot, base: head.stdout, baseBranch };
 }
-
-/**
- * The store's own directory name, as a value.
- *
- * One spelling, because the retention sweep and the size figure beside it both
- * name this directory from the mount rather than from a repository — and a
- * second copy of the literal is a directory this app would create and never
- * find again.
- */
-export const WORKTREE_STORE_DIR = ".uf-worktrees";
 
 /**
  * Where a repo's isolated checkouts live: a hidden sibling inside the mount.
