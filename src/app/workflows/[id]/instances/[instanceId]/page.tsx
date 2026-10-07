@@ -15,6 +15,10 @@ import {
   fmtPct,
   fmtUSD,
   grantedCycles,
+  INSTANCE_OUTCOME_LABEL,
+  INSTANCE_OUTCOME_TONE,
+  instanceCanMove,
+  instanceOutcomeDetail,
   landingSummary,
   passRuns,
   passesOf,
@@ -889,7 +893,19 @@ export default function WorkflowInstancePage() {
     }
   }, [id, instanceId]);
 
-  useEffect(() => startPoll(load, POLL_MS), [load]);
+  // A halted or rolled-back instance cannot move — nothing re-opens one — so the
+  // poll stands down once a read says so. `instance` is null until the first
+  // answer, which keeps that first read above the gate: opening a stopped
+  // instance still reads it. The effect re-runs on the flip and reads once more
+  // before declining to re-arm, which catches whatever a dying member wrote
+  // between the last poll and the one that saw `stopped`. Re-arming is a reload;
+  // the Stop and pick-up presses write their own answer into `instance`.
+  const polling = instance === null || instanceCanMove(instance.status);
+  useEffect(() => {
+    if (polling) return startPoll(load, POLL_MS);
+    void load();
+    return undefined;
+  }, [load, polling]);
 
   /**
    * Halt every block at once.
@@ -1088,9 +1104,23 @@ export default function WorkflowInstancePage() {
           ← {instance.workflowName}
         </Link>
         <div className="mt-1 flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-xl font-semibold tracking-tight">
-            Run of {fmtDateTime(instance.createdAt)}
-          </h1>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <h1 className="text-xl font-semibold tracking-tight">
+              Run of {fmtDateTime(instance.createdAt)}
+            </h1>
+            {/* The outcome in the page's own words, which is the list's: this
+                page owns the answer and said it only for a failure or a halt.
+                The clause is left to the two readings no notice below states —
+                a halt and a rollback each have a sentence of their own, and the
+                failure's would be printed twice. */}
+            <span className="text-sm text-ink-muted">
+              <Badge tone={INSTANCE_OUTCOME_TONE[instance.status]}>
+                {INSTANCE_OUTCOME_LABEL[instance.status]}
+              </Badge>
+              {(instance.status === "started" || instance.status === "blocked") &&
+                ` ${instanceOutcomeDetail(instance)}`}
+            </span>
+          </div>
           {/* Not disabled by `confirmStop`: that lands in the same commit that
               opens the sheet, so the button is blurred to <body> before
               `showModal()` records what to restore focus to, and Esc would drop

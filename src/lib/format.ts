@@ -16,6 +16,7 @@ import type {
   TaskPriorityDTO,
   TaskStatusDTO,
   WorkflowInstanceBlockDTO,
+  WorkflowInstanceDTO,
   WorkflowInstanceNodeDTO,
   WorkflowInstanceWaitDTO,
 } from "./apiTypes";
@@ -964,6 +965,96 @@ export const EDGE_CHIP_LABEL: Record<
   "on-finish": "either way",
   repeats: "repeats from here",
 };
+
+/**
+ * What one press of Run is called, on the page that lists them and the page that
+ * is one.
+ *
+ * "working" rather than "started", which is what this said for every unhalted
+ * instance — a graph that finished an hour ago, one whose tail was written off
+ * and one with an agent spending in it right now all read `started` and all
+ * wore the same green badge. The word an operator acts on is whether anything
+ * is still going, so that is the word. A reading, never a switch: it is derived
+ * from the members and nothing here acts on it (`instanceStatus`).
+ */
+export const INSTANCE_OUTCOME_LABEL: Record<WorkflowInstanceDTO["status"], string> = {
+  started: "working",
+  finished: "finished",
+  blocked: "blocked",
+  failed: "not started",
+  stopping: "stopping",
+  stopped: "stopped",
+};
+
+export const INSTANCE_OUTCOME_TONE: Record<WorkflowInstanceDTO["status"], BadgeTone> = {
+  started: "accent",
+  finished: "ok",
+  blocked: "warn",
+  failed: "danger",
+  stopping: "warn",
+  stopped: "warn",
+};
+
+/**
+ * The clause after the badge, or nothing.
+ *
+ * `finished` has none on purpose: the badge is the whole fact, and the Runs
+ * column beside it already carries the count. Every other reading leaves a
+ * question the badge cannot answer — how much is still going, how much never
+ * ran, who stopped it. Takes the four fields it reads rather than the whole
+ * instance, so the list's rows and the instance page's heading both pass theirs.
+ */
+export function instanceOutcomeDetail(
+  inst: Pick<
+    WorkflowInstanceDTO,
+    "status" | "liveRunCount" | "blockedCount" | "error" | "stopCause"
+  >,
+): string | null {
+  switch (inst.status) {
+    case "started":
+      return `${inst.liveRunCount} block(s) working`;
+    case "blocked":
+      return `${inst.blockedCount} block(s) never ran`;
+    case "failed":
+      return inst.error;
+    case "stopping":
+      return `${inst.liveRunCount} block(s) still finishing`;
+    case "stopped":
+      return inst.stopCause === "guard"
+        ? "by its budget guard"
+        : inst.stopCause === "fleet"
+          ? "with everything in flight"
+          : "by you";
+    case "finished":
+      return null;
+  }
+}
+
+/**
+ * Whether an instance can still change on its own or by a press, so whether the
+ * page showing it should keep asking.
+ *
+ * A halt is the one door nothing re-opens: `stopInstance` closes it, every
+ * pick-up refuses a halted instance whole, and a rolled-back one never had a
+ * member to move. `finished` and `blocked` are the surprising two to keep
+ * polling — they are derived readings, and a pick-up on one member turns either
+ * back into `started`, so a page that stood down for them would go on showing a
+ * resumed run as over. A `Record` rather than a comparison, so a seventh reading
+ * does not compile until somebody has decided which side it is on. Re-arming a
+ * page that stood down is a reload, because nothing here can move it.
+ */
+const INSTANCE_CAN_MOVE: Record<WorkflowInstanceDTO["status"], boolean> = {
+  started: true,
+  finished: true,
+  blocked: true,
+  stopping: true,
+  stopped: false,
+  failed: false,
+};
+
+export function instanceCanMove(status: WorkflowInstanceDTO["status"]): boolean {
+  return INSTANCE_CAN_MOVE[status];
+}
 
 /**
  * One thing an instance member starts after, as the instance page words it:
