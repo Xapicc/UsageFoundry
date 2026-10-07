@@ -778,6 +778,26 @@ export default function ChatPage() {
     setCaretTo(before.length + inserted.length);
   };
 
+  /**
+   * Draw the thread an action answered with. It is newer than any read still
+   * out, so the ticket moves and those reads drop their answers: a poll sent
+   * before the press and landing after this put back the status, proposals and
+   * questions from before it — an approved proposal pending again, "Thinking…"
+   * back to idle — until the next poll, up to `POLL_IDLE_MS` away. The poll
+   * re-arms on its own. A read sent after the POST but landing before it is
+   * overwritten instead, which is right when it was served first and costs one
+   * poll period when it was not.
+   *
+   * Skipped once the operator has opened another thread: the answer is about
+   * the one they left, and drawing it would undo the click — moving the ticket
+   * as well would drop the opened thread's own read.
+   */
+  const drawAnswer = (answered: ChatDTO) => {
+    if (opened.current !== null && opened.current !== answered.id) return;
+    ++loadRequest.current;
+    setChat(answered);
+  };
+
   const send = async () => {
     const message = draft.trim();
     // `thinking` is checked here and not only on the button: the composer stays
@@ -793,7 +813,7 @@ export default function ChatPage() {
       if (!result.ok) setSendError(result.error ?? "The message could not be sent.");
       else {
         setDraft("");
-        if (result.chat) setChat(result.chat);
+        if (result.chat) drawAnswer(result.chat);
       }
     } finally {
       // `busy` disables every button here at once and only this line clears it,
@@ -819,7 +839,7 @@ export default function ChatPage() {
     try {
       const result = await chatRequest(`/api/chat/${chatId}/cancel`);
       if (!result.ok) setSendError(result.error ?? "The turn could not be stopped.");
-      else if (result.chat) setChat(result.chat);
+      else if (result.chat) drawAnswer(result.chat);
     } finally {
       // `send`'s reasoning, and this handler is the one that most needs it: a
       // turn worth stopping is one where something has already gone wrong.
@@ -849,7 +869,7 @@ export default function ChatPage() {
       if (!result.ok) {
         setAnswerError(result.error ?? "That answer could not be sent.");
       } else if (result.chat) {
-        setChat(result.chat);
+        drawAnswer(result.chat);
       }
     } finally {
       setBusy(false);
@@ -875,7 +895,7 @@ export default function ChatPage() {
         void load(chatId);
       } else {
         setSelected(new Set());
-        if (result.chat) setChat(result.chat);
+        if (result.chat) drawAnswer(result.chat);
       }
     } finally {
       setBusy(false);
@@ -897,7 +917,7 @@ export default function ChatPage() {
         return;
       }
       opened.current = data.chat.id;
-      setChat(data.chat);
+      drawAnswer(data.chat);
       setSelected(new Set());
       // Same rule the thread list's own switch follows: a refusal names a
       // proposal of the thread being left. It outlives an empty proposals list

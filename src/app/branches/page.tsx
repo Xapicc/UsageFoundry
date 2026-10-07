@@ -769,6 +769,9 @@ export default function Branches() {
   const [repo, setRepo] = useState<string>("");
   const [offset, setOffset] = useState(0);
 
+  /** Which inventory read is allowed to write; see `load`. */
+  const inventoryRequest = useRef(0);
+
   /**
    * Both reads used to drop a non-ok answer on the floor and neither had a
    * `catch`. A signed-out session or a restarting container therefore left the
@@ -778,6 +781,11 @@ export default function Branches() {
    * than separately, and both mean the same thing to the person reading it.
    */
   const load = useCallback(async () => {
+    // Only the newest read may write: Next pressed twice, a repo change, the
+    // re-read after a row's action and the one on the queue's idle edge can all
+    // be out together, and whichever landed last was drawn — a page the
+    // controls no longer name, or the table as it stood before a Purge.
+    const ticket = ++inventoryRequest.current;
     setLoading(true);
     try {
       const query = new URLSearchParams();
@@ -789,6 +797,7 @@ export default function Branches() {
       const json = (await res.json().catch(() => ({}))) as Partial<
         BranchInventoryDTO & { error: string }
       >;
+      if (ticket !== inventoryRequest.current) return;
       if (!res.ok || !json.branches) {
         const detail =
           json.error ?? (res.ok ? "no branches in the response" : null);
@@ -799,10 +808,12 @@ export default function Branches() {
       dispatchStrategy({ kind: "read", serverDefault: json.defaultStrategy ?? "merge" });
       setReadError(null);
     } catch (err) {
+      if (ticket !== inventoryRequest.current) return;
       const cause = err instanceof Error ? err.message : String(err);
       setReadError(pollFailureMessage(null, cause));
     } finally {
-      setLoading(false);
+      // A dropped answer leaves the spinner to the read that replaced it.
+      if (ticket === inventoryRequest.current) setLoading(false);
     }
   }, [repo, offset]);
 
