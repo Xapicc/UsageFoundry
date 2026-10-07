@@ -18,6 +18,7 @@ import {
 } from "@/lib/contextPruning";
 import { runAgentDTO } from "@/lib/agents";
 import { tasksLinkedToRun } from "@/lib/tasks";
+import { workflowOriginOf } from "@/lib/workflows";
 import { normalizePolicy } from "@/lib/budget";
 import { auditMutation } from "../../../../lib/requestLog";
 import { readReceipts } from "../../../../lib/stacks";
@@ -103,6 +104,11 @@ export async function GET(req: Request, ctx: Ctx) {
       // What `reopenRun` will refuse this run for, sent so the page can decline
       // to offer the button rather than let the operator find out by pressing it.
       haltedWorkflow: haltedWorkflowOf(id),
+      // The press of Run and the block this run was made for, so the origin
+      // line can link back to the instance page. Provenance beside `origin` and
+      // never authority; on the run's own page only, because the list would pay
+      // a join a row for a link it does not draw.
+      workflowOrigin: workflowOriginOf(id),
       // What this run was started for, if anything wrote it down. Provenance
       // beside `origin` and never authority: nothing on the run's loop reads it,
       // and the run reaching a terminal status does not close what is named here —

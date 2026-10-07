@@ -3251,6 +3251,39 @@ export function getInstance(id: string): WorkflowInstance | null {
   return row ? rowToInstance(row) : null;
 }
 
+/** Which workflow, press of Run and block a run belongs to. */
+export interface RunWorkflowOrigin {
+  workflowId: string;
+  workflowName: string;
+  instanceId: string;
+  nodeName: string;
+}
+
+/**
+ * The press of Run and the block a run was made for, or null for every run that
+ * is no member of an instance — and for a member whose workflow has since been
+ * deleted, because the instance goes with it and a link to it would be a 404.
+ *
+ * Read off the membership row rather than `runs.origin_ref`, which holds an
+ * instance id, a schedule id or a node id depending on `origin`: a run a
+ * schedule fired and a run an orchestrator block emitted are both members, and
+ * only this row says of which instance. One indexed lookup on `run_id`, and the
+ * run's own route is its one caller — the runs list would pay it a row, so it
+ * draws no link. Provenance, never authority: nothing decides on the answer.
+ */
+export function workflowOriginOf(runId: string): RunWorkflowOrigin | null {
+  const row = db()
+    .prepare(
+      `SELECT i.workflow_id AS workflowId, i.workflow_name AS workflowName,
+              i.id AS instanceId, w.node_name AS nodeName
+         FROM workflow_instance_runs w
+         JOIN workflow_instances i ON i.id = w.instance_id
+        WHERE w.run_id = ?`,
+    )
+    .get(runId) as RunWorkflowOrigin | undefined;
+  return row ?? null;
+}
+
 /**
  * Runs this workflow started that have not finished.
  *

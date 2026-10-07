@@ -1507,8 +1507,21 @@ export default function RunDetail({
             this is the first question — and it was answerable only by joining
             three tables, none of which survived deleting the chat or workflow
             it came from. Picking a run up again is a separate act and says so
-            separately, because it does not change where the run came from. */}
-        {fmtRunOrigin(run.origin)}
+            separately, because it does not change where the run came from.
+            A workflow member links to its press of Run, which is the trip the
+            instance page's pick-up card already makes the other way. */}
+        {run.workflowOrigin ? (
+          <>
+            <Link
+              href={`/workflows/${run.workflowOrigin.workflowId}/instances/${run.workflowOrigin.instanceId}`}
+            >
+              {fmtRunOrigin(run.origin)}
+            </Link>{" "}
+            ({run.workflowOrigin.workflowName}, block {run.workflowOrigin.nodeName})
+          </>
+        ) : (
+          fmtRunOrigin(run.origin)
+        )}
         {run.reopened_at ? ` · picked up again ${fmtRelative(run.reopened_at, nowTick)}` : ""}
         {/* The board rows this run was started for. Beside the origin because
             they answer the second half of the same question — that line says

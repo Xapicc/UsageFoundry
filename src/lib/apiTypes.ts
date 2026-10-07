@@ -1547,6 +1547,20 @@ export interface RunDTO {
    */
   haltedWorkflow?: string | null;
   /**
+   * The press of Run and the block this run was made for, or null for a run
+   * that belongs to no workflow instance — including one whose workflow has
+   * been deleted, which takes its instances with it. Mirrors `RunWorkflowOrigin`
+   * in `workflows.ts`.
+   *
+   * Provenance beside `origin`, and like `tasks` it is resolved by the run's
+   * own route only: the runs list draws no link and would pay a join a row on a
+   * list polled every four seconds. A run that belongs to a workflow also
+   * carries `origin` = `workflow`, `orchestrator-block` or `schedule`; this is
+   * the half `origin_ref` cannot give, since that holds an instance id, a
+   * schedule id or a node id depending on which.
+   */
+  workflowOrigin?: RunWorkflowOriginDTO | null;
+  /**
    * The specialised agent this run was started with, or null for the ordinary
    * run. The run's own frozen copy, so it still names the agent it was given
    * after that agent has been renamed or deleted.
@@ -1828,6 +1842,14 @@ export type LiveFrameDTO =
   | { kind: "event"; runId: string; event: RunEventDTO }
   | { kind: "tools"; runId: string; tools: RunToolActivityDTO[] }
   | { kind: "leave"; runId: string };
+
+/** Mirrors `RunWorkflowOrigin` in `workflows.ts`. */
+export interface RunWorkflowOriginDTO {
+  workflowId: string;
+  workflowName: string;
+  instanceId: string;
+  nodeName: string;
+}
 
 /** Mirrors `RunOrigin` in `orchestrator.ts`; see the column note in `db.ts`. */
 export type RunOriginDTO =

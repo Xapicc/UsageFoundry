@@ -148,6 +148,7 @@ Twenty-one are renderings rather than functions — every `*.test.tsx` in the tr
 | `format.test.ts` | [tasks], [stacks] |
 | `haltedMembers.test.ts` |  |
 | `instanceReading.test.ts` |  |
+| `runWorkflowOrigin.test.ts` |  |
 | `scheduleFire.test.ts` |  |
 | `schedulePut.test.ts` |  |
 | `src/app/api/workflows/[id]/route.test.ts` |  |
