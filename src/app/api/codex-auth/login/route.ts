@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 // Relative, not "@/…" — see the note in the login route.
-import { beginLogin, cancelLogin, pendingLogin } from "../../../../lib/codexAuth";
+import {
+  beginLogin,
+  cancelLogin,
+  loginStarting,
+  pendingLogin,
+} from "../../../../lib/codexAuth";
 import { auditMutation, recordDurableMutation } from "../../../../lib/requestLog";
 
 export const runtime = "nodejs";
@@ -31,6 +36,17 @@ export const dynamic = "force-dynamic";
 async function postHandler(req: Request) {
   const res = await beginLogin();
   if (!res.ok) {
+    // A superseded start is recorded by whatever took it over — a newer start,
+    // a key or a sign-out by its own row, a cancel by the one below. A start
+    // that failed on its own has only this one, and the CLI deletes
+    // `auth.json` before it asks OpenAI for a code, so an unreachable endpoint
+    // is a sign-out with no link to show for it. No row when no CLI ran.
+    if (!res.superseded && res.mayHaveClearedCredential) {
+      recordDurableMutation(req, "warn", "auth.provider_login_failed", {
+        provider: "codex",
+        may_have_cleared_credential: true,
+      });
+    }
     return NextResponse.json(
       { error: res.error },
       { status: res.superseded ? 409 : 502 },
@@ -59,10 +75,20 @@ async function deleteHandler(req: Request) {
   // there is nothing to tell an abandoned login from a dialog closed over
   // nothing, and only the first is worth a row on a 500-row table.
   const abandoned = pendingLogin() !== null;
+  // A start still waiting for its link has no started row behind it, and its
+  // CLI may already have deleted `auth.json` — ~20 ms after spawn, against a
+  // code ~300 ms later — so this row is the only one that will say so, and it
+  // is `warn` for the started row's reason.
+  const cutShort = loginStarting();
   cancelLogin();
   if (abandoned) {
     recordDurableMutation(req, "info", "auth.provider_login_cancelled", {
       provider: "codex",
+    });
+  } else if (cutShort) {
+    recordDurableMutation(req, "warn", "auth.provider_login_cancelled", {
+      provider: "codex",
+      may_have_cleared_credential: true,
     });
   }
   return NextResponse.json({ ok: true });

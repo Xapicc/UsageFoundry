@@ -1096,6 +1096,49 @@ test("propose_run, save_template and propose_workflow refuse a text argument tha
   }
   assert.equal(proposals(), 1, "no workflow card was written");
 
+  // The rest of what `propose_workflow` and `propose_run` read through
+  // `String()`: a list-wrapped `supersedes` was the card it names, and the same
+  // wrapping on a block's `id` or `kind` or a dependsOn entry's `id` or `edge`
+  // was the word inside it — a graph, or a run's start condition, the model
+  // never wrote.
+  const second = { ...block, id: "b", name: "Next" };
+  for (const [args, said] of [
+    [{ summary: { text: "Nightly" } }, /^"summary" has to be a string/],
+    [{ supersedes: ["first"] }, /^"supersedes" has to be a string/],
+    [{ blocks: [{ ...block, id: ["a"] }] }, /^Block 1: "id" has to be a string/],
+    [{ blocks: [{ ...block, kind: ["run"] }] }, /^Block 1: "kind" has to be a string/],
+    [{ blocks: [{ ...block, name: { text: "Step" }, folder: undefined }] }, /^Block 1: "name" has to be a string/],
+    [
+      { blocks: [block, { ...second, dependsOn: [{ id: ["a"], edge: "on-success" }] }] },
+      /^Block 2 dependsOn entry 1: "id" has to be a string/,
+    ],
+    [
+      { blocks: [block, { ...second, dependsOn: [{ id: "a", edge: ["on-success"] }] }] },
+      /^Block 2 dependsOn entry 1: "edge" has to be a string/,
+    ],
+  ] as const) {
+    const workflow = await callTool(token, "propose_workflow", { name: "Nightly", blocks: [block], ...args });
+    assert.equal(workflow.isError, true, `propose_workflow took ${JSON.stringify(args)}: ${workflow.text}`);
+    assert.match(workflow.text, said);
+    assert.doesNotMatch(workflow.text, /\[object Object\]/);
+  }
+  assert.equal(proposals(), 1, "no workflow card was written");
+
+  for (const [dependsOn, field] of [
+    [[{ id: ["first"], edge: "on-success" }], "id"],
+    [[{ id: "first", edge: ["on-success"] }], "edge"],
+  ] as const) {
+    const proposed = await callTool(token, "propose_run", { ...base, id: "later", dependsOn });
+    assert.equal(proposed.isError, true, `propose_run took ${JSON.stringify(dependsOn)}: ${proposed.text}`);
+    assert.match(proposed.text, new RegExp(`^dependsOn entry 1: "${field}" has to be a string`), field);
+  }
+  assert.equal(proposals(), 1, "no run card was written for a wrapped dependsOn entry");
+  assert.deepEqual(
+    db().prepare("SELECT status FROM chat_proposals WHERE chat_id = ?").all(chatId),
+    [{ status: "pending" }],
+    "and the card a list-wrapped supersedes named is still waiting",
+  );
+
   // Absent and null still mean "not given".
   const plain = await callTool(token, "propose_run", {
     ...base,
@@ -1106,6 +1149,94 @@ test("propose_run, save_template and propose_workflow refuse a text argument tha
     id: null,
   });
   assert.equal(plain.isError, false, plain.text);
+
+  // And a string in each of those places still works: the refusal is the type.
+  const chained = await callTool(token, "propose_run", {
+    ...base,
+    id: "later",
+    dependsOn: [{ id: "first", edge: "on-success" }],
+  });
+  assert.equal(chained.isError, false, chained.text);
+  const graph = await callTool(token, "propose_workflow", {
+    name: "Nightly",
+    summary: null,
+    supersedes: null,
+    blocks: [block, { ...second, kind: "run", dependsOn: [{ id: "a", edge: "on-success" }] }],
+  });
+  assert.equal(graph.isError, false, graph.text);
+});
+
+// `["daily"]` was read as `daily`, `["<id>"]` as the workflow inside it and a
+// list-wrapped `supersedes` as the card it names, each with a card as the
+// result — and a schedule card is the one whose approval leads to spending with
+// nobody present.
+test("propose_schedule refuses a text argument that is not a string and writes nothing", async () => {
+  const { chatId, token, proposals } = proposingChat();
+  const { createWorkflow } = await import("../../../lib/workflows");
+  const workflow = createWorkflow({
+    name: "Nightly review",
+    graph: {
+      nodes: [
+        {
+          id: "a",
+          name: "Review",
+          kind: "run",
+          templateId: null,
+          mountId: MOUNT,
+          folder: "RepoOne",
+          task: "Review the diff.",
+          promptOverride: null,
+          agentId: null,
+          fanOut: null,
+          mergeStrategy: null,
+          mergeAutoResolve: false,
+          maxPasses: null,
+          maxLoopCostUSD: null,
+          stopWhenTasks: null,
+          bodyNodeIds: [],
+          provider: null,
+          fixRounds: null,
+        },
+      ],
+      edges: [],
+    },
+    instanceBudget: { maxInstanceCostUSD: 5, maxSessionFraction: null, maxWeeklyFraction: null },
+  });
+  const base = { workflowId: workflow.id, kind: "weekly", time: "09:30", weekday: "Monday", timeZone: "UTC" };
+  const first = await callTool(token, "propose_schedule", base);
+  assert.equal(first.isError, false, first.text);
+  const firstId = /\(id ([0-9a-f-]+)\)/.exec(first.text)?.[1];
+  assert.ok(firstId, first.text);
+
+  for (const [extra, field] of [
+    [{ workflowId: [workflow.id] }, "workflowId"],
+    [{ kind: ["weekly"] }, "kind"],
+    [{ time: ["09:30"] }, "time"],
+    [{ weekday: ["Monday"] }, "weekday"],
+    [{ supersedes: [firstId] }, "supersedes"],
+  ] as const) {
+    const proposed = await callTool(token, "propose_schedule", { ...base, ...extra });
+    assert.equal(proposed.isError, true, `propose_schedule took ${JSON.stringify(extra)}: ${proposed.text}`);
+    assert.match(proposed.text, new RegExp(`^"${field}" has to be a string`), field);
+  }
+  assert.equal(proposals(), 1, "no second card was written");
+  assert.deepEqual(
+    db().prepare("SELECT status FROM chat_proposals WHERE chat_id = ?").all(chatId),
+    [{ status: "pending" }],
+    "and the card a list-wrapped supersedes named is still waiting",
+  );
+
+  // A string still proposes, and null still means "not given".
+  const replaced = await callTool(token, "propose_schedule", { ...base, supersedes: firstId });
+  assert.equal(replaced.isError, false, replaced.text);
+  const daily = await callTool(token, "propose_schedule", {
+    ...base,
+    kind: "daily",
+    weekday: null,
+    supersedes: null,
+  });
+  assert.equal(daily.isError, true, "a second waiting schedule for one workflow is still refused");
+  assert.match(daily.text, /already waiting/);
 });
 
 /**

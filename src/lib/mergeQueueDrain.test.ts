@@ -542,6 +542,86 @@ describe("the merge worker", () => {
       "a billed resolution was spawned",
     );
   });
+
+  // A resolution is a billed child nobody is watching, which is what the hold
+  // on new work is pressed to stop. A clean branch costs nothing and still
+  // lands; only the resolution is refused.
+  it("pays for no resolution while new work is held, and says so", async () => {
+    const settings = await import("./settings");
+    const id = "held9a00";
+    makeRun(id, "held9a.txt");
+    fs.writeFileSync(path.join(repo, "held9a.txt"), "main's own\n");
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "main adds held9a.txt");
+    const state = await land.landState(id);
+    assert.equal(state?.preview.outcome, "conflict", "the fixture branch does not conflict");
+
+    settings.setNewWorkPaused(true);
+    try {
+      const queued = mergeQueue.enqueue([id], { strategy: "merge", autoResolve: true });
+      assert.ok(queued.ok, JSON.stringify(queued));
+      const rows = await settle(queued.batchId);
+
+      assert.equal(rows[0].status, "failed", rows[0].message ?? "");
+      assert.match(rows[0].message ?? "", /no resolution was attempted: New work is held/);
+      assert.equal(rows[0].resolve_cost, 0, "the row was charged for a resolution");
+      assert.deepEqual(
+        dbMod.db().prepare("SELECT run_id FROM run_reviews WHERE kind = 'resolve' AND run_id = ?").all(id),
+        [],
+        "a resolution was started under the hold",
+      );
+      assert.equal(
+        fs.existsSync(spawned) ? fs.readFileSync(spawned, "utf8") : "",
+        "",
+        "a billed resolution was spawned",
+      );
+    } finally {
+      settings.setNewWorkPaused(false);
+    }
+  });
+
+  // The queue asks before `resolveConflicts` does any of its awaits, and a hold
+  // pressed during them is not in that answer, so the resolution asks again at
+  // its spawn. Pressed from inside the window scan, the one await that door
+  // always reaches.
+  it("pays for no resolution when the hold is pressed while it is being prepared", async () => {
+    const settings = await import("./settings");
+    const review = await import("./review");
+    const id = "held9b00";
+    const branch = makeRun(id, "held9b.txt");
+    fs.writeFileSync(path.join(repo, "held9b.txt"), "main's own\n");
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "main adds held9b.txt");
+    const tip = git(repo, "rev-parse", branch).trim();
+
+    const real = review.assistRefusal;
+    (review as { assistRefusal: typeof real }).assistRefusal = async () => {
+      settings.setNewWorkPaused(true);
+      return real();
+    };
+    try {
+      const queued = mergeQueue.enqueue([id], { strategy: "merge", autoResolve: true });
+      assert.ok(queued.ok, JSON.stringify(queued));
+      const rows = await settle(queued.batchId);
+
+      assert.equal(rows[0].status, "failed", rows[0].message ?? "");
+      assert.match(rows[0].message ?? "", /New work is held/);
+      assert.equal(git(repo, "rev-parse", branch).trim(), tip, "the branch was left mid-merge");
+      assert.deepEqual(
+        dbMod.db().prepare("SELECT run_id FROM run_reviews WHERE kind = 'resolve' AND run_id = ?").all(id),
+        [],
+        "a resolution was started under the hold",
+      );
+      assert.equal(
+        fs.existsSync(spawned) ? fs.readFileSync(spawned, "utf8") : "",
+        "",
+        "a billed resolution was spawned",
+      );
+    } finally {
+      (review as { assistRefusal: typeof real }).assistRefusal = real;
+      settings.setNewWorkPaused(false);
+    }
+  });
 });
 
 /**

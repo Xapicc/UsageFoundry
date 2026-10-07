@@ -899,7 +899,8 @@ export interface UsageResponse {
     /**
      * What the boot made of this process's own configuration — a mount that is
      * not a directory, a `CLAUDE_HOME` with no transcripts under it, a variable
-     * set to the empty string.
+     * set to the empty string, a `UF_AUTH_TOKEN` short enough to guess (which is
+     * why this stays behind the gate).
      *
      * Only ever warnings in practice: a refusal exits the process before it
      * serves, so nothing that reads this can be looking at one. It rides on the

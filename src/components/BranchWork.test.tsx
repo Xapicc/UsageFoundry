@@ -136,4 +136,11 @@ test("a checkout left mid-rebase draws no Commit, and the row names the rebase",
     /mid-bisect/i,
     "a bisect over a clean tree is still a bisect",
   );
+  // `deleteBranch` refuses a branch a checkout is mid-rebase of, so the page
+  // draws no Delete on a landed row either, and the note is where that is said.
+  assert.match(
+    renderToStaticMarkup(<UncommittedNote branch={{ ...midRebase, merged: true }} />),
+    /no Commit or Delete/,
+  );
+  assert.doesNotMatch(note, /Delete/, "an unlanded row is offered Purge, not Delete");
 });

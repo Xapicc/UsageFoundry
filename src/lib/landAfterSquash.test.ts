@@ -377,3 +377,29 @@ describe("resolving a conflict past a squash", () => {
     assert.equal(read(path.join(c.repo, "f2.txt")), "link B's f2\n");
   });
 });
+
+describe("landing past a squash while another process holds the target's ref lock", () => {
+  // Nothing before the commit moves a ref, so the commit is what meets the
+  // lock; the undo — `merge --abort` for a merge, `reset --merge` for a squash
+  // — restores the tree and exits 1 on the same lock.
+  for (const strategy of ["merge", "squash"] as const) {
+    it(`says a ${strategy} refused at its commit was rolled back`, async () => {
+      const name = `ref-lock-${strategy}`;
+      const c = await squashedLinkA(name);
+      const b = linkB(name, c);
+      const before = git(c.repo, "rev-parse", "main").trim();
+      const lock = path.join(c.repo, ".git", "refs", "heads", "main.lock");
+      fs.writeFileSync(lock, "");
+
+      const landed = await land.landRun(b, strategy);
+
+      assert.equal(landed.ok, false, "landed through a held ref lock");
+      assert.match(landed.ok ? "" : landed.reason, /^The \w+ could not be committed and was rolled back: /);
+      assert.equal(git(c.repo, "rev-parse", "main").trim(), before);
+      assert.equal(git(c.repo, "status", "--porcelain"), "", "the land was left staged");
+      assert.equal(fs.existsSync(path.join(c.repo, ".git", "MERGE_HEAD")), false);
+      assert.equal(read(path.join(c.repo, "f2.txt")), "original f2\n");
+      fs.rmSync(lock);
+    });
+  }
+});

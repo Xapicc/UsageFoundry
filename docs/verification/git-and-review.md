@@ -58,7 +58,49 @@
   with a `measuredFrom` and a `patchFailure` payload: hint, both notices and
   the row sentence paint, no console error. 1280px only; not a server's diff.
 
+- **A repository's own `core.fsmonitor` and `core.hooksPath` outrank global
+  ones, and only `-c` or `GIT_CONFIG_*` outranks them, 2026-10-06, git
+  2.39.5.** Board task `9d74a9ef`. A scratch repository whose `.git/config`
+  named a marker as `core.fsmonitor`, and whose `.git/hooks/post-checkout`
+  wrote another, with a scratch `HOME` and `GIT_CONFIG_NOSYSTEM=1`. With a
+  global `core.fsmonitor false`, `git status` still ran the repository's
+  fsmonitor. It did not run under `-c core.fsmonitor=false`, `-c
+  core.fsmonitor=`, a `GIT_CONFIG_COUNT` pair or `GIT_CONFIG_PARAMETERS`. A
+  global `core.hooksPath=/dev/null` stopped `.git/hooks/post-checkout` on
+  `checkout -b`, and stopped nothing once the repository set a
+  `core.hooksPath` of its own. `-c core.hooksPath=/dev/null` stopped both.
+  Caveat: this was the container's git as uid 1000, not a host's git (see
+  below).
+
+- **Reading a repository's own configuration, hooks and attributes runs none
+  of them, 2026-10-06, git 2.39.5.** The same repository also had a
+  `filter.x.clean` under `* filter=x` in `.git/info/attributes`, an
+  `include.path` naming a second file under `.git` that set
+  `core.sshCommand`, and `extensions.worktreeConfig` with a
+  `diff.external` in `.git/config.worktree`. `git config --list --show-scope
+  --show-origin`, `ls .git/hooks` and `cat .git/info/attributes` wrote no
+  marker. The first listed every planted key on a `local` or `worktree` line
+  naming its file, the included one under `file:.git/evil.inc`. A plain
+  `git status` afterwards ran the filter and the fsmonitor.
+
 ## Not yet verified by hand
+
+- **A planted `core.fsmonitor` running in the operator's own git on the
+  host.** Inferred from the two entries above and from
+  `security-and-sandboxing-chat-config.md`, where it ran on `status`, `diff`
+  and `blame` in the container: a work cycle writes the bind mount as its
+  owner, so the operator's `git status` in that checkout runs the command as
+  the operator. Unmeasured: the host's git, the bind mount, and on macOS the
+  platform's file sharing (the hook's exec bit included). To settle it, in a
+  scratch directory and never a real repository:
+  `uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)`, then
+  `docker compose exec --user "$uid" usagefoundry sh -c 'git init -q /workspace/uf-fsmonitor-probe && cd /workspace/uf-fsmonitor-probe && git config core.fsmonitor "touch .git/fsmonitor-ran #" && printf "#!/bin/sh\ntouch .git/hook-ran\n" > .git/hooks/post-checkout && chmod +x .git/hooks/post-checkout'`.
+  Then, on the host in the same directory, run `git status`, `git commit -q
+  --allow-empty -m x`, `git checkout -q -b probe` and
+  `ls .git/fsmonitor-ran .git/hook-ran`. Both files existing confirms the
+  gap. The probe left both markers when run in the container on 2026-10-06,
+  from the repository's root and from a subdirectory. Board task `da885677`
+  is the operator's.
 
 - **A resolution made through the app, then "What changed".** The range was
   measured on a hand-made merge; `resolveConflicts`' own merge, the review it

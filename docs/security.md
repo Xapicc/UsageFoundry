@@ -169,6 +169,39 @@ read — reaches something that is not this run's business.
   run's config is deliberately **not** strict, so your own MCP servers stay
   available to your agents — which also means those servers are what actually
   bounds an agent, not this switch.
+- **Your own git, in any repository a run worked in.** A work cycle commits
+  into your real `<repo>/.git`, which every worktree of it shares, and writes
+  it as the bind mount's owner. So it can set `core.fsmonitor` in
+  `.git/config`, leave an executable in `.git/hooks/`, or name a filter driver
+  from `.git/info/attributes`. None of that is in a branch, a diff or anything
+  Land shows you. Measured in the container, each one ran its command on an
+  ordinary command. `core.fsmonitor` ran on `git status`, `diff` and `blame`.
+  `post-checkout` and `reference-transaction` ran on `git checkout -b`. A
+  clean filter ran on `status` and `diff`. So the next `git status` you run in
+  that checkout on your host runs the command **as you, outside the
+  container** and outside everything else on this page. That last step is
+  inferred and not yet measured on a host; `docs/verification/git-and-review.md`
+  carries the probe. This app's own git and the chat's ignore `core.fsmonitor`
+  and hooks, but yours does not. Here is what protects you and what does not,
+  measured with git 2.39.5:
+  - `git config --global core.fsmonitor false` does **not** protect you,
+    because the repository's own value wins. A global `core.hooksPath` stops
+    `.git/hooks` only until the repository sets a `core.hooksPath` of its own.
+  - A command-line `-c` or a `GIT_CONFIG_COUNT` block in your environment does
+    outrank the repository: `git -c core.fsmonitor=false -c
+    core.hooksPath=/dev/null status`. Kept in a profile, that also switches off
+    your own hooks in every repository. It does nothing about a filter or diff
+    driver, because the repository picks the driver's name.
+  - So the step that holds is to look before you run git in a checkout a run
+    has worked in. Run
+    `git config --list --show-scope --show-origin | grep -E '^(local|worktree)'`,
+    `ls .git/hooks` and `cat .git/info/attributes`. None of them runs anything
+    it lists, and the first shows every key the repository set, including
+    one pulled in from another file by `include.path`. Anything you did not put
+    there is the run's: a `core.fsmonitor` or `core.hooksPath`, a `filter.*`,
+    `diff.*` or `merge.*` driver, or a hook without `.sample`.
+  - `safe.directory` does not help. Git's documentation says it refuses only a
+    repository owned by another user, and the run writes as you.
 
 There is one thing the split *does* close that reads similarly and is worth not
 confusing with the above: an agent can no longer read the **server's**
@@ -262,16 +295,22 @@ is the only evidence here that the boundary exists.
 they write.** A chat turn and an orchestrator block run with a `HOME` of their
 own, `/run/uf-chat-home`, which is root's and the chat group's. Nothing a run
 leaves in `/home/node` — a shell rc file, `~/.gitconfig`, Python's user site —
-runs in them. Their git ignores a repository's `core.fsmonitor` and hooks. They
+runs in them. Their git ignores a repository's `core.fsmonitor` and hooks, and
+every command its `.git/config` names for `fetch`, `push` and `log`: a
+credential helper, `core.sshCommand`, a local remote's `uploadpack`, a signature
+program. That costs them fetching from a local path or a `git://` URL. They
 read no `.claude/settings*.json` from the folder they stand in. And they run no
 hooks at all, yours included, because an enabled plugin's hook file stays the
 agents' even with `UF_LOCK_CLAUDE_HOME=1`. So the answer is not simply "set the
 lock", but the lock is still needed: the chat does read `~/.claude/settings.json`
 itself, including its environment and `apiKeyHelper`, and with the lock off a
-run can edit that file. Two git routes stay open. A `diff.external`, or a filter
-or `textconv` driver named in a repository's `.git/info/attributes`, runs when
-the chat diffs that repository. Clearing `UF_CHAT_GID` puts the chat back on the
-agents' `HOME` along with removing the group.
+run can edit that file. One git route stays open, by decision, because git has
+no setting that closes it. A `diff.external`, or a filter, `textconv` or diff
+driver named in a repository's `.git/info/attributes`, runs when the chat runs
+`git status`, `diff`, `show` or `blame` there. An orchestrator block standing in
+that repository can run it as its turn starts, because the CLI runs `git status`
+itself before the model does anything. Clearing `UF_CHAT_GID` puts the
+chat back on the agents' `HOME` along with removing the group.
 `docs/agent/security/chat-child-config-files.md` has the measurements.
 
 **This app can now put a hook on that path itself, and it ships off.**
@@ -303,8 +342,9 @@ on may do nothing whatever. `docs/verification.md` carries what would settle it.
 - Set `UF_AUTH_TOKEN` (`openssl rand -hex 32`). Leaving it blank makes the
   server refuse to start; the only way past that is `UF_ALLOW_NO_AUTH=1`, which
   runs with no authentication and puts a banner on every page saying so. A
-  token shorter than 32 characters starts, with a warning at every boot: the
-  limits below bound how fast it can be guessed, not whether.
+  token shorter than 32 characters starts, with a warning at every boot and
+  above the dashboard's meters once signed in: the limits below bound how fast
+  it can be guessed, not whether.
 - **`/api/login` is rate-limited.** Ten consecutive failures from one address
   lock that address out for 15 minutes; 100 failures across every address lock
   sign-in install-wide for 60 seconds, which is what still bounds an attacker

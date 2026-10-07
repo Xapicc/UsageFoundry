@@ -389,6 +389,17 @@ export const ALLOW_NO_AUTH = optionalEnv("UF_ALLOW_NO_AUTH");
 export const COOKIE_SECURE = optionalEnv("UF_COOKIE_SECURE");
 
 /**
+ * Blank is 0; null is a value that is not a whole number. One function for
+ * `TRUSTED_PROXY_HOPS` below and for the boot warning, so the value warned
+ * about is exactly the one read as zero.
+ */
+export function parseTrustedProxyHops(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (trimmed === "") return 0;
+  return /^\d+$/.test(trimmed) ? Number(trimmed) : null;
+}
+
+/**
  * How many reverse proxies in front of this process append to
  * `x-forwarded-for`, which is how far from that header's right-hand end the
  * client's address sits. `sourceAddress` in `requestLog.ts` is the one reader.
@@ -398,12 +409,11 @@ export const COOKIE_SECURE = optionalEnv("UF_COOKIE_SECURE");
  * operator's address put it under sign-in's fifteen-minute source lockout. Not
  * a whole number reads as zero too, because that is the direction where a
  * mistake costs the operator a per-source bucket rather than handing a guesser
- * the operator's.
+ * the operator's — and `configCheck.ts` warns about it, because nothing else
+ * says why the bucket and the request log's address went away.
  */
-export const TRUSTED_PROXY_HOPS = ((): number => {
-  const raw = optionalEnv("UF_TRUSTED_PROXY_HOPS").trim();
-  return /^\d+$/.test(raw) ? Number(raw) : 0;
-})();
+export const TRUSTED_PROXY_HOPS =
+  parseTrustedProxyHops(optionalEnv("UF_TRUSTED_PROXY_HOPS")) ?? 0;
 
 /** Admin API key (sk-ant-admin01-...). Optional. */
 export const ADMIN_API_KEY = optionalEnv("ANTHROPIC_ADMIN_KEY");

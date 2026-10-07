@@ -123,6 +123,17 @@ if (args[0] === "login" && args[1] === "--with-api-key") {
   return;
 }
 if (args[0] === "login" && args[1] === "--device-auth") {
+  // The pinned CLI deletes the credential first and asks OpenAI for a code
+  // second, so a start can sign the container out and still never print one.
+  require("node:fs").rmSync(require("node:path").join(process.env.CODEX_HOME, "auth.json"), { force: true });
+  if (process.env.CODEX_STUB_DEVICE === "unreachable") {
+    process.stderr.write("Error logging in with device code: error sending request for url (https://auth.openai.com/api/accounts/deviceauth/usercode)\\n");
+    process.exit(1);
+  }
+  if (process.env.CODEX_STUB_DEVICE === "stall") {
+    setInterval(() => {}, 60_000);
+    return;
+  }
   process.stdout.write("Open https://auth.openai.com/device to continue\\n");
   process.stdout.write("ABCD-1234\\n");
   // Stays alive polling, which is what the real device flow does and what the
@@ -179,6 +190,7 @@ beforeEach(() => {
   delete process.env.CLAUDE_STUB_FAIL;
   delete process.env.CLAUDE_STUB_LOGGED_IN;
   delete process.env.CODEX_STUB_STATUS;
+  delete process.env.CODEX_STUB_DEVICE;
 });
 
 interface OpsRow {
@@ -211,6 +223,23 @@ function onlyOps(): OpsRow {
   const rows = opsRows();
   assert.equal(rows.length, 1, `expected one durable row, got ${JSON.stringify(rows)}`);
   return rows[0];
+}
+
+/** A stored Codex credential for the stub to delete, and where it is. */
+function storedCodexCredential(): string {
+  const home = process.env.CODEX_HOME as string;
+  fs.mkdirSync(home, { recursive: true });
+  const file = path.join(home, "auth.json");
+  fs.writeFileSync(file, JSON.stringify({ auth_mode: "apikey" }));
+  return file;
+}
+
+async function until(check: () => boolean, what: string): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (!check()) {
+    if (Date.now() > deadline) assert.fail(`timed out waiting for ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 function post(url: string, body?: unknown): Request {
@@ -335,6 +364,53 @@ describe("a provider credential that changed leaves a durable row", () => {
     );
     assert.equal(onlyOps().event, "auth.provider_login_cancelled");
   });
+
+  /**
+   * The two ways a Codex start ends without a link, after its CLI has already
+   * deleted `auth.json`: measured against 0.153.4, the file goes ~20 ms after
+   * spawn and the code arrives ~300 ms later, after a round trip to OpenAI.
+   * Neither has a started row behind it, so its own row is the only one that
+   * says the credential may have gone.
+   */
+  it("records a cancel that lands while a Codex start still waits for its link", async () => {
+    process.env.CODEX_STUB_DEVICE = "stall";
+    const credential = storedCodexCredential();
+    const start = codexLogin.POST(post("http://localhost/api/codex-auth/login"));
+    await until(() => !fs.existsSync(credential), "the stub to delete auth.json");
+
+    await codexLogin.DELETE(
+      new Request("http://localhost/api/codex-auth/login", { method: "DELETE" }),
+    );
+    assert.equal((await start).status, 409);
+
+    const row = onlyOps();
+    assert.equal(row.event, "auth.provider_login_cancelled");
+    assert.equal(row.detail.provider, "codex");
+    assert.equal(row.detail.may_have_cleared_credential, true);
+    // `warn`, where a cancel over a pending login is `info`: there the
+    // deletion is already the started row's, and here it is nobody else's.
+    assert.equal(row.level, "warn");
+  });
+
+  it("records a Codex start whose CLI exited after deleting the credential", async () => {
+    process.env.CODEX_STUB_DEVICE = "unreachable";
+    const credential = storedCodexCredential();
+    const res = await codexLogin.POST(post("http://localhost/api/codex-auth/login"));
+    assert.equal(res.status, 502);
+    assert.ok(!fs.existsSync(credential));
+
+    // Field by field, and the CLI's own output is not one of them.
+    assert.deepEqual(onlyOps(), {
+      level: "warn",
+      event: "auth.provider_login_failed",
+      detail: {
+        provider: "codex",
+        may_have_cleared_credential: true,
+        actor: "session",
+        address: "203.0.113.9",
+      },
+    });
+  });
 });
 
 describe("what a credential route records when nothing changed", () => {
@@ -362,6 +438,22 @@ describe("what a credential route records when nothing changed", () => {
     // rows: a row per no-op press is a row that evicts a real one.
     assert.deepEqual(opsRows(), []);
     assert.equal(requestRows().length, 1);
+  });
+
+  it("writes no durable row for a Codex start that never ran its CLI", async () => {
+    // A `CODEX_HOME` that cannot be a directory fails the start before
+    // anything is spawned, so nothing can have deleted the credential.
+    const home = process.env.CODEX_HOME as string;
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.writeFileSync(home, "");
+    try {
+      const res = await codexLogin.POST(post("http://localhost/api/codex-auth/login"));
+      assert.equal(res.status, 502);
+      assert.deepEqual(opsRows(), []);
+      assert.equal(requestRows()[0].status, 502);
+    } finally {
+      fs.rmSync(home, { force: true });
+    }
   });
 
   it("writes no durable row for a rejected authorize code", async () => {

@@ -43,6 +43,7 @@ import {
   promoteQueued,
   refundedCyclesSql,
   releaseDependents,
+  restartClosedSql,
   resolveWorkspaceFolder,
   revivableDependents,
   signalTree,
@@ -55,7 +56,7 @@ import {
   type RunRow,
   type DependencyEdge,
   type DependencyLink,
-  type DependencyState,
+  type ReleaseState,
   type RunStatus,
 } from "./orchestrator";
 import {
@@ -116,6 +117,7 @@ import {
 import { getTemplate, listTemplates, type RunTemplate } from "./templates";
 import { WORKSPACE_MOUNTS, mountById } from "./config";
 import { dataDirRefusal } from "./serverLock";
+import { notStringRefusal } from "./http";
 import {
   passMemberId,
   passMemberIn,
@@ -832,8 +834,20 @@ export function planEmission(raw: unknown, limits: EmissionLimits): EmissionPlan
     }
     const links = Array.isArray(e.dependsOn) ? e.dependsOn : [];
 
-    for (const link of links) {
+    for (const [at, link] of links.entries()) {
       const l = (link ?? {}) as Record<string, unknown>;
+      // `["a"]` was read as the sibling inside it, and `edge: ["on-finish"]` as
+      // the condition: a run told to wait on something other than what was
+      // written, with nobody reading the emission.
+      for (const field of ["id", "edge"]) {
+        const notString = notStringRefusal(field, l[field]);
+        if (notString) {
+          return {
+            ok: false,
+            reason: `“${spec.title}” dependsOn entry ${at + 1}: ${notString}`,
+          };
+        }
+      }
       const from = String(l.id ?? "");
       const target = byId.get(from);
       if (!target) {
@@ -1038,7 +1052,7 @@ function normalizeSpec(
 /* ------------------------------------------------------------------ */
 
 /** One run of a loop's body, and the one extra fact the loop reads off it. */
-export interface LoopRunState extends DependencyState {
+export interface LoopRunState extends ReleaseState {
   /**
    * Whether the agent actually replied `DONE`.
    *
@@ -1540,8 +1554,13 @@ const LIVE_BLOCK_STATUSES: readonly BlockStatus[] = [
 
 /** One node of an instance as the scheduler sees it. */
 export interface InstanceNodeState {
-  /** The run this node became, or null when it has not been created. */
-  run: DependencyState | null;
+  /**
+   * The run this node became, or null when it has not been created.
+   * `ReleaseState` rather than `DependencyState` for `releasableRuns`' reason:
+   * a restart's ending satisfies `on-finish`, and the scheduler must not read
+   * one nobody has picked up as finished.
+   */
+  run: ReleaseState | null;
   /**
    * The operator picked the workflow up past `run` — see `leaveRunBehind`. Its
    * successors stop waiting on it and resolve to no run through it, so a merge
@@ -1558,7 +1577,7 @@ export interface InstanceNodeState {
      * The runs an orchestrator block started, as their rows stand now — less
      * any the operator left behind, which are counted in `leftBehind` instead.
      */
-    emitted: readonly DependencyState[];
+    emitted: readonly ReleaseState[];
     /** How many of the block's runs were left behind, and so are not above. */
     leftBehind?: number;
     /**
@@ -1855,6 +1874,20 @@ function edgeVerdict(
     // the edge's condition. No `dependsOn` entry, so a merge behind it leaves
     // its branch where it is and a successor starts fresh rather than on it.
     if (state.leftBehind) return SATISFIED;
+    // Ahead of the edge, on either, for `releasableRuns`' reason: a closed-out
+    // run that did a cycle satisfies `on-finish`, and it is outstanding — the
+    // restart notice offers it, and picking it up would run it beside this
+    // block. Blocked rather than pending, because nothing obliges anybody to
+    // pick it up, and blocked is what `reviveBlockedBlocks` brings back.
+    if (state.run.restartClosed) {
+      return {
+        kind: "blocked",
+        reason:
+          `Set to start after “${from.name}” (run ${state.run.id.slice(0, 8)}), ` +
+          "which the server restart closed out. Picking that run up puts this " +
+          "block back to waiting for it.",
+      };
+    }
     if (edgeSatisfied(state.run, edge.edge)) {
       dependsOn.push({
         runId: state.run.id,
@@ -1919,6 +1952,16 @@ function edgeVerdict(
 
   let pending = false;
   for (const run of block.emitted) {
+    // The run block's rule above, for one of however many the block started.
+    if (run.restartClosed) {
+      return {
+        kind: "blocked",
+        reason:
+          `Set to start after every run “${from.name}” started; run ` +
+          `${run.id.slice(0, 8)} was closed out by the server restart. Picking ` +
+          "that run up puts this block back to waiting for it.",
+      };
+    }
     if (edgeSatisfied(run, edge.edge)) continue;
     if (TERMINAL_STATUSES.includes(run.status)) {
       return {
@@ -5330,7 +5373,12 @@ function advanceInstance(instanceId: string): void {
   // The merge's shape and its claim, for its reason: the block awaits reviews
   // and runs, and two advances arriving together would otherwise both review
   // the same branches.
+  //
+  // Held at the claim for the deciding turn's reason: every branch it is handed
+  // is a billed review nobody is watching. Left `waiting`, so the lift's
+  // `releaseDependents` claims it.
   for (const review of step.review) {
+    if (newWorkPaused()) break;
     if (!claimBlock(instanceId, review.nodeId)) continue;
     void startReviewBlock(instanceId, review.nodeId, review.runIds).catch((err) => {
       finishMergeBlock(instanceId, review.nodeId, {
@@ -5354,6 +5402,7 @@ function instanceState(
       `SELECT w.node_id AS nodeId, w.emitted_by AS emittedBy, r.id AS id,
               r.status AS status, r.iterations AS iterations,
               ${refundedCyclesSql("r")} AS refundedCycles,
+              ${restartClosedSql("r")} AS restartClosed,
               w.left_behind_at AS leftBehindAt
          FROM workflow_instance_runs w
          LEFT JOIN runs r ON r.id = w.run_id
@@ -5367,6 +5416,7 @@ function instanceState(
     status: RunStatus | null;
     iterations: number | null;
     refundedCycles: number | null;
+    restartClosed: number | null;
     leftBehindAt: number | null;
   }>;
 
@@ -5375,7 +5425,7 @@ function instanceState(
   // reads the *last* of them any more — a loop hands on no run at all, because
   // every pass lands its own work — but the order is what `loopPasses` groups
   // on, and this is the query that establishes it.
-  const emitted = new Map<string, DependencyState[]>();
+  const emitted = new Map<string, ReleaseState[]>();
   const emittedLeftBehind = new Map<string, number>();
   for (const row of runs) {
     // A row whose run has been deleted is treated as gone rather than as
@@ -5383,11 +5433,12 @@ function instanceState(
     // "not found" is not "settled", and a block released on the strength of one
     // would start on work nobody can show.
     if (!row.id || !row.status) continue;
-    const run: DependencyState = {
+    const run: ReleaseState = {
       id: row.id,
       status: row.status,
       iterations: row.iterations ?? 0,
       refundedCycles: row.refundedCycles ?? 0,
+      restartClosed: row.restartClosed === 1,
     };
     if (row.emittedBy) {
       if (row.leftBehindAt !== null) {
@@ -5603,6 +5654,7 @@ function loopPasses(instanceId: string, nodeId: string): LoopPass[] {
               w.emitted_by AS emittedBy, w.position AS position,
               r.id AS id, r.status AS status, r.iterations AS iterations,
               ${refundedCyclesSql("r")} AS refundedCycles,
+              ${restartClosedSql("r")} AS restartClosed,
               r.reported_done AS reportedDone, w.left_behind_at AS leftBehindAt
          FROM workflow_instance_runs w
          LEFT JOIN runs r ON r.id = w.run_id
@@ -5618,6 +5670,7 @@ function loopPasses(instanceId: string, nodeId: string): LoopPass[] {
     status: RunStatus | null;
     iterations: number | null;
     refundedCycles: number | null;
+    restartClosed: number | null;
     reportedDone: number | null;
     leftBehindAt: number | null;
   }>;
@@ -5649,6 +5702,7 @@ function loopPasses(instanceId: string, nodeId: string): LoopPass[] {
           status: row.status,
           iterations: row.iterations ?? 0,
           refundedCycles: row.refundedCycles ?? 0,
+          restartClosed: row.restartClosed === 1,
           reportedDone: !!row.reportedDone,
           leftBehind: row.leftBehindAt !== null,
         }
@@ -6211,7 +6265,9 @@ function stepPass(
     });
   }
 
+  // Held as `advanceInstance`'s review claims are, and for their reason.
   for (const review of step.review) {
+    if (newWorkPaused()) break;
     const id = memberId(review.nodeId);
     if (!claimBlock(instanceId, id)) continue;
     wrote = true;
@@ -7130,6 +7186,7 @@ function approvedRunsOf(instanceId: string, blockId: string): LoopRunState[] {
     .prepare(
       `SELECT r.id AS id, r.status AS status, r.iterations AS iterations,
               ${refundedCyclesSql("r")} AS refundedCycles,
+              ${restartClosedSql("r")} AS restartClosed,
               r.reported_done AS reportedDone
          FROM workflow_review_items i
          JOIN runs r ON r.id = i.run_id
@@ -7141,6 +7198,7 @@ function approvedRunsOf(instanceId: string, blockId: string): LoopRunState[] {
     status: RunStatus;
     iterations: number;
     refundedCycles: number;
+    restartClosed: number;
     reportedDone: number | null;
   }>;
   return rows.map((row) => ({
@@ -7148,6 +7206,7 @@ function approvedRunsOf(instanceId: string, blockId: string): LoopRunState[] {
     status: row.status,
     iterations: row.iterations,
     refundedCycles: row.refundedCycles,
+    restartClosed: row.restartClosed === 1,
     reportedDone: !!row.reportedDone,
     leftBehind: false,
   }));
@@ -7264,6 +7323,13 @@ export async function startReviewBlock(
   // already written this block off, and seeding its branches would draw a
   // review on the page that never happened.
   if (!reviewStillOpen(instanceId, nodeId)) return;
+  // And the hold, `startBlockTurn`'s question after its own awaits: the claim
+  // asked before the snapshot. Nothing is seeded yet, so the claim is handed
+  // back for the lift rather than written off.
+  if (newWorkPaused()) {
+    releaseBlockClaim(instanceId, nodeId);
+    return;
+  }
 
   // Seeded once. `INSERT OR IGNORE` because a retried block finds its rows.
   const now = Date.now();
@@ -7376,8 +7442,10 @@ async function driveReviewItem(
 
     // Waited for rather than refused: a full assist queue is a shortage that
     // clears in minutes, and a branch set aside over it would be judged by the
-    // queue rather than by a review.
-    if (assistBudgetFull()) {
+    // queue rather than by a review. The hold is waited out the same way, for a
+    // review this block had not started when it was pressed — a reviewer is new
+    // spending — and the poll is what notices the lift.
+    if (assistBudgetFull() || newWorkPaused()) {
       await pause();
       continue;
     }

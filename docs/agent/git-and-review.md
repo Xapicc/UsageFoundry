@@ -9,7 +9,7 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 
 ## [Reviews, resolutions and validations: the assist child](git-and-review/reviews-and-assists.md)
 
-- Reviewing a diff is not a work cycle and is never automatic. (was line 8)
+- Reviewing a diff is not a work cycle, and the run loop never starts one. (was line 8)
 - A conflict resolution may check its own merge only where a toolchain can exist, and only where an operator named the command. (was line 10)
 - `AssistKind` has a third member and it is the one that is not a person's press. (was line 26)
 - An assist streams, and every tool call it makes is on the run's log wearing its own name. (was line 28)

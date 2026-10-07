@@ -50,6 +50,7 @@ export function UncommittedNote({ branch }: { branch: BranchSummaryDTO }) {
       {branch.operation && (
         <div className="mt-1 text-balance text-2xs font-semibold uppercase tracking-wide text-warn">
           Mid-{branch.operation}, so no Commit
+          {(branch.merged || branch.landedUnchanged) && " or Delete"}
         </div>
       )}
     </>
