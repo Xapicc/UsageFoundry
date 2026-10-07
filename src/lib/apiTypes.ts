@@ -1583,6 +1583,63 @@ export interface RunDTO {
   stackRequests?: StackRequestDTO[];
   /** When an operator last picked this run up again. Never rewrites `origin`. */
   reopened_at?: number | null;
+  /**
+   * What this run's start read of its repository's git directory, and what
+   * its end found changed there. Null for a run that worked outside a
+   * repository, or whose start predates the check. The run's own page only.
+   */
+  gitDir?: GitDirDTO | null;
+}
+
+/** Why a git configuration key is watched: what makes the operator's own git run it. */
+export type GitDirCommandClassDTO =
+  | "fsmonitor"
+  | "hooks-path"
+  | "attribute-driver"
+  | "external-diff"
+  | "remote"
+  | "signing"
+  | "interactive"
+  | "alias"
+  | "include";
+
+export type GitDirChangeDTO = "added" | "removed" | "changed";
+
+export type GitDirFindingDTO =
+  | {
+      kind: "config";
+      commandClass: GitDirCommandClassDTO;
+      key: string;
+      change: GitDirChangeDTO;
+      /** Every value the key has at the end, in git's order; empty when removed. */
+      now: Array<{ scope: "local" | "worktree"; origin: string; shown: string | null }>;
+    }
+  | { kind: "hook"; name: string; change: GitDirChangeDTO; executable: boolean }
+  | { kind: "attributes"; change: GitDirChangeDTO; driverLines: string[] };
+
+/**
+ * A run's end, compared with its start. `concurrentRunIds` is every other run
+ * of this app that worked in the same repository in that time; it can never
+ * include the operator, the chat or anything outside this app.
+ */
+export type GitDirReportDTO =
+  | { state: "unchanged"; commonDir: string; since: number; checkedAt: number }
+  | {
+      state: "changed";
+      commonDir: string;
+      since: number;
+      checkedAt: number;
+      findings: GitDirFindingDTO[];
+      concurrentRunIds: string[];
+    }
+  | { state: "unreadable"; commonDir: string | null; reason: string; checkedAt: number };
+
+export interface GitDirDTO {
+  /** When the start read it. */
+  since: number;
+  commonDir: string | null;
+  /** Null until the run's end has compared; a run still going has none. */
+  report: GitDirReportDTO | null;
 }
 
 /**
