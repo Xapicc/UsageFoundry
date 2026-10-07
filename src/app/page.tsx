@@ -456,8 +456,9 @@ export default function Dashboard() {
           is below can still change. */}
       {data?.meta?.newWorkPaused && (
         <Notice tone="warn">
-          <strong>New work is held.</strong> Queued runs, dependents, schedules
-          and orchestrator blocks all wait; work in flight carries on.{" "}
+          <strong>New work is held.</strong> Queued runs, dependents, schedules,
+          orchestrator blocks and review blocks all wait, and no merge conflict
+          is resolved; work in flight carries on.{" "}
           <Link href="/runs">Resume it on the runs page</Link>.
         </Notice>
       )}

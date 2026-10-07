@@ -615,6 +615,29 @@ describe("DONE, over a pass whose review set the branch aside", () => {
     assert.match(loopBlock(instanceId).error ?? "", /reported the work complete on pass 1/);
     assert.equal(membersOf(instanceId).length, 1, "it stopped after the first pass");
   });
+
+  it("leaves its review unclaimed while new work is held, and reviews once the hold clears", async () => {
+    // A pass claims its review members in a loop of its own rather than
+    // through `advanceInstance`'s, so the hold has to be asked there as well:
+    // claimed under it, every branch was handed to a billed reviewer.
+    const settings = await import("./settings");
+    const instanceId = scene({ ...REVIEWED, maxPasses: 1 });
+    const member = passMemberId("L", 1, "v");
+    workflows.advanceInstances();
+    settleQueuedRuns(instanceId, { done: true });
+
+    settings.setNewWorkPaused(true);
+    try {
+      workflows.advanceInstances();
+      assert.equal(blockRow(instanceId, member).status, "waiting", "the held pass claimed its review");
+      assert.equal(loopBlock(instanceId).status, "looping", "a held pass is not a stopped loop");
+    } finally {
+      settings.setNewWorkPaused(false);
+    }
+
+    await drive(instanceId, { done: true });
+    assert.deepEqual(reviewItems(instanceId), [{ status: "set-aside", committedNothing: 1 }]);
+  });
 });
 
 /** One run settled the way `settleQueuedRuns` settles them. */

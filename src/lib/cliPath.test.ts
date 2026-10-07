@@ -386,6 +386,116 @@ describe("the chat child's own configuration", () => {
     assert.deepEqual(repoMarkers.filter(ran), [], "git in the chat child ran a command from the repository's .git");
   });
 
+  /**
+   * What `fetch`, `push` and `log` run from a repository's `.git/config`
+   * (board task `5219cea7`), in a repository of its own so that none of it
+   * fires in the cases above. No server is needed: `credential fill` is the
+   * call a fetch makes when a remote asks for a password, and every other
+   * remote points at a closed port or a local path.
+   */
+  describe("a repository's fetch, push and log settings", () => {
+    let net: string;
+    let signed: string[];
+    const markers = [
+      "net-credential-helper",
+      "net-askpass",
+      "net-ssh-command",
+      "net-uploadpack",
+      "net-receivepack",
+      "net-ext",
+      "net-git-proxy",
+      "net-gpg",
+      "net-gpgsm",
+      "net-ssh-keygen",
+    ];
+    // A terminal prompt is the last resort after both planted commands, and
+    // it would wait on a developer's tty. `GIT_SSH_COMMAND` outranks
+    // `core.sshCommand`, and an agent's own sandbox sets it.
+    const git = (args: string[], env: NodeJS.ProcessEnv, input?: string) => {
+      const { GIT_SSH_COMMAND: _command, GIT_SSH: _ssh, ...rest } = env;
+      return spawnSync(realGit, args, {
+        cwd: net,
+        env: { ...rest, GIT_TERMINAL_PROMPT: "0" },
+        input,
+        encoding: "utf8",
+        timeout: 20_000,
+      });
+    };
+
+    before(() => {
+      const upstream = makeDir(scratch, "net-upstream");
+      net = makeDir(scratch, "net");
+      const setup = { ...process.env, HOME: chatHome };
+      for (const dir of [upstream, net]) {
+        fs.writeFileSync(path.join(dir, "f.txt"), "one\n");
+        for (const args of [
+          ["init", "-q"],
+          ["add", "f.txt"],
+          ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "one"],
+        ]) {
+          const result = spawnSync(realGit, args, { cwd: dir, env: setup, encoding: "utf8" });
+          assert.equal(result.status, 0, `git ${args.join(" ")} failed: ${result.stderr}`);
+        }
+      }
+      // One commit per signature format, so that `log.showSignature` has each
+      // program to run. The signatures are junk; verifying one is the channel.
+      const tree = git(["rev-parse", "HEAD^{tree}"], setup).stdout.trim();
+      const parent = git(["rev-parse", "HEAD"], setup).stdout.trim();
+      signed = ["PGP SIGNATURE", "SIGNED MESSAGE", "SSH SIGNATURE"].map((armor) => {
+        const body =
+          `tree ${tree}\nparent ${parent}\nauthor t <t@t> 1 +0000\ncommitter t <t@t> 1 +0000\n` +
+          `gpgsig -----BEGIN ${armor}-----\n AAAA\n -----END ${armor}-----\n\nsigned\n`;
+        return git(["hash-object", "-t", "commit", "-w", "--stdin"], setup, body).stdout.trim();
+      });
+      const allowedSigners = path.join(scratch, "net-allowed-signers");
+      fs.writeFileSync(allowedSigners, "");
+      for (const [key, value] of [
+        ["credential.helper", `!${command("net-credential-helper")}`],
+        ["core.askPass", command("net-askpass")],
+        ["core.sshCommand", command("net-ssh-command")],
+        ["remote.ssh.url", "ssh://127.0.0.1:1/x"],
+        ["remote.local.url", upstream],
+        ["remote.local.uploadpack", `${command("net-uploadpack")}; git-upload-pack`],
+        ["remote.local.receivepack", `${command("net-receivepack")}; git-receive-pack`],
+        ["protocol.allow", "always"],
+        ["remote.ext.url", `ext::${command("net-ext")}`],
+        ["core.gitProxy", command("net-git-proxy")],
+        ["remote.git.url", "git://127.0.0.1:1/x"],
+        ["log.showSignature", "true"],
+        ["gpg.program", command("net-gpg")],
+        ["gpg.x509.program", command("net-gpgsm")],
+        ["gpg.ssh.program", command("net-ssh-keygen")],
+        ["gpg.ssh.allowedSignersFile", allowedSigners],
+      ]) {
+        assert.equal(git(["config", "--add", key, value], setup).status, 0, `git config ${key} failed`);
+      }
+    });
+
+    const exercise = (env: NodeJS.ProcessEnv) => {
+      git(["credential", "fill"], env, "protocol=https\nhost=example.com\n\n");
+      for (const remote of ["ssh", "local", "ext", "git"]) git(["fetch", "-q", remote], env);
+      git(["push", "-q", "local", "HEAD:refs/heads/pushed"], env);
+      for (const commit of signed) git(["log", "-1", commit], env);
+    };
+
+    it("pins every one of them for every git the chat runs", () => {
+      forget(...markers);
+      exercise({ ...chat.chatEnv(chatHome), GIT_CONFIG_COUNT: "0" });
+      assert.deepEqual(markers.filter(ran), markers, "a planted repository command never ran");
+
+      forget(...markers);
+      exercise(chat.chatEnv(chatHome));
+      assert.deepEqual(markers.filter(ran), [], "git in the chat child ran a command from the repository's .git/config");
+    });
+
+    it("still answers github.com from the token, which an emptied helper list after it would take away", () => {
+      forget("net-credential-helper");
+      const fill = git(["credential", "fill"], chat.chatEnv(chatHome, "uf-test-token"), "protocol=https\nhost=github.com\n\n");
+      assert.match(fill.stdout, /^password=uf-test-token$/m, fill.stderr);
+      assert.equal(ran("net-credential-helper"), false, "the repository's credential helper ran for github.com");
+    });
+  });
+
   it("drops every variable naming a path in the agents' HOME, and keeps the Claude config directory", () => {
     const env = chat.chatHomeEnv(
       {
