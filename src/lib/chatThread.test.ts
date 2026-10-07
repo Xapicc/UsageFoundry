@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { mergeMessages, threadItems, turnStartInstant } from "./chatThread";
+import { hasLeftThread, mergeMessages, threadItems, turnStartInstant } from "./chatThread";
 import type { ChatMessageDTO, ChatQuestionDTO } from "./apiTypes";
 
 /**
@@ -233,4 +233,20 @@ test("what a poll merges does not grow with the length of the thread", () => {
     assert.equal(merged.length, n + 1);
     assert.equal(merged.at(-1)?.id, "new");
   }
+});
+
+test("an action's answer lands on a page nobody has navigated", () => {
+  // `opened` is null until the operator first opens or starts a thread, and the
+  // thread on screen is then the one every action was pressed in. Read as left,
+  // this drops every answer on a freshly loaded page, a refusal's sentence among
+  // them, with nothing on screen to say an answer came.
+  assert.equal(hasLeftThread(null, "a"), false);
+});
+
+test("an action's answer lands once the operator is back in its thread", () => {
+  assert.equal(hasLeftThread("a", "a"), false);
+});
+
+test("an action's answer is withheld from a thread opened while it was out", () => {
+  assert.equal(hasLeftThread("b", "a"), true);
 });

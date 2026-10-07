@@ -132,3 +132,22 @@ export function turnStartInstant(
 ): number | null {
   return turnStartedAt ?? lastWrite ?? null;
 }
+
+/**
+ * Whether the operator has opened another thread since an action was pressed in
+ * `actedOn`, in which case none of that action's answer may reach the page.
+ *
+ * The thread rows take no `busy` guard, because blocking them would trap the
+ * operator in a thread whose send is stuck, so a POST can answer after they
+ * have moved on. Everything its tail writes is page state rather than thread
+ * state — the drawn thread, the error lines, the ticked proposals, the read a
+ * refusal sends — so each of those lands on whichever thread is open by then.
+ *
+ * `opened` is null until the operator first opens or starts a thread, and the
+ * thread on screen is then the only one there has been: null is never left.
+ * That is the case the test pins, because reading it the other way drops every
+ * answer on a freshly loaded page, a refusal's sentence among them.
+ */
+export function hasLeftThread(opened: string | null, actedOn: string): boolean {
+  return opened !== null && opened !== actedOn;
+}
