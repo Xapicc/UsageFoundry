@@ -73,6 +73,13 @@ src/lib/
                    environment names a URL and a secret
   git.ts           the one way this app runs git — argv only, environment scrubbed
   diff.ts          a run's <base>...<branch> as a budgeted file list + patches
+  gitDirWatch.ts   the keys, hooks and `info/attributes` in a repository's
+                   git directory that make the operator's own git run a
+                   command, compared between a run's start and its end. Pure,
+                   and the report types are `apiTypes.ts`'s
+  gitDirRead.ts    the disk and database half: reads that directory without
+                   running anything planted there, once before a run's first
+                   cycle and again after every terminal status, onto the row
   runTouchScan.ts  the files a run's `kind: "tool"` events named, as one indexed
                    range scan over `run_events` — `readCountsFor`'s own CASE,
                    unfiltered by tool name and keeping the rows it drops at its

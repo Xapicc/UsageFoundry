@@ -16,7 +16,7 @@ This page is the index. The bar every test is held to comes first, each of its p
 
 `npm run typecheck` plus a `docker compose up --build` smoke test is still the real verification loop, and `docs/verification.md` records what was checked by hand — including its "Not yet verified" list, which must stay honest.
 
-Twenty-one are renderings rather than functions — every `*.test.tsx` in the tree, which is the whole of that class and is countable as `find src -name '*.test.tsx' | wc -l`.
+Twenty-two are renderings rather than functions — every `*.test.tsx` in the tree, which is the whole of that class and is countable as `find src -name '*.test.tsx' | wc -l`.
 
 ## [Run queue and admission](testing/run-queue-and-admission.md)
 
@@ -393,6 +393,14 @@ Units that are about no test file in the tree:
 |---|---|
 | `usageRemaining.test.ts` |  |
 | `UsageRemaining.test.ts` |  |
+
+## [What a run left in its repository's git directory](testing/git-dir-watch.md)
+
+| Test file | Also in |
+|---|---|
+| `gitDirWatch.test.ts` |  |
+| `gitDirRead.test.ts` |  |
+| `RunGitDirNotice.test.tsx` |  |
 
 ## [Components: Meter, the ascii skin, Markdown and the UI kit](testing/components-meter-markdown-and-kit.md)
 
