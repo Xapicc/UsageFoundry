@@ -179,6 +179,36 @@
   `docker compose up -d --build` recreated the container (`cda29edf`) and
   `codex login status` as uid 1000 still answered `Logged in using ChatGPT`.
 
+- **A Codex cycle refuses every MCP call under `approval_policy = "never"`
+  unless the server's tools are pre-approved, 2026-10-07**, `codex-cli
+  0.153.4`, `gpt-5.6-luna`: with this app's server named by `url` and
+  `bearer_token_env_var` the cycle listed all eight `mcp__uf__*` tools and
+  every call failed "MCP tool call requires approval, but approval policy is
+  never" — `list_my_tasks` on the first cycle, `create_task` on the resumed
+  second.
+
+- **`shell_environment_policy.exclude` does not reliably keep a variable out of
+  a Codex cycle's shell, 2026-10-07**, same pin: through `app-server`'s
+  `command/exec` the exclusion held (0 against 1 for an unexcluded variable),
+  and 0.153.4 has no default exclusion of `*TOKEN*`; through `codex exec` it held
+  once and failed three times, `printenv` printing the excluded value, with and
+  without MCP overrides beside it. Why it differs between the two paths is not
+  known.
+
+- **Codex reads MCP request headers from `http_headers_helper`, 2026-10-07**,
+  same pin, against a local listener: a helper string `/bin/cat <file>`,
+  arguments included, sent the file's JSON object as the request's headers —
+  `Authorization` exactly as written — and a helper not found failed with exit
+  127 before any request.
+
+- **A Codex run reaches the taskboard, 2026-10-07**, the deployed app with
+  `taskboardForRuns` on, a two-cycle `gpt-5.6-luna` run in a scratch repository
+  with a seeded open task: `list_my_tasks` returned the seeded task on the
+  first cycle, `create_task` filed a task with `origin` `run` and the run as
+  `created_by_run_id` on the resumed second, and the run completed on DONE.
+  `env | grep -c USAGEFOUNDRY_MCP_TOKEN` in the cycle's shell was 0 and
+  `/run/uf-mcp` was empty after it. The test tasks were deleted afterwards.
+
 ## Not yet verified by hand
 
 - **No local cycle has been seen compacting under a sign-in window

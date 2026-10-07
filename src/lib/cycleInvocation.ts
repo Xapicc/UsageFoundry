@@ -1319,8 +1319,20 @@ export function buildArgs(opts: {
    * Optional, and absent means an argv byte-identical to the one this app
    * emitted before the board existed — which is what every run gets while the
    * setting is off.
+   *
+   * **A Codex cycle takes the other shape, `mcpUrl` and `headersPath`.** Codex
+   * reads its MCP servers from `config.toml`, which `--ignore-user-config`
+   * keeps out of a cycle, so `buildCodexArgs` names the server with `-c`
+   * overrides instead: the URL, and a headers helper that reads
+   * `headersPath` — a file `chat.ts`'s `writeMcpHeaders` wrote for this cycle,
+   * holding the same token in the same place with the same modes as a Claude
+   * cycle's config. The token is never on the argv and never in the child's
+   * environment; `writeMcpHeaders` says why the environment was refused.
    */
-  taskboard?: { mcpConfigPath: string } | null;
+  taskboard?:
+    | { mcpConfigPath: string }
+    | { mcpUrl: string; headersPath: string }
+    | null;
   /**
    * What the install's stacks grant this cycle, and what they take back.
    *
@@ -1339,6 +1351,10 @@ export function buildArgs(opts: {
    */
   stackGrants?: { allow: readonly string[]; deny: readonly string[] } | null;
 }): string[] {
+  // The file shape is Claude Code's; the URL shape is a Codex cycle's and
+  // means nothing on this argv.
+  const claudeTaskboard =
+    opts.taskboard && "mcpConfigPath" in opts.taskboard ? opts.taskboard : null;
   const args = ["-p", "--output-format", "stream-json", "--verbose"];
   if (opts.model) args.push("--model", opts.model);
   if (opts.permissionMode) args.push("--permission-mode", opts.permissionMode);
@@ -1394,7 +1410,7 @@ export function buildArgs(opts: {
       DELEGATION_NOTICE,
       RENDERING_NOTICE,
       COMMIT_IDENTITY_NOTICE,
-      opts.taskboard ? TASKBOARD_NOTICE : null,
+      claudeTaskboard ? TASKBOARD_NOTICE : null,
       opts.fileCostNotice?.trim(),
       opts.tmpdirNotice?.trim(),
     ]
@@ -1413,7 +1429,7 @@ export function buildArgs(opts: {
   // Beside `--plugin-dir` because it shares that flag's one property: not
   // restored by `--resume`, therefore on every cycle's argv rather than only the
   // first. No `--strict-mcp-config` beside it — see `taskboard`.
-  if (opts.taskboard) args.push("--mcp-config", opts.taskboard.mcpConfigPath);
+  if (claudeTaskboard) args.push("--mcp-config", claudeTaskboard.mcpConfigPath);
   // The run's cwd is its workspace and needs no flag; this is the one
   // directory it is told about that is not its own. `--add-dir` is variadic,
   // which is worth knowing when moving it — measured against the pinned CLI, a
@@ -1573,10 +1589,51 @@ export const CODEX_PERMISSIONS: Readonly<
  * is how it learns to reach for an absent tool, which is the argument
  * `SELF_HOSTING_NOTICE` already makes about naming `docker`, `fuser` and `ss`.
  */
-export function codexPromptPreamble(fileCostNotice?: string | null): string {
-  return [SELF_HOSTING_NOTICE, COMMIT_IDENTITY_NOTICE, fileCostNotice?.trim()]
+export function codexPromptPreamble(
+  fileCostNotice?: string | null,
+  taskboard = false,
+): string {
+  return [
+    SELF_HOSTING_NOTICE,
+    COMMIT_IDENTITY_NOTICE,
+    // In-band like the two above, for their reason, and only when the board is
+    // on this cycle's argv: a notice naming tools the cycle cannot call teaches
+    // it to reach for an absent tool.
+    taskboard ? TASKBOARD_NOTICE : null,
+    fileCostNotice?.trim(),
+  ]
     .filter((notice): notice is string => Boolean(notice))
     .join("\n\n");
+}
+
+/**
+ * The `-c` overrides that hand a Codex cycle this app's MCP server.
+ *
+ * `-c` because `--ignore-user-config` keeps `config.toml` — where Codex
+ * otherwise reads `mcp_servers` — out of the cycle, and an override is applied
+ * after that file would have been. Three keys, each measured on the pinned
+ * 0.153.4 rather than documented:
+ *
+ * - `url` is what `codex mcp add --url` writes.
+ * - `http_headers_helper` is a command whose stdout, a JSON object, becomes the
+ *   request's headers; `/bin/cat <file>` with arguments was seen to send
+ *   exactly the file's `Authorization` to a listener. Absolute, so nothing on
+ *   the agents' writable `PATH` is run in its place.
+ * - `default_tools_approval_mode = "approve"`, because under `approval_policy =
+ *   "never"` every MCP call — `list_my_tasks` included — was otherwise refused
+ *   with "requires approval". It approves this server's tools only, which is
+ *   what a Claude cycle already gets for the same eight (`RUN_TOOLS`); the
+ *   capability, not an approval prompt, is what bounds them.
+ */
+function codexTaskboardArgs(mcpUrl: string, headersPath: string): string[] {
+  return [
+    "-c",
+    `mcp_servers.uf.url=${JSON.stringify(mcpUrl)}`,
+    "-c",
+    `mcp_servers.uf.http_headers_helper=${JSON.stringify(`/bin/cat ${headersPath}`)}`,
+    "-c",
+    'mcp_servers.uf.default_tools_approval_mode="approve"',
+  ];
 }
 
 /**
@@ -1603,15 +1660,6 @@ export function codexPromptPreamble(fileCostNotice?: string | null): string {
  *   Codex's tool permissions are the sandbox rather than a list. An isolated
  *   Codex run under `acceptEdits` can commit because `workspace-write` covers
  *   its checkout, not because anything here granted it.
- * - **`taskboard`.** `--mcp-config` is a Claude Code flag; Codex configures MCP
- *   servers through `config.toml`, which `--ignore-user-config` above
- *   deliberately keeps out of the cycle. A Codex run therefore reaches no board,
- *   and it is told about none for the same reason it is told nothing else this
- *   function does not emit: `TASKBOARD_NOTICE` is `buildArgs`' string and there
- *   is no `--append-system-prompt` here at all. The run loop does not prepare
- *   the config for a Codex cycle either, so no capability token is minted for a
- *   run that could never spend it.
- *
  * What it does emit, and why each is load-bearing:
  *
  * `--json` is the stream `handleCodexStreamLine` reads, and stdout under it was
@@ -1630,6 +1678,13 @@ export function codexPromptPreamble(fileCostNotice?: string | null): string {
  * replaces it here is the isolation the run already has — a worktree run has its
  * own branch, and a non-isolated run is in the operator's own checkout either
  * way, which is exactly the case Claude Code has never guarded against.
+ *
+ * The taskboard, when the operator has switched it on, arrives as
+ * `codexTaskboardArgs`' `-c` overrides rather than as `--mcp-config`, which is
+ * a Claude Code flag: the URL of this app's MCP server, a helper that reads
+ * the token from this cycle's headers file, and the approval its tools need,
+ * with `TASKBOARD_NOTICE` at the head of the prompt because there is no system
+ * prompt to append it to.
  *
  * `--ignore-user-config` keeps `$CODEX_HOME/config.toml` out of the cycle. It is
  * the file the *operator* edits, it can raise `sandbox_mode`, `approval_policy`
@@ -1669,6 +1724,14 @@ export function buildCodexArgs(opts: Parameters<typeof buildArgs>[0]): string[] 
   if (opts.lastMessageFile) {
     args.push("--output-last-message", opts.lastMessageFile);
   }
+  // On every cycle including a resumed one, and above `resume` with the other
+  // parent flags so it applies to the resumed session — the placement the
+  // sandbox flags were measured to need.
+  const codexTaskboard =
+    opts.taskboard && "mcpUrl" in opts.taskboard ? opts.taskboard : null;
+  if (codexTaskboard) {
+    args.push(...codexTaskboardArgs(codexTaskboard.mcpUrl, codexTaskboard.headersPath));
+  }
   // Resume last, because it is a *subcommand* and not a flag: `codex exec resume
   // <id>` takes the prompt after the id, so everything above has to precede it.
   //
@@ -1690,7 +1753,9 @@ export function buildCodexArgs(opts: Parameters<typeof buildArgs>[0]): string[] 
   // The prompt is the positional argument, and the notices are in front of it
   // because there is nowhere else for them to go. Last on the argv so that
   // nothing after it can be read as a flag.
-  args.push(`${codexPromptPreamble(opts.fileCostNotice)}\n\n${opts.prompt}`);
+  args.push(
+    `${codexPromptPreamble(opts.fileCostNotice, codexTaskboard !== null)}\n\n${opts.prompt}`,
+  );
   return args;
 }
 

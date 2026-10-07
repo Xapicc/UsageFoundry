@@ -11,6 +11,7 @@ import {
   CODEX_HOME,
   CLAUDE_CONFIG_DIR,
   GITHUB_TOKEN,
+  MCP_SELF_URL,
   OTLP_SELF_URL,
   WORKSPACE_MOUNTS,
   githubTokenFor,
@@ -91,6 +92,7 @@ import { parseRunAgent, sessionAgentArgs, type AgentDefinition } from "./agents"
 import {
   mintRunCapability,
   removeMcpConfig,
+  writeMcpHeaders,
   revokeRunCapabilities,
   turnCostOf,
   writeMcpConfig,
@@ -9979,6 +9981,9 @@ function claimTaskForRun(id: string, link: RunTaskDTO): void {
 type RunTaskboardDelivery =
   | { kind: "off" }
   | { kind: "ready"; mcpConfigPath: string }
+  // A Codex cycle's: the same token in a headers file its MCP client reads
+  // through `http_headers_helper`, written and removed like the config above.
+  | { kind: "headers"; headersPath: string }
   | { kind: "unavailable"; reason: string };
 
 /**
@@ -10000,13 +10005,26 @@ function prepareRunTaskboard(
   provider: RunProviderDTO | null,
 ): RunTaskboardDelivery {
   if (!getSettings().taskboardForRuns) return { kind: "off" };
-  // Not `unavailable`: there is nothing here that failed. `buildCodexArgs` says
-  // why a Codex cycle reaches no MCP server, and `startRun` says so once on the
-  // run's own log rather than once per cycle. Minting a token for a child that
-  // could never spend it would be a live credential on disk for nothing.
-  if (provider === "codex") return { kind: "off" };
 
   try {
+    // The same capability, in the shape each CLI reads: a Claude cycle's
+    // `--mcp-config` file, or the headers file a Codex cycle's helper reads.
+    // Revoked by the same `revokeRunCapabilities` in `startRun`'s `finally`.
+    if (provider === "codex") {
+      const headersPath = writeMcpHeaders(mintRunCapability(runId), null);
+      // The helper is one string the CLI splits into a command and its
+      // arguments, so a path with whitespace in it would be read as two. Never
+      // one this app writes — `uf-mcp-<hex>/headers.json` under the config base
+      // — and refused here rather than handed to a CLI that would mis-read it.
+      if (/\s/.test(headersPath)) {
+        removeMcpConfig(headersPath);
+        return {
+          kind: "unavailable",
+          reason: `The taskboard headers file landed at a path with whitespace (${headersPath}), which the Codex CLI's headers helper cannot take.`,
+        };
+      }
+      return { kind: "headers", headersPath };
+    }
     return {
       kind: "ready",
       mcpConfigPath: writeMcpConfig(mintRunCapability(runId), null),
@@ -10330,18 +10348,6 @@ export async function startRun(id: string): Promise<void> {
     // Reached on every segment, and it asks only on the first: a pick-up that
     // claimed again would take back a task the run or the operator released.
     claimTasksForRun(id);
-
-    // Once per segment rather than once per cycle, because it is a fact about
-    // how this run was started and it does not change while it runs. Said at all
-    // because the alternative is silence: an operator who switched the board on
-    // and started a Codex run would otherwise watch it finish without ever
-    // filing anything and have nothing to read that explains it.
-    if (settings.taskboardForRuns && run.provider === "codex") {
-      log(
-        id,
-        "This run was spawned as Codex, which takes its MCP servers from a config file this app deliberately keeps out of a cycle. It cannot reach the taskboard, and it is not told there is one.",
-      );
-    }
 
     // Once per segment for the Codex notice's reason: three things that differ
     // from a Claude run and that nothing else on the run's log would mention.
@@ -10984,7 +10990,9 @@ export async function startRun(id: string): Promise<void> {
         taskboard:
           taskboard.kind === "ready"
             ? { mcpConfigPath: taskboard.mcpConfigPath }
-            : null,
+            : taskboard.kind === "headers"
+              ? { mcpUrl: MCP_SELF_URL, headersPath: taskboard.headersPath }
+              : null,
         isolated: run.isolation === "worktree",
         // On every cycle including a resumed one, for `--plugin-dir`'s reason
         // and with a sharper edge: the CLI restores no `--allowedTools` on
@@ -11171,6 +11179,7 @@ export async function startRun(id: string): Promise<void> {
         // `finally` — which is exactly why the file must not: a config left on
         // disk is a live capability a sibling agent sharing this uid could read.
         if (taskboard.kind === "ready") removeMcpConfig(taskboard.mcpConfigPath);
+        if (taskboard.kind === "headers") removeMcpConfig(taskboard.headersPath);
       }
 
       cyclesThisSegment += 1;

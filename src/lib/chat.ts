@@ -4658,11 +4658,56 @@ export function writeMcpConfig(
   token: string,
   ownership: McpConfigOwnership | null = mcpConfigOwnership(),
 ): string {
+  return writeCapabilityFile(
+    "config.json",
+    JSON.stringify({
+      mcpServers: {
+        uf: {
+          type: "http",
+          url: MCP_SELF_URL,
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      },
+    }),
+    ownership,
+  );
+}
+
+/**
+ * The same capability for a Codex work cycle, as the request headers its MCP
+ * client sends: `{"Authorization":"Bearer …"}`, which `buildCodexArgs` has
+ * Codex read through `http_headers_helper` (`/bin/cat <this file>`).
+ *
+ * A file for `writeMcpConfig`'s reason, and in its place with its modes and
+ * its removal, so a Codex cycle's token is exactly as exposed as a Claude
+ * cycle's and no more. The alternative the pinned CLI also offers,
+ * `bearer_token_env_var`, was measured and refused: it puts the token in the
+ * Codex process's environment, and `shell_environment_policy.exclude` did not
+ * reliably keep it out of the shell commands the agent runs — `printenv`
+ * printed it with the exclusion set (codex-cli 0.153.4, 2026-10-07) — so every
+ * test runner and script a cycle starts would have inherited it.
+ */
+export function writeMcpHeaders(
+  token: string,
+  ownership: McpConfigOwnership | null = mcpConfigOwnership(),
+): string {
+  return writeCapabilityFile(
+    "headers.json",
+    JSON.stringify({ Authorization: `Bearer ${token}` }),
+    ownership,
+  );
+}
+
+function writeCapabilityFile(
+  name: string,
+  contents: string,
+  ownership: McpConfigOwnership | null,
+): string {
   const dir = path.join(
     mcpConfigBase(),
     `uf-mcp-${randomBytes(9).toString("hex")}`,
   );
-  const file = path.join(dir, "config.json");
+  const file = path.join(dir, name);
   const dirMode = ownership?.dirMode ?? 0o700;
   const fileMode = ownership?.fileMode ?? 0o600;
   try {
@@ -4672,19 +4717,7 @@ export function writeMcpConfig(
     // 0022 umask would otherwise arrive as 0710 by luck and 0700 under any
     // umask an operator changed.
     fs.chmodSync(dir, dirMode);
-    fs.writeFileSync(
-      file,
-      JSON.stringify({
-        mcpServers: {
-          uf: {
-            type: "http",
-            url: MCP_SELF_URL,
-            headers: { Authorization: `Bearer ${token}` },
-          },
-        },
-      }),
-      { mode: fileMode },
-    );
+    fs.writeFileSync(file, contents, { mode: fileMode });
     fs.chmodSync(file, fileMode);
     // Written by the server, read by the child, and they are no longer the same
     // uid. Both halves: a directory the child cannot enter is a turn with no

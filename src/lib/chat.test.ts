@@ -188,6 +188,7 @@ const {
   subjectForCapability,
   turnCostOf,
   writeMcpConfig,
+  writeMcpHeaders,
   MCP_CONFIG_BASE,
 } = require("./chat") as typeof import("./chat");
 const { githubSlug } = require("./workspace") as typeof import("./workspace");
@@ -2339,6 +2340,27 @@ describe("writeMcpConfig — the capability never lands in a shared directory", 
     } finally {
       removeMcpConfig(file);
     }
+  });
+
+  // A Codex cycle's copy of the same token, which its MCP client sends as the
+  // headers this file holds. Same directory rule and modes as the config, or
+  // the Codex path would be the one leak the config closed.
+  it("writes a Codex cycle's headers the same way, and removes them the same way", () => {
+    const file = writeMcpHeaders("cap-token-codex");
+    const dir = path.dirname(file);
+    try {
+      assert.notEqual(dir, os.tmpdir());
+      assert.deepEqual(fs.readdirSync(dir), ["headers.json"]);
+      assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+      assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
+      assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), {
+        Authorization: "Bearer cap-token-codex",
+      });
+      assert.doesNotMatch(file, /\s/, "the helper splits its command on whitespace");
+    } finally {
+      removeMcpConfig(file);
+    }
+    assert.equal(fs.existsSync(dir), false, "the token's directory outlived the cycle");
   });
 
   it("names a base outside the shared tmpdir when the uids differ", () => {

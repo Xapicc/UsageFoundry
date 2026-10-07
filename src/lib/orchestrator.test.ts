@@ -3793,6 +3793,58 @@ describe("buildCodexArgs", () => {
     }
   });
 
+  /**
+   * The board reaches a Codex cycle as `-c` overrides, and every way this goes
+   * wrong is silent: an override after `resume` or missing on a resumed cycle
+   * is a cycle with no tools, which reads as a model that chose not to call
+   * any; a notice without the server teaches it to reach for absent tools; and
+   * a token on the argv is a credential in a world-readable `/proc/<pid>/cmdline`.
+   * Without the approval mode every call is refused under `approval_policy =
+   * "never"`, measured on the pin — the server listed, every tool failing.
+   */
+  it("hands a Codex cycle the board by URL and headers file, before resume", () => {
+    const args = buildCodexArgs({
+      ...base,
+      workDir: "/w/repo",
+      resumeSessionId: "0199-thread",
+      taskboard: {
+        mcpUrl: "http://127.0.0.1:3000/api/mcp",
+        headersPath: "/run/uf-mcp/uf-mcp-ab12/headers.json",
+      },
+    });
+    const overrides = args.flatMap((a, i) => (a === "-c" ? [args[i + 1]] : []));
+    assert.ok(overrides.includes('mcp_servers.uf.url="http://127.0.0.1:3000/api/mcp"'));
+    assert.ok(
+      overrides.includes(
+        'mcp_servers.uf.http_headers_helper="/bin/cat /run/uf-mcp/uf-mcp-ab12/headers.json"',
+      ),
+    );
+    assert.ok(overrides.includes('mcp_servers.uf.default_tools_approval_mode="approve"'));
+    assert.equal(args.some((a) => /Bearer/.test(a)), false, "a token on the argv");
+    const resumeAt = args.indexOf("resume");
+    assert.ok(
+      args.every((a, i) => !a.startsWith("mcp_servers.") || i < resumeAt),
+      "an override after resume does not reach the resumed session",
+    );
+    assert.match(args.at(-1) ?? "", /list_my_tasks/, "the cycle is told the board is there");
+  });
+
+  it("gives a Codex cycle no board and no notice of one when it is off, or Claude-shaped", () => {
+    for (const taskboard of [null, { mcpConfigPath: "/run/uf-mcp/c.json" }]) {
+      const args = buildCodexArgs({ ...base, workDir: "/w/repo", taskboard });
+      assert.equal(args.some((a) => a.startsWith("mcp_servers.")), false);
+      assert.equal(args.includes("--mcp-config"), false, "a Claude flag on a Codex argv");
+      assert.doesNotMatch(args.at(-1) ?? "", /list_my_tasks/);
+    }
+    // And the other way round: the URL shape means nothing to Claude Code.
+    const claude = buildArgs({
+      ...base,
+      isolated: false,
+      taskboard: { mcpUrl: "http://x/api/mcp", headersPath: "/run/uf-mcp/h.json" },
+    });
+    assert.equal(claude.includes("--mcp-config"), false);
+  });
+
   it("names every writable directory, working root included, one per flag", () => {
     const args = buildCodexArgs({
       ...base,

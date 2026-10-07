@@ -87,13 +87,18 @@ it was before the feature. It is read **per cycle** rather than fixed at the
 run's start, the read guard's rule rather than `liveSpendTelemetry`'s: an
 operator who has just decided this should stop gets it at the next cycle rather
 than at the next restart, and the price is one cold prefix on that cycle for the
-run in flight. A **Codex** run reaches no board and is told about none — Codex
-takes its MCP servers from a `config.toml` that `--ignore-user-config`
-deliberately keeps out of a cycle — and no token is minted for it, since a
-credential a child could never spend is one on disk for nothing. That is said
-once on the run's own log rather than left silent, because an operator who
-switched the board on and started a Codex run would otherwise watch it finish
-having filed nothing with nothing to read that explains it.
+run in flight. A **Codex** run reaches the same board with the same token
+and the same eight tools, delivered the way that CLI reads them: Codex takes
+its MCP servers from a `config.toml` that `--ignore-user-config` deliberately
+keeps out of a cycle, so `buildCodexArgs` names the server with `-c`
+overrides instead — its URL, an `http_headers_helper` that `/bin/cat`s a
+per-cycle headers file `writeMcpHeaders` writes beside where a Claude cycle's
+config would be, and `default_tools_approval_mode = "approve"` for this server
+alone, without which every call, the reads included, is refused under
+`approval_policy = "never"`. `TASKBOARD_NOTICE` rides the head of its prompt,
+since there is no system prompt to append it to. Measured end to end on
+2026-10-07: `list_my_tasks` and `create_task` from a two-cycle Codex run, the
+second resumed (`docs/verification/other-providers.md`).
 
 **A run that came off the board carries the link, and the link is a record
 rather than a trigger.** `propose_run` and `emit_runs` each take an optional
