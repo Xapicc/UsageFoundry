@@ -165,6 +165,30 @@ The rules these entries back are `docs/agent/security/chat-child-config-files.md
   process, not root; the stub runs the measured `git status` rather than the
   CLI.
 
+- **Under the `UF_SANDBOX=1` policy shape, a chat `Bash` call whose sandbox
+  cannot start does not run, 2026-10-07, Claude Code 2.1.280.** Board task
+  `7764bc65`. The managed file here had `enabled`, `failIfUnavailable: true`,
+  `allowUnsandboxedCommands: false` and `enableWeakerNestedSandbox`, as
+  `docker-entrypoint.sh` writes them. A turn with the chat's flags ran against
+  a stub API answering one `Bash` call that copied a scratch file into a
+  marker. The `--settings` overlay carried `allowWrite`, a `denyRead` over the
+  file's directory and `disableAllHooks`. The tool result was `Sandbox is
+  required but failed to initialize: EPERM: operation not permitted, listen
+  '…/srt-mux-…sock'`, and no marker was written. It was the same with
+  `dangerouslyDisableSandbox: true` in the tool input, with the overlay also
+  setting `allowUnsandboxedCommands: true`, and with `TMPDIR` moved off
+  `/tmp`. Caveat: nested in an agent's sandbox, which refuses the socket, so
+  whether `denyRead` hides a file from a working sandbox was not observed.
+
+- **A tmpfs over a directory hides it from `/proc/<pid>/root` across a user
+  namespace, 2026-10-07.** In `unshare -Urm` with a tmpfs mounted over a
+  scratch directory holding a `0600` file, `cat` of the file failed with
+  ENOENT. Through `/proc/<pid>/root` of a same-uid `sleep` outside the
+  namespace it failed with EACCES. The same `/proc/<pid>/root` read from
+  outside succeeded. `ptrace_scope` was 0. This is the shape the 2.1.280
+  binary gives a denied directory (`--tmpfs`, read from the binary). Caveat:
+  `unshare`, not the CLI's own bwrap flags.
+
 ## Not yet verified by hand
 
 - **No booted image has run a chat turn with its own `HOME`.** Unmeasured:
@@ -192,3 +216,12 @@ The rules these entries back are `docs/agent/security/chat-child-config-files.md
   `GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=core.sshCommand GIT_CONFIG_VALUE_0=ssh
   GIT_CONFIG_KEY_1=gpg.program GIT_CONFIG_VALUE_1=gpg`. Expect the same
   output as without the variables.
+
+- **Whether `denyRead` keeps a capability file from a chat `Bash` call.**
+  Board task `f3cb882a` would add `/run/uf-mcp` to the chat's overlay, and
+  nothing here could start the CLI's sandbox to observe it. To settle it, in a
+  booted `UF_SANDBOX=1` container and never against the live app's
+  `/run/uf-mcp`, run the stub-API probe as uid 1000 with the chat's flags. Use
+  an overlay denying a scratch directory that holds a marker file, and a
+  `Bash` call running `git status` in a scratch repository whose planted
+  `filter.x.clean` copies that file out. Expect the copy to fail.
