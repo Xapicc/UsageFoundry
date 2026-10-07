@@ -104,6 +104,39 @@
   symptom. And 320 is measured only because it is where the over-budget case is
   reachable; the interface claims 390.
 
+- **The toolbar's usage readout fits wherever it appears and changes nothing
+  where it does not, 2026-10-07** (`npm run build` at the branch's tip, standalone
+  bundle against a scratch `DATA_DIR`, `CLAUDE_BIN` that cannot spawn, Chromium via
+  the globally installed Playwright; `/api/usage/remaining` intercepted so the
+  readings could be chosen). 112 states — default and ascii skins, one and two
+  providers, source list open and collapsed to the rail, seven viewport widths
+  from 768 to 1440, `/` (the only route with an action) and `/runs`: the header's
+  `scrollWidth` equals its `clientWidth` in all 112, the readout is never drawn
+  beside a truncated title, and it always fits inside the title's row. It first
+  appears at 768 (rail, one provider, a route with no action: 5h only) at the
+  earliest and at 1100 (list open, two providers, `/`: 5h only) at the latest, and
+  both windows are drawn in every state from 1280 up; at 768 with the list open
+  on `/` it is not drawn, the title having 13.9px (default) or 0px (ascii) there
+  already.
+  Natural widths of the link, default skin: 98.6px (one provider, 5h only), 152.2
+  (one, both windows), 193.2 (two, 5h only), 300.4 (two, both); ascii is 4-10%
+  narrower. The widest route title is 98px (ascii, "What it touched"), which is
+  what the 120px reserve in `SHOW`/`SHOW_WEEKLY` is measured against. Wrapping the
+  title in the row the readout shares changed the title's width in none of 32
+  states (both skins, list and rail, 768/820/900/1024, `/` and `/runs`), compared
+  against the old structure rebuilt in place in the same page. At 390, 767 and 768
+  with a provider signed in the readout is `display: none` and the header does not
+  scroll. Against the real route: nothing signed in answers `{"providers":[]}` in
+  4-7 ms; a Claude credential with no network answers in 13 ms with both windows
+  unknown; with a Codex `auth.json` as well the first call took 5.3 s (the app
+  server failing) and the second 13 ms. Caveats: one Chromium, one font stack —
+  the thresholds are in rem against widths measured in this one, with the 120px
+  title reserve as the slack; no real reading was fetched from either provider (no
+  credential here), so the figures drawn were the intercepted ones; and the
+  failed-poll branch was seen as "draws nothing on a first failure" only, the
+  turn-to-dashes branch after a good answer being covered by the unit test and not
+  by a browser, since the poll is 120s.
+
 ## Not yet verified by hand
 
 - **The shared layer's 390px pass (2026-09-10) was never on a real phone or

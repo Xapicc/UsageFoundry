@@ -387,6 +387,13 @@ Units that are about no test file in the tree:
 | `dreamingLedger.test.ts` |  |
 | `dreamingScan.test.ts` |  |
 
+## [The toolbar's usage readout](testing/toolbar-usage-readout.md)
+
+| Test file | Also in |
+|---|---|
+| `usageRemaining.test.ts` |  |
+| `UsageRemaining.test.ts` |  |
+
 ## [Components: Meter, the ascii skin, Markdown and the UI kit](testing/components-meter-markdown-and-kit.md)
 
 | Test file | Also in |
