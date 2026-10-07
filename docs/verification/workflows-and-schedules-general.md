@@ -141,6 +141,24 @@
   four. Caveat: one pass, non-overlapping files so no conflict, and only the
   API door was tried, not the editor.
 
+- **`/workflows/[id]` states a refusal, a hold and a zone before they bite,
+  2026-10-07** (production standalone build of `6d2ae6f` plus the zone change,
+  scratch `DATA_DIR` seeded from the compiled test build, Chromium at 1280 and
+  390 with the browser in America/Los_Angeles): a workflow whose only live
+  member was a `thinking` block and no run rendered Run disabled with
+  `aria-describedby` on its notice, and the notice's link read
+  `/workflows/<id>/instances/inst-live`; the idle workflow's Run was enabled.
+  With the install hold on, both workflows carried the page notice and the
+  schedule card of a switched-on schedule carried its own, each linking
+  `/runs`. A daily 09:00 Europe/Berlin schedule printed
+  "8 Oct 2026, 09:00 (Europe/Berlin)" beside "in 8h 6m" with the clock at
+  15:54 Los Angeles time, and the editor's zone field offered 419 names with
+  `UTC` first and `Europe/Berlin` among them. No console error and no sideways
+  scroll at either width; `npm run smoke-pages` 96/96. Caveat: a `thinking`
+  block written before the server booted was settled by its own boot
+  reconcile, so the live press was inserted after boot; the open `<datalist>`
+  popup was not photographed, only its options read; nothing was pressed.
+
 ## Not yet verified by hand
 
 - **No review block has run against a real model (2026-09-28).** The block's
@@ -172,9 +190,10 @@
   still read `failed`.
 
 - **No workflow schedule has ever fired.** `decideSchedule` and its helpers are
-  unit-tested, both Europe/Berlin DST boundaries included; no card has rendered,
-  and `reconcileSchedulesOnBoot` has not seen a real restart. Settle: fire one
-  a few minutes out, stop the container over the next and expect *missed*.
+  unit-tested, both Europe/Berlin DST boundaries included; its card has
+  rendered (entry above) but `reconcileSchedulesOnBoot` has not seen a real
+  restart. Settle: fire one a few minutes out, stop the container over the next
+  and expect *missed*.
 
 - **An unhalted instance's `working`/`finished`/`blocked` badges.** Tested
   against a real db; no browser has rendered them. The risk is cosmetic.

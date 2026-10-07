@@ -5,6 +5,8 @@ import {
   EDGE_OPTION_LABEL,
   fmtCycleInFlight,
   fmtCycles,
+  fmtDateTimeInZone,
+  fmtInstantWithZone,
   fmtLiveCycle,
   fmtTokens,
   guardBadge,
@@ -773,4 +775,72 @@ test("between cycles a tile counts what finished rather than claiming one open",
     fmtLiveCycle(liveRun({ active_iteration: null, max_iterations: 0 })),
     "3 work cycles done",
   );
+});
+
+/**
+ * A schedule's instant is read in the schedule's zone, not the reader's.
+ *
+ * "Next start" printed in the browser's zone beside "Every day at 09:00
+ * (Europe/Berlin)" and the two agree only when the operator happens to sit in
+ * the schedule's zone — an hour out, in a form that looks like a schedule that
+ * is wrong, or looks right for the one reader who cannot tell. Both
+ * ways are silent and well formed, and the first reading to a person in another
+ * zone is a reason to switch off a schedule that is correct.
+ */
+const SEVENTH_JULY_0700Z = Date.UTC(2026, 6, 7, 7, 0);
+
+test("fmtInstantWithZone reads the instant on the schedule's own clock and names the zone", () => {
+  assert.equal(
+    fmtInstantWithZone(SEVENTH_JULY_0700Z, "Europe/Berlin"),
+    "7 Jul 2026, 09:00 (Europe/Berlin)",
+  );
+  assert.equal(
+    fmtInstantWithZone(SEVENTH_JULY_0700Z, "America/Los_Angeles"),
+    "7 Jul 2026, 00:00 (America/Los_Angeles)",
+  );
+});
+
+test("fmtInstantWithZone follows the zone's own offset on either side of a clock change", () => {
+  // 08:00Z is 09:00 in Berlin in January and 10:00 in July: a fixed offset,
+  // or the reader's, gets one of the two wrong.
+  assert.equal(
+    fmtInstantWithZone(Date.UTC(2026, 0, 15, 8, 0), "Europe/Berlin"),
+    "15 Jan 2026, 09:00 (Europe/Berlin)",
+  );
+  assert.equal(
+    fmtInstantWithZone(Date.UTC(2026, 6, 15, 8, 0), "Europe/Berlin"),
+    "15 Jul 2026, 10:00 (Europe/Berlin)",
+  );
+});
+
+test("fmtInstantWithZone does not depend on the zone the reader is in", () => {
+  const before = process.env.TZ;
+  try {
+    const answers = ["Asia/Tokyo", "America/Sao_Paulo"].map((reader) => {
+      process.env.TZ = reader;
+      return fmtInstantWithZone(SEVENTH_JULY_0700Z, "Europe/Berlin");
+    });
+    assert.deepEqual(answers, [
+      "7 Jul 2026, 09:00 (Europe/Berlin)",
+      "7 Jul 2026, 09:00 (Europe/Berlin)",
+    ]);
+  } finally {
+    if (before === undefined) delete process.env.TZ;
+    else process.env.TZ = before;
+  }
+});
+
+test("fmtInstantWithZone names the zone it really used when it does not know the schedule's", () => {
+  // The server accepted this name against its own ICU; a browser a base image
+  // away may not know it, and throwing from render takes the whole page down.
+  // Reading it in the reader's zone is fine only if it says so — an instant
+  // labelled with a zone it was not read in is the defect this exists to end.
+  const own = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const text = fmtInstantWithZone(SEVENTH_JULY_0700Z, "Mars/Olympus_Mons");
+  assert.ok(text.endsWith(`(${own})`), text);
+  assert.ok(!text.includes("Mars"), text);
+});
+
+test("fmtDateTimeInZone refuses a zone the runtime does not know rather than inventing one", () => {
+  assert.throws(() => fmtDateTimeInZone(SEVENTH_JULY_0700Z, "Mars/Olympus_Mons"), RangeError);
 });

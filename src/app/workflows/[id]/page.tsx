@@ -42,9 +42,6 @@ import { WorkflowSchedule } from "@/components/WorkflowSchedule";
 
 const POLL_MS = 10_000;
 
-/** What Run's `aria-describedby` points at while an earlier press is live. */
-const LIVE_NOTICE_ID = "workflow-live-notice";
-
 type InstanceStatus = WorkflowInstanceDTO["status"];
 
 /**
@@ -118,6 +115,9 @@ function LimitValue({ set, children }: { set: boolean; children: ReactNode }) {
     </span>
   );
 }
+
+/** What Run's `aria-describedby` points at while an earlier press is live. */
+const LIVE_NOTICE_ID = "workflow-live-notice";
 
 export default function WorkflowPage() {
   const params = useParams<{ id: string }>();

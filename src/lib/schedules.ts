@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { instanceBudgetIsOff, type InstanceBudgetPolicy } from "./budget";
 import { getProposal, markProposal } from "./chat";
 import { db } from "./db";
+import { fmtDateTimeInZone } from "./format";
 import { mayWriteDataDir } from "./serverLock";
 import { currentSnapshot } from "./orchestrator";
 import { newWorkPaused } from "./settings";
@@ -802,11 +803,7 @@ function recordOutcome(
 
 function missedSentence(missed: number[], timeZone: string): string {
   const last = missed[missed.length - 1];
-  const when = new Intl.DateTimeFormat("en-GB", {
-    timeZone,
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(last));
+  const when = fmtDateTimeInZone(last, timeZone);
   return missed.length === 1
     ? `Missed the occurrence at ${when} (${timeZone}). Not started late — a ` +
         "server coming back up does not press Run for a window that has passed."

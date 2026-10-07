@@ -332,6 +332,41 @@ export function fmtDateTime(ts: number): string {
 }
 
 /**
+ * "7 Jul 2026, 09:00" on the wall clock of `timeZone`, whoever is reading.
+ *
+ * `en-GB` rather than the reader's locale, because the schedule's own sentences
+ * (`missedSentence`) are written server-side and the card has to read as the
+ * same instant in the same words. Throws `RangeError` for a zone this runtime
+ * does not know: the server-side caller has already validated the name and
+ * wants to hear if that stops being true.
+ */
+export function fmtDateTimeInZone(ts: number, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(ts));
+}
+
+/**
+ * `fmtDateTimeInZone` with the zone named, for a page that must not throw.
+ *
+ * A schedule's zone was accepted by the server's ICU, and a browser may be a
+ * base image away from it. Rendering is the wrong place to find that out, so an
+ * unknown zone is read in the reader's own and **says so**: the label always
+ * names the clock the digits are on, never the one the caller hoped for.
+ */
+export function fmtInstantWithZone(ts: number, timeZone: string): string {
+  try {
+    return `${fmtDateTimeInZone(ts, timeZone)} (${timeZone})`;
+  } catch (err) {
+    if (!(err instanceof RangeError)) throw err;
+    const own = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return `${fmtDateTimeInZone(ts, own)} (${own})`;
+  }
+}
+
+/**
  * "12 Aug" — a date with no clock on it, for a span measured in weeks.
  *
  * The year appears only when it is not the current one, on `fmtPeriodLabel`'s
