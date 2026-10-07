@@ -5,6 +5,7 @@ import {
   EDGE_OPTION_LABEL,
   fmtCycleInFlight,
   fmtCycles,
+  fmtInstanceWait,
   fmtLiveCycle,
   fmtTokens,
   guardBadge,
@@ -772,5 +773,32 @@ test("between cycles a tile counts what finished rather than claiming one open",
   assert.equal(
     fmtLiveCycle(liveRun({ active_iteration: null, max_iterations: 0 })),
     "3 work cycles done",
+  );
+});
+
+/**
+ * A wait as the instance page words it. The condition is the chip's own phrase,
+ * so the page that shows an instance and the one that shows its workflow cannot
+ * word one link two ways, and a wait with no edge behind it is the bare name:
+ * "(either way)" on the block that decided a run would be a rule nobody saved.
+ */
+test("fmtInstanceWait states the condition the link carries, in the chip's words", () => {
+  const names = new Map([["build", "Build"]]);
+  assert.equal(
+    fmtInstanceWait({ nodeId: "build", edge: "on-success" }, names),
+    `Build (${EDGE_CHIP_LABEL["on-success"]})`,
+  );
+  assert.equal(
+    fmtInstanceWait({ nodeId: "build", edge: "on-finish" }, names),
+    `Build (${EDGE_CHIP_LABEL["on-finish"]})`,
+  );
+});
+
+test("fmtInstanceWait claims no condition for a wait with no edge, and falls back to the id", () => {
+  const names = new Map([["decide", "Decide"]]);
+  assert.equal(fmtInstanceWait({ nodeId: "decide", edge: null }, names), "Decide");
+  assert.equal(
+    fmtInstanceWait({ nodeId: "gone", edge: "on-success" }, names),
+    `gone (${EDGE_CHIP_LABEL["on-success"]})`,
   );
 });

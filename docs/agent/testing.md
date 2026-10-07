@@ -145,6 +145,7 @@ Twenty-one are renderings rather than functions — every `*.test.tsx` in the tr
 |---|---|
 | `bootBlocks.test.ts` | [harnesses] |
 | `canvasGraph.test.ts` | [stacks] |
+| `src/app/api/workflows/dto.test.ts` |  |
 | `format.test.ts` | [tasks], [stacks] |
 | `haltedMembers.test.ts` |  |
 | `instanceReading.test.ts` |  |

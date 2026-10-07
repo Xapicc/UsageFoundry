@@ -11,6 +11,7 @@ import {
   fmtCycleInFlight,
   fmtCycles,
   fmtDateTime,
+  fmtInstanceWait,
   fmtPct,
   fmtUSD,
   grantedCycles,
@@ -205,7 +206,7 @@ function RunRows({
   return (
     <TBody>
       {nodes.map((n) => {
-        const waits = n.waitsFor.map((from) => nodeName.get(from) ?? from);
+        const waits = n.waitsFor.map((wait) => fmtInstanceWait(wait, nodeName));
         // Reads the run's own `fmtCycleInFlight` and `grantedCycles`, in their
         // argument shape rather than a second copy of their rules: what counts
         // as a cycle in flight, and what widens the cap, are one definition
@@ -318,7 +319,7 @@ function MemberBlockRows({
   block: BlockDTO;
   nodeName: Map<string, string>;
 }) {
-  const waits = block.waitsFor.map((from) => nodeName.get(from) ?? from);
+  const waits = block.waitsFor.map((wait) => fmtInstanceWait(wait, nodeName));
   return (
     <TBody>
       <Tr>
@@ -634,7 +635,7 @@ function LoopCard({
 }) {
   const runs = passes.flatMap(passRuns);
   const spend = passSpend(runs);
-  const waits = loop.waitsFor.map((from) => nodeName.get(from) ?? from);
+  const waits = loop.waitsFor.map((wait) => fmtInstanceWait(wait, nodeName));
 
   return (
     <Card emphasis={emphasis}>
@@ -1290,9 +1291,7 @@ export default function WorkflowInstancePage() {
                 </THead>
                 <TBody>
                   {standaloneBlocks.map((b) => {
-                    const waits = b.waitsFor.map(
-                      (from) => nodeName.get(from) ?? from,
-                    );
+                    const waits = b.waitsFor.map((wait) => fmtInstanceWait(wait, nodeName));
                     return (
                       <Tr key={b.nodeId}>
                         <Td className="align-top">

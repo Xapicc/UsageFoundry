@@ -2522,6 +2522,20 @@ export type WorkflowListItemDTO = Omit<
 };
 
 /**
+ * One thing an instance member starts after, and on what condition.
+ *
+ * `edge` is the condition the saved link carries — `RunDependencyDTO.edge`'s two
+ * answers — and null for a wait with no link behind it: the orchestrator block
+ * that decided on a run, or the loop that created the entry of a pass. The page
+ * words it and never decides on it; whether the condition is met is
+ * `edgeSatisfied`'s, in the run loop.
+ */
+export interface WorkflowInstanceWaitDTO {
+  nodeId: string;
+  edge: "on-success" | "on-finish" | null;
+}
+
+/**
  * One block of an instance, and what became of its run.
  *
  * `run` is null when the run row has gone — the mapping is a historical record
@@ -2555,8 +2569,8 @@ export interface WorkflowInstanceNodeDTO {
      */
     spentUSD: number | null;
   } | null;
-  /** Node ids this block was told to start after, from the instance's graph. */
-  waitsFor: string[];
+  /** What this block was told to start after, from the instance's graph. */
+  waitsFor: WorkflowInstanceWaitDTO[];
   /**
    * The orchestrator block that decided on this run, or null for a block of the
    * saved graph. Nobody approved the runs this names — see the orchestrator
@@ -2681,7 +2695,7 @@ export interface WorkflowInstanceBlockDTO {
    */
   reviewItems: ReviewItemDTO[];
   error: string | null;
-  waitsFor: string[];
+  waitsFor: WorkflowInstanceWaitDTO[];
   /**
    * The section this loop repeats, in the order a pass creates it.
    *

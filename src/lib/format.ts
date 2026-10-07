@@ -17,6 +17,7 @@ import type {
   TaskStatusDTO,
   WorkflowInstanceBlockDTO,
   WorkflowInstanceNodeDTO,
+  WorkflowInstanceWaitDTO,
 } from "./apiTypes";
 
 /**
@@ -963,6 +964,24 @@ export const EDGE_CHIP_LABEL: Record<
   "on-finish": "either way",
   repeats: "repeats from here",
 };
+
+/**
+ * One thing an instance member starts after, as the instance page words it:
+ * "Build (if it completes)", in the chip's own words so the condition read here
+ * is the one `/workflows/[id]` shows for the same link.
+ *
+ * A wait with no condition — the block that decided on a run, the loop that
+ * created a pass's entry — is the bare name, because no edge was saved there and
+ * claiming one would be this page inventing a rule. A node the map no longer
+ * names reads as its id, as it always has.
+ */
+export function fmtInstanceWait(
+  wait: WorkflowInstanceWaitDTO,
+  nodeName: ReadonlyMap<string, string>,
+): string {
+  const name = nodeName.get(wait.nodeId) ?? wait.nodeId;
+  return wait.edge === null ? name : `${name} (${EDGE_CHIP_LABEL[wait.edge]})`;
+}
 
 /**
  * What the operator's own `~/.claude` puts in play whatever a picker picks.

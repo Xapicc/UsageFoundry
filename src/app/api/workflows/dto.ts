@@ -3,11 +3,13 @@ import type {
   WorkflowInstanceBlockDTO,
   WorkflowInstanceDTO,
   WorkflowInstanceNodeDTO,
+  WorkflowInstanceWaitDTO,
   WorkflowListItemDTO,
   WorkflowScheduleDTO,
 } from "../../../lib/apiTypes";
 import { getSchedule, scheduleView, type ScheduleView } from "../../../lib/schedules";
 import { passMemberIn } from "../../../lib/passIds";
+import { isDependencyEdge, type WorkflowEdge } from "../../../lib/workflowGraph";
 import {
   blockSpendReading,
   lastRunAt,
@@ -81,18 +83,35 @@ export function workflowListDTO(workflow: Workflow): WorkflowListItemDTO {
   return { ...rest, nodeCount: nodes.length };
 }
 
-export function instanceDTO(instance: WorkflowInstance): WorkflowInstanceDTO {
-  // Read off the instance's own graph snapshot, not the live workflow: the
-  // blocks may have been renamed or rewired since, and this is a record of what
-  // ran.
-  const waits = new Map<string, string[]>();
-  for (const edge of instance.graph.edges) {
+/**
+ * What each member of an instance starts after, and on what condition, read off
+ * the graph the instance was started from.
+ *
+ * Pure and exported for the reason `instanceStatus` is: the condition is the
+ * half of an edge that decides whether the member starts at all, and a wait that
+ * kept the name and dropped the condition reads as "after Build" where the
+ * truth is "after Build, but only if it completes" — nothing throws, and the
+ * page looks right. The condition is carried as the edge states it and is never
+ * re-derived: whether it is *met* stays `edgeSatisfied`'s, in the run loop.
+ *
+ * `edge` is null on a wait that has no edge behind it — a run an orchestrator
+ * block decided on, or the entry of a pass, which the loop created. Those wait
+ * for the block that made them to decide, which is a fact about who created the
+ * member and not a condition anyone saved, so no condition is claimed for it.
+ */
+export function instanceWaiter(graph: {
+  nodes: ReadonlyArray<{ id: string; kind: string }>;
+  edges: ReadonlyArray<WorkflowEdge>;
+}): (nodeId: string, createdBy: string | null) => WorkflowInstanceWaitDTO[] {
+  const waits = new Map<string, WorkflowInstanceWaitDTO[]>();
+  for (const edge of graph.edges) {
     // A `repeats` link names the loop a block is *inside*, which is not
     // something it waits for: the loop creates it, once per pass.
-    if (edge.edge === "repeats") continue;
+    if (!isDependencyEdge(edge)) continue;
+    const entry = { nodeId: edge.from, edge: edge.edge };
     const list = waits.get(edge.to);
-    if (list) list.push(edge.from);
-    else waits.set(edge.to, [edge.from]);
+    if (list) list.push(entry);
+    else waits.set(edge.to, [entry]);
   }
 
   /**
@@ -109,12 +128,19 @@ export function instanceDTO(instance: WorkflowInstance): WorkflowInstanceDTO {
    * falls back to whatever created it — the loop for a member, the block for a
    * run an orchestrator emitted.
    */
-  const waitsForRow = (nodeId: string, createdBy: string | null): string[] => {
-    const member = passMemberIn(instance.graph, nodeId);
+  return (nodeId, createdBy) => {
+    const member = passMemberIn(graph, nodeId);
     const own = waits.get(member?.bodyNodeId ?? nodeId) ?? [];
     if (own.length > 0) return own;
-    return createdBy ? [createdBy] : [];
+    return createdBy ? [{ nodeId: createdBy, edge: null }] : [];
   };
+}
+
+export function instanceDTO(instance: WorkflowInstance): WorkflowInstanceDTO {
+  // Read off the instance's own graph snapshot, not the live workflow: the
+  // blocks may have been renamed or rewired since, and this is a record of what
+  // ran.
+  const waitsForRow = instanceWaiter(instance.graph);
 
   const nodes: WorkflowInstanceNodeDTO[] = instance.nodes.map((n) => ({
     nodeId: n.nodeId,
