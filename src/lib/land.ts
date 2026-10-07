@@ -1950,11 +1950,22 @@ export async function landRun(
         const unwound = await unwind(folder, strategy, true);
         const why = commit.stderr.split("\n")[0] || "unknown error";
         const what = strategy === "squash" ? "squash" : "merge";
+        if (unwound !== "restored") {
+          return {
+            ok: false,
+            reason: `The ${what} could not be committed and could not be rolled back, so it is still staged in your checkout — look at git status there before anything else: ${why}`,
+          };
+        }
+        // The same cause as a merge refused at the lock, so the same sentence:
+        // which git step met the other process is not the operator's business,
+        // and only `lockRefusal` says a lock left by a crashed git is theirs to
+        // remove. Asked once the tree is proved restored, `mergeRefusal`'s rule.
+        const lock = heldLock(commit.stderr);
         return {
           ok: false,
-          reason: unwound === "restored"
-            ? `The ${what} could not be committed and was rolled back: ${why}`
-            : `The ${what} could not be committed and could not be rolled back, so it is still staged in your checkout — look at git status there before anything else: ${why}`,
+          reason: lock
+            ? lockRefusal(lock)
+            : `The ${what} could not be committed and was rolled back: ${why}`,
         };
       }
     }
@@ -2188,8 +2199,9 @@ function mergeRefusal(
  * the same contention as "Unable to write index.", which a full disk or a
  * read-only `.git` also print, so that one keeps the plain refusal rather than
  * telling the operator to wait out a process that is not there. A held ref
- * lock refuses a fast-forward only after it has written the tree, so "nothing
- * was merged" is true of it only because `mergeRefusal` asks this once
+ * lock refuses a fast-forward only after it has written the tree, and a squash
+ * at its commit after staging it, so "nothing was merged" is true of either
+ * only because `mergeRefusal` and `landRun`'s refused commit ask this once
  * `unwind` has proved the checkout restored.
  */
 function heldLock(stderr: string): string | null {
