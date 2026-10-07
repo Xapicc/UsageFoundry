@@ -20,6 +20,7 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - A continuing agent is told whose commits it is standing on. (was line 18)
 - A null `isolation` means isolated-but-not-yet-planned, and every reader of the column takes it that way.
 - `repo_root` is the repository a checkout was cut from, and is null on a run that was not given one.
+- A slot outlives the run that worked in it, so anything read from one has to prove the slot still holds that run's branch first.
 
 ## [Land and the verify gate](isolation-and-landing/land-verify-and-deliver.md)
 
