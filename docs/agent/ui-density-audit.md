@@ -479,7 +479,9 @@ grouping (the `<nav>`), one action, and a closed destination list. Two things a
 build run will be tempted to do and must not:
 
 - **Do not add a badge or a count to a sidebar row.** That is a feature, not a
-  rearrangement, and it puts a polling read behind every page. It is in §6.
+  rearrangement, and it puts a polling read behind every page. It is in §6,
+  where the one such poll the operator has since asked for — the toolbar's
+  usage readout — is recorded.
 - **Do not remove the toolbar title as a duplicate of the page's `<h1>`.** The
   duplication is deliberate and documented — the title is what truncates when
   `ThemeToggle` grows below the breakpoint, precisely because it is a duplicate.
@@ -2260,6 +2262,15 @@ I would ask.
 9. **A count badge on the sidebar's `Runs` row.** The single most-requested
    shape of change for a shell like this, and it would put a poll behind every
    page. It is a feature, not a rearrangement.
+   **Decided 2026-10-07, for a different surface: the toolbar.** The operator
+   commented on the top bar — "similar on almost every page" — and asked for a
+   compact readout of the usage remaining for every signed-in provider. That is
+   the poll behind every page this item warns of, accepted for that one
+   readout and not for a sidebar count: `src/components/shell/UsageRemaining.tsx`
+   polls `GET /api/usage/remaining` every 120s, the dashboard's idle cadence.
+   It reads a light route rather than `GET /api/usage`, which scans every
+   transcript and sends ~52 KB per call; the light one reads the two provider
+   caches `/api/usage` already fills. A `Runs` count badge is still undecided.
 10. **`discard()` on Settings resets `copyGlobsText` but not
     `copyGlobsByRepoText` or `verifyToolsText`** (`settings/page.tsx:1229-1234`,
     and the same asymmetry in `save()` at `:1254`). Not a layout defect —
