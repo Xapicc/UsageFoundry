@@ -117,6 +117,7 @@ import {
 import { getTemplate, listTemplates, type RunTemplate } from "./templates";
 import { WORKSPACE_MOUNTS, mountById } from "./config";
 import { dataDirRefusal } from "./serverLock";
+import { notStringRefusal } from "./http";
 import {
   passMemberId,
   passMemberIn,
@@ -833,8 +834,20 @@ export function planEmission(raw: unknown, limits: EmissionLimits): EmissionPlan
     }
     const links = Array.isArray(e.dependsOn) ? e.dependsOn : [];
 
-    for (const link of links) {
+    for (const [at, link] of links.entries()) {
       const l = (link ?? {}) as Record<string, unknown>;
+      // `["a"]` was read as the sibling inside it, and `edge: ["on-finish"]` as
+      // the condition: a run told to wait on something other than what was
+      // written, with nobody reading the emission.
+      for (const field of ["id", "edge"]) {
+        const notString = notStringRefusal(field, l[field]);
+        if (notString) {
+          return {
+            ok: false,
+            reason: `“${spec.title}” dependsOn entry ${at + 1}: ${notString}`,
+          };
+        }
+      }
       const from = String(l.id ?? "");
       const target = byId.get(from);
       if (!target) {

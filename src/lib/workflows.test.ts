@@ -3261,6 +3261,30 @@ describe("planEmission — which specs become runs", () => {
     );
   });
 
+  it("refuses a dependsOn entry whose id or edge is not a string rather than reading what is inside it", () => {
+    // `["a"]` read through `String()` is `a` and `["on-finish"]` is `on-finish`:
+    // a run told to wait on something other than what the turn wrote, by a
+    // condition other than the one it wrote, with nobody reading the emission.
+    for (const [link, field] of [
+      [{ id: ["a"], edge: "on-success" }, "id"],
+      [{ id: { name: "a" }, edge: "on-success" }, "id"],
+      [{ id: "a", edge: ["on-finish"] }, "edge"],
+      [{ id: "a", edge: 1 }, "edge"],
+    ] as const) {
+      assert.match(
+        refused([spec("a"), spec("b", { dependsOn: [link] })]),
+        new RegExp(`^“B” dependsOn entry 1: "${field}" has to be a string`),
+        JSON.stringify(link),
+      );
+    }
+    // Absent and null are still what they were: a missing condition is refused
+    // for that, not for its type.
+    assert.match(
+      refused([spec("a"), spec("b", { dependsOn: [{ id: "a", edge: null }] })]),
+      /needs a condition for starting after/,
+    );
+  });
+
   /* ---------------------------------------------------------------- */
   /* …and who each of them is started as                              */
   /* ---------------------------------------------------------------- */
