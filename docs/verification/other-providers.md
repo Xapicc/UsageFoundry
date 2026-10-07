@@ -226,6 +226,19 @@
   `prompt-input`, and twice in the session file of a `codex exec
   --ignore-user-config` there. Not yet seen in a cycle through the app.
 
+- **What `codex exec --json` prints for a tool item, 2026-10-07**, `codex-cli
+  0.153.4`, `gpt-5.6-luna`, one cycle in a scratch directory with a throwaway
+  stdio MCP server: a `file_change` is `{changes: [{path, kind}], status}` with
+  absolute paths, `add` then `update`, and one item for a patch over two
+  files; a `command_execution` is `{command: "/bin/bash -lc …", aggregated_output,
+  exit_code, status}`, `ls` completing with 0 and `cat` of a missing file
+  `failed` with 1; an `mcp_tool_call` is `{server, tool, arguments, result:
+  {content, structured_content}, error, status}`, and a tool answering `isError`
+  came back `failed` with `error: null` and its words in `result.content`. All
+  three were sent as `item.started` before `item.completed`; no item named a
+  file read. `readCodexItem`'s cases are these items. Not yet seen through a
+  run of the deployed app: the run page's log and Files tab for a Codex run.
+
 ## Not yet verified by hand
 
 - **No local cycle has been seen compacting under a sign-in window
