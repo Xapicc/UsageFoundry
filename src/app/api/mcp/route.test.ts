@@ -677,6 +677,54 @@ test("release_task refuses a task this run does not hold without naming it", asy
   }
 });
 
+// Offered where the word is evidence — a local run that tried — and nowhere
+// else, since every run's tool list rides every cycle's prefix. A flag the
+// handler dropped would be a plain release, and the next local run is started
+// on the same wall.
+test("release_task offers needsFrontier to a local run only, and the flag reaches the board", async () => {
+  const releaseSchema = async (token: string) => {
+    const result = (await rpc(token, "tools/list")) as {
+      tools: { name: string; inputSchema: { properties: Record<string, unknown> } }[];
+    };
+    return result.tools.find((t) => t.name === "release_task")?.inputSchema.properties ?? {};
+  };
+  const claude = seedRun(HERE);
+  const local = seedRun(HERE);
+  db().prepare("UPDATE runs SET provider = 'local' WHERE id = ?").run(local.runId);
+  assert.ok(!("needsFrontier" in (await releaseSchema(claude.token))), "not to a Claude run");
+  assert.ok("needsFrontier" in (await releaseSchema(local.token)), "to a local run");
+
+  const task = file(HERE, { title: "Beyond the local model" });
+  move(task, "claimed", local.runId);
+  const refused = await callTool(local.token, "release_task", {
+    taskId: task.id,
+    reason: "Could not.",
+    needsFrontier: "true",
+  });
+  assert.equal(refused.isError, true);
+  assert.match(refused.text, /needsFrontier must be true or false/);
+  assert.equal(tasks.getTask(task.id)?.status, "claimed", "a refused flag releases nothing");
+
+  const released = await callTool(local.token, "release_task", {
+    taskId: task.id,
+    reason: "Three fix rounds failed the same way.",
+    needsFrontier: true,
+  });
+  assert.equal(released.isError, false, released.text);
+  assert.match(released.text, /needs-frontier/);
+  assert.equal(tasks.getTask(task.id)?.needsFrontier, true);
+
+  const listed = JSON.parse(
+    (await callTool(claude.token, "list_my_tasks", { query: "Beyond the local model" })).text,
+  );
+  assert.equal(listed.openInFolder[0]?.needsFrontier, true, "beside the row, as operatorOnly is");
+  assert.match(listed.note, /needsFrontier is beyond a local model/);
+  const unflagged = JSON.parse(
+    (await callTool(claude.token, "list_my_tasks", { query: "matches nothing here" })).text,
+  );
+  assert.doesNotMatch(unflagged.note, /needsFrontier/, "the sentence costs tokens when no row needs it");
+});
+
 test("complete_task refuses a task another run closed rather than saying this run did", async () => {
   const reader = seedRun(HERE);
   const other = seedRun(ELSEWHERE);
@@ -943,6 +991,30 @@ test("list_tasks narrows to a project by the folder within its mount", async () 
   }
 });
 
+// The handler's half of `listTasks`' query: a search the handler dropped
+// returns the project and calls it the matches, and a total of one with
+// nothing saying a search ran reads as a nearly empty board.
+test("list_tasks searches every row the filters leave, says so, and narrows by rank", async () => {
+  const chatToken = chat.mintCapability({ kind: "chat", chatId: randomUUID() });
+  const project = path.join(ws, "RepoSearch");
+  fs.mkdirSync(project);
+  const sought = file(project, { title: "Coverage stuck at 50% on CI", priority: "urgent" });
+  file(project, { title: "Coverage stuck at 500 on CI" });
+  const list = (args: Record<string, unknown>) =>
+    callTool(chatToken, "list_tasks", { mountId: MOUNT, folder: project, ...args });
+  const ids = (listed: { tasks: { taskId: string }[] }) => listed.tasks.map((t) => t.taskId);
+
+  const found = JSON.parse((await list({ query: "50%" })).text);
+  assert.deepEqual(ids(found), [sought.id]);
+  assert.equal(found.totalMatching, 1);
+  assert.equal(found.query, "50%", "a search says it ran");
+
+  assert.deepEqual(ids(JSON.parse((await list({ priority: "urgent" })).text)), [sought.id]);
+  const refused = await list({ priority: "critical" });
+  assert.equal(refused.isError, true, "an unknown rank is not an empty one");
+  assert.match(refused.text, /priority must be one of urgent, high, normal, low/);
+});
+
 test("list_tasks still finds a folder that no longer resolves, and says so", async () => {
   const chatToken = chat.mintCapability({ kind: "chat", chatId: randomUUID() });
   const gone = path.join(ws, "RepoGone");
@@ -981,6 +1053,7 @@ test("the chat's read tools refuse a non-string filter by name rather than searc
   const refusals: [string, Record<string, unknown>, string][] = [
     ["list_tasks", { mountId: MOUNT, folder: { path: "RepoOne" } }, "folder"],
     ["list_tasks", { mountId: [MOUNT], folder: "RepoOne" }, "mountId"],
+    ["list_tasks", { query: { words: "flake" } }, "query"],
     ["list_past_proposals", { mountId: { id: MOUNT } }, "mountId"],
     ["list_past_proposals", { mountId: MOUNT, folder: ["RepoOne"] }, "folder"],
     ["list_past_proposals", { query: { words: "flake" } }, "query"],

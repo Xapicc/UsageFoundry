@@ -80,10 +80,12 @@ import {
   taskVisibleToRun,
   updateTask,
   TASK_ORIGINS,
+  TASK_PRIORITIES,
   TASK_STATUSES,
   type Task,
   type TaskActor,
   type TaskOrigin,
+  type TaskPriority,
   type TaskStatus,
 } from "../../../lib/tasks";
 import {
@@ -178,13 +180,14 @@ const SPEC_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const MAX_FAILURES_LISTED = 40;
 
 /**
- * The longest `list_my_tasks` search honoured, the run list's own bound.
+ * The longest `list_my_tasks` or `list_tasks` search honoured, the run list's
+ * own bound.
  *
  * Clipped rather than refused: a shorter needle matches a superset of what the
- * whole one would, so the clip can only show a run more candidates, never hide
- * the task it was looking for.
+ * whole one would, so the clip can only show a caller more candidates, never
+ * hide the task it was looking for.
  */
-const MAX_RUN_TASK_QUERY = 200;
+const MAX_TASK_QUERY = 200;
 
 /** How much of one error sample the tool repeats. The pane shows more. */
 const FAILURE_SAMPLE_CHARS = 300;
@@ -402,10 +405,18 @@ const SHARED_TOOLS = [
       "never what is happening. Read it before proposing or emitting work: " +
       "the thing being asked for may already be on the board, and a run named " +
       "for the task it does is one the operator can follow. Bodies are " +
-      "clipped; call get_task for a whole brief.",
+      "clipped; call get_task for a whole brief. Before you file something " +
+      "with create_task, search for it with query: one page is not the board.",
     inputSchema: {
       type: "object",
       properties: {
+        query: {
+          type: "string",
+          description:
+            "Words to look for in the title and brief of every task the other " +
+            "filters leave, not only the ones one page shows; case is ignored " +
+            "for unaccented letters. totalMatching then counts matches.",
+        },
         status: {
           type: "string",
           enum: ["open", "claimed", "done", "dropped"],
@@ -435,6 +446,11 @@ const SHARED_TOOLS = [
           enum: ["operator", "chat", "block", "run"],
           description:
             "Who filed it. 'operator' is what a person wrote down themselves.",
+        },
+        priority: {
+          type: "string",
+          enum: [...TASK_PRIORITIES],
+          description: "Only tasks ranked this. Omit for every rank.",
         },
         operatorOnly: {
           type: "boolean",
@@ -576,7 +592,8 @@ const COMMENT_CAP_SENTENCE =
  * task but its reply — the task stayed `claimed` by a run that had ended, and
  * the board showed it held by nobody who was working it. It may also mark the
  * task operator-only, which is the one way a model moves the flag at all; it
- * can never clear it.
+ * can never clear it. A local run's copy may mark it needs-frontier instead —
+ * `localReleaseTask`, beside `toolsFor`, says why only a local run's.
  *
  * `get_my_task` is the seventh, the whole-brief door onto `list_my_tasks`' own
  * rows, and its scope is that list's and never wider: a task this run holds, in
@@ -734,8 +751,10 @@ const RUN_TOOLS = [
         },
         priority: {
           type: "string",
-          enum: ["low", "normal", "high"],
-          description: "Omit for normal.",
+          enum: [...TASK_PRIORITIES],
+          description:
+            "Omit for normal. urgent sorts above everything else on the " +
+            "board: keep it for something broken now, not merely important.",
         },
         parentTaskId: {
           type: "string",
@@ -961,8 +980,10 @@ const CHAT_TOOLS = [
         },
         priority: {
           type: "string",
-          enum: ["low", "normal", "high"],
-          description: "Omit for normal.",
+          enum: [...TASK_PRIORITIES],
+          description:
+            "Omit for normal. urgent sorts above everything else on the " +
+            "board: keep it for something broken now, not merely important.",
         },
         mountId: {
           type: "string",
@@ -1848,15 +1869,53 @@ const CHECKED_COMPLETE_TASK =
   "again to find out what happened, and do not wait for it. If you cannot " +
   "finish the task, call release_task instead, with the reason.";
 
+/**
+ * `release_task` as a local run is handed it: the same tool, able to mark the
+ * task needs-frontier as it gives it back.
+ *
+ * A local run's only, though `needsFrontierRefusal` lets any actor set the
+ * flag and the handler takes it from any run. The flag says a local model
+ * cannot do the work, and the run whose word is evidence of that is a local one
+ * that tried; a Claude or Codex run giving up is the frontier failing, which
+ * says nothing about the local lane. And it is `CHECKED_COMPLETE_TASK`'s price
+ * rule: every run's tool list rides its cached prefix, so a property offered to
+ * every Claude run is paid for on every cycle by runs with no use for it.
+ */
+function localReleaseTask(tool: ToolSpec): ToolSpec {
+  return {
+    ...tool,
+    description:
+      tool.description +
+      " If the work is beyond a local model rather than beyond this " +
+      "container, set needsFrontier instead: no local run is started on it " +
+      "again, and a Claude run still can be.",
+    inputSchema: {
+      ...tool.inputSchema,
+      properties: {
+        ...tool.inputSchema.properties,
+        needsFrontier: {
+          type: "boolean",
+          description:
+            "True when you tried and the task is beyond the model this run " +
+            "uses, not when you ran out of time. Only the operator clears it. " +
+            "Omit otherwise.",
+        },
+      },
+    },
+  };
+}
+
 function toolsFor(subject: CapabilitySubject) {
   if (subject.kind === "run") {
-    return getSettings().validateTaskCompletion
-      ? RUN_TOOLS.map((tool) =>
-          tool.name === "complete_task"
-            ? { ...tool, description: CHECKED_COMPLETE_TASK }
-            : tool,
-        )
-      : [...RUN_TOOLS];
+    const checked = getSettings().validateTaskCompletion;
+    const local = getRun(subject.runId)?.provider === "local";
+    return RUN_TOOLS.map((tool) => {
+      if (checked && tool.name === "complete_task") {
+        return { ...tool, description: CHECKED_COMPLETE_TASK };
+      }
+      if (local && tool.name === "release_task") return localReleaseTask(tool);
+      return tool;
+    });
   }
   return subject.kind === "chat"
     ? [...SHARED_TOOLS, ...CHAT_TOOLS]
@@ -3493,6 +3552,7 @@ function listTasksTool(args: Record<string, unknown>) {
   for (const [field, allowed] of [
     ["status", TASK_STATUSES],
     ["origin", TASK_ORIGINS],
+    ["priority", TASK_PRIORITIES],
   ] as const) {
     const raw = args[field];
     if (raw === undefined || raw === null) continue;
@@ -3505,10 +3565,11 @@ function listTasksTool(args: Record<string, unknown>) {
     }
   }
 
-  const notString = nonStringArg(args, "mountId", "folder");
+  const notString = nonStringArg(args, "mountId", "folder", "query");
   if (notString) return notString;
   const mountId = String(args.mountId ?? "").trim() || null;
   const folder = String(args.folder ?? "").trim() || null;
+  const query = String(args.query ?? "").trim().slice(0, MAX_TASK_QUERY) || null;
   // Said rather than silently ignored: `listTasks` narrows on the pair, so a
   // folder without its mount filters nothing and a model that sent one would
   // read a whole board back as "everything in that folder".
@@ -3537,9 +3598,11 @@ function listTasksTool(args: Record<string, unknown>) {
   const page = listTasks({
     status: (args.status as TaskStatus | undefined) ?? null,
     origin: (args.origin as TaskOrigin | undefined) ?? null,
+    priority: (args.priority as TaskPriority | undefined) ?? null,
     mountId,
     folder: matched?.folder ?? null,
     operatorOnly,
+    query,
     offset: Number(args.offset) || 0,
   });
 
@@ -3614,6 +3677,9 @@ function listTasksTool(args: Record<string, unknown>) {
         offset: page.offset,
         returned: page.tasks.length,
         totalMatching: page.total,
+        // Echoed for `list_my_tasks`' reason: a small total with nothing saying
+        // a search ran reads as a board that is nearly empty.
+        ...(query ? { query } : {}),
         // The path the rows were compared against, because the folder a model
         // sent is not it: a zero beside the path that was actually matched is
         // one a model can check, where a zero beside its own words is not.
@@ -4363,13 +4429,14 @@ function listMyTasks(args: Record<string, unknown>, runId: string) {
   const notString = nonStringArg(args, "query");
   if (notString) return notString;
   const { folder } = runFolder(runId);
-  const query = String(args.query ?? "").trim().slice(0, MAX_RUN_TASK_QUERY) || null;
+  const query = String(args.query ?? "").trim().slice(0, MAX_TASK_QUERY) || null;
   const mine = tasksForRun(runId, folder, query);
   // One pair of queries for the held rows, not one per row: unlike the threads
   // below, this read answers for a whole set at a time and there is no reason
   // to pay the N+1 the board's own listing refuses. `openInFolder` is
   // deliberately not in it — see the note beside `held`.
   const deps = depsForTasks(mine.held.map((t) => t.id));
+  const flagged = [...mine.held, ...mine.openInFolder].some((t) => t.needsFrontier);
 
   return text(
     JSON.stringify(
@@ -4404,6 +4471,7 @@ function listMyTasks(args: Record<string, unknown>, runId: string) {
             // was written — the claim stands, and the run should know whose
             // work the operator thinks it is.
             ...(t.operatorOnly ? { operatorOnly: true } : {}),
+            ...(t.needsFrontier ? { needsFrontier: true } : {}),
             comments: thread.comments.map(toolComment),
             commentsShown: thread.comments.length,
             commentsTotal: thread.total,
@@ -4435,6 +4503,7 @@ function listMyTasks(args: Record<string, unknown>, runId: string) {
             // does not file a duplicate, and an operator-only task is still a
             // task somebody already wrote down.
             ...(t.operatorOnly ? { operatorOnly: true } : {}),
+            ...(t.needsFrontier ? { needsFrontier: true } : {}),
           };
         }),
         // Said rather than left to be inferred from a list that stops, the rule
@@ -4458,7 +4527,13 @@ function listMyTasks(args: Record<string, unknown>, runId: string) {
           "task you were given even if something it waits for is unfinished, " +
           "and say in your reply if that turns out to be why you could not. " +
           "bodyPreview is clipped wherever bodyClipped is true: get_my_task " +
-          "returns the whole brief of any task here, with its notes.",
+          "returns the whole brief of any task here, with its notes." +
+          // Only when a row carries the flag, for the flag's own reason above:
+          // this sentence is paid for on every call that shows it.
+          (flagged
+            ? " A task marked needsFrontier is beyond a local model: no local " +
+              "run is started on it, and a Claude run still can be."
+            : ""),
       },
       null,
       1,
@@ -4615,17 +4690,24 @@ function releaseTaskForRun(args: Record<string, unknown>, runId: string) {
   // and a coercion would hand the task to the operator when the model said not
   // to.
   const operatorOnly = args.operatorOnly ?? false;
-  if (typeof operatorOnly !== "boolean") {
-    return text(
-      `operatorOnly must be true or false; got ${JSON.stringify(operatorOnly)}. ` +
-        "Nothing was released.",
-      true,
-    );
+  const needsFrontier = args.needsFrontier ?? false;
+  for (const [field, value] of [
+    ["operatorOnly", operatorOnly],
+    ["needsFrontier", needsFrontier],
+  ] as const) {
+    if (typeof value !== "boolean") {
+      return text(
+        `${field} must be true or false; got ${JSON.stringify(value)}. ` +
+          "Nothing was released.",
+        true,
+      );
+    }
   }
 
   const released = releaseTask(taskId, runId, {
     reason: typeof args.reason === "string" ? args.reason : "",
-    operatorOnly,
+    operatorOnly: operatorOnly === true,
+    needsFrontier: needsFrontier === true,
   });
   if (!released.ok) {
     return text(
@@ -4642,7 +4724,11 @@ function releaseTaskForRun(args: Record<string, unknown>, runId: string) {
       (released.task.operatorOnly
         ? "It is marked operator-only, so no run will claim it until the " +
           "operator clears that. "
-        : "The next run started for it reads your note first. ") +
+        : released.task.needsFrontier
+          ? "It is marked needs-frontier, so no local run is started on it " +
+            "until the operator clears that; the Claude run started for it " +
+            "reads your note first. "
+          : "The next run started for it reads your note first. ") +
       "You no longer hold it and cannot complete it. Say in your reply that " +
       "you released it and why.",
   );

@@ -1257,6 +1257,46 @@ test("a query narrows openInFolder and leaves held as it was", () => {
   assert.deepEqual(searched.held.map((t: Task) => t.id), [held.id]);
 });
 
+/**
+ * The same search on the board listing a chat and a block read through
+ * `list_tasks`, which files with `create_task` too. Each failure reads as an
+ * answer: a query dropped returns the board and calls it the matches, a
+ * wildcard left live calls the decoy "already filed", and a query read
+ * *instead of* the other filters answers for the wrong rank.
+ */
+test("a board query matches the title or the brief as text, beside the other filters", () => {
+  const folder = searchFolder("board-search");
+  const percent = file({
+    mountId: MOUNT,
+    folder,
+    title: "Coverage stuck at 50% on CI",
+    priority: "urgent",
+  });
+  file({ mountId: MOUNT, folder, title: "coverage stuck at 500 on CI" });
+  const byBody = file({
+    mountId: MOUNT,
+    folder,
+    title: "terse",
+    body: "mentions 50% once",
+    priority: "low",
+  });
+  const ids = (page: { tasks: Task[] }) => page.tasks.map((t: Task) => t.id);
+
+  const exact = listTasks({ mountId: MOUNT, folder, query: "  COVERAGE stuck at 50%  " });
+  assert.deepEqual(ids(exact), [percent.id], "case-folded, and the % a character");
+  assert.equal(exact.total, 1, "the total counts matches, not the board");
+
+  const either = listTasks({ mountId: MOUNT, folder, query: "50%" });
+  assert.deepEqual(ids(either), [percent.id, byBody.id], "the brief too, in the board's order");
+
+  assert.deepEqual(
+    ids(listTasks({ mountId: MOUNT, folder, query: "50%", priority: "low" })),
+    [byBody.id],
+    "the query narrows beside the other filters, never instead of them",
+  );
+  assert.equal(listTasks({ mountId: MOUNT, folder, query: "   " }).total, 3, "blank searches nothing");
+});
+
 /* ------------------------------------------------------------------ */
 /* Operator-only: who moves the flag, and what it refuses              */
 /* ------------------------------------------------------------------ */
@@ -1732,6 +1772,24 @@ test("a release asked for operator-only marks the task, and no run claims it aft
 
   const again = updateTask(task.id, { status: "claimed" }, { kind: "run", runId: STRANGER });
   assert.equal(again.ok, false);
+});
+
+// A needs-frontier release that wrote no flag is a plain release, and the next
+// local run is started on the same wall with nothing saying it was hit.
+test("a release asked for needs-frontier marks that lane and leaves operator-only alone", () => {
+  const task = claimedBy(HOLDER);
+  const released = releaseTask(task.id, HOLDER, {
+    reason: "Three fix rounds failed on the same generic constraint.",
+    operatorOnly: false,
+    needsFrontier: true,
+  });
+  assert.equal(released.ok, true, released.ok ? "" : released.error);
+
+  const row = getTask(task.id)!;
+  assert.equal(row.status, "open");
+  assert.equal(row.needsFrontier, true);
+  assert.equal(row.operatorOnly, false, "a Claude run may still take it");
+  assert.match(listTaskComments(task.id, 10).comments[0].body, /^Released and marked needs-frontier/);
 });
 
 test("a refused release writes nothing: a stranger, no reason, or a task nobody holds", () => {

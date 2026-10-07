@@ -19,8 +19,9 @@ import { getTask, updateTask, type Task, type TaskWriteResult } from "./tasks";
  *
  * **No authority of its own.** Who may release is `taskTransitionRefusal`'s
  * `claimed → open`, asked through `updateTask` against the row's own
- * `claimed_by_run_id`; who may mark the task operator-only is
- * `operatorOnlyRefusal`, asked by the same call. The one check here is that
+ * `claimed_by_run_id`; who may mark the task operator-only or needs-frontier
+ * is `operatorOnlyRefusal` and `needsFrontierRefusal`, asked by the same call.
+ * The one check here is that
  * the task is `claimed` at all, because `open → open` is not a move and that
  * rule allows it for anybody — without it any run could write a "released"
  * note on any open task.
@@ -30,17 +31,35 @@ import { getTask, updateTask, type Task, type TaskWriteResult } from "./tasks";
 const RELEASED = "Released — this run could not finish the task and put it back as open.";
 const RELEASED_FOR_OPERATOR =
   "Released and marked operator-only — this needs something no run in this container has.";
+const RELEASED_FOR_FRONTIER =
+  "Released and marked needs-frontier — a local model could not finish this.";
 
 /**
  * Characters of a reason: whatever keeps the note it becomes inside
  * `MAX_TASK_COMMENT`, so a reason the tool accepted is never refused by the
- * comment store for a length the caller never typed.
+ * comment store for a length the caller never typed. Measured against the
+ * longest heading, since the reason is checked before the heading is chosen.
  */
-export const MAX_RELEASE_REASON = MAX_TASK_COMMENT - RELEASED_FOR_OPERATOR.length - 2;
+export const MAX_RELEASE_REASON =
+  MAX_TASK_COMMENT -
+  Math.max(RELEASED_FOR_OPERATOR.length, RELEASED_FOR_FRONTIER.length) -
+  2;
 
 export interface ReleaseRequest {
   reason: string;
   operatorOnly: boolean;
+  /** Absent is false: only a local run's `release_task` is offered the flag. */
+  needsFrontier?: boolean;
+}
+
+/**
+ * The heading a release note opens with. Operator-only wins when both are set:
+ * it keeps every run off the task, so it is the one the next reader acts on.
+ */
+function releaseHeading(request: ReleaseRequest): string {
+  if (request.operatorOnly) return RELEASED_FOR_OPERATOR;
+  if (request.needsFrontier) return RELEASED_FOR_FRONTIER;
+  return RELEASED;
 }
 
 export type TaskReleaseResult =
@@ -86,7 +105,7 @@ export function readReleaseReason(
 
 /**
  * Release `taskId` from `runId`, writing `reason` on it and, if asked, marking
- * it operator-only — all of it or none of it.
+ * it operator-only or needs-frontier — all of it or none of it.
  */
 export function releaseTask(
   taskId: string,
@@ -97,7 +116,7 @@ export function releaseTask(
   if (!reason.ok) return { ok: false, kind: "refused", error: reason.error };
 
   const actor = { kind: "run", runId } as const;
-  const note = `${request.operatorOnly ? RELEASED_FOR_OPERATOR : RELEASED}\n\n${reason.reason}`;
+  const note = `${releaseHeading(request)}\n\n${reason.reason}`;
 
   const release = db().transaction((): TaskReleaseResult => {
     const task = getTask(taskId);
@@ -118,7 +137,11 @@ export function releaseTask(
 
     const moved: TaskWriteResult = updateTask(
       taskId,
-      request.operatorOnly ? { status: "open", operatorOnly: true } : { status: "open" },
+      {
+        status: "open",
+        ...(request.operatorOnly ? { operatorOnly: true } : {}),
+        ...(request.needsFrontier ? { needsFrontier: true } : {}),
+      },
       actor,
     );
     if (!moved.ok) return moved;

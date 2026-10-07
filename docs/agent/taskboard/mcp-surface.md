@@ -97,6 +97,14 @@ the result echoes `query` back, since a total of two with nothing saying a searc
 ran reads as a backlog that is nearly empty. `held` is never narrowed, because
 what a run holds is not a search result. Nothing widens either: a query reads the
 open rows of the same folder the list reads, and nothing else.
+The chat's and the block's `list_tasks` take the same `query` through
+`listTasks`, matched and escaped the same way, because a chat files with
+`create_task` too and one page of the board is not the board: it narrows beside
+the other filters rather than instead of them, `totalMatching` counts matches,
+and the result echoes `query` for the reason above. `priority` is a filter there
+as on the board's own route, and both `create_task` schemas offer all four ranks
+off `TASK_PRIORITIES` — `urgent` was missing from them with nothing recording why,
+and the description says it sorts above everything the operator ranked.
 
 **`get_my_task` is the whole-brief door onto exactly those rows, and its scope is
 the list's and never wider.** It exists because `list_my_tasks` clips every brief

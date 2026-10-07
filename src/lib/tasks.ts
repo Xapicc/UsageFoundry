@@ -161,8 +161,9 @@ export interface Task {
   /**
    * A local model could not get this past a frontier review, so no local-model
    * run may take it on. Not a status, operator-only's shape one lane over: set
-   * by a workflow's review block when it sets a branch aside, or by the
-   * operator; cleared by the operator alone. See `needsFrontierRefusal`.
+   * by a workflow's review block when it sets a branch aside, by a local run
+   * giving the task back with `release_task`, or by the operator; cleared by
+   * the operator alone. See `needsFrontierRefusal`.
    */
   needsFrontier: boolean;
   createdAt: number;
@@ -1391,6 +1392,11 @@ export interface TaskListQuery {
   /** Only operator-only tasks, only agent work, or null for both. */
   operatorOnly?: boolean | null;
   /**
+   * Text the title or the brief must contain, matched as `tasksForRun`'s query
+   * is: as characters rather than a pattern, case folded for ASCII only.
+   */
+  query?: string | null;
+  /**
    * Whether `folder` also matches everything filed under it.
    *
    * Off by default, which is how the board itself groups a project: a task on
@@ -1411,6 +1417,7 @@ export interface TaskListFilters {
   mountId: string | null;
   folder: string | null;
   operatorOnly: boolean | null;
+  query: string | null;
   includeSubfolders: boolean;
 }
 
@@ -1454,6 +1461,7 @@ export function normalizeTaskListQuery(query: TaskListQuery = {}): TaskListFilte
 
   const mountId = (query.mountId ?? "").trim();
   const folder = (query.folder ?? "").trim();
+  const text = (query.query ?? "").trim();
 
   return {
     offset,
@@ -1464,6 +1472,7 @@ export function normalizeTaskListQuery(query: TaskListQuery = {}): TaskListFilte
     mountId: mountId || null,
     folder: folder || null,
     operatorOnly: typeof query.operatorOnly === "boolean" ? query.operatorOnly : null,
+    query: text || null,
     // `=== true` rather than truthiness: a stored condition written before the
     // field existed carries `undefined` here, and the exact match is what it
     // meant.
@@ -1566,9 +1575,10 @@ function likePrefix(folder: string): string {
 }
 
 /**
- * A run's search text as a `LIKE` needle matching anywhere in a column.
+ * Search text — a run's or a board listing's — as a `LIKE` needle matching
+ * anywhere in a column.
  *
- * `likePrefix`'s escape, unanchored at both ends. A run searching for `100%` or
+ * `likePrefix`'s escape, unanchored at both ends. A search for `100%` or
  * `snake_case` is looking for the task that says so, and the wildcards left in
  * would answer with tasks that hold neither — a list that reads as "already
  * filed" for work nobody wrote down.
@@ -1627,6 +1637,11 @@ export function listTasks(query: TaskListQuery = {}): TaskListPage {
       where.push("folder = ?");
       args.push(filters.folder);
     }
+  }
+  if (filters.query) {
+    const needle = likeContains(filters.query);
+    where.push("(title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')");
+    args.push(needle, needle);
   }
   const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
 

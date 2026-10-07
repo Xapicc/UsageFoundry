@@ -144,3 +144,18 @@
   with a null run id proposes a run for it anyway. Settle it after `docker
   compose up --build`: claim a task on the board, ask the orchestrator chat for
   a run that does it, and read the proposal or the refusal it took.
+
+- **No local run has called `release_task` with `needsFrontier` (added
+  2026-10-07).** `route.test.ts` pins in process that only a local run's tool
+  list offers it and that the flag reaches the row; unmeasured is whether the
+  pinned CLI hands a local model the swapped schema, and whether a model that
+  gave up keeps the flag for work beyond it rather than for a run out of
+  cycles. Settle it with a local sign-in and *Let runs use the taskboard* on:
+  start a local run from a task beyond the model, and read whether the task
+  comes back open, marked needs-frontier, with a reason.
+
+- **No chat has searched `list_tasks` with `query` (added 2026-10-07).** The
+  duplicate filing it answers was measured for runs (2026-09-25), not chats.
+  Settle it on a project with more open tasks than one page (100): ask a chat
+  to file something already on the board, and read whether it calls
+  `list_tasks` with `query` before `create_task`.
