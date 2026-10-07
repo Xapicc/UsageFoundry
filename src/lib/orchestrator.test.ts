@@ -3829,6 +3829,25 @@ describe("buildCodexArgs", () => {
     assert.match(args.at(-1) ?? "", /list_my_tasks/, "the cycle is told the board is there");
   });
 
+  /**
+   * Network for a Codex cycle's commands is a widening, so it must come only
+   * from the operator's switch and only on the one mode it opens: on `plan` or
+   * `default` it would hand the network to a run whose mode says it may not
+   * even write, and a Claude argv carrying the key would be a flag the CLI
+   * does not know.
+   */
+  it("opens the network only for an acceptEdits Codex cycle, and only when switched on", () => {
+    const net = "sandbox_workspace_write.network_access=true";
+    const has = (args: string[]) => args.includes(net);
+    assert.equal(has(buildCodexArgs({ ...base, permissionMode: "acceptEdits", codexNetworkAccess: true })), true);
+    assert.equal(has(buildCodexArgs({ ...base, permissionMode: "acceptEdits", codexNetworkAccess: false })), false);
+    assert.equal(has(buildCodexArgs({ ...base, permissionMode: "acceptEdits" })), false);
+    for (const permissionMode of ["plan", "default", "bypassPermissions"] as const) {
+      assert.equal(has(buildCodexArgs({ ...base, permissionMode, codexNetworkAccess: true })), false, permissionMode);
+    }
+    assert.equal(has(buildArgs({ ...base, isolated: false, codexNetworkAccess: true })), false);
+  });
+
   it("gives a Codex cycle no board and no notice of one when it is off, or Claude-shaped", () => {
     for (const taskboard of [null, { mcpConfigPath: "/run/uf-mcp/c.json" }]) {
       const args = buildCodexArgs({ ...base, workDir: "/w/repo", taskboard });

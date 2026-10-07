@@ -1295,6 +1295,12 @@ export function buildArgs(opts: {
    */
   workDir?: string | null;
   /**
+   * `settings.codexNetworkAccess`, for a Codex cycle under `acceptEdits` only.
+   * Ignored by `buildArgs`: Claude Code's commands are not network-sandboxed
+   * by this flag, and nothing here changes what a Claude cycle may reach.
+   */
+  codexNetworkAccess?: boolean;
+  /**
    * The taskboard tool surface, when the operator has switched it on.
    *
    * `mcpConfigPath` is a file `chat.ts`'s `writeMcpConfig` wrote for this cycle,
@@ -1704,6 +1710,14 @@ export function buildCodexArgs(opts: Parameters<typeof buildArgs>[0]): string[] 
   if (opts.model) args.push("-m", opts.model);
   if (opts.workDir) args.push("-C", opts.workDir);
   args.push(...CODEX_PERMISSIONS[opts.permissionMode]);
+  // Beside the mode it opens and only on that mode's row: `workspace-write` is
+  // the one sandbox with a network switch that means anything here — `plan`
+  // and `default` are read-only and stay offline, and `bypassPermissions` has
+  // no sandbox. Off unless the operator turned it on, because it widens what a
+  // run may do (`settings.codexNetworkAccess`).
+  if (opts.codexNetworkAccess && opts.permissionMode === "acceptEdits") {
+    args.push("-c", "sandbox_workspace_write.network_access=true");
+  }
   // Every directory beyond the working root this cycle may write, one per flag:
   // `--add-dir` is repeatable and takes one directory each time. The run loop
   // hands over Codex's own shape of the write set (`codexWritableRoots`), not

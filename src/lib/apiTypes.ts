@@ -3493,6 +3493,8 @@ export interface SettingsDTO {
    * listed, until the operator edits it. Empty means no list.
    */
   codexModelCatalogue: ModelCatalogueEntryDTO[];
+  /** Network for an `acceptEdits` Codex run's commands. See `settings.codexNetworkAccess`. */
+  codexNetworkAccess: boolean;
   /**
    * The saved agent the new-run form starts on. An id, never a definition, and
    * it carries no capability — see `settings.defaultAgentId`.

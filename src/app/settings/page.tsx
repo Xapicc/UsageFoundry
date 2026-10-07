@@ -359,6 +359,7 @@ const EDITABLE_PATHS = [
   "includeSidechains",
   "defaultModel",
   "codexDefaultModel",
+  "codexNetworkAccess",
   "defaultAgentId",
   "forwardSubAgentText",
   "runEffort",
@@ -4011,6 +4012,21 @@ export default function SettingsPage() {
                   )}
               </Select>
             </div>
+          </SettingRow>
+
+          {/* Beside the Codex model because it is about Codex runs alone, and
+              a widening: off, an `acceptEdits` Codex run's commands have no
+              network at all, where a Claude run's do. */}
+          <SettingRow
+            edited={isEdited("codexNetworkAccess")}
+            label="Network for Codex runs"
+            description="Lets an accept-edits Codex run's commands reach the internet, to install packages or push. Plan and default stay offline"
+          >
+            <Switch
+              checked={effective.codexNetworkAccess}
+              onChange={(v) => patch({ codexNetworkAccess: v })}
+              label="Network for Codex runs"
+            />
           </SettingRow>
 
           {/* Beside the model and deliberately not among the guards below. An

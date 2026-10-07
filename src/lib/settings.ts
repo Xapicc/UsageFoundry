@@ -140,6 +140,24 @@ export interface Settings {
    */
   codexModelCatalogue: ModelCatalogueEntry[];
   /**
+   * Let an `acceptEdits` Codex run's shell commands reach the network.
+   *
+   * Codex's `workspace-write` sandbox — what `acceptEdits` becomes for that CLI
+   * (`CODEX_PERMISSIONS`) — blocks the network for every command the agent
+   * runs: measured on 0.153.4, `curl https://example.com` failed in a cycle and
+   * answered 200 with `sandbox_workspace_write.network_access` set. So without
+   * this a Codex run cannot `npm install`, `git push` or fetch anything, where a
+   * Claude run in the same mode can. Codex's own connections, to OpenAI and to
+   * this app's taskboard, are not commands and work either way.
+   *
+   * **Off by default because it widens what a run may do**, which is the one
+   * direction `CODEX_PERMISSIONS` refuses to move on its own: an agent with the
+   * network can push a branch, publish a package or send a file somewhere.
+   * Only the `acceptEdits` row reads it — `plan` and `default` stay read-only
+   * and offline, and `bypassPermissions` has no sandbox to open.
+   */
+  codexNetworkAccess: boolean;
+  /**
    * The saved agent the new-run form starts on, or null for none.
    *
    * `defaultModel`'s precedent and its shape: one place for a default the run
@@ -1067,6 +1085,7 @@ export const DEFAULTS: Settings = {
   modelCatalogue: SEEDED_MODEL_CATALOGUE,
   codexDefaultModel: null,
   codexModelCatalogue: [],
+  codexNetworkAccess: false,
   defaultAgentId: null,
   continuationPrompt: DEFAULT_CONTINUATION_PROMPT,
   includeSidechains: true,

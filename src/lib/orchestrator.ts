@@ -11005,6 +11005,9 @@ export async function startRun(id: string): Promise<void> {
         // all three doors a per-run selector could attach to closed by name,
         // and the narrowing that matters is the stack author's `deny`.
         stackGrants: stackGrants(),
+        // Read per cycle, `taskboardForRuns`' rule: switching it off reaches a
+        // run in flight at its next cycle rather than at its next start.
+        codexNetworkAccess: getSettings().codexNetworkAccess,
         // Written out as the guard's own expression rather than passed as one
         // number, because `buildArgs` is where the subtraction is tested and
         // because the two halves have to be read together: this is the figure

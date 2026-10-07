@@ -1967,6 +1967,16 @@ export default function NewRunPage() {
                 model could be argued out of. Agent roles, plugins and sub-agent
                 forwarding do not cross at all.
               </p>
+              {/* Said only while it is true: the switch is the operator's,
+                  and a run that cannot install a package fails at a step
+                  that reads like the model's mistake. */}
+              {permissionMode === "acceptEdits" && settings?.codexNetworkAccess === false && (
+                <p>
+                  <strong>Its commands have no network.</strong> No package
+                  installs or pushes unless{" "}
+                  <Link href="/settings#runs">Network for Codex runs</Link> is on.
+                </p>
+              )}
               <p>
                 <strong>The sign-in is separate.</strong> The mounted{" "}
                 <span className="mono">~/.claude</span> credential is not one

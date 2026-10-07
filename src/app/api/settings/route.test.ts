@@ -103,6 +103,7 @@ const PROBES: Record<keyof Settings, Probe> = {
   // The Codex pair: the list keeps the default's model enabled for
   // `modelCatalogue`'s reason, and differs from the empty shipped default.
   codexDefaultModel: { send: "gpt-6-astra" },
+  codexNetworkAccess: { send: true },
   codexModelCatalogue: {
     send: [
       { id: "gpt-6-astra", label: "GPT-6-Astra", enabled: true },

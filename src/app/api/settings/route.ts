@@ -520,6 +520,12 @@ async function applySettingsPut(body: Record<string, unknown>): Promise<Response
     patch.forwardSubAgentText = Boolean(body.forwardSubAgentText);
   }
 
+  // Strictly `true` rather than `Boolean(…)`: this one widens what a run may
+  // do, so a stray string must not switch it on.
+  if ("codexNetworkAccess" in body) {
+    patch.codexNetworkAccess = body.codexNetworkAccess === true;
+  }
+
   if ("runEffort" in body) {
     // Refused rather than coerced: the value lands on every work cycle's argv,
     // and a level the CLI does not know fails every spawn.
