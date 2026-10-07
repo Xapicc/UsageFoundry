@@ -98,6 +98,56 @@ export interface CodexUsageDTO {
 }
 
 /**
+ * One provider window on `GET /api/usage/remaining`.
+ *
+ * Carries the *used* fraction as the provider reported it and not "remaining":
+ * subtracting is the strip's job, so the server's figure stays the one the
+ * dashboard's meters print and the two can be compared by eye.
+ */
+export interface UsageRemainingWindowDTO {
+  slot: "session" | "weekly";
+  /** The window's length, so the strip names it from what was reported. */
+  minutes: number | null;
+  /**
+   * Used, 0 upward and not capped — over the wall is a real reading. Null is
+   * "no current reading": a window that closed since it was read, one the
+   * provider did not name, or a provider that did not answer. Never zero.
+   */
+  used: number | null;
+  /** Epoch ms, or null when none is named. */
+  resetsAt: number | null;
+}
+
+/** One signed-in provider's allowance. Never summed with another's. */
+export interface UsageRemainingProviderDTO {
+  provider: "claude" | "codex";
+  /** Always the session window then the weekly one, whatever was read. */
+  windows: UsageRemainingWindowDTO[];
+  /** When the provider last answered, or null when no reading is held. */
+  fetchedAt: number | null;
+  /**
+   * The reading is older than one refresh, which with a cache that refreshes
+   * on every call can only mean the latest refresh failed.
+   */
+  stale: boolean;
+  /** Codex's own word for a wall it says is hit; always null for Claude. */
+  limitReached: string | null;
+  /** Why `windows` hold no reading, or null when at least one does. */
+  note: string | null;
+}
+
+/**
+ * `GET /api/usage/remaining`: the shell toolbar's readout.
+ *
+ * Only providers with a stored sign-in appear, and the local provider never
+ * does — it has no allowance to have a remainder of. An empty list is "nothing
+ * signed in", which the strip renders as nothing.
+ */
+export interface UsageRemainingDTO {
+  providers: UsageRemainingProviderDTO[];
+}
+
+/**
  * Mirror of `AgentOrigin` in `windows.ts` — where the definition behind an
  * agent bucket lives, as far as this install can see.
  *

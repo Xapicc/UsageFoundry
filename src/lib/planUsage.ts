@@ -99,6 +99,31 @@ export async function readAccessToken(now: number): Promise<string | null> {
 }
 
 /**
+ * Whether the credential file holds a Claude sign-in at all, expired or not.
+ *
+ * `readAccessToken` answers a different question — can this process spend the
+ * token — and an expired one is a miss there because only the CLI may refresh
+ * it. Someone whose token lapsed overnight is still signed in, and the toolbar
+ * must keep naming the provider with an unknown reading rather than drop it,
+ * which is what asking `readAccessToken` would do. A read of one small file,
+ * where `claude auth status` is a process: this runs on a poll from every page.
+ */
+export async function claudeSignInStored(): Promise<boolean> {
+  try {
+    const raw = JSON.parse(await fs.readFile(credentialsPath(), "utf8")) as {
+      claudeAiOauth?: { accessToken?: unknown; refreshToken?: unknown };
+    };
+    const oauth = raw.claudeAiOauth;
+    if (!oauth) return false;
+    return [oauth.accessToken, oauth.refreshToken].some(
+      (token) => typeof token === "string" && token !== "",
+    );
+  } catch {
+    return false; // missing, unreadable, mid-write, or a shape we do not know
+  }
+}
+
+/**
  * Numbers only, never a coercion.
  *
  * `Number(null)` is 0 and `Number("")` is 0, so coercing here would turn "this
