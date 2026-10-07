@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { parseCodexModelPage, parseCodexRateLimits } from "./codexAccount";
+import { codexWallBoundary, parseCodexModelPage, parseCodexRateLimits } from "./codexAccount";
 
 /**
  * The two parsers over `codex app-server`'s answers, which are the whole of
@@ -160,5 +160,43 @@ describe("parseCodexModelPage", () => {
   it("refuses a body with no list rather than reading it as no models", () => {
     assert.equal(parseCodexModelPage(null), null);
     assert.equal(parseCodexModelPage({ models: [] }), null);
+  });
+});
+
+/**
+ * When a Codex run parked at its usage limit wakes. Waking at the session
+ * reset with the week still full is a second refusal and a spent wait; a
+ * boundary in the past would wake it at once into the same wall.
+ */
+describe("codexWallBoundary", () => {
+  const NOW = 1_000_000;
+  const plan = (session: [number, number] | null, weekly: [number, number] | null) => ({
+    session: session ? { utilization: session[0], resetsAt: session[1] } : null,
+    weekly: weekly ? { utilization: weekly[0], resetsAt: weekly[1] } : null,
+    scopedWeekly: [],
+    fetchedAt: NOW,
+    sessionMinutes: 300,
+    weeklyMinutes: 10_080,
+    planType: "team",
+    limitReached: "rate_limit_reached",
+  });
+
+  it("waits for the full window's reset", () => {
+    assert.equal(codexWallBoundary(plan([1, NOW + 100], [0.4, NOW + 9_000]), NOW), NOW + 100);
+    assert.equal(codexWallBoundary(plan([0.3, NOW + 100], [1.02, NOW + 9_000]), NOW), NOW + 9_000);
+  });
+
+  it("waits for the later reset when both windows are full", () => {
+    assert.equal(codexWallBoundary(plan([1, NOW + 100], [1, NOW + 9_000]), NOW), NOW + 9_000);
+  });
+
+  it("falls back to the session reset when the reading shows nothing full yet", () => {
+    assert.equal(codexWallBoundary(plan([0.97, NOW + 100], [0.5, NOW + 9_000]), NOW), NOW + 100);
+  });
+
+  it("answers null with no reading or no reset still ahead, for the ladder to decide", () => {
+    assert.equal(codexWallBoundary(null, NOW), null);
+    assert.equal(codexWallBoundary(plan([1, NOW - 5], null), NOW), null);
+    assert.equal(codexWallBoundary(plan(null, null), NOW), null);
   });
 });

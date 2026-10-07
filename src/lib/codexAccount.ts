@@ -394,6 +394,27 @@ export function invalidateCodexUsage(): void {
   usageCache.v = undefined;
 }
 
+/**
+ * When a Codex run refused at its usage limit should try again, as far as the
+ * account's own reading says. Pure, and under test.
+ *
+ * The reset of the window that is full, and the later of the two when both
+ * are — waking at the session reset with the week still full is a second
+ * refusal. With a reading that shows neither full (it may predate the wall by
+ * a few minutes), the session window's reset, the one that refills soonest.
+ * With no reading, or no reset still ahead, null, and `refusalResumeAt`'s
+ * ladder decides instead. Either way that function floors, caps and jitters
+ * the wait, so nothing here has to.
+ */
+export function codexWallBoundary(plan: CodexPlanUsage | null, now: number): number | null {
+  if (!plan) return null;
+  const ahead = (w: PlanWindow | null): w is PlanWindow & { resetsAt: number } =>
+    w !== null && w.resetsAt !== null && w.resetsAt > now;
+  const full = [plan.session, plan.weekly].filter(ahead).filter((w) => w.utilization >= 1);
+  if (full.length > 0) return Math.max(...full.map((w) => w.resetsAt));
+  return ahead(plan.session) ? plan.session.resetsAt : null;
+}
+
 /** No typed ceiling: a Codex window has only the provider's own percentage. */
 const NO_CEILINGS = {
   sessionCostLimit: null,

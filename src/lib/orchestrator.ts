@@ -149,7 +149,12 @@ import { prepareReadGuard } from "./readGuard";
 // generated on disk for a cycle to pick up — and unlike it in the one way that
 // matters: an unavailable read guard logs, an unavailable denial refuses.
 import { prepareCodexRules } from "./codexRules";
-import { codexGuardSnapshot } from "./codexAccount";
+import {
+  codexGuardSnapshot,
+  codexUsage,
+  codexWallBoundary,
+  invalidateCodexUsage,
+} from "./codexAccount";
 import {
   ensureLocalConfigDir,
   getLocalSignIn,
@@ -1986,6 +1991,33 @@ export function isUsageLimit(text: string): boolean {
 }
 
 /**
+ * The Codex CLI's wall, which `isUsageLimit` cannot read for it.
+ *
+ * Every variant the pinned 0.153.4 prints opens "You've hit your usage limit"
+ * (read out of the binary), and one of them goes on "Visit …/codex/settings/usage
+ * to purchase more credits" — an upsell on an allowance that refills, which the
+ * credit exclusion above would file as a spend cap and end the run over. So the
+ * Codex test is the opening sentence alone. The Claude predicate is untouched:
+ * its credit exclusion is about Claude's own spend-cap wording.
+ */
+export function isCodexUsageLimit(text: string): boolean {
+  return /you(?:'|’)?ve hit your usage limit/i.test(text);
+}
+
+/**
+ * OpenAI refusing a Codex request on content policy, which no retry or wait
+ * clears.
+ *
+ * Measured on a real run, 2026-10-07: "This content was flagged for possible
+ * cybersecurity risk…", `codex_error_info` `cyber_policy` in the session file,
+ * on a bug-hunting brief. Named so the run ends with a sentence about what to
+ * change rather than "refused the request".
+ */
+export function isCodexPolicyRefusal(text: string): boolean {
+  return /flagged for possible cybersecurity risk|cyber_policy|misalignment_policy/i.test(text);
+}
+
+/**
  * Whether a refusal is a transport or upstream failure that clears by itself.
  *
  * The third answer to a refusal, and the one this app used to be missing: a
@@ -2052,10 +2084,12 @@ export function isRateLimited(text: string): boolean {
   return /\bAPI Error:\s*429\b/i.test(text) || /\brate_limit_error\b/i.test(text);
 }
 
-/** Which of the four things a refused work cycle actually was. */
+/** Which of the five things a refused work cycle actually was. */
 export type RefusalKind =
   /** The subscription allowance is used up. It refills on its own. */
   | "allowance"
+  /** The provider refused the content itself. Nothing here clears it. */
+  | "policy"
   /** The provider is refusing this app's request rate. Its own ladder. */
   | "rate-limit"
   /** A transport or upstream fault that clears by itself in seconds. */
@@ -2079,7 +2113,16 @@ export type RefusalKind =
  * every 429 too, so asking it first would file every rate limit under the
  * ladder written for a dropped socket.
  */
-export function refusalKind(refusal: string): RefusalKind {
+export function refusalKind(
+  refusal: string,
+  provider: RunProviderDTO | null = null,
+): RefusalKind {
+  // Codex's own wording first, for that CLI only: a Claude refusal that
+  // happened to quote one of these sentences is not Codex's wall.
+  if (provider === "codex") {
+    if (isCodexUsageLimit(refusal)) return "allowance";
+    if (isCodexPolicyRefusal(refusal)) return "policy";
+  }
   if (isUsageLimit(refusal)) return "allowance";
   if (isRateLimited(refusal)) return "rate-limit";
   if (isTransientApiError(refusal)) return "transient";
@@ -2314,6 +2357,8 @@ export type RefusalCause =
   | "retries-spent"
   /** The provider refusing this app's request rate, with its ladder spent. */
   | "rate-limited"
+  /** The provider refusing the content on policy. */
+  | "content-policy"
   /** Not a wall and not a blip — nothing here would clear. */
   | "other";
 
@@ -2377,6 +2422,7 @@ export function refusalDisposition(o: {
           cause: o.kind === "rate-limit" ? "rate-limited" : "retries-spent",
         };
   }
+  if (o.kind === "policy") return { action: "fail", cause: "content-policy" };
   return { action: "fail", cause: "other" };
 }
 
@@ -2389,29 +2435,42 @@ export function refusalDisposition(o: {
  * have silently rendered as "refused the request", losing the one line telling
  * a person what to do about it. The `never` arm makes that a build failure.
  */
-export function refusalStopReason(cause: RefusalCause, refusal: string): string {
+export function refusalStopReason(
+  cause: RefusalCause,
+  refusal: string,
+  provider: RunProviderDTO | null = null,
+): string {
+  // The CLI that refused, by name: a local run is still Claude Code, and a
+  // Codex run's refusal reported as Claude's sends the operator to the wrong
+  // account and the wrong status page.
+  const cli = provider === "codex" ? "Codex" : "Claude Code";
+  const vendor = provider === "codex" ? "Codex" : "Claude";
   switch (cause) {
     // Named as attempts rather than as the wall, because those are different
     // facts and the operator's next move differs. The allowance may well have
     // refilled by now; what has run out is how often one run may wait for it
     // without anybody looking.
     case "pauses-spent":
-      return `Claude refused the work cycle for want of allowance again, after this run had already waited out ${MAX_PAUSES_PER_RUN} windows. Out of waits rather than out of allowance: ${refusal}`;
+      return `${vendor} refused the work cycle for want of allowance again, after this run had already waited out ${MAX_PAUSES_PER_RUN} windows. Out of waits rather than out of allowance: ${refusal}`;
     // Reached only with the retries spent, so say that rather than reporting
     // the last attempt as if it were the only one.
     case "retries-spent":
-      return `Claude Code hit a transient API error on ${MAX_TRANSIENT_RETRIES + 1} attempts in a row: ${refusal}`;
+      return `${cli} hit a transient API error on ${MAX_TRANSIENT_RETRIES + 1} attempts in a row: ${refusal}`;
     // A different sentence from the one above, because the operator's response
     // is the opposite. An upstream that is down clears on its own and waiting
     // is right; a rate limit at this concurrency is the account describing how
     // much of it this app is using, and waiting changes nothing that lowering
     // the cap would not change faster.
     case "rate-limited":
-      return `Claude Code was rate limited on ${MAX_RATE_LIMIT_RETRIES + 1} attempts in a row, over ${Math.round(
+      return `${cli} was rate limited on ${MAX_RATE_LIMIT_RETRIES + 1} attempts in a row, over ${Math.round(
         RATE_LIMIT_BACKOFF_MS.reduce((a, b) => a + b, 0) / 60_000,
       )} minutes or more of backing off. This is the account refusing this app's own request rate rather than being unreachable, so lower the concurrent-run limit rather than waiting: ${refusal}`;
+    // What the operator can change, because the run cannot: the provider's
+    // filter read the brief, and the same brief re-spawned is refused again.
+    case "content-policy":
+      return `OpenAI's content filter refused this ${cli} run's request, which is OpenAI's decision rather than this app's. Rephrase the brief — a bug hunt reads less like security research as "write a failing test for each defect" than as "demonstrate each one" — pick another Codex model, or run it on Claude: ${refusal}`;
     case "other":
-      return `Claude Code refused the request: ${refusal}`;
+      return `${cli} refused the request: ${refusal}`;
   }
   const unreachable: never = cause;
   throw new Error(`Unhandled refusal cause: ${String(unreachable)}`);
@@ -11606,7 +11665,7 @@ export async function startRun(id: string): Promise<void> {
         // it clears in seconds — so it is retried here rather than parked or
         // reported as a failure. The wall is named first because an exhausted
         // allowance is not something backing off five seconds can fix.
-        const kind = refusalKind(refusal);
+        const kind = refusalKind(refusal, run.provider);
         const limited = kind === "allowance";
         const plan = refusalDisposition({
           kind,
@@ -11667,14 +11726,30 @@ export async function startRun(id: string): Promise<void> {
           // of its own reading as a window five hours out.
           // The ladder is the refusal count's too: a guard park between two
           // refusals is not a second refusal in a row.
+          //
+          // A Codex run's boundary is its own provider's reset instant instead:
+          // the snapshot above was built from Codex's reading, which has no
+          // transcript blocks to take a spending window from, so the Claude
+          // rule would always fall through to the ladder. The reading is asked
+          // for fresh, because the cached one may predate the wall.
+          let boundary: number | null;
+          if (run.provider === "codex") {
+            invalidateCodexUsage();
+            boundary = codexWallBoundary(await codexUsage(), Date.now());
+          } else {
+            boundary = lastSpendingWindowEnd(snapshot);
+          }
           pausedUntil = refusalResumeAt({
-            boundary: lastSpendingWindowEnd(snapshot),
+            boundary,
             pauseCount: run.refusal_pauses ?? 0,
             now: Date.now(),
           });
           stopReason =
-            "Claude refused the work cycle: the subscription allowance is used up. " +
-            "Waiting for it to refill.";
+            run.provider === "codex"
+              ? "Codex refused the work cycle: the ChatGPT plan's usage limit is reached. " +
+                "Waiting for it to reset."
+              : "Claude refused the work cycle: the subscription allowance is used up. " +
+                "Waiting for it to refill.";
           finalStatus = "paused";
           refusalPark = true;
           // Refunded for the same reason a guard-interrupted cycle is, and with
@@ -11683,7 +11758,7 @@ export async function startRun(id: string): Promise<void> {
           break;
         }
 
-        stopReason = refusalStopReason(plan.cause, refusal);
+        stopReason = refusalStopReason(plan.cause, refusal, run.provider);
         finalStatus = "failed";
         break;
       }

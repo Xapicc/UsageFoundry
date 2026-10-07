@@ -2047,6 +2047,46 @@ describe("rate limits, apart from the rest", () => {
     );
   });
 
+  /**
+   * Codex's wall and Codex's content filter, which the Claude predicates
+   * misread silently: the "purchase more credits" variant of the wall tripped
+   * the spend-cap exclusion, so a Codex run at its usage limit would have
+   * ended as failed instead of waiting, and a cyber-filter refusal ended with
+   * "Claude Code refused the request" on a run Claude never saw. The wall
+   * sentences are the four the pinned 0.153.4 prints, read out of the binary;
+   * the cyber one is the measured refusal of run ccfcf641.
+   */
+  it("reads Codex's own wall and content refusal, for a Codex run only", () => {
+    const walls = [
+      "You've hit your usage limit.",
+      "You've hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at 3:42 PM.",
+      "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 3:42 PM.",
+      "You've hit your usage limit. To get more access now, send a request to your admin or try again at 3:42 PM.",
+    ];
+    for (const wall of walls) {
+      assert.equal(refusalKind(wall, "codex"), "allowance", wall);
+    }
+    // The Claude reading is unchanged: credits still mean a spend cap there.
+    assert.notEqual(refusalKind(walls[2], null), "allowance");
+    assert.notEqual(refusalKind(walls[2], "claude"), "allowance");
+
+    const cyber =
+      "This content was flagged for possible cybersecurity risk. If this seems wrong, try rephrasing your request.";
+    assert.equal(refusalKind(cyber, "codex"), "policy");
+    assert.equal(refusalKind(cyber, null), "other");
+    assert.deepEqual(
+      refusalDisposition({ kind: "policy", pauseCount: 0, transientRetries: 0 }),
+      { action: "fail", cause: "content-policy" },
+    );
+
+    const ended = refusalStopReason("content-policy", cyber, "codex");
+    assert.match(ended, /^OpenAI's content filter refused this Codex run's request/);
+    assert.match(ended, /Rephrase the brief/);
+    assert.match(refusalStopReason("other", "boom", "codex"), /^Codex refused the request: boom$/);
+    assert.match(refusalStopReason("other", "boom", null), /^Claude Code refused the request: boom$/);
+    assert.match(refusalStopReason("pauses-spent", "boom", "codex"), /^Codex refused the work cycle/);
+  });
+
   it("gives each refusal cause its own instruction to the operator", () => {
     // The test above pins the two *causes* apart; this pins the two sentences
     // apart, which is the half an operator actually reads. `refusalStopReason`
@@ -2054,14 +2094,14 @@ describe("rate limits, apart from the rest", () => {
     // last arm doubled as the fallback — so a cause added upstream would have
     // rendered as the generic sentence with nothing failing to say so.
     const sentences = (
-      ["pauses-spent", "retries-spent", "rate-limited", "other"] as const
+      ["pauses-spent", "retries-spent", "rate-limited", "content-policy", "other"] as const
     ).map((cause) => refusalStopReason(cause, "API Error: overloaded_error"));
 
     // Every one names the underlying refusal, and no two read alike.
     for (const s of sentences) assert.match(s, /API Error: overloaded_error$/);
     assert.equal(new Set(sentences).size, sentences.length);
 
-    const [pauses, retries, rateLimited, other] = sentences;
+    const [pauses, retries, rateLimited, , other] = sentences;
     assert.match(pauses, new RegExp(`waited out ${MAX_PAUSES_PER_RUN} windows`));
     assert.match(
       retries,
