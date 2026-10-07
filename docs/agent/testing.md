@@ -223,7 +223,7 @@ Units that are about no test file in the tree:
 |---|---|
 | `deleteBranch.test.ts` |  |
 | `diffSlotReuse.test.ts` |  |
-| `landAfterSquash.test.ts` | [merge-queue] |
+| `landAfterSquash.test.ts` | [resolution] |
 | `landAfterVerify.test.ts` |  |
 | `landUnwind.test.ts` |  |
 | `landView.test.ts` | [cards] |
@@ -242,19 +242,24 @@ Units that are about no test file in the tree:
 | `deliverRun.test.ts` |  |
 | `delivery.test.ts` |  |
 
-## [The merge queue and conflict resolution](testing/merge-queue-and-resolution.md)
+## [The merge queue](testing/merge-queue.md)
+
+| Test file | Also in |
+|---|---|
+| `mergeQueue.test.ts` | [argv], [resolution] |
+| `mergeQueueDrain.test.ts` | [fleet] |
+| `mergeQueueOrder.test.ts` |  |
+| `mergeQueueView.test.ts` |  |
+
+## [Conflict resolution: its checkout, limits and refusals](testing/conflict-resolution.md)
 
 | Test file | Also in |
 |---|---|
 | `conflictedPaths.test.ts` |  |
-| `mergeQueue.test.ts` | [argv] |
-| `mergeQueueDrain.test.ts` | [fleet] |
-| `mergeQueueOrder.test.ts` |  |
-| `mergeQueueView.test.ts` |  |
 | `midOperationSlot.test.ts` | [landing] |
 | `resolutionBudget.test.ts` |  |
 | `resolutionMarkerless.test.ts` |  |
-| `resolutionSilence.test.ts` |  |
+| `resolutionSilence.test.ts` | [merge-queue] |
 | `resolveCheckout.test.ts` |  |
 
 ## [Run page panels: background tasks, touched files and conflict maps](testing/run-page-panels-and-file-maps.md)
@@ -487,7 +492,8 @@ It prints nothing as this is written. Whoever owns a file it names owes that fil
 [tasks]: testing/taskboard-authority-and-moves.md
 [task-deps]: testing/taskboard-comments-deps-and-mcp.md
 [landing]: testing/landing-and-delivery.md
-[merge-queue]: testing/merge-queue-and-resolution.md
+[merge-queue]: testing/merge-queue.md
+[resolution]: testing/conflict-resolution.md
 [run-page]: testing/run-page-panels-and-file-maps.md
 [argv]: testing/spawn-argv-and-child-env.md
 [chat-child]: testing/chat-child-lookups-and-config.md

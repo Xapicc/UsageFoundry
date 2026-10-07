@@ -943,6 +943,15 @@ function normalizeSpec(
 ): SpecNormalization {
   const e = (entry ?? {}) as Record<string, unknown>;
   const where = `Run ${index + 1}`;
+  // Asked before the `String(…)` that reads each one, which turned `{…}` into a
+  // task of "[object Object]" and `["reviewer"]` into the agent inside the
+  // list — a run started as something the turn did not write, by a block
+  // nobody reads. Absent and null are still absent: each is judged below for
+  // what it always was.
+  for (const field of ["id", "title", "task", "folder", "agent"]) {
+    const notString = notStringRefusal(field, e[field]);
+    if (notString) return { ok: false, reason: `${where}: ${notString}` };
+  }
     const id = String(e.id ?? "").trim();
     if (!NODE_ID.test(id)) {
       return {
