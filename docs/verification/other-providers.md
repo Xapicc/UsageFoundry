@@ -174,6 +174,11 @@
   attempt, a `Permission denied` or an unknown stream event, and both cycles
   wrote `$CODEX_HOME/last-message/<run>.txt` owned by uid 1000.
 
+- **A Codex sign-in survives a rebuild on the `usagefoundry-codex` volume,
+  2026-10-07**: after a ChatGPT sign-in on the volume's first boot, a second
+  `docker compose up -d --build` recreated the container (`cda29edf`) and
+  `codex login status` as uid 1000 still answered `Logged in using ChatGPT`.
+
 ## Not yet verified by hand
 
 - **No local cycle has been seen compacting under a sign-in window
@@ -216,12 +221,6 @@
   unobserved.** A ChatGPT sign-in made from the deployed app on 2026-10-07
   left `login status` at `Logged in using ChatGPT`; the poll's own states on
   the way there, and `loginError` on a failure, were not watched.
-
-- **The `usagefoundry-codex` volume has not been through a rebuild
-  (2026-10-07).** It is in compose, the image and the entrypoint, and asserted
-  by `deployment.test.ts`; that a sign-in survives is reasoned from that.
-  Settles with `docker compose up -d --build`, a sign-in, a second rebuild, and
-  `codex login status` as uid 1000 still signed in.
 
 - **The amd64 Codex figures are registry metadata (2026-09-05)**: ~335 MB
   unpacked and a 123 MB download, never pulled here; and signed-out is still
