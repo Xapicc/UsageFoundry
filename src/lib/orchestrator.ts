@@ -108,6 +108,7 @@ import {
   apiContextSample,
   BOUNDARY_BREAK_EVEN_BUDGET,
   contextTokens,
+  sampleCodexContext,
   sampleContext,
   coldAgeRefusalMessage,
   CYCLE_CONTEXT_CEILING_TOKENS,
@@ -150,6 +151,14 @@ import { prepareReadGuard } from "./readGuard";
 // matters: an unavailable read guard logs, an unavailable denial refuses.
 import { prepareCodexRules } from "./codexRules";
 import { codexGuardSnapshot } from "./codexAccount";
+import {
+  beginCodexCycle,
+  codexCycleTracked,
+  endCodexCycle,
+  noteCodexThread,
+  readCodexCycle,
+  takeCodexSampleAdvance,
+} from "./codexRollout";
 import {
   ensureLocalConfigDir,
   getLocalSignIn,
@@ -871,6 +880,19 @@ export const MAX_EARLY_ENDS_PER_RUN = 3;
 
 /** Shared empty reading, for a policy whose guards do not need telemetry. */
 const NO_TELEMETRY_SPEND: TelemetrySpend = { requests: 0, costUSD: 0, tokens: 0 };
+
+/**
+ * What a Codex cycle in flight has used, in `TelemetrySpend`'s shape so the
+ * live guard adds it where it adds a Claude cycle's telemetry. Tokens only:
+ * `costUSD` is zero because Codex reports none, and nothing reads it as money
+ * for a Codex run — `maxRunCostUSD` cannot act on one.
+ */
+function codexInFlightSpend(runId: string): TelemetrySpend {
+  const reading = readCodexCycle(runId);
+  return reading
+    ? { requests: reading.requests, costUSD: 0, tokens: reading.tokens }
+    : NO_TELEMETRY_SPEND;
+}
 
 /**
  * The two background timers, and their reentrancy flags.
@@ -10322,11 +10344,25 @@ export async function startRun(id: string): Promise<void> {
     // Fixed for the run, because it decides what the child is spawned with. A
     // Settings edit mid-run must not leave one cycle exporting and the next not,
     // which would read as the run's spend jumping backwards.
-    const liveSpendTelemetry = needsLiveSpendTelemetry(policy);
+    // Claude Code's export, and never a Codex cycle's: that CLI's exporter is
+    // not this app's ingest format, so the variables would be set for nothing
+    // and the post-cycle "a paid cycle reported nothing" check would read a
+    // Codex cycle as a broken export. A Codex run's live figure is its rollout.
+    const liveSpendTelemetry = run.provider !== "codex" && needsLiveSpendTelemetry(policy);
     if (liveSpendTelemetry) {
       log(
         id,
         "Live spending limits are enforced from Claude Code's own per-request telemetry, which arrives while a cycle works. Expect a lag of a few seconds rather than an exact cut-off.",
+      );
+    }
+    if (
+      run.provider === "codex" &&
+      policy.enforcement !== "between-cycles" &&
+      policy.maxRunTokens !== null
+    ) {
+      log(
+        id,
+        "This run's token limit is read mid-cycle from Codex's own session file, on the live-guard tick, so expect it to stop a little past the limit rather than exactly at it. Its spending limit in dollars cannot act: Codex reports no cost.",
       );
     }
 
@@ -11075,6 +11111,12 @@ export async function startRun(id: string): Promise<void> {
       const resumeTarget = sessionId;
       const usedResume = resumeTarget !== null;
 
+      // A Codex cycle's running tokens and context come off its session
+      // rollout as it is written (`codexRollout.ts`). Begun before the spawn,
+      // so a resumed thread's earlier cycles are behind the line this cycle's
+      // reading starts from and are never counted again.
+      if (run.provider === "codex") beginCodexCycle(id, resumeTarget);
+
       // Registered for exactly as long as a child exists. The closure reads
       // this function's own locals, which stay alive because it is suspended on
       // the await below — no database round trip, no second copy of progress.
@@ -11091,9 +11133,13 @@ export async function startRun(id: string): Promise<void> {
         liveGuards.set(id, {
           policy,
           progress: () => {
+            // A Codex cycle exports no telemetry; its in-flight tokens are its
+            // rollout's, and its money is nothing, never a guess.
             const inFlight = liveSpendTelemetry
               ? telemetrySpendSince(id, cycleStartedAt)
-              : NO_TELEMETRY_SPEND;
+              : run.provider === "codex"
+                ? codexInFlightSpend(id)
+                : NO_TELEMETRY_SPEND;
             return {
               // The loop increments before it spawns, so the cycle in flight is
               // the one the pre-cycle guard has just authorised. Reporting it as
@@ -11152,6 +11198,7 @@ export async function startRun(id: string): Promise<void> {
               );
             }
             adoptSession(sid);
+            if (run.provider === "codex") noteCodexThread(id, sid);
           },
           github.token,
           local,
@@ -11176,6 +11223,14 @@ export async function startRun(id: string): Promise<void> {
       } finally {
         liveGuards.delete(id);
         contextWatches.delete(id);
+        // The last reading of a Codex cycle, so one shorter than the tick that
+        // samples it still leaves a point on the run's context chart.
+        if (run.provider === "codex") {
+          const last = endCodexCycle(id);
+          if (last) {
+            sampleCodexContext(id, iterations, last.reading, last.advanced, last.freshThread);
+          }
+        }
         // The child is gone by here on every path this `finally` is reached by,
         // including a kill, so the file has no reader left. The token inside it
         // outlives the cycle — it is the run's, revoked in the loop's own
@@ -12655,6 +12710,16 @@ export async function checkContextCeilings(): Promise<void> {
 
   for (const [id, watch] of contextWatches) {
     if (interrupts.has(id)) continue;
+    // A Codex cycle: the occupancy reading comes off its rollout, and nothing
+    // below applies — no transcript, no ceiling and no pruning act on it.
+    if (codexCycleTracked(id)) {
+      const reading = readCodexCycle(id);
+      const advance = takeCodexSampleAdvance(id);
+      if (reading && advance) {
+        sampleCodexContext(id, watch.iteration(), reading, advance.advanced, advance.freshThread);
+      }
+      continue;
+    }
     const sessionId = watch.sessionId();
     if (!sessionId) continue;
 

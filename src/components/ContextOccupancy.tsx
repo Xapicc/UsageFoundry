@@ -105,6 +105,11 @@ export function ContextOccupancy({
   compact?: boolean;
 }) {
   const { ceilingTokens, samples, sampleCount, prunes, pruneCount } = context;
+  // A Codex run is drawn against its model's whole window, which no guard acts
+  // on, and must not be labelled with the word for the line that ends a cycle.
+  const line = context.ceilingKind === "window" ? "window" : "ceiling";
+  const meterLabel =
+    context.ceilingKind === "window" ? "Of the context window" : "Of the cycle ceiling";
 
   // A ceiling of zero is not a ceiling. Guarded rather than divided by, because
   // `x / 0` is `Infinity`, `Meter` treats a non-finite fraction as unknown, and
@@ -138,7 +143,7 @@ export function ContextOccupancy({
         <>
           <Meter
             size="compact"
-            label="Of the cycle ceiling"
+            label={meterLabel}
             fraction={null}
             unknownHint="not measured yet"
           />
@@ -174,9 +179,9 @@ export function ContextOccupancy({
           </div>
           <Meter
             size="compact"
-            label="Of the cycle ceiling"
+            label={meterLabel}
             fraction={fraction}
-            unknownHint="no ceiling reported"
+            unknownHint={`no ${line} reported`}
           />
 
           {!compact && (
@@ -185,6 +190,7 @@ export function ContextOccupancy({
                 samples={samples}
                 prunes={prunes}
                 ceilingTokens={ceilingTokens}
+                lineKind={line}
               />
 
               <CompositionStack
@@ -301,10 +307,13 @@ function Sparkline({
   samples,
   prunes,
   ceilingTokens,
+  lineKind,
 }: {
   samples: ContextSampleDTO[];
   prunes: ContextOccupancyDTO["prunes"];
   ceilingTokens: number;
+  /** What the dashed rule is, in the legend and the description. */
+  lineKind: "ceiling" | "window";
 }) {
   const t0 = samples[0].ts;
   const span = samples[samples.length - 1].ts - t0;
@@ -342,7 +351,7 @@ function Sparkline({
         className="mt-2.5 block h-auto w-full"
         viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
         role="img"
-        aria-label={describeSeries(samples, prunes, ceilingTokens, peak)}
+        aria-label={describeSeries(samples, prunes, ceilingTokens, peak, lineKind)}
       >
         {/* No floor is drawn, and that is a decision rather than an omission.
             A rule at `baseline` is zero tokens — a reading no series approaches
@@ -450,7 +459,7 @@ function Sparkline({
             />
           </svg>
           <span className="tabular-nums">
-            ceiling {fmtTokens(ceilingTokens)}
+            {lineKind} {fmtTokens(ceilingTokens)}
           </span>
         </span>
         {marks.length > 0 && (
@@ -523,6 +532,7 @@ function describeSeries(
   prunes: ContextOccupancyDTO["prunes"],
   ceilingTokens: number,
   peak: number,
+  line: "ceiling" | "window" = "ceiling",
 ): string {
   const first = samples[0];
   const last = samples[samples.length - 1];
@@ -532,7 +542,7 @@ function describeSeries(
   if (samples.length === 1) {
     return (
       `Context occupancy: one reading so far, ${fmtTokens(first.tokens)} tokens` +
-      `${pct(first.tokens)} against a ceiling of ${fmtTokens(ceilingTokens)}, ` +
+      `${pct(first.tokens)} against a ${line} of ${fmtTokens(ceilingTokens)}, ` +
       `taken at ${fmtClock(first.ts)}. No shape yet.`
     );
   }
@@ -540,7 +550,7 @@ function describeSeries(
   const marks = prunesInSpan(samples, prunes);
   return (
     `Context occupancy: ${samples.length} readings from ${fmtClock(first.ts)} ` +
-    `to ${fmtClock(last.ts)}, against a ceiling of ${fmtTokens(ceilingTokens)} ` +
+    `to ${fmtClock(last.ts)}, against a ${line} of ${fmtTokens(ceilingTokens)} ` +
     `tokens. It starts at ${fmtTokens(first.tokens)}${pct(first.tokens)}, ` +
     `peaks at ${fmtTokens(peak)}${pct(peak)} and is now ` +
     `${fmtTokens(last.tokens)}${pct(last.tokens)}. ` +
@@ -702,7 +712,12 @@ function CompositionStack({
   if (readings.length === 0) {
     return (
       <p className="mt-2 max-w-[68ch] text-xs leading-snug text-ink-muted">
-        {absence === "off" ? (
+        {absence === "provider" ? (
+          <>
+            What the window is made of is read from Claude Code sessions only;
+            a Codex run&rsquo;s is not broken down.
+          </>
+        ) : absence === "off" ? (
           <>
             What the window is made of is not read while context pruning is
             switched off.

@@ -973,6 +973,94 @@ export function sampleContext(
   return reading;
 }
 
+/**
+ * Store a Codex cycle's context reading, `sampleContext`'s twin for the other
+ * CLI.
+ *
+ * The same quantity on the same basis: `api`, the request's whole input as
+ * the provider reported it — off the session rollout's `token_count`
+ * (`codexRollout.ts`) where a Claude cycle's comes off its transcript's
+ * `usage` frame — so the two series draw in one currency. What differs is the
+ * line it is drawn against, which is why `window` is stored with it: a Codex
+ * cycle has no ceiling this app acts on, only the model's own window.
+ *
+ * Deduplicated on the reading's own instant, as `sampleContext` is on its
+ * frame: the tick is time-based and a request outlasts several of them.
+ * `advanced` is the requests this cycle made since the last stored sample, and
+ * `wholeThread` says the count started at the thread's first request, which is
+ * what makes the first sample's turn index exact. Never throws.
+ */
+export function sampleCodexContext(
+  runId: string,
+  iteration: number,
+  reading: { contextTokens: number | null; contextWindow: number | null; at: number | null },
+  advanced: number,
+  wholeThread: boolean,
+): void {
+  const frameId = reading.at === null ? null : `codex:${reading.at}`;
+  const basis = reading.contextTokens === null ? "unreadable" : "api";
+  noteContextCheck(runId, {
+    tokens: reading.contextTokens ?? 0,
+    basis,
+    frameId,
+    turnsAdvanced: 0,
+    sinceFound: false,
+    wholeFile: false,
+  });
+  if (reading.contextTokens === null || reading.contextTokens <= 0) return;
+  try {
+    const last = db()
+      .prepare(
+        `SELECT frame_id, basis, tokens, turn_index, turns_exact
+           FROM context_samples WHERE run_id = ? ORDER BY id DESC LIMIT 1`,
+      )
+      .get(runId) as StoredSample | undefined;
+    // The run's first sample of a thread seen from its first request is the one
+    // whose turn count is complete by itself; every later one adds to the last.
+    const fromThreadStart = wholeThread && !last;
+    const asReading: ContextReading = {
+      tokens: reading.contextTokens,
+      basis,
+      frameId,
+      turnsAdvanced: Math.max(0, advanced),
+      sinceFound: !fromThreadStart,
+      wholeFile: fromThreadStart,
+    };
+    if (last && sameReading(last, asReading)) return;
+    const turns = nextTurnIndex(
+      last ? { turnIndex: last.turn_index, exact: last.turns_exact !== 0 } : null,
+      asReading,
+    );
+    db()
+      .prepare(
+        `INSERT INTO context_samples
+           (ts, run_id, iteration, tokens, basis, frame_id, turn_index, turns_exact, window_tokens)
+         VALUES (?, ?, ?, ?, 'api', ?, ?, ?, ?)`,
+      )
+      .run(
+        reading.at ?? Date.now(),
+        runId,
+        iteration,
+        reading.contextTokens,
+        frameId,
+        turns.turnIndex,
+        turns.exact ? 1 : 0,
+        reading.contextWindow,
+      );
+    db()
+      .prepare(
+        `DELETE FROM context_samples
+          WHERE run_id = ?
+            AND id NOT IN (
+              SELECT id FROM context_samples WHERE run_id = ? ORDER BY id DESC LIMIT ?
+            )`,
+      )
+      .run(runId, runId, CONTEXT_SAMPLES_PER_RUN);
+  } catch (err) {
+    noteBookkeepingFailure("sampleCodexContext", err);
+  }
+}
+
 /** Whether a new reading is the one already on the row. */
 function sameReading(last: StoredSample, reading: ContextReading): boolean {
   if (reading.frameId !== null) return last.frame_id === reading.frameId;
@@ -1090,12 +1178,21 @@ export function contextOccupancy(runId: string): ContextOccupancyDTO | undefined
   try {
     const rows = db()
       .prepare(
-        `SELECT ts, iteration, tokens, basis, turn_index, turns_exact
+        `SELECT ts, iteration, tokens, basis, turn_index, turns_exact, window_tokens
            FROM context_samples WHERE run_id = ? ORDER BY id DESC LIMIT ?`,
       )
       .all(runId, CONTEXT_SERIES_MAX_POINTS) as Array<
-      StoredSample & { ts: number; iteration: number }
+      StoredSample & { ts: number; iteration: number; window_tokens: number | null }
     >;
+    // A Codex run's line is its model's window, read off its newest sample; no
+    // ceiling this app holds acts on a Codex cycle. Asked of the row rather
+    // than inferred from the samples, so a Codex run with none yet is still
+    // not drawn against Claude's ceiling.
+    const codex =
+      (db().prepare("SELECT provider FROM runs WHERE id = ?").get(runId) as
+        | { provider: string | null }
+        | undefined)?.provider === "codex";
+    const codexWindow = rows.find((r) => r.window_tokens !== null)?.window_tokens ?? 0;
     const receipts = db()
       .prepare(
         `SELECT ts, trigger, tokens_removed FROM prune_receipts
@@ -1179,7 +1276,8 @@ export function contextOccupancy(runId: string): ContextOccupancyDTO | undefined
       .reverse();
 
     return {
-      ceilingTokens: CYCLE_CONTEXT_CEILING_TOKENS,
+      ceilingTokens: codex ? codexWindow : CYCLE_CONTEXT_CEILING_TOKENS,
+      ceilingKind: codex ? "window" : "cycle",
       // Reversed rather than selected ascending: the cap has to take the newest
       // rows, which needs a descending scan, and a series is drawn oldest-first.
       samples: rows.reverse().map((r) => ({
@@ -1208,7 +1306,13 @@ export function contextOccupancy(runId: string): ContextOccupancyDTO | undefined
       // is taken behind, and a component that guessed would tell an operator to
       // wait for a reading nothing is going to take.
       compositionAbsence:
-        series.length > 0 ? null : pruningEnabled() ? "pending" : "off",
+        series.length > 0
+          ? null
+          : codex
+            ? "provider"
+            : pruningEnabled()
+              ? "pending"
+              : "off",
     };
   } catch (err) {
     noteBookkeepingFailure("contextOccupancy", err);

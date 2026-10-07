@@ -28,8 +28,12 @@ const SUB = "mt-0.5 text-xs tabular-nums text-ink-muted";
 export function LiveRunFigures({
   run,
 }: {
-  run: Pick<LiveRunDTO, "provider" | "spent_usd" | "cycleTelemetry">;
+  run: Pick<
+    LiveRunDTO,
+    "provider" | "spent_usd" | "cycleTelemetry" | "spent_tokens" | "cycleCodex"
+  >;
 }) {
+  if (run.provider === "codex") return <CodexFigures run={run} />;
   const reportsSpend = providerReportsSpend(run.provider);
   const telemetry = run.cycleTelemetry;
   return (
@@ -54,6 +58,45 @@ export function LiveRunFigures({
           <>
             <Stat>—</Stat>
             <div className={SUB}>none reported this cycle</div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The same two figures for a Codex run, in tokens: what its finished cycles
+ * reported on `turn.completed`, and what its cycle in flight has used so far
+ * by its session file. Codex reports no cost, so there is no money to show and
+ * none is derived; the cycle figure is a dash until something has been read.
+ */
+function CodexFigures({
+  run,
+}: {
+  run: Pick<LiveRunDTO, "spent_tokens" | "cycleCodex">;
+}) {
+  const cycle = run.cycleCodex;
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      <div className="min-w-0">
+        <div className="text-xs font-semibold text-ink">Tokens used</div>
+        <Stat>{fmtTokens(run.spent_tokens)}</Stat>
+        <div className={SUB}>finished cycles · no cost reported</div>
+      </div>
+      <div className="min-w-0">
+        <div className="text-xs font-semibold text-ink">This cycle — Codex</div>
+        {cycle ? (
+          <>
+            <Stat>{fmtTokens(cycle.tokens)}</Stat>
+            <div className={SUB}>
+              {cycle.requests} {cycle.requests === 1 ? "request" : "requests"} so far
+            </div>
+          </>
+        ) : (
+          <>
+            <Stat>—</Stat>
+            <div className={SUB}>none read this cycle</div>
           </>
         )}
       </div>

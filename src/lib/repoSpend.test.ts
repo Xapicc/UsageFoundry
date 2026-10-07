@@ -53,6 +53,7 @@ const run = (
   spentEstUSD,
   spentTokens: spentUSD * 1000,
   spentEstTokens: spentEstUSD * 1000,
+  provider: null,
 });
 
 describe("groupRunSpend", () => {
@@ -169,6 +170,31 @@ describe("groupRunSpend", () => {
     assert.equal(rows[0].spentUSD, 2);
     assert.equal(rows[0].spentEstUSD, 7);
     assert.equal(totals.spentUSD, 2);
+  });
+
+  // A Codex run reports tokens and no cost. Folded into the dollar columns its
+  // zero reads as a measured free run; folded into the token columns its
+  // tokens are summed with Claude's, a figure no instrument produced.
+  it("counts a Codex run in its own token column and in neither of Claude's", () => {
+    const codex: RunSpendRow = {
+      ...run("c", "/w1/api", 0),
+      provider: "codex",
+      spentTokens: 130_963,
+      spentEstTokens: 37,
+    };
+    const { rows, totals } = groupRunSpend(
+      [run("a", "/w1/api", 3), codex],
+      identify,
+      describeFolder,
+    );
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].runCount, 2);
+    assert.equal(rows[0].codexRunCount, 1);
+    assert.equal(rows[0].codexTokens, 131_000);
+    assert.equal(rows[0].spentTokens, 3000, "Claude's tokens alone");
+    assert.equal(rows[0].spentUSD, 3);
+    assert.equal(totals.codexTokens, 131_000);
+    assert.equal(totals.spentTokens, 3000);
   });
 
   it("is empty rather than zero when the span holds no runs", () => {

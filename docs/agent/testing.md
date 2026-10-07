@@ -295,6 +295,7 @@ Units that are about no test file in the tree:
 
 | Test file | Also in |
 |---|---|
+| `codexRollout.test.ts` |  |
 | `mcpStatus.test.ts` |  |
 | `notify.test.ts` |  |
 | `review.test.ts` | [pricing], [landing], [stacks] |

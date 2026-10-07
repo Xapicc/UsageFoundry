@@ -33,6 +33,8 @@ const ON: BudgetFields = {
   maxIterations: "5",
   costLimited: true,
   maxRunCostUSD: "5",
+  tokensLimited: true,
+  maxRunTokens: "2000000",
   timeLimited: true,
   maxDurationMinutes: "60",
   maxSessionFraction: "80",
@@ -45,6 +47,7 @@ test("every limit on sends what is in its box, unparsed", () => {
   assert.deepEqual(budgetFromForm(ON), {
     maxIterations: "5",
     maxRunCostUSD: "5",
+    maxRunTokens: "2000000",
     maxDurationMinutes: "60",
     maxWeeklyFraction: 0.5,
     maxSessionFraction: 0.8,
@@ -61,10 +64,12 @@ test("a limit switched off sends null, however full its box is", () => {
     ...ON,
     iterationsCapped: false,
     costLimited: false,
+    tokensLimited: false,
     timeLimited: false,
   });
   assert.equal(off.maxIterations, null);
   assert.equal(off.maxRunCostUSD, null);
+  assert.equal(off.maxRunTokens, null);
   assert.equal(off.maxDurationMinutes, null);
   // And the two window guards are not switches: they are off by being blank.
   assert.equal(off.maxWeeklyFraction, 0.5);
@@ -133,13 +138,15 @@ test("nothing else reaches the budget", () => {
   // payload and never through here — a budget that grew a permission mode would
   // be a second route to `--permission-mode`, which the run door refuses to
   // become, and one that grew a model would put a figure that only moves cost
-  // in among the guards that bound it.
+  // in among the guards that bound it. `maxRunTokens` is a guard — the
+  // policy's own, offered on the form for a Codex run, whose spend is tokens.
   assert.deepEqual(Object.keys(budgetFromForm(ON)).sort(), [
     "continueAfterDone",
     "enforcement",
     "maxDurationMinutes",
     "maxIterations",
     "maxRunCostUSD",
+    "maxRunTokens",
     "maxSessionFraction",
     "maxWeeklyFraction",
   ]);

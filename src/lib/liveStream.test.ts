@@ -215,6 +215,7 @@ describe("a tile's context", () => {
     });
     const full: ContextOccupancyDTO = {
       ceilingTokens: 200_000,
+      ceilingKind: "cycle",
       samples: [sample(1, 10_000), sample(2, 40_000)],
       sampleCount: 37,
       prunes: [{ ts: 1, trigger: "boundary", tokensRemoved: 5_000 }],

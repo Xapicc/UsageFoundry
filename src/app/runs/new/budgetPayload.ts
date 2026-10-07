@@ -13,6 +13,14 @@ export interface BudgetFields {
   maxIterations: string;
   costLimited: boolean;
   maxRunCostUSD: string;
+  /**
+   * A limit in tokens, offered on the form for a Codex run alone — the one
+   * spend figure that provider reports — and read live from its session file
+   * under live enforcement. The page clears the switch for every other
+   * provider before this reads it.
+   */
+  tokensLimited: boolean;
+  maxRunTokens: string;
   timeLimited: boolean;
   maxDurationMinutes: string;
   maxSessionFraction: string;
@@ -44,6 +52,7 @@ export function budgetFromForm(v: BudgetFields) {
     // picker and never the box.
     maxIterations: v.iterationsCapped ? v.maxIterations : null,
     maxRunCostUSD: v.costLimited ? v.maxRunCostUSD : null,
+    maxRunTokens: v.tokensLimited ? v.maxRunTokens : null,
     maxDurationMinutes: v.timeLimited ? v.maxDurationMinutes : null,
     // Sent as a 0–1 fraction rather than the 0–100 the field shows.
     // normalizePolicy's frac() reads a bare 1 as 100%, so a user typing

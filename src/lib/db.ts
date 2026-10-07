@@ -2052,6 +2052,11 @@ function migrate(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_context_samples_run ON context_samples(run_id, id);
     CREATE INDEX IF NOT EXISTS idx_context_samples_ts ON context_samples(ts);
   `);
+  // The whole context window a Codex sample was measured against, as that CLI
+  // reported it (`model_context_window`). Null on every Claude sample, which is
+  // drawn against this app's own cycle ceiling instead — the two are different
+  // lines and a chart must not draw one labelled as the other.
+  addColumn(db, "context_samples", "window_tokens", "INTEGER");
 
   // What the window was made of when a reading was taken — `winnow context`,
   // at depth 1, one row per provenance per reading.
