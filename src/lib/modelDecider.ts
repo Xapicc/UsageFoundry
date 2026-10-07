@@ -3,7 +3,8 @@ import { enabledModels, modelRefusal, type ModelCatalogueEntry } from "./modelCa
 import { getSettings } from "./settings";
 
 /**
- * Asks the model decider which Claude model a run should use.
+ * Asks the model decider which model a run should use: a Claude model for a
+ * Claude run, a Codex model for a Codex run.
  *
  * The decider is a separate local service (the LocalDecider project: a Tev1-4B
  * classifier behind llama-server) that is handed a run's task and this
@@ -41,6 +42,11 @@ export interface DeciderWork {
   agent?: string | null;
   /** The template's name, when the run has one. */
   template?: string | null;
+  /**
+   * Which CLI the run is spawned as, and so which list the decider is handed
+   * and its answer is held to. Null or absent is the ordinary Claude run.
+   */
+  provider?: string | null;
 }
 
 /**
@@ -56,12 +62,15 @@ export interface ModelDecision {
 /**
  * Whether a run is the decider's to answer.
  *
- * Only a Claude run — every id the decider can return is a Claude catalogue
- * id, and none may cross to Codex or the local provider. And only where nothing
- * a person configured names a model: the run's own (the chat may name one), its
- * template's, and its agent's, because an agent pinned to a model is the
- * operator's answer for that role. `settings.defaultModel` is deliberately not
- * on the list; it is the fallback the decider sits above.
+ * A Claude run or a Codex run, each from its own list (`catalogueFor`), and
+ * never a local one, whose server lists nothing the decider could be handed.
+ * And only where nothing a person configured names a model: the run's own (the
+ * chat may name one), its template's, and its agent's, because an agent pinned
+ * to a model is the operator's answer for that role. On a Codex run only the
+ * run's own counts — a template's or an agent's model is a Claude id that never
+ * reaches `codex exec`, so it answers nothing there. `settings.defaultModel` and
+ * `settings.codexDefaultModel` are deliberately not on the list; they are the
+ * fallbacks the decider sits above.
  */
 export function deciderApplies(run: {
   provider: string | null | undefined;
@@ -69,8 +78,15 @@ export function deciderApplies(run: {
   templateModel: string | null | undefined;
   agentModel: string | null | undefined;
 }): boolean {
+  if (run.provider === "codex") return !run.named?.trim();
   if (run.provider && run.provider !== "claude") return false;
   return [run.named, run.templateModel, run.agentModel].every((model) => !model?.trim());
+}
+
+/** The list a run's model is chosen from and held to: its own provider's. */
+function catalogueFor(provider: string | null | undefined): readonly ModelCatalogueEntry[] {
+  const settings = getSettings();
+  return provider === "codex" ? settings.codexModelCatalogue : settings.modelCatalogue;
 }
 
 /**
@@ -82,6 +98,7 @@ export function readDeciderReply(
   status: number,
   body: unknown,
   catalogue: readonly ModelCatalogueEntry[],
+  provider: string | null | undefined = null,
 ): ModelDecision {
   const field = (name: string): unknown =>
     body !== null && typeof body === "object" ? Reflect.get(body, name) : undefined;
@@ -100,7 +117,7 @@ export function readDeciderReply(
     return { model: null, note: "The model decider answered in a shape this build cannot read." };
   }
 
-  const refusal = modelRefusal(catalogue, model);
+  const refusal = modelRefusal(catalogue, model, provider === "codex" ? "codex" : "claude");
   if (refusal) return { model: null, note: `The model decider picked ${clip(model)}, which was refused. ${refusal}` };
   return { model: model.trim(), note: `Picked by the model decider: ${why}.` };
 }
@@ -113,12 +130,18 @@ export function readDeciderReply(
 export async function decideRunModel(work: DeciderWork): Promise<ModelDecision | null> {
   if (!MODEL_DECIDER_URL) return null;
 
-  const catalogue = getSettings().modelCatalogue;
+  // One provider's list per request: the decider ranks within a tier by
+  // version, and a Claude id beside a Codex one would be a pick this run's CLI
+  // cannot take.
+  const catalogue = catalogueFor(work.provider);
   const models = enabledModels(catalogue).map((entry) => entry.id);
   if (models.length === 0) {
     return {
       model: null,
-      note: "The model decider was not asked: this install has no enabled models to choose from.",
+      note:
+        work.provider === "codex"
+          ? "The model decider was not asked: this install has no enabled Codex models to choose from."
+          : "The model decider was not asked: this install has no enabled models to choose from.",
     };
   }
 
@@ -154,7 +177,7 @@ export async function decideRunModel(work: DeciderWork): Promise<ModelDecision |
     return { model: null, note: `The model decider ${why}.` };
   }
 
-  const decision = readDeciderReply(res.status, body, catalogue);
+  const decision = readDeciderReply(res.status, body, catalogue, work.provider);
   if (res.status !== 200) console.warn(`[usagefoundry] ${decision.note}`);
   return decision;
 }

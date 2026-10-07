@@ -39,6 +39,15 @@
   was admitted, and its pre-cycle `budget` event carried `sessionFraction` 0
   with `sessionPlanAgeMs` 130,734 — the Codex reading, not a transcript scan.
 
+- **LocalDecider picks a Codex model per tier, 2026-10-07**, its `tiers.json`
+  with the Codex families added, Tev1-4B Q8_0 on the host, handed the four
+  enabled Codex ids: a README typo went to `gpt-5.6-luna` (mechanical_change,
+  0.989), an endpoint with a test to `gpt-5.6-terra` (routine_engineering,
+  0.995), and a race with no reproduction to `gpt-5.6-sol` (hard_engineering,
+  0.998), nothing `unrecognised`; the container reached it on
+  `host.docker.internal:8090`. Asked directly, not yet through a chat proposal
+  or a block of the deployed app.
+
 ## Not yet verified by hand
 
 - **The deployed pages have not been looked at (2026-10-07).** `npm run

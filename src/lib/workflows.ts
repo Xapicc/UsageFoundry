@@ -636,11 +636,15 @@ export function planEmittedRun(
     // moment, so one given a model after the emission was decided on still
     // wins: a person's answer outranks the decider's. The turn itself still
     // has no way to name a model — `decidedModel` is written by this app, see
-    // `RunSpec`. Dropped for Codex and local, `planNode`'s rule.
+    // `RunSpec`. A Codex run takes the decider's pick and never the
+    // template's, which is a Claude id; the pick was held to the Codex list
+    // when it was made. Dropped for local, `planNode`'s rule.
     model:
-      node.provider === "codex" || node.provider === "local"
+      node.provider === "local"
         ? null
-        : (template?.model ?? spec.decidedModel ?? null),
+        : node.provider === "codex"
+          ? (spec.decidedModel ?? null)
+          : (template?.model ?? spec.decidedModel ?? null),
     // The block's, never the spec's: a person saved it, and `emit_runs` has no
     // field that could carry one.
     provider: node.provider || null,
@@ -7990,7 +7994,12 @@ export function emittedModelWork(
     return [
       {
         specId: spec.id,
-        work: { task: `${spec.title}\n\n${spec.task}`, agent: spec.agent, template: template?.name ?? null },
+        work: {
+          task: `${spec.title}\n\n${spec.task}`,
+          agent: spec.agent,
+          template: template?.name ?? null,
+          provider: node.provider,
+        },
       },
     ];
   });

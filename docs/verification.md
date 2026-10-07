@@ -43,7 +43,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Git and review | [git-and-review.md](verification/git-and-review.md) | 13 | 10 |
 | Agents, templates and models | [agents-templates-and-models.md](verification/agents-templates-and-models.md) | 21 | 9 |
 | Other providers | [other-providers.md](verification/other-providers.md) — Codex, and the local provider | 22 | 8 |
-| Other providers | [codex-account-and-models.md](verification/codex-account-and-models.md) — Codex's usage windows and model list, read through `codex app-server` | 4 | 3 |
+| Other providers | [codex-account-and-models.md](verification/codex-account-and-models.md) — Codex's usage windows and model list, read through `codex app-server` | 5 | 3 |
 | Knowledge and plugins | [knowledge-and-plugins.md](verification/knowledge-and-plugins.md) | 16 | 11 |
 | Dreaming | [dreaming.md](verification/dreaming.md) | 2 | 1 |
 | Retention | [retention.md](verification/retention.md) | 2 | 2 |
@@ -64,4 +64,4 @@ measurement under *Verified* and cut the item down to what is still open.
 | Interface | [interface-narrow-viewports.md](verification/interface-narrow-viewports.md) — pages at 390px, layout sweeps and smoke-pages | 15 | 9 |
 | Interface | [interface-canvases.md](verification/interface-canvases.md) — the graph canvases, touched map and replay | 5 | 2 |
 | Interface | [interface-pages-and-api.md](verification/interface-pages-and-api.md) — pages, panels and API payloads | 20 | 12 |
-| **Total** | | **454** | **275** |
+| **Total** | | **455** | **275** |

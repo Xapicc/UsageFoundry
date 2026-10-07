@@ -5138,8 +5138,9 @@ async function proposalModelDecision(args: Record<string, unknown>): Promise<Mod
   const template = templateId ? getTemplate(templateId) : null;
   const agentId = String(args.agentId ?? "").trim();
   const agent = agentId ? getAgent(agentId) : null;
+  const provider = String(args.provider ?? "").trim() || null;
   const applies = deciderApplies({
-    provider: String(args.provider ?? "").trim() || null,
+    provider,
     named: modelArgument(args.model),
     templateModel: template?.model,
     agentModel: agent?.model,
@@ -5151,6 +5152,7 @@ async function proposalModelDecision(args: Record<string, unknown>): Promise<Mod
     task: title ? `${title}\n\n${task}` : task,
     agent: agent?.name ?? null,
     template: template?.name ?? null,
+    provider,
   });
 }
 

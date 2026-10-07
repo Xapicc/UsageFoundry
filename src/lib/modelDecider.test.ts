@@ -30,9 +30,21 @@ describe("deciderApplies — which runs the decider may answer", () => {
     assert.equal(deciderApplies({ ...open, provider: "claude" }), true);
   });
 
-  it("never answers for Codex or the local provider", () => {
-    assert.equal(deciderApplies({ ...open, provider: "codex" }), false);
+  it("never answers for the local provider", () => {
     assert.equal(deciderApplies({ ...open, provider: "local" }), false);
+  });
+
+  // A Codex run is answered from the Codex list, and only the run's own model
+  // stands it aside: a template's or an agent's is a Claude id that never
+  // reaches `codex exec`, so treating it as an answer would leave every Codex
+  // run from a template with a model on the Codex default for good.
+  it("answers a Codex run unless the run itself named a model", () => {
+    assert.equal(deciderApplies({ ...open, provider: "codex" }), true);
+    assert.equal(
+      deciderApplies({ ...open, provider: "codex", templateModel: "claude-sonnet-5", agentModel: "claude-haiku-4-5" }),
+      true,
+    );
+    assert.equal(deciderApplies({ ...open, provider: "codex", named: "gpt-5.6-luna" }), false);
   });
 
   it("stands aside for a model the chat, the template or the agent named", () => {
@@ -63,6 +75,21 @@ describe("readDeciderReply — what becomes a run's model", () => {
       assert.equal(decision.model, null, model);
       assert.match(decision.note, /was refused/, model);
     }
+  });
+
+  // Held to the Codex list for a Codex run, and the sentence names that list:
+  // a Claude id the decider answered with is refused there however enabled it
+  // is on the Claude list.
+  it("holds a Codex run's pick to the Codex list", () => {
+    const codex: ModelCatalogueEntry[] = [
+      { id: "gpt-6-astra", label: "GPT-6-Astra", enabled: true },
+      { id: "gpt-5.6-luna", label: "GPT-5.6-Luna", enabled: true },
+    ];
+    const ok = readDeciderReply(200, { model: "gpt-5.6-luna", reason: "mechanical_change" }, codex, "codex");
+    assert.equal(ok.model, "gpt-5.6-luna");
+    const crossed = readDeciderReply(200, { model: "claude-sonnet-5", reason: "r" }, codex, "codex");
+    assert.equal(crossed.model, null);
+    assert.match(crossed.note, /not on this install's Codex list/);
   });
 
   it("reads an abstention, an error and a body it cannot parse as no pick", () => {

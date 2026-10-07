@@ -2742,8 +2742,8 @@ describe("planNode — a block that names a provider", () => {
  *
  * Silent in money both ways: a decider pick that outranked the block's
  * template would replace the price the operator saved with one a classifier
- * chose, and a pick that reached a Codex or local run would hand a Claude id to
- * a CLI that does not serve it. The template is read when the run is created,
+ * chose, and a Claude id reaching a Codex or local run — the template's, on a
+ * Codex block — would be handed to a CLI that does not serve it. The template is read when the run is created,
  * so one given a model after the emission was decided on must still win.
  */
 describe("planEmittedRun — the decider's pick against the block's template", () => {
@@ -2769,10 +2769,22 @@ describe("planEmittedRun — the decider's pick against the block's template", (
     assert.equal(planEmittedRun(ORCHESTRATOR, SPEC, BLOCK_TEMPLATE, BLOCK_DEFAULTS, null).model, "claude-sonnet-5");
   });
 
-  it("drops the pick for a Codex or local block", () => {
-    for (const provider of ["codex", "local"] as const) {
-      assert.equal(planEmittedRun({ ...ORCHESTRATOR, provider }, SPEC, null, BLOCK_DEFAULTS, null).model, null, provider);
-    }
+  it("drops the pick for a local block", () => {
+    assert.equal(
+      planEmittedRun({ ...ORCHESTRATOR, provider: "local" }, SPEC, null, BLOCK_DEFAULTS, null).model,
+      null,
+    );
+  });
+
+  // A Codex block's pick came off the Codex list, and its template's model is a
+  // Claude id `codex exec -m` would refuse, so the template must not outrank it
+  // there the way it does on a Claude block.
+  it("runs a Codex block on the decider's pick and never on the template's model", () => {
+    const codex = { ...ORCHESTRATOR, provider: "codex" as const };
+    const picked = { ...SPEC, decidedModel: "gpt-5.6-luna" };
+    assert.equal(planEmittedRun(codex, picked, BLOCK_TEMPLATE, BLOCK_DEFAULTS, null).model, "gpt-5.6-luna");
+    const { decidedModel: _, ...undecided } = SPEC;
+    assert.equal(planEmittedRun(codex, undecided, BLOCK_TEMPLATE, BLOCK_DEFAULTS, null).model, null);
   });
 
   it("leaves the model to createRun when nothing decided one", () => {
