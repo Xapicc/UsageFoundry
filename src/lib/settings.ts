@@ -10,7 +10,7 @@ import {
   type ModelCatalogueEntry,
 } from "./modelCatalogue";
 import type { LimitConfig, WeeklyAnchor } from "./windows";
-import type { EffortLevel, PruneTier } from "./apiTypes";
+import type { CodexEffortLevel, EffortLevel, PruneTier } from "./apiTypes";
 
 /**
  * User-editable preferences.
@@ -157,6 +157,18 @@ export interface Settings {
    * and offline, and `bypassPermissions` has no sandbox to open.
    */
   codexNetworkAccess: boolean;
+  /**
+   * The reasoning effort every Codex work cycle runs at, or `null` for the
+   * model's own default.
+   *
+   * `runEffort`'s twin and on its terms — install-wide, carried by no
+   * proposal, template, agent or node, so nothing the orchestrator chat writes
+   * can move it — but its own field, because the two CLIs' scales differ:
+   * Codex's runs to `ultra`, which its CLI describes as "maximum reasoning with
+   * automatic task delegation" and so may start sub-agents, and a Claude level
+   * handed to Codex or the reverse is a value one of them does not take.
+   */
+  codexRunEffort: CodexEffortLevel | null;
   /**
    * The saved agent the new-run form starts on, or null for none.
    *
@@ -983,6 +995,19 @@ export function isEffortLevel(value: unknown): value is EffortLevel {
   return typeof value === "string" && (EFFORT_LEVELS as readonly string[]).includes(value);
 }
 
+export const CODEX_EFFORT_LEVELS: readonly CodexEffortLevel[] = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+];
+
+export function isCodexEffortLevel(value: unknown): value is CodexEffortLevel {
+  return typeof value === "string" && (CODEX_EFFORT_LEVELS as readonly string[]).includes(value);
+}
+
 export const DEFAULT_CONTINUATION_PROMPT =
   "Continue working on the task. If it is fully complete and verified, reply " +
   "with exactly DONE on its own line and make no further changes.";
@@ -1086,6 +1111,7 @@ export const DEFAULTS: Settings = {
   codexDefaultModel: null,
   codexModelCatalogue: [],
   codexNetworkAccess: false,
+  codexRunEffort: null,
   defaultAgentId: null,
   continuationPrompt: DEFAULT_CONTINUATION_PROMPT,
   includeSidechains: true,

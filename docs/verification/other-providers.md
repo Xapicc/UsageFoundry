@@ -239,6 +239,11 @@
   file read. `readCodexItem`'s cases are these items. Not yet seen through a
   run of the deployed app: the run page's log and Files tab for a Codex run.
 
+- **Codex runs an effort its model does not list, 2026-10-07**, `codex-cli
+  0.153.4`, `gpt-5.6-luna`, `codex exec -c model_reasoning_effort=…`: `high`
+  and `ultra` — which Luna's `model/list` entry does not include — both
+  completed a one-word turn, and each session recorded the effort asked for.
+
 ## Not yet verified by hand
 
 - **No local cycle has been seen compacting under a sign-in window

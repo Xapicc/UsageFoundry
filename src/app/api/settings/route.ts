@@ -4,8 +4,10 @@ import { NextResponse } from "next/server";
 // the way src/lib and the chat route already do.
 import { armDreaming, disarmDreaming } from "../../../lib/dreamingRun";
 import {
+  CODEX_EFFORT_LEVELS,
   EFFORT_LEVELS,
   getSettings,
+  isCodexEffortLevel,
   isEffortLevel,
   PERMISSION_MODES,
   sameValue,
@@ -536,6 +538,18 @@ async function applySettingsPut(body: Record<string, unknown>): Promise<Response
       );
     }
     patch.runEffort = body.runEffort;
+  }
+
+  if ("codexRunEffort" in body) {
+    // Refused rather than coerced, `runEffort`'s reason: the value reaches
+    // every Codex cycle's argv.
+    if (body.codexRunEffort !== null && !isCodexEffortLevel(body.codexRunEffort)) {
+      return NextResponse.json(
+        { error: `codexRunEffort must be null or one of ${CODEX_EFFORT_LEVELS.join(", ")}` },
+        { status: 400 },
+      );
+    }
+    patch.codexRunEffort = body.codexRunEffort;
   }
 
   if ("readGuard" in body) {

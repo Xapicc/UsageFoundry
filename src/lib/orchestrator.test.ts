@@ -3891,6 +3891,24 @@ describe("buildCodexArgs", () => {
     assert.equal(at < args.indexOf("resume"), true);
   });
 
+  // The Codex level is a price on every cycle, so it may come from the Codex
+  // setting alone: a Claude level on a Codex argv, or the Codex one on a
+  // Claude argv, is a value that CLI does not take.
+  it("sets a Codex cycle's reasoning effort from its own setting, before resume", () => {
+    const args = buildCodexArgs({ ...base, codexEffort: "ultra", resumeSessionId: "t1" });
+    const at = args.indexOf('model_reasoning_effort="ultra"');
+    assert.notEqual(at, -1);
+    assert.equal(args[at - 1], "-c");
+    assert.equal(at < args.indexOf("resume"), true);
+    assert.equal(
+      buildCodexArgs({ ...base, effort: "max" }).some((a) => a.startsWith("model_reasoning_effort")),
+      false,
+      "Claude's level reached a Codex argv",
+    );
+    assert.equal(buildCodexArgs({ ...base, codexEffort: null }).some((a) => a.startsWith("model_reasoning_effort")), false);
+    assert.equal(buildArgs({ ...base, isolated: false, codexEffort: "high" }).includes("--effort"), false);
+  });
+
   it("opens the network only for an acceptEdits Codex cycle, and only when switched on", () => {
     const net = "sandbox_workspace_write.network_access=true";
     const has = (args: string[]) => args.includes(net);

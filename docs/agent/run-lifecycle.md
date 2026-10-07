@@ -91,6 +91,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - `runs.provider` records which CLI a run was admitted as, and `null` on it is a third answer rather than a default.
 - A Codex cycle is handed the run's write set in the shape Codex's sandbox can build, and none of Claude Code's sandbox preparation.
 - A Codex cycle's commands are offline unless the operator opened the network, and only `acceptEdits` can be opened.
+- A Codex cycle's reasoning effort is its own install-wide setting, on its own scale.
 - An isolated run is told what its worktree does not isolate.
 - A run is told to delegate, and the instruction has a floor in it.
 - A run is told a browser is already here, because the command it reaches for from memory is the one thing that does not work.

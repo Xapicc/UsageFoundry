@@ -3397,6 +3397,15 @@ export type PruneTier = "standard" | "aggressive";
 export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
 
 /**
+ * A reasoning effort `codex exec` takes as `model_reasoning_effort`: every
+ * level the Codex CLI's `model/list` named for any model on the measured
+ * account (0.153.4, 2026-10-07). Not every model lists every level — Luna has
+ * no `ultra` — and a level a model does not list was measured to run rather
+ * than fail.
+ */
+export type CodexEffortLevel = "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+
+/**
  * One model this install may start work on.
  *
  * Mirrors `ModelCatalogueEntry`, `RunGuardsDTO`'s rule — this file imports
@@ -3495,6 +3504,8 @@ export interface SettingsDTO {
   codexModelCatalogue: ModelCatalogueEntryDTO[];
   /** Network for an `acceptEdits` Codex run's commands. See `settings.codexNetworkAccess`. */
   codexNetworkAccess: boolean;
+  /** Every Codex work cycle's reasoning effort; `null` leaves it to the model. */
+  codexRunEffort: CodexEffortLevel | null;
   /**
    * The saved agent the new-run form starts on. An id, never a definition, and
    * it carries no capability — see `settings.defaultAgentId`.

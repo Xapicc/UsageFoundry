@@ -16,7 +16,7 @@
 import { sessionAgentArgs, type AgentDefinition } from "./agents";
 import { pluginDirArgs } from "./plugins";
 import type { PermissionMode } from "./settings";
-import type { EffortLevel } from "./apiTypes";
+import type { CodexEffortLevel, EffortLevel } from "./apiTypes";
 import { shortId } from "./format";
 import type { ToolCall } from "./orchestrator";
 
@@ -1301,6 +1301,11 @@ export function buildArgs(opts: {
    */
   codexNetworkAccess?: boolean;
   /**
+   * `settings.codexRunEffort`, as `model_reasoning_effort` on a Codex argv.
+   * Ignored by `buildArgs`, whose effort is `effort` on Claude's own scale.
+   */
+  codexEffort?: CodexEffortLevel | null;
+  /**
    * The taskboard tool surface, when the operator has switched it on.
    *
    * `mcpConfigPath` is a file `chat.ts`'s `writeMcpConfig` wrote for this cycle,
@@ -1726,6 +1731,13 @@ export function buildCodexArgs(opts: Parameters<typeof buildArgs>[0]): string[] 
   // run may do (`settings.codexNetworkAccess`).
   if (opts.codexNetworkAccess && opts.permissionMode === "acceptEdits") {
     args.push("-c", "sandbox_workspace_write.network_access=true");
+  }
+  // Absent leaves each model on its own default — on the measured account
+  // `gpt-6-astra` defaults to low and `gpt-5.5` to xhigh, so one install-wide
+  // level is a real change of price per model. Before `resume` with the other
+  // parent flags, so a resumed cycle runs at it too.
+  if (opts.codexEffort) {
+    args.push("-c", `model_reasoning_effort=${JSON.stringify(opts.codexEffort)}`);
   }
   // Every directory beyond the working root this cycle may write, one per flag:
   // `--add-dir` is repeatable and takes one directory each time. The run loop

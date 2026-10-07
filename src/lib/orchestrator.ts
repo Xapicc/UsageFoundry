@@ -11403,6 +11403,10 @@ export async function startRun(id: string): Promise<void> {
         // purpose: no proposal, template, agent or workflow node carries an
         // effort, so nothing the orchestrator chat writes can move it.
         effort: settings.runEffort,
+        // Codex's own scale, from the same segment-fixed read and for the
+        // same reason; `buildArgs` ignores it and `buildCodexArgs` ignores
+        // `effort`, so neither level can reach the other CLI.
+        codexEffort: settings.codexRunEffort,
         // Inside the argv the adapter builds rather than appended to it after
         // the fact, which is where it used to be. The paths are the same for
         // every provider and the flag that carries them is not — a `--settings`

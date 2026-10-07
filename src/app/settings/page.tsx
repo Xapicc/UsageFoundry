@@ -27,6 +27,7 @@ import type {
   ToolInventoryDTO,
   ToolRowDTO,
   ToolStateDTO,
+  CodexEffortLevel,
   EffortLevel,
   PruneTier,
   RunGuardsDTO,
@@ -273,6 +274,17 @@ const EFFORT_OPTIONS: readonly { value: EffortLevel; label: string }[] = [
   { value: "max", label: "Max" },
 ];
 
+// Codex's own scale, which runs one rung past Claude's: `ultra` lets the model
+// start sub-agents, so it is named for what it does rather than only how high.
+const CODEX_EFFORT_OPTIONS: readonly { value: CodexEffortLevel; label: string }[] = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "xhigh", label: "Extra high" },
+  { value: "max", label: "Max" },
+  { value: "ultra", label: "Ultra — delegates to sub-agents" },
+];
+
 const PRUNE_TIER_OPTIONS: readonly SegmentedOption<PruneTier>[] = [
   { value: "standard", label: "Standard" },
   { value: "aggressive", label: "Aggressive" },
@@ -360,6 +372,7 @@ const EDITABLE_PATHS = [
   "defaultModel",
   "codexDefaultModel",
   "codexNetworkAccess",
+  "codexRunEffort",
   "defaultAgentId",
   "forwardSubAgentText",
   "runEffort",
@@ -4027,6 +4040,32 @@ export default function SettingsPage() {
               onChange={(v) => patch({ codexNetworkAccess: v })}
               label="Network for Codex runs"
             />
+          </SettingRow>
+
+          <SettingRow
+            htmlFor="codexeffort"
+            edited={isEdited("codexRunEffort")}
+            label="Codex reasoning effort"
+            description="Every Codex work cycle runs at this level. A model that does not list it still runs"
+          >
+            <div className="w-56">
+              <Select
+                id="codexeffort"
+                value={effective.codexRunEffort ?? ""}
+                onChange={(e) =>
+                  patch({
+                    codexRunEffort: (e.target.value || null) as CodexEffortLevel | null,
+                  })
+                }
+              >
+                <option value="">Each model&apos;s own default</option>
+                {CODEX_EFFORT_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
           </SettingRow>
 
           {/* Beside the model and deliberately not among the guards below. An
