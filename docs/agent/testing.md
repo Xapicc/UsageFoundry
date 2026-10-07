@@ -95,6 +95,7 @@ Twenty-one are renderings rather than functions — every `*.test.tsx` in the tr
 | Test file | Also in |
 |---|---|
 | `codexAccount.test.ts` |  |
+| `codexInstructions.test.ts` |  |
 | `codexModelDiscovery.test.ts` |  |
 | `modelAdoption.test.ts` |  |
 | `modelCatalogue.test.ts` |  |

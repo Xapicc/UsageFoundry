@@ -217,6 +217,15 @@
   /api/settings`, a one-cycle `acceptEdits` Codex run got 200 and completed.
   The switch was left on for this install.
 
+- **Codex reads `CLAUDE.md` only with the fallback, and `$CODEX_HOME/AGENTS.md`
+  even under `--ignore-user-config`, 2026-10-07**, `codex-cli 0.153.4`, `codex
+  debug prompt-input` with markers in a scratch repository and a scratch
+  `CODEX_HOME`: no marker from a repository `CLAUDE.md` by default; with `-c
+  project_doc_fallback_filenames=["CLAUDE.md"]` the root's, and from a
+  subdirectory the nested one as well; the global `AGENTS.md` marker in
+  `prompt-input`, and twice in the session file of a `codex exec
+  --ignore-user-config` there. Not yet seen in a cycle through the app.
+
 ## Not yet verified by hand
 
 - **No local cycle has been seen compacting under a sign-in window

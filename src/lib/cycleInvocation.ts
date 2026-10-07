@@ -1706,6 +1706,15 @@ export function buildCodexArgs(opts: Parameters<typeof buildArgs>[0]): string[] 
     "--json",
     "--skip-git-repo-check",
     "--ignore-user-config",
+    // A repository's `CLAUDE.md` where it has no `AGENTS.md`, from its root
+    // down to the working directory — which Codex otherwise never reads, so a
+    // Codex run in a repository written for Claude worked without its
+    // instructions. Measured with `codex debug prompt-input` on 0.153.4: no
+    // marker from either file without this, both the root's and a nested one
+    // with it. The operator's own rules reach the cycle as `$CODEX_HOME/AGENTS.md`
+    // instead (`codexInstructions.ts`).
+    "-c",
+    'project_doc_fallback_filenames=["CLAUDE.md"]',
   ];
   if (opts.model) args.push("-m", opts.model);
   if (opts.workDir) args.push("-C", opts.workDir);

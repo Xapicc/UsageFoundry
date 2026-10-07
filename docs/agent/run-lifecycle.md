@@ -36,6 +36,11 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - …and a rate limit is a transient failure that is not the same transient failure, so it has its own ladder and its own ending.
 - A paused run is reconsidered, not trusted.
 
+## [What a Codex cycle is told before its prompt](run-lifecycle/codex-instructions.md)
+
+- A Codex cycle reads the same standing instructions a Claude cycle does, through the two files Codex looks for.
+- The generated file is this app's whatever it holds, and it is rewritten or removed before every Codex cycle.
+
 ## [A Codex run's wall and content refusals](run-lifecycle/codex-refusals.md)
 
 - A Codex run's wall is read in Codex's words and waited out to Codex's reset.

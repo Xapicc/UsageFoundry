@@ -3725,6 +3725,8 @@ describe("buildCodexArgs", () => {
       "--json",
       "--skip-git-repo-check",
       "--ignore-user-config",
+      "-c",
+      'project_doc_fallback_filenames=["CLAUDE.md"]',
       "-C",
       "/w/repo",
       "-s",
@@ -3749,7 +3751,7 @@ describe("buildCodexArgs", () => {
     // Spelled out rather than read from `CODEX_PERMISSIONS`, for the reason
     // `buildArgs`' allowed-tools list is: the mapping is the thing under test,
     // and a test that imported it would agree with any edit to it.
-    assert.deepEqual(argvFor("plan").slice(4), [
+    assert.deepEqual(argvFor("plan").slice(6), [
       "-s",
       "read-only",
       "-c",
@@ -3759,19 +3761,19 @@ describe("buildCodexArgs", () => {
     // think is a mistake: `default` is the mode that asks a person before each
     // action, no work cycle has one, and answering "read-only" is the only
     // reading of it that does not invent consent.
-    assert.deepEqual(argvFor("default").slice(4), [
+    assert.deepEqual(argvFor("default").slice(6), [
       "-s",
       "read-only",
       "-c",
       'approval_policy="never"',
     ]);
-    assert.deepEqual(argvFor("acceptEdits").slice(4), [
+    assert.deepEqual(argvFor("acceptEdits").slice(6), [
       "-s",
       "workspace-write",
       "-c",
       'approval_policy="never"',
     ]);
-    assert.deepEqual(argvFor("bypassPermissions").slice(4), [
+    assert.deepEqual(argvFor("bypassPermissions").slice(6), [
       "--dangerously-bypass-approvals-and-sandbox",
     ]);
 
@@ -3876,6 +3878,17 @@ describe("buildCodexArgs", () => {
    * even write, and a Claude argv carrying the key would be a flag the CLI
    * does not know.
    */
+  // Without it a Codex run in a repository written for Claude never reads that
+  // repository's CLAUDE.md, which looks like a model ignoring its instructions.
+  // Measured on the pin: no marker from the file without the override.
+  it("points every Codex cycle at the repository's CLAUDE.md, before resume", () => {
+    const args = buildCodexArgs({ ...base, workDir: "/w/repo", resumeSessionId: "0199-thread" });
+    const at = args.indexOf('project_doc_fallback_filenames=["CLAUDE.md"]');
+    assert.notEqual(at, -1);
+    assert.equal(args[at - 1], "-c");
+    assert.equal(at < args.indexOf("resume"), true);
+  });
+
   it("opens the network only for an acceptEdits Codex cycle, and only when switched on", () => {
     const net = "sandbox_workspace_write.network_access=true";
     const has = (args: string[]) => args.includes(net);

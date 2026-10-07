@@ -149,6 +149,7 @@ import { prepareReadGuard } from "./readGuard";
 // generated on disk for a cycle to pick up — and unlike it in the one way that
 // matters: an unavailable read guard logs, an unavailable denial refuses.
 import { prepareCodexRules } from "./codexRules";
+import { prepareCodexInstructions } from "./codexInstructions";
 import {
   codexGuardSnapshot,
   codexUsage,
@@ -10761,6 +10762,14 @@ export async function startRun(id: string): Promise<void> {
           throw new Error(
             `Refusing to spawn a Codex work cycle with no process-kill denial: ${rules.reason}`,
           );
+        }
+        // The operator's `~/.claude` rules, as the `AGENTS.md` Codex reads.
+        // Degraded rather than refused, unlike the denial above: a cycle
+        // without the operator's style rules still does its work, where one
+        // without the denial could end every run in the container.
+        const instructions = prepareCodexInstructions();
+        if (instructions.kind === "unavailable") {
+          log(id, `Codex is running this cycle without your ~/.claude rules: ${instructions.reason}`);
         }
       }
 
