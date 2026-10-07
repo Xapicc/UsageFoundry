@@ -1342,8 +1342,9 @@ const CHAT_TOOLS = [
             "Claude: its spend is unknown rather than measured, it gets no " +
             "plugins, agent role or taskboard, and its guard set must carry a " +
             "work-cycle or time limit — a template or default set without one " +
-            "is refused. It takes no model from the list above: omit model and " +
-            "it runs Codex's own default. It also needs its own sign-in in " +
+            "is refused. Its model is one of the Codex ids on the list above " +
+            "(gpt-…), never a claude- id; omit model and it runs the " +
+            "operator's Codex default. It also needs its own sign-in in " +
             "Settings. \"local\" runs Claude Code against the operator's own " +
             "model server, signed in under Settings: it too takes no model from " +
             "the list (it runs the signed-in model), needs a work-cycle or time " +
@@ -2194,10 +2195,16 @@ async function handle(
 
     case "tools/list":
       return ok({
-        tools: withModelChoices(
-          toolsFor(subject),
-          enabledModels(getSettings().modelCatalogue).map((entry) => entry.id),
-        ),
+        // Both providers' enabled ids, because one `model` argument serves
+        // both: which list an id must be on is decided where the provider is
+        // known, and an enum of Claude ids alone would steer a Codex card onto
+        // a model its CLI refuses.
+        tools: withModelChoices(toolsFor(subject), [
+          ...new Set([
+            ...enabledModels(getSettings().modelCatalogue).map((entry) => entry.id),
+            ...enabledModels(getSettings().codexModelCatalogue).map((entry) => entry.id),
+          ]),
+        ]),
       });
 
     case "tools/call": {
@@ -5526,9 +5533,11 @@ function proposeRun(args: Record<string, unknown>, chatId: string, decision: Mod
   // does. Refusing there would be terminal for every member of the batch.
   //
   // Blank is "named none": whitespace must not become `--model "  "`.
+  //
+  // Judged against the list of the provider the card names, once that is
+  // known below — a Codex slug is on the Codex list and never on the Claude
+  // one, and the reverse.
   const model = modelArgument(args.model);
-  const modelProblem = modelRefusal(getSettings().modelCatalogue, model);
-  if (modelProblem) return text(modelProblem, true);
 
   // Narrowed against the list `POST /api/runs` narrows against, for its reason:
   // a value nothing recognises must not become a run that quietly spawned
@@ -5572,12 +5581,12 @@ function proposeRun(args: Record<string, unknown>, chatId: string, decision: Mod
       true,
     );
   }
-  if (provider === "codex" && model) {
-    return text(
-      `A Codex run cannot take ${model}: every model on this list is a Claude ` +
-        "id. Omit model and it runs on Codex's own default.",
-      true,
-    );
+  if (provider !== "local") {
+    const modelProblem =
+      provider === "codex"
+        ? modelRefusal(getSettings().codexModelCatalogue, model, "codex")
+        : modelRefusal(getSettings().modelCatalogue, model);
+    if (modelProblem) return text(modelProblem, true);
   }
   // Here as well as at the click, so the model can act on it while it is
   // still writing the card. The guards are the ones the run would start under

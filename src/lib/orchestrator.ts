@@ -39,6 +39,7 @@ import {
   ensureSandboxExcludesFile,
   ensureSandboxMountPoints,
   sweepSandboxTreeRoot,
+  type MountPointResult,
 } from "./sandboxMountPoints";
 import { baselineFrom, taskSignature, type CostBaseline } from "./costBaseline";
 import { db } from "./db";
@@ -146,6 +147,7 @@ import { prepareReadGuard } from "./readGuard";
 // generated on disk for a cycle to pick up — and unlike it in the one way that
 // matters: an unavailable read guard logs, an unavailable denial refuses.
 import { prepareCodexRules } from "./codexRules";
+import { codexGuardSnapshot } from "./codexAccount";
 import {
   ensureLocalConfigDir,
   getLocalSignIn,
@@ -4458,20 +4460,23 @@ function admitDependencies(
  * price table, so it is a Claude id by construction and a fallback for the
  * Claude provider only. Handed to a Codex run it became `codex exec -m
  * claude-…`, a model that CLI has never heard of. A Codex run that named none
- * is left null instead, which `buildCodexArgs` turns into no `-m` at all, so
- * Codex runs its own default. Not refused: blank has a true meaning for that
- * CLI, and the door already declines to validate a Codex id against a list it
- * was never told.
+ * takes `settings.codexDefaultModel` instead — picked from the Codex list,
+ * which is what the Codex CLI's own `model/list` named — and null where that
+ * is unset, which `buildCodexArgs` turns into no `-m` at all, so Codex runs
+ * its own default. Neither default ever stands in for the other.
  */
 export function frozenRunModel(
   model: string | null | undefined,
   provider: RunProviderDTO | null | undefined,
   defaultModel: string | null,
+  codexDefaultModel: string | null = null,
 ): string | null {
+  if (model) return model;
+  if (provider === "codex") return codexDefaultModel;
   // A local run is Claude Code, but a Claude id is exactly what its server has
   // never heard of. The door freezes the sign-in's model onto it; a null that
   // got past it spawns with the sign-in's model at the cycle instead.
-  return model ?? (provider === "codex" || provider === "local" ? null : defaultModel);
+  return provider === "local" ? null : defaultModel;
 }
 
 /**
@@ -4603,10 +4608,15 @@ export function createRun(input: CreateRunInput): RunRow {
         id,
         folder,
         prompt,
-        frozenRunModel(input.model, input.provider, settings.defaultModel),
+        frozenRunModel(
+          input.model,
+          input.provider,
+          settings.defaultModel,
+          settings.codexDefaultModel,
+        ),
         // No `?? "claude"`, unlike the model above: the model has a settings
-        // default to fall back to (for Claude; `frozenRunModel` says why a
-        // Codex run gets none), and a provider nobody named is a question
+        // default to fall back to (one per provider; `frozenRunModel` says why
+        // neither crosses), and a provider nobody named is a question
         // that was never put to anybody. Null here is what the run page renders
         // as "not recorded".
         input.provider ?? null,
@@ -6736,6 +6746,139 @@ export function sandboxWritableRoots(
   return policy.allowWrite;
 }
 
+/**
+ * The same run's write set as a Codex cycle's `--add-dir` list, which is not the
+ * list Claude Code's overlay takes.
+ *
+ * **Codex's sandbox has to create three mount points in every root it is given,
+ * and one root it cannot create them in fails every command of the cycle.**
+ * Recorded in a real cycle's session file (`codex-cli 0.153.4`, 2026-10-07):
+ * each writable root carries a read-only `<root>/.git`, `<root>/.agents` and
+ * `<root>/.codex` entry with `missing_path_behavior: "skip"`, and bwrap still
+ * `mkdir`s each one before the command runs. `STACKS_STATE_DIR` is root-owned
+ * 0755 by design (`docker-compose.yml`'s stacks volume: the agents own the
+ * per-stack directories inside it and never the directory itself), so every
+ * sandboxed command of that cycle died with `bwrap: Can't mkdir
+ * /var/lib/uf-stacks/state/.git: Permission denied` — `apply_patch` included,
+ * so the cycle could not write a single file. On a root the agent uid can
+ * write, the three directories exist only while a command runs and are removed
+ * after it, and after a SIGTERM; a SIGKILL leaves them behind, empty.
+ *
+ * So three kinds of entry are not handed over as they are, and none of the
+ * three widens anything:
+ *
+ * - **`STACKS_STATE_DIR` becomes the stack directories inside it** the agent
+ *   uid can write (`agentWritableStackStateDirs`). The agent could never
+ *   create anything in the directory itself, so naming its children instead
+ *   is the same write set spelled in a way bwrap can build.
+ * - **`CLAUDE_CONFIG_DIR` is dropped.** It is in every write set because it is
+ *   where Claude Code writes the transcripts this app meters (`writeSet`), and
+ *   a Codex cycle writes none. Handed over, it was a write grant to the
+ *   operator's own bind-mounted `~/.claude` that nothing used, and every
+ *   command flashed `.git`, `.agents` and `.codex` into it.
+ * - **The temporary directory is dropped**, because Codex already grants it:
+ *   the same session file lists `slash_tmp` and `tmpdir` as write entries of
+ *   its own, so naming it again only added a fourth place for the mount points.
+ *
+ * **Read regardless of whether the install has a managed sandbox**, which is
+ * the one place this departs from `sandboxWritableRoots`. That function answers
+ * null on an install with no managed policy because Claude Code is then
+ * unconfined and naming paths configures nothing; Codex is never unconfined
+ * under `workspace-write`, so on that install a null left a Codex cycle able to
+ * write its checkout and `/tmp` and nothing else — no npm or Go cache, and on
+ * an isolated run not the repository's `.git` it is told to commit into. What
+ * this names is the write set `sandboxSettings` defines for every run, so it
+ * brings a Codex cycle up to that set and never past it. An `unconfined` policy
+ * — a path the CLI would read as a glob — still names nothing extra, and the
+ * cycle keeps Codex's own checkout-and-tmp confinement.
+ *
+ * Pure for `sandboxSettings`' reason: too narrow fails inside a tool call and
+ * too wide is a boundary that is not there, and both are silent.
+ */
+export function codexWritableRoots(
+  policy: SandboxPolicy,
+  stacksStateDirs: readonly string[],
+): string[] {
+  if (policy.kind !== "confined") return [];
+  const roots: string[] = [];
+  const add = (dir: string) => {
+    if (!roots.includes(dir)) roots.push(dir);
+  };
+  for (const root of policy.allowWrite) {
+    if (root === CLAUDE_CONFIG_DIR || root === os.tmpdir()) continue;
+    if (root === STACKS_STATE_DIR) {
+      stacksStateDirs.forEach(add);
+      continue;
+    }
+    add(root);
+  }
+  return roots;
+}
+
+/** The fields of an `fs.Stats` that decide whether a uid may create entries. */
+export interface CreatableStats {
+  isDirectory(): boolean;
+  uid: number;
+  gid: number;
+  mode: number;
+}
+
+/**
+ * Whether the agent uid can make a directory inside this one.
+ *
+ * Asked by a server running as root, where `fs.access` answers for root and so
+ * says yes to everything. Owner, then group, then other, as the kernel checks
+ * them — the first class that matches is the only one consulted, so an owner
+ * without the write bit is refused even where "other" has it. Without privilege
+ * separation the children are this process's own uid and any directory will do.
+ */
+export function agentCanCreateIn(
+  stats: CreatableStats,
+  agent: { uid?: number; gid?: number },
+): boolean {
+  if (!stats.isDirectory()) return false;
+  if (agent.uid === undefined) return true;
+  const bits =
+    stats.uid === agent.uid
+      ? (stats.mode >> 6) & 0o7
+      : stats.gid === agent.gid
+        ? (stats.mode >> 3) & 0o7
+        : stats.mode & 0o7;
+  return (bits & 0o3) === 0o3;
+}
+
+/**
+ * The stack directories under `STACKS_STATE_DIR` a Codex cycle may be handed.
+ *
+ * `lstat`, so a link is never followed out of the volume, and dot-entries are
+ * skipped: no stack is named with one, and they are where a SIGKILLed sandbox
+ * leaves its empty mount points. A stack whose directory the applier failed to
+ * hand over is left out rather than allowed to fail every command of the cycle;
+ * its tool then fails on its own cache, which is the narrower failure. Stat on
+ * this path is trustworthy as root because it is a named volume, not a bind
+ * mount a VM layer re-owns per caller.
+ */
+function agentWritableStackStateDirs(): string[] {
+  let names: string[];
+  try {
+    names = fs.readdirSync(STACKS_STATE_DIR);
+  } catch {
+    return [];
+  }
+  const agent = childCredentials();
+  const dirs: string[] = [];
+  for (const name of names) {
+    if (name.startsWith(".")) continue;
+    const dir = path.join(STACKS_STATE_DIR, name);
+    try {
+      if (agentCanCreateIn(fs.lstatSync(dir), agent)) dirs.push(dir);
+    } catch {
+      // Gone between the listing and the stat: nothing to hand over.
+    }
+  }
+  return dirs.sort();
+}
+
 /** The overlay for a child spawned right now, against this install's policy. */
 export function sandboxArgsFor(scope: SandboxScope): string[] {
   return sandboxArgs(sandboxSettings(scope), currentSandbox().state);
@@ -7288,15 +7431,49 @@ function lastMessageFileIn(args: readonly string[]): string | null {
  * write one", which is a real and expected state, and the stream still carries
  * the same text. A cycle refused for a temp file it did not need would be the
  * larger failure.
+ *
+ * **The directory is handed to the agent uid on every call**, because the server
+ * that makes it is root and the CLI that writes into it is not. Made root's
+ * 0755, every Codex cycle logged `Failed to write last message file …:
+ * Permission denied (os error 13)` and the file was never there to prefer —
+ * measured on the first real Codex run, 2026-10-07. Every call rather than only
+ * the one that creates it, so a directory an older build left root's is
+ * corrected on the next cycle instead of never.
  */
 function clearLastMessageFile(args: readonly string[]): void {
   const file = lastMessageFileIn(args);
   if (!file) return;
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o755 });
+    // Removed before the chown, which throws on failure: a stale file left
+    // behind by a chown that failed would be read as this cycle's last word.
     fs.rmSync(file, { force: true });
+    handDirectoryToChild(path.dirname(file));
   } catch {
     // See above: an unwritable path costs the file, never the cycle.
+  }
+}
+
+/**
+ * `chownForChild` for a directory inside the agents' own home, which is the one
+ * place a root chown must not follow a link.
+ *
+ * `$CODEX_HOME` is the agent uid's, so an agent can replace `last-message` with
+ * a symlink to anything, and `chownSync` follows it: the next Codex cycle would
+ * have root hand that target to the agent uid. Opened with `O_NOFOLLOW` and
+ * re-owned through the descriptor, so a link fails the open instead.
+ */
+function handDirectoryToChild(dir: string): void {
+  const { uid, gid } = childCredentials();
+  if (uid === undefined || gid === undefined) return;
+  const fd = fs.openSync(
+    dir,
+    fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW,
+  );
+  try {
+    fs.fchownSync(fd, uid, gid);
+  } finally {
+    fs.closeSync(fd);
   }
 }
 
@@ -7469,7 +7646,18 @@ export function runIteration(
     // the state of each tree at the moment the child constructs its sandbox.
     // Every tree the child is handed, since the list is applied to the working
     // directory and to each `--add-dir` alike.
-    const mountPoints = ensureSandboxMountPoints([cwd, ...addDirsIn(args)]);
+    //
+    // **Claude Code's sandbox only, and never a Codex cycle's.** The names are
+    // the paths that sandbox binds `/dev/null` over; Codex's builds a different
+    // three of its own and removes them itself. Run for a Codex cycle — whose
+    // whole write set is `--add-dir` — the first real one left twelve empty
+    // files and a `.gitignore` in a `.claude/` it created in each of six trees,
+    // the operator's own bind-mounted `~/.claude` and `/tmp` among them, and a
+    // `/tmp/.claude` makes `/tmp` an ancestor every chat turn then fills.
+    const mountPoints: MountPointResult =
+      adapter === CODEX_ADAPTER
+        ? { created: [], problems: [] }
+        : ensureSandboxMountPoints([cwd, ...addDirsIn(args)]);
     if (mountPoints.created.length > 0) {
       // The directories rather than the two dozen paths, which are on the event
       // for anyone who wants them. Said once per tree and then never again,
@@ -7862,6 +8050,26 @@ async function prune(
       break;
   }
   return null;
+}
+
+/**
+ * Whether a run's cycle boundary is one the pruner may touch at all.
+ *
+ * Every engine here edits a **Claude Code** transcript — `prune` looks the
+ * session up among Claude's own files, `forkAndAdopt` forks one with winnow, and
+ * `settleBoundary` probes the resume and observes the plan against the same
+ * file. A Codex run's session id names a thread in `$CODEX_HOME/sessions`, so on
+ * the first real Codex run every boundary logged "Could not find this run's
+ * transcript, so its context was not pruned." and wrote a failed prune decision:
+ * a failure nothing could fix, recorded as one, on every cycle. There is
+ * nothing to decline or settle either, so the whole boundary is skipped rather
+ * than routed through any of them.
+ *
+ * Pure and tested on its other edge, which is the expensive one: a version that
+ * also answered false for a Claude run would stop every run's pruning in silence.
+ */
+export function boundaryPruneApplies(provider: RunProviderDTO | null): boolean {
+  return provider !== "codex";
 }
 
 /**
@@ -10212,14 +10420,19 @@ export async function startRun(id: string): Promise<void> {
         break;
       }
 
-      const snapshot = await currentSnapshot();
+      // A Codex run's fraction guards read the Codex account's own windows
+      // (`codexGuardSnapshot`): Claude's transcripts describe a population a
+      // Codex cycle is not in. Every other run reads Claude's, as before.
+      const snapshot =
+        run.provider === "codex" ? await codexGuardSnapshot() : await currentSnapshot();
 
       // A scan that could not read part of the tree answers with a short entry
       // list, and short understates every window below — which is the direction
       // that lets a guard admit a cycle it should have refused. Say so on the
       // run's own log, because the `budget` event beneath this one is
       // indistinguishable from a clean reading of a quiet week.
-      const scanFailures = lastScanReadFailures();
+      // Not for a Codex run, whose windows above were read off no transcript.
+      const scanFailures = run.provider === "codex" ? [] : lastScanReadFailures();
       if (scanFailures.length > 0) {
         log(
           id,
@@ -10828,7 +11041,14 @@ export async function startRun(id: string): Promise<void> {
         // every provider and the flag that carries them is not — a `--settings`
         // overlay for Claude Code, a repeated `--add-dir` for Codex — so a push
         // out here put a flag `codex exec` rejects on every Codex spawn.
-        writableRoots: sandboxWritableRoots(sandbox, confinement),
+        //
+        // And not quite the same paths: Codex's sandbox builds mount points
+        // inside every root it is given, so its list is reshaped rather than
+        // copied — see `codexWritableRoots` for the three entries it changes.
+        writableRoots:
+          run.provider === "codex"
+            ? codexWritableRoots(sandbox, agentWritableStackStateDirs())
+            : sandboxWritableRoots(sandbox, confinement),
         // Ignored by Claude Code, which has no such flag. See `runIteration`
         // for why the file is preferred over the stream where it exists, and
         // why it is removed before the spawn rather than after the read.
@@ -11730,10 +11950,12 @@ export async function startRun(id: string): Promise<void> {
       // Awaited rather than left floating. It is seconds of subprocess against a
       // cycle measured in minutes, and the next spawn must not read the file
       // while winnow is rewriting it.
-      lastContextTokens = contextAfterPrune(
-        lastContextTokens,
-        await pruneAtBoundary(id, sessionId, lastContextTokens, adoptSession),
-      );
+      if (boundaryPruneApplies(run.provider)) {
+        lastContextTokens = contextAfterPrune(
+          lastContextTokens,
+          await pruneAtBoundary(id, sessionId, lastContextTokens, adoptSession),
+        );
+      }
     }
   } catch (err) {
     stopReason = err instanceof Error ? err.message : String(err);
@@ -12282,7 +12504,17 @@ export async function liveGuardTick(): Promise<void> {
     const pending = [...liveGuards].filter(([id]) => !interrupts.has(id));
     if (pending.length === 0) return;
 
-    const snapshot = await currentSnapshot();
+    // Each run against its own provider's windows, `startRun`'s pre-cycle
+    // rule. The provider is read off the row rather than added to the guard
+    // entry, whose map is a `globalThis` key a shape change would have to
+    // replace; each reading is asked for once per tick at most.
+    const providerOf = (id: string) => getRun(id)?.provider ?? null;
+    const anyClaude = pending.some(([id]) => providerOf(id) !== "codex");
+    const anyCodex = pending.some(([id]) => providerOf(id) === "codex");
+    const [snapshot, codexSnapshot] = await Promise.all([
+      anyClaude ? currentSnapshot() : null,
+      anyCodex ? codexGuardSnapshot() : null,
+    ]);
     const now = Date.now();
 
     for (const [id, guard] of pending) {
@@ -12297,7 +12529,12 @@ export async function liveGuardTick(): Promise<void> {
       // signal, the stop would land on the next cycle, or on the next pick-up.
       if (liveGuards.get(id) !== guard || interrupts.has(id)) continue;
 
-      const verdict = evaluateBudget(guard.policy, snapshot, guard.progress(), now);
+      const windows = providerOf(id) === "codex" ? codexSnapshot : snapshot;
+      // The run's provider moved between the two reads only if the row did,
+      // which nothing does to a running run; skipped rather than judged against
+      // the other provider's windows if it ever happens.
+      if (!windows) continue;
+      const verdict = evaluateBudget(guard.policy, windows, guard.progress(), now);
       if (verdict.allowed) continue;
       if (!LIVE_ENFORCEABLE_CODES.includes(verdict.code)) continue;
 
@@ -13044,7 +13281,12 @@ export async function sweepPaused(): Promise<void> {
     const due = duePausedRuns(paused, Date.now());
     if (due.length === 0) return; // nothing to decide, so no scan
 
-    const snapshot = await currentSnapshot();
+    // Each parked run is re-read against its own provider's windows, so a
+    // Codex run parked on a full Codex window waits for Codex's reset.
+    const [snapshot, codexSnapshot] = await Promise.all([
+      due.some((run) => run.provider !== "codex") ? currentSnapshot() : null,
+      due.some((run) => run.provider === "codex") ? codexGuardSnapshot() : null,
+    ]);
     // Asked again, on the entry check's rule: the scan can take seconds, a beat
     // that finds the lock taken can land inside it, and every decision below is
     // a write to rows that would then be the new owner's.
@@ -13059,9 +13301,12 @@ export async function sweepPaused(): Promise<void> {
 
     for (const run of due) {
       const policy = normalizePolicy(JSON.parse(run.budget));
+      const windows = run.provider === "codex" ? codexSnapshot : snapshot;
+      // Both reads above were asked for exactly the providers in `due`.
+      if (!windows) continue;
       const verdict = evaluateBudget(
         policy,
-        snapshot,
+        windows,
         {
           iterations: run.iterations,
           spentUSD: run.spent_usd,

@@ -3,7 +3,7 @@
 > Extracted verbatim from `CLAUDE.md`, which grew past the size Claude Code will
 > load into a session. Each paragraph records a correctness or safety decision
 > whose violation is silent — nothing throws, nothing fails to typecheck.
-> **Read before editing src/lib/windows.ts, transcripts.ts, pricing.ts, planUsage.ts, repoSpend.ts, otlp.ts.**
+> **Read before editing src/lib/windows.ts, transcripts.ts, pricing.ts, planUsage.ts, codexAccount.ts, repoSpend.ts, otlp.ts.**
 
 This file is an index. Each line below is the lead claim of one paragraph, and the paragraph itself is in the topic file its heading links to.
 
@@ -16,6 +16,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - Cost is the primary metric; raw tokens are the fallback.
 - Naming the plan is not setting a ceiling.
 - Reserved headroom is applied in exactly one place.
+- Codex's percentages are a second provider's reading, read through its own CLI, and they guard only Codex runs.
 
 ## [Pricing, unpriced models and cache multipliers](metering/pricing.md)
 

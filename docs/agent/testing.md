@@ -16,7 +16,7 @@ This page is the index. The bar every test is held to comes first, each of its p
 
 `npm run typecheck` plus a `docker compose up --build` smoke test is still the real verification loop, and `docs/verification.md` records what was checked by hand — including its "Not yet verified" list, which must stay honest.
 
-Twenty are renderings rather than functions — every `*.test.tsx` in the tree, which is the whole of that class and is countable as `find src -name '*.test.tsx' | wc -l`.
+Twenty-one are renderings rather than functions — every `*.test.tsx` in the tree, which is the whole of that class and is countable as `find src -name '*.test.tsx' | wc -l`.
 
 ## [Run queue and admission](testing/run-queue-and-admission.md)
 
@@ -94,6 +94,8 @@ Twenty are renderings rather than functions — every `*.test.tsx` in the tree, 
 
 | Test file | Also in |
 |---|---|
+| `codexAccount.test.ts` |  |
+| `codexModelDiscovery.test.ts` |  |
 | `modelAdoption.test.ts` |  |
 | `modelCatalogue.test.ts` |  |
 | `modelDiscovery.test.ts` |  |
@@ -402,6 +404,7 @@ Units that are about no test file in the tree:
 | Test file | Also in |
 |---|---|
 | `BranchWork.test.tsx` |  |
+| `CodexWindows.test.tsx` |  |
 | `ContextControl.test.tsx` |  |
 | `ContextOccupancy.test.tsx` | [ceiling] |
 | `InstallSpendCard.test.tsx` |  |

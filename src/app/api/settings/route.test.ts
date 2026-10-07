@@ -100,6 +100,15 @@ const PROBES: Record<keyof Settings, Probe> = {
       { id: "claude-opus-5[1m]", label: "Claude Opus 5 (1M)", enabled: false },
     ],
   },
+  // The Codex pair: the list keeps the default's model enabled for
+  // `modelCatalogue`'s reason, and differs from the empty shipped default.
+  codexDefaultModel: { send: "gpt-6-astra" },
+  codexModelCatalogue: {
+    send: [
+      { id: "gpt-6-astra", label: "GPT-6-Astra", enabled: true },
+      { id: "gpt-5.6-luna", label: "GPT-5.6-Luna", enabled: false },
+    ],
+  },
   // Filled in by the hook below: the route refuses an id that names no usable
   // agent, so this is the one probe whose value has to exist in the database
   // before it can be sent.

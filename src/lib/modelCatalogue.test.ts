@@ -8,6 +8,7 @@ import {
   defaultCatalogueWith,
   discoveredEntriesOf,
   enabledModels,
+  isCodexModelId,
   isDiscoverableModelId,
   mergeDiscoveredModels,
   mergeSeededModels,
@@ -575,5 +576,76 @@ describe("the model catalogue", () => {
         );
       }
     });
+  });
+});
+
+/**
+ * The Codex catalogue rides the same merge with two options, and each one
+ * decides something an operator would never see go wrong: the id rule is what
+ * stands between `model/list` and `codex exec -m`, and `fillEmpty` is the
+ * difference between a first listing that fills the list and one that leaves
+ * every Codex picker on free text with "Listed 4 models" beside it.
+ */
+describe("the Codex catalogue's options", () => {
+  it("admits the measured Codex slugs and refuses what could not be one", () => {
+    for (const id of ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-luna", "codex-auto-review", "o3"]) {
+      assert.equal(isCodexModelId(id), true, id);
+    }
+    for (const id of ["", "-m", "--dangerous", "GPT-6", "gpt 6", "gpt-6-", "gpt..6", "a".repeat(101), 7]) {
+      assert.equal(isCodexModelId(id), false, String(id));
+    }
+  });
+
+  it("fills an empty list only when told it is a default nobody chose", () => {
+    const listed = [
+      { id: "gpt-6-astra", displayName: "GPT-6-Astra" },
+      { id: "--flag", displayName: "x" },
+    ];
+    const filled = mergeDiscoveredModels([], listed, [], {
+      isDiscoverable: isCodexModelId,
+      fillEmpty: true,
+    });
+    assert.deepEqual(filled.catalogue, [{ id: "gpt-6-astra", label: "GPT-6-Astra", enabled: true }]);
+    assert.deepEqual(filled.offered, ["gpt-6-astra"]);
+    assert.deepEqual(filled.refused, ["--flag"]);
+
+    const kept = mergeDiscoveredModels([], listed, [], { isDiscoverable: isCodexModelId });
+    assert.deepEqual(kept.catalogue, []);
+    assert.deepEqual(kept.offered, []);
+  });
+
+  it("refuses a Codex slug under the Claude rule, so the two lists cannot cross", () => {
+    const merged = mergeDiscoveredModels(
+      [{ id: "claude-opus-5", label: "Claude Opus 5", enabled: true }],
+      [{ id: "gpt-6-astra", displayName: "GPT-6-Astra" }],
+      [],
+    );
+    assert.deepEqual(merged.refused, ["gpt-6-astra"]);
+    assert.equal(merged.added.length, 0);
+  });
+
+  it("re-validates the stored Codex record with the Codex rule", () => {
+    const record = {
+      added: [
+        { id: "gpt-6-astra", label: "GPT-6-Astra" },
+        { id: "--flag", label: "x" },
+        { id: "gpt-6-astra", label: "duplicate" },
+      ],
+    };
+    assert.deepEqual(discoveredEntriesOf(record, isCodexModelId), [
+      { id: "gpt-6-astra", label: "GPT-6-Astra", enabled: true },
+    ]);
+    assert.deepEqual(discoveredEntriesOf(record), []);
+  });
+
+  it("names the Codex list, not the Claude one, when it refuses a Codex model", () => {
+    const list = [
+      { id: "gpt-6-astra", label: "GPT-6-Astra", enabled: true },
+      { id: "gpt-5.6-luna", label: "GPT-5.6-Luna", enabled: false },
+    ];
+    assert.equal(modelRefusal(list, "gpt-6-astra", "codex"), null);
+    assert.match(modelRefusal(list, "gpt-5.6-luna", "codex") ?? "", /Settings → Codex models/);
+    assert.match(modelRefusal(list, "gpt-9", "codex") ?? "", /not on this install's Codex list/);
+    assert.equal(modelRefusal([], "anything", "codex"), null);
   });
 });

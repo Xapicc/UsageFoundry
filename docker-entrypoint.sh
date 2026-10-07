@@ -127,6 +127,27 @@ if [ -n "${UF_AGENT_UID:-}" ] && [ -d "$CLAUDE_LOCAL_VOLUME" ]; then
   fi
 fi
 
+# The Codex CLI's home, `CODEX_HOME`, in its own named volume so the sign-in the
+# Settings panel writes and the threads a picked-up Codex run resumes outlive an
+# `up --build`. The same ownership guard, with one directory handed back: `rules/`
+# is the server's, written as root every cycle by `codexRules.ts`, because it
+# holds the `pkill`/`killall` denial and an agent able to rewrite it could lift
+# that denial for every sibling. `-R` changes links rather than what they name.
+CODEX_HOME_VOLUME=/home/node/.codex
+if [ -n "${UF_AGENT_UID:-}" ] && [ -d "$CODEX_HOME_VOLUME" ]; then
+  want="${UF_AGENT_UID}:${UF_AGENT_GID:-$UF_AGENT_UID}"
+  have="$(stat -c '%u:%g' "$CODEX_HOME_VOLUME" 2>/dev/null || echo '')"
+  if [ "$have" != "$want" ]; then
+    if ! chown -R "$want" "$CODEX_HOME_VOLUME" 2>/dev/null; then
+      echo "[usagefoundry] cannot give $CODEX_HOME_VOLUME to $want — a Codex" \
+           "sign-in and every Codex work cycle will fail on a directory they cannot write." >&2
+    elif [ -d "$CODEX_HOME_VOLUME/rules" ] && ! chown -R 0:0 "$CODEX_HOME_VOLUME/rules" 2>/dev/null; then
+      echo "[usagefoundry] cannot hand $CODEX_HOME_VOLUME/rules back to root — an" \
+           "agent can now rewrite the rules file that denies it pkill and killall." >&2
+    fi
+  fi
+fi
+
 # The Playwright browsers, and the one part of them that is not the image's.
 #
 # `/opt/playwright/browsers` ships with its contents root-owned and the directory

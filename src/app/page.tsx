@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
+import { CodexWindows } from "@/components/CodexWindows";
 import { InstallSpendCard } from "@/components/InstallSpendCard";
 import { LiveTelemetry } from "@/components/LiveTelemetry";
 import { Meter } from "@/components/Meter";
@@ -847,6 +848,12 @@ export default function Dashboard() {
               )}
             </div>
           </div>
+
+          {/* In the same card because it is the same subject — what may still
+              be spent — for the other provider. Only once Codex has a stored
+              sign-in: an install that never used Codex is not shown an empty
+              section about it. */}
+          {data.codex && <CodexWindows codex={data.codex} now={s.now} />}
         </Card>
 
         {/* Gated on the window itself, and it has to be: `telemetryWindow`

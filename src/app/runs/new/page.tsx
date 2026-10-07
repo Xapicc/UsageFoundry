@@ -920,10 +920,14 @@ export default function NewRunPage() {
    * `createRun`'s to apply. Reading it here would post a default that was true
    * when the page loaded rather than when Start was pressed.
    */
+  // The Codex list, empty until Codex model discovery has listed the account's
+  // models — and while it is empty the Codex model field stays free text.
+  const codexCatalogue = settings?.codexModelCatalogue ?? [];
+
   const effectiveModel =
     model.trim() ||
     (provider === "codex"
-      ? null
+      ? (settings?.codexDefaultModel ?? null)
       : provider === "local"
         ? (localSignIn?.model ?? null)
         : (settings?.defaultModel ?? null));
@@ -1702,17 +1706,21 @@ export default function NewRunPage() {
                 than a release. Blank still means inherit, so the fallback rungs
                 are untouched.
 
-                Free text for a Codex run, because the catalogue is seeded from
-                a table of Anthropic prices and holds Claude Code's own id
-                spellings — offering them for a run that will not spawn Claude
-                Code would be a picker that is confidently wrong, and the door
-                scopes its refusal the same way. */}
+                A Codex run picks from `settings.codexModelCatalogue` instead,
+                never from the Claude list: that one is seeded from a table of
+                Anthropic prices and holds Claude Code's own id spellings, and
+                offering them for a run that will not spawn Claude Code would be
+                a picker that is confidently wrong. The Codex list is what the
+                Codex CLI's own `model/list` named, and until the first listing
+                it is empty and the field is free text, as it always was. */}
             <ListRow
               htmlFor="model"
               label="Model"
               description={
                 provider === "codex"
-                  ? "A model id this provider's CLI takes; blank runs its default"
+                  ? codexCatalogue.length > 0
+                    ? "Inherit takes the Codex default in Settings, read when the run starts"
+                    : "A model id this provider's CLI takes; blank runs its default"
                   : provider === "local"
                     ? "A model id your local server lists; blank takes the one you signed in with"
                     : "Blank takes the default in Settings, read when the run starts"
@@ -1728,7 +1736,7 @@ export default function NewRunPage() {
                     placeholder={localSignIn?.model ?? "sign in under Settings"}
                     onChange={(e) => setModel(e.target.value)}
                   />
-                ) : provider === "codex" ? (
+                ) : provider === "codex" && codexCatalogue.length === 0 ? (
                   <Input
                     id="model"
                     type="text"
@@ -1736,11 +1744,43 @@ export default function NewRunPage() {
                     // What blank resolves to, shown rather than filled in: a
                     // value in the box is a value that gets posted. Never
                     // `settings.defaultModel`, which is a Claude id that
-                    // `createRun` no longer hands a Codex run, so this would
-                    // show a model the spawn does not pass.
+                    // `createRun` never hands a Codex run, so this would show
+                    // a model the spawn does not pass.
                     placeholder="Codex's own default"
                     onChange={(e) => setModel(e.target.value)}
                   />
+                ) : provider === "codex" ? (
+                  <Select
+                    id="model"
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                  >
+                    {/* The Claude picker's shape below, over the Codex list:
+                        Inherit names what it inherits, by label. */}
+                    <option value="">
+                      {settings?.codexDefaultModel
+                        ? `Inherit — ${
+                            codexCatalogue.find(
+                              (entry) => entry.id === settings.codexDefaultModel,
+                            )?.label ?? settings.codexDefaultModel
+                          }`
+                        : "Inherit — Codex default"}
+                    </option>
+                    {codexCatalogue
+                      .filter((entry) => entry.enabled)
+                      .map((entry) => (
+                        <option key={entry.id} value={entry.id}>
+                          {entry.label}
+                        </option>
+                      ))}
+                    {/* `defaultAgentId`'s rule, as on the Claude picker: a
+                        seeded model the list no longer enables stays visible
+                        and the door refuses it by name. */}
+                    {model !== "" &&
+                      !codexCatalogue.some(
+                        (entry) => entry.enabled && entry.id === model,
+                      ) && <option value={model}>{model} — not enabled</option>}
+                  </Select>
                 ) : (
                   <Select
                     id="model"
@@ -1812,9 +1852,23 @@ export default function NewRunPage() {
                 <Select
                   id="provider"
                   value={provider}
-                  onChange={(e) =>
-                    setProvider(e.target.value as RunProviderDTO)
-                  }
+                  onChange={(e) => {
+                    const next = e.target.value as RunProviderDTO;
+                    // A model is one provider's id. Carried across the switch it
+                    // is a value the other provider's door refuses — or, for a
+                    // list nobody has filled, a `-m` its CLI does not know — so
+                    // it goes back to Inherit unless the new list has it.
+                    const list =
+                      next === "codex"
+                        ? codexCatalogue
+                        : next === "claude"
+                          ? (settings?.modelCatalogue ?? [])
+                          : [];
+                    if (model !== "" && !list.some((entry) => entry.id === model)) {
+                      setModel("");
+                    }
+                    setProvider(next);
+                  }}
                 >
                   {RUN_PROVIDERS.map((p) =>
                     // Offered disabled rather than hidden while signed out, so
@@ -1916,10 +1970,8 @@ export default function NewRunPage() {
               <p>
                 <strong>The sign-in is separate.</strong> The mounted{" "}
                 <span className="mono">~/.claude</span> credential is not one
-                Codex can use; someone must have run{" "}
-                <span className="mono">codex login</span> as the agent user,
-                with <span className="mono">CODEX_HOME</span> pointed at the
-                directory this app reads.
+                Codex can use; Codex runs on the account signed in under{" "}
+                <Link href="/settings">Settings → Codex account</Link>.
               </p>
             </Hint>
           )}

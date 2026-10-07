@@ -127,6 +127,43 @@
   buffer, so compaction near 98,000. Before it, local session 22d3bae3 reached
   127,833 input tokens without compacting.
 
+- **The first Codex work cycle ran through this app, 2026-10-07**,
+  `codex-cli 0.153.4`, ChatGPT sign-in, run 08f0702d (`gpt-5.6-luna`,
+  `acceptEdits`, two cycles, `UF_SANDBOX=1`). The CLI accepted the whole argv;
+  `thread.started` set `session_id` and cycle two ran `exec resume` on it (one
+  rollout file, two `task_started`); no stream event reached
+  `noteUnknownStreamEvent`; exit 0. `spent_tokens` 130,963 is exactly cycle one
+  (97,713 + 1,429) plus cycle two (31,529 + 292), so `turn.completed` usage is
+  per invocation and assigning it is right. Spend read as unknown, not `$0`.
+
+- **The rules file loads in a real cycle, 2026-10-07**, same run: the model's
+  `pkill -f uf-nonexistent-marker-9z` came back `rejected: policy forbids
+  commands starting with \`pkill\``. The `$(echo pkill)` bypass the rules
+  module names was not tried.
+
+- **Codex's sandbox makes three mount points in every write root, and one it
+  cannot make fails every command, 2026-10-07**, `codex-cli 0.153.4`, uid 1000.
+  The run's session file lists read-only `<root>/.git`, `.agents` and `.codex`
+  entries (`missing_path_behavior: "skip"`) for each root, and bwrap still
+  `mkdir`s them: with `/var/lib/uf-stacks/state` (root 0755) a root, every
+  command of that run, `apply_patch` included, failed `bwrap: Can't mkdir
+  /var/lib/uf-stacks/state/.git: Permission denied`. Replayed through `codex
+  sandbox --sandbox-state-json` with the recorded profile: the old root set
+  fails the same way; `codexWritableRoots`' set (checkout, `~/.npm`, `~/go`,
+  `~/.cache`, the four stack directories) writes the checkout, the npm cache,
+  a stack's state and `/tmp`, reads the vault, and is refused writing the vault
+  and `~/.claude`. A worktree with its repository's `.git` as a root committed.
+
+- **The mount points outlive a SIGKILL and nothing gentler, 2026-10-07**, same
+  CLI, `codex sandbox -P :workspace -- sleep 30` in a fresh directory: all three
+  present while it ran, gone after SIGTERM to its group, left behind empty after
+  SIGKILL. `:workspace` makes `/tmp` a root too, so a killed cycle can leave
+  them in `/tmp` whatever `--add-dir` says.
+
+- **The vault is readable to a Codex cycle without `--add-dir`, 2026-10-07**:
+  `ls /workspace2` succeeds under `codex sandbox -P :workspace`, and `touch` in
+  it is refused `Read-only file system`.
+
 ## Not yet verified by hand
 
 - **No local cycle has been seen compacting under a sign-in window
@@ -165,20 +202,25 @@
   closed. Settles with one review of a local run's branch and the Land card read
   before and after.
 
-- **No Codex device sign-in has been completed** (no OpenAI account): the
-  exit-0 `auth.json` write, `loginError` on any failure and the poll
-  converging are unmeasured; an unnoticed success reads `waiting for approval`.
-  `CODEX_HOME` (unmounted `~/.codex` by default) lives in the container's
-  writable layer, lost on a rebuild.
+- **What the Settings panel showed while a device sign-in converged is
+  unobserved.** A ChatGPT sign-in made from the deployed app on 2026-10-07
+  left `login status` at `Logged in using ChatGPT`; the poll's own states on
+  the way there, and `loginError` on a failure, were not watched.
 
-- **The image has not been rebuilt with Codex (2026-09-05)**: the amd64
-  figures (~335 MB unpacked, 123 MB download) are registry metadata, no work
-  cycle has run `codex`, signed-out is reasoned from `childEnv`'s strip, and
-  `codex` under `UF_SANDBOX=1`, whose read-only binds may break `$HOME/.codex`,
-  is untried.
+- **The `usagefoundry-codex` volume has not been through a rebuild
+  (2026-10-07).** It is in compose, the image and the entrypoint, and asserted
+  by `deployment.test.ts`; that a sign-in survives is reasoned from that.
+  Settles with `docker compose up -d --build`, a sign-in, a second rebuild, and
+  `codex login status` as uid 1000 still signed in.
 
-- **No Codex work cycle has ever been spawned (2026-09-05)**; `codex login
-  status` says "Not logged in". Unverified: argv acceptance, event names,
-  `resume` taking the session id, `--output-last-message`, sandbox binding,
-  notices as prompt text, a Codex wall, and above all a real cycle loading the
-  rules file (a wrong dialect loads as zero rules): ask one to `pkill -f`.
+- **The amd64 Codex figures are registry metadata (2026-09-05)**: ~335 MB
+  unpacked and a 123 MB download, never pulled here; and signed-out is still
+  reasoned from `childEnv`'s strip rather than read off a cycle.
+
+- **The fixed write set has not run in a real cycle (2026-10-07).** It is
+  measured through `codex sandbox --sandbox-state-json`, not `codex exec`; nor
+  has a cycle yet written `--output-last-message` since its directory is handed
+  to the agent uid. Open beside them: whether in-band notices are obeyed, and
+  what a Codex wall looks like. Settles with one two-cycle Codex run that edits
+  a file and runs `npm --version`: `hello.txt` committed, no `Permission
+  denied` on the last-message file, no `.claude/` anywhere.

@@ -571,6 +571,19 @@ services:
       # every meter that scans that tree.
       - usagefoundry-claude-local:/home/node/.claude-local
 
+      # The Codex CLI's home, `CODEX_HOME`: the ChatGPT or API-key sign-in the
+      # Settings panel writes, and the `sessions/` threads a picked-up Codex run
+      # resumes. A named volume for the reason the ones above are — the default
+      # location is the writable layer — and what losing it cost was the
+      # sign-in itself: every `up --build` signed the install out of Codex.
+      #
+      # It holds a credential, so `down -v` is also how to be rid of it. The
+      # volume is created from the image's empty, `node`-owned directory, so an
+      # install upgrading onto this line starts signed out exactly once: a
+      # sign-in made before it lived in the old container's writable layer,
+      # which the volume masks rather than copies.
+      - usagefoundry-codex:/home/node/.codex
+
       # Where `scripts/backup-db.mjs` writes, and the one thing here that is
       # deliberately *not* the named volume above: a snapshot kept inside the
       # volume dies with `docker compose down -v`, which is the command this
@@ -882,4 +895,5 @@ volumes:
   usagefoundry-winnow:
   usagefoundry-winnow-venv:
   usagefoundry-claude-local:
+  usagefoundry-codex:
   usagefoundry-stacks:

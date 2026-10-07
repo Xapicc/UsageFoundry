@@ -276,6 +276,9 @@ export async function register() {
       // finds already offered.
       const { startModelDiscovery } = await import("./lib/modelDiscovery");
       startModelDiscovery();
+      // The Codex list's writer, behind the same claim for the same reason.
+      const { startCodexModelDiscovery } = await import("./lib/codexModelDiscovery");
+      startCodexModelDiscovery();
     } else {
       // Not "starting without closing anything out" any more, which read like a
       // benign notice on a process that then admitted runs and spawned billed

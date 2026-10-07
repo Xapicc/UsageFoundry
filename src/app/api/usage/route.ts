@@ -11,6 +11,7 @@ import { listAgents, listAmbientAgents } from "@/lib/agents";
 import { getSettings, limitConfig, newWorkPaused } from "@/lib/settings";
 import { readAccountProfile } from "@/lib/account";
 import { planUsage } from "@/lib/planUsage";
+import { codexSignInStored, codexUsage, codexUsageError } from "@/lib/codexAccount";
 import { telemetryWindow } from "@/lib/otlp";
 import { transcriptCutoff } from "@/lib/retention";
 import { installSpendReport } from "@/lib/installBudget";
@@ -52,10 +53,15 @@ const COUNTERFACTUAL_MODEL = "claude-sonnet-5";
 export async function GET(req: Request) {
   try {
     const settings = getSettings();
-    const [scan, account, plan] = await Promise.all([
+    // The Codex reading rides the same poll for the reason `plan` does, behind
+    // its own five-minute cache. Gated on a stored Codex sign-in rather than on
+    // `planUsageFromApi`, which is a switch about asking Anthropic.
+    const codexSignedIn = codexSignInStored();
+    const [scan, account, plan, codexPlan] = await Promise.all([
       scanUsage(),
       readAccountProfile(),
       settings.planUsageFromApi ? planUsage() : Promise.resolve(null),
+      codexSignedIn ? codexUsage() : Promise.resolve(null),
     ]);
     const entries = settings.includeSidechains
       ? scan.entries
@@ -203,6 +209,9 @@ export async function GET(req: Request) {
       // key rather than a field on `snapshot`, because it is a fourth reading
       // over a different span and must never be summed with the meters.
       install: installSpendReport(now),
+      codex: codexSignedIn
+        ? { plan: codexPlan, error: codexPlan ? null : codexUsageError() }
+        : null,
       // What context pruning has been worth: the two windows the meters above
       // already draw — so a reader comparing them is comparing the same span,
       // not this app's idea of "recently" — and the whole of what can still be

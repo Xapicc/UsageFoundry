@@ -811,10 +811,11 @@ export function spawnCommand(
  * What that costs is on the record rather than hidden, in two places. This app
  * writes an execpolicy rules file into that directory (`codexRules.ts`), so the
  * denial it installs is visible to an operator's own interactive `codex` too.
- * And it is not a mounted path on a stock install — `docker-compose.yml` binds
- * `~/.claude` and nothing else — so a credential written here lives in the
- * container's writable layer. That second one is a deployment fact rather than a
- * decision this module can make, and it is recorded in `docs/verification.md`.
+ * And it is a named volume on a stock install — `docker-compose.yml` mounts
+ * `usagefoundry-codex` at the default path — so a sign-in survives the rebuild.
+ * That is a deployment fact rather than a decision this module can make: an
+ * install that sets `CODEX_HOME` elsewhere has to mount something there itself,
+ * or the credential is back in the container's writable layer.
  */
 export const CODEX_HOME = env("CODEX_HOME", path.join(os.homedir(), ".codex"));
 

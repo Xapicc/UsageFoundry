@@ -330,6 +330,30 @@ async function applySettingsPut(body: Record<string, unknown>): Promise<Response
     patch.defaultModel = model;
   }
 
+  // The Codex pair, in the same order and for the same reason as the Claude
+  // pair above. Each is judged against its own list only: a Codex slug is
+  // never on the Claude list, and the two defaults never stand in for each
+  // other.
+  if ("codexModelCatalogue" in body) {
+    const result = normalizeModelCatalogue(body.codexModelCatalogue);
+    if ("error" in result) {
+      return NextResponse.json({ error: `Codex models: ${result.error}` }, { status: 400 });
+    }
+    patch.codexModelCatalogue = result.catalogue;
+  }
+
+  if ("codexDefaultModel" in body) {
+    const v = body.codexDefaultModel;
+    const model = typeof v === "string" && v.trim() ? v.trim() : null;
+    const refusal = modelRefusal(
+      patch.codexModelCatalogue ?? getSettings().codexModelCatalogue,
+      model,
+      "codex",
+    );
+    if (refusal) return NextResponse.json({ error: refusal }, { status: 400 });
+    patch.codexDefaultModel = model;
+  }
+
   if ("defaultAgentId" in body) {
     const raw = body.defaultAgentId;
     const id = typeof raw === "string" ? raw.trim() : "";

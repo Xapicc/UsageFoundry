@@ -429,6 +429,18 @@ const NO_READING_REASON: Record<"weekly" | "session", string> = {
     "reading to come back.",
 };
 
+/** `NO_READING_REASON` for a Codex run, whose windows come from the Codex CLI alone. */
+const CODEX_NO_READING_REASON: Record<"weekly" | "session", string> = {
+  weekly:
+    "A weekly-fraction guard is set but Codex's weekly window has no reading: " +
+    "the Codex CLI did not report this account's usage. Check the Codex " +
+    "sign-in under Settings, or drop the guard.",
+  session:
+    "A session-fraction guard is set but Codex's 5-hour window has no reading: " +
+    "the Codex CLI did not report this account's usage. Check the Codex " +
+    "sign-in under Settings, or drop the guard.",
+};
+
 /**
  * The refusal a fraction guard with nothing to read earns **at a door**.
  *
@@ -445,20 +457,25 @@ const NO_READING_REASON: Record<"weekly" | "session", string> = {
 export function windowGuardRefusal(
   policy: BudgetPolicy,
   snapshot: UsageSnapshot,
+  provider: RunProviderDTO | null = null,
 ): string | null {
+  // A Codex run's windows are the Codex account's, which have no typed
+  // ceiling to fall back on, so "set one in Settings" would send the operator
+  // to a field that cannot help.
+  const reasons = provider === "codex" ? CODEX_NO_READING_REASON : NO_READING_REASON;
   if (
     policy.maxWeeklyFraction !== null &&
     readWindowGuard(snapshot.weekly, policy.maxWeeklyFraction).state ===
       "no-ceiling"
   ) {
-    return NO_READING_REASON.weekly;
+    return reasons.weekly;
   }
   if (
     policy.maxSessionFraction !== null &&
     readWindowGuard(snapshot.session, policy.maxSessionFraction).state ===
       "no-ceiling"
   ) {
-    return NO_READING_REASON.session;
+    return reasons.session;
   }
   return null;
 }
@@ -480,6 +497,11 @@ export function windowGuardRefusal(
  * would ever end it" would leave them believing the fractions they set were the
  * safety net they are not.
  *
+ * A Codex run's fractions read the Codex account's own windows now
+ * (`codexAccount.ts`), so for that provider they are real guards — and still
+ * not termini, because a window refills. The sentence says that instead of the
+ * population argument, which is the local provider's alone.
+ *
  * So it is checked *before* the generic refusal, both refusals stay reachable,
  * and the more specific sentence is the one a person sees. Constraint C2 in
  * `proposals/ProviderFallback/01-constraints.md`.
@@ -495,6 +517,14 @@ export function providerTerminusRefusal(
   if (provider === null || provider === "claude") return null;
   if (policy.maxIterations !== null || policy.maxDurationMinutes !== null) {
     return null;
+  }
+  if (provider === "codex") {
+    return (
+      "A Codex run needs a work-cycle limit or a time limit. Its window guards " +
+      "read the Codex account's own windows, which refill rather than end a " +
+      "run, and its spending limit reaches no cycle, so those three would " +
+      "leave nothing to end it."
+    );
   }
   return (
     `A ${RUN_PROVIDER_LABEL[provider]} run needs a work-cycle limit or a time ` +

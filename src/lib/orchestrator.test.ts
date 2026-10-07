@@ -135,6 +135,9 @@ const {
   sandboxArgs,
   sandboxSettings,
   selectCycleAdapter,
+  agentCanCreateIn,
+  boundaryPruneApplies,
+  codexWritableRoots,
   contextAfterPrune,
   startsFresh,
   SEARCH_TOOLS,
@@ -165,7 +168,7 @@ const { revokeIngestTokens, runForIngestToken } =
 const { db } = require("./db") as typeof import("./db");
 const { recentOpsEvents } = require("./ops") as typeof import("./ops");
 const { getSettings, saveSettings } = require("./settings") as typeof import("./settings");
-const { stackGrants } = require("./stacks") as typeof import("./stacks");
+const { STACKS_STATE_DIR, stackGrants } = require("./stacks") as typeof import("./stacks");
 const { priceFiles, renderFileCostNotice } =
   require("./fileCostNotice") as typeof import("./fileCostNotice");
 const { chatEnv } = require("./chat") as typeof import("./chat");
@@ -3800,8 +3803,14 @@ describe("buildCodexArgs", () => {
     // `--add-dir` takes one directory each time; a version that joined them
     // would grant a single directory whose name is two paths and a comma, which
     // does not exist and therefore silently grants nothing.
+    //
+    // And the vault is not among them, though the run was granted it. This
+    // case used to assert it first on the list: for Codex the flag only ever
+    // added *write* — every sandbox mode already reads the vault — and a Codex
+    // cycle gets no skill telling it not to write there. Changed on purpose.
     const dirs = args.flatMap((a, i) => (a === "--add-dir" ? [args[i + 1]] : []));
-    assert.deepEqual(dirs, ["/vault", "/w/repo", "/w/repo/.git"]);
+    assert.deepEqual(dirs, ["/w/repo", "/w/repo/.git"]);
+    assert.equal(args.includes("/vault"), false, "the vault reached a Codex argv");
     // `-C` is what `workspace-write` grants, so it must be the directory the
     // run loop re-proved contained rather than wherever the process started.
     assert.deepEqual(args.slice(args.indexOf("-C"), args.indexOf("-C") + 2), [
@@ -3885,6 +3894,13 @@ describe("buildCodexArgs", () => {
     assert.equal(frozenRunModel(null, "claude", "claude-opus-5-5"), "claude-opus-5-5");
     assert.equal(frozenRunModel(null, null, "claude-opus-5-5"), "claude-opus-5-5");
     assert.equal(frozenRunModel(undefined, undefined, "claude-opus-5-5"), "claude-opus-5-5");
+    // The Codex default is the Codex run's alone, and neither default crosses:
+    // a Claude run never takes the Codex one, and a Codex run with no Codex
+    // default set is still left on the CLI's own.
+    assert.equal(frozenRunModel(null, "codex", "claude-opus-5-5", "gpt-6-astra"), "gpt-6-astra");
+    assert.equal(frozenRunModel(null, "claude", "claude-opus-5-5", "gpt-6-astra"), "claude-opus-5-5");
+    assert.equal(frozenRunModel(null, "local", "claude-opus-5-5", "gpt-6-astra"), null);
+    assert.equal(frozenRunModel(null, "codex", "claude-opus-5-5", null), null);
   });
 });
 
@@ -5029,6 +5045,101 @@ describe("sandboxSettings — what one child may write", () => {
       // with no off switch an operator can reach.
       assert.equal("enabled" in overlay.sandbox, false);
     }
+  });
+});
+
+/**
+ * A Codex cycle's write set, which is the run's but cannot be handed over as
+ * Claude Code takes it. Measured on the first real Codex run: a root the agent
+ * uid cannot create entries in fails *every* sandboxed command of the cycle,
+ * because Codex's bwrap makes `.git`, `.agents` and `.codex` mount points in
+ * each one — `STACKS_STATE_DIR` is root-owned by design, and the cycle could not
+ * write a file.
+ */
+describe("codexWritableRoots — the run's write set, as Codex's sandbox can build it", () => {
+  const own = `${ws}/.uf-worktrees/repoone-1`;
+  const isolated = sandboxSettings({ kind: "run", workDir: own, repoRoot: `${ws}/RepoOne` });
+  const stackDirs = [`${STACKS_STATE_DIR}/go`, `${STACKS_STATE_DIR}/swift`];
+
+  it("hands over the stacks' own directories in place of the root-owned one holding them", () => {
+    const roots = codexWritableRoots(isolated, stackDirs);
+    assert.equal(roots.includes(STACKS_STATE_DIR), false);
+    for (const dir of stackDirs) assert.equal(roots.includes(dir), true, `${dir} was dropped`);
+    // No stack installed is no stack directory, not the root back again.
+    assert.equal(codexWritableRoots(isolated, []).includes(STACKS_STATE_DIR), false);
+  });
+
+  it("drops the Claude transcript directory and the temporary directory, and nothing else", () => {
+    const roots = codexWritableRoots(isolated, stackDirs);
+    assert.equal(roots.includes(CLAUDE_CONFIG_DIR), false);
+    assert.equal(roots.includes(os.tmpdir()), false);
+    // The narrow direction is the one that fails inside a tool call: the
+    // checkout, the repository's git directory an isolated run commits into, and
+    // the build caches all survive, in the order the run's set names them.
+    assert.equal(isolated.kind, "confined");
+    const kept =
+      isolated.kind === "confined"
+        ? isolated.allowWrite.filter(
+            (p) => p !== CLAUDE_CONFIG_DIR && p !== os.tmpdir() && p !== STACKS_STATE_DIR,
+          )
+        : [];
+    assert.deepEqual(roots, [...kept, ...stackDirs]);
+    assert.equal(roots[0], own);
+    assert.equal(roots.includes(`${ws}/RepoOne/.git`), true);
+  });
+
+  it("names nothing extra for a set this app could not spell", () => {
+    assert.deepEqual(codexWritableRoots({ kind: "unconfined", reason: "x" }, stackDirs), []);
+  });
+});
+
+describe("agentCanCreateIn — read as root, for a different uid", () => {
+  const dir = (uid: number, gid: number, mode: number) => ({
+    isDirectory: () => true,
+    uid,
+    gid,
+    mode: 0o040000 | mode,
+  });
+  const agent = { uid: 1000, gid: 1000 };
+
+  it("refuses the root-owned 0755 directory that broke every Codex command", () => {
+    assert.equal(agentCanCreateIn(dir(0, 0, 0o755), agent), false);
+  });
+
+  it("allows a directory the agent owns, shares a writable group with, or anyone may write", () => {
+    assert.equal(agentCanCreateIn(dir(1000, 1000, 0o755), agent), true);
+    assert.equal(agentCanCreateIn(dir(0, 1000, 0o775), agent), true);
+    assert.equal(agentCanCreateIn(dir(0, 0, 0o1777), agent), true);
+  });
+
+  it("consults only the first class that matches, as the kernel does", () => {
+    // Owner without write is refused even though "other" may write.
+    assert.equal(agentCanCreateIn(dir(1000, 0, 0o557), agent), false);
+    // Write without search is not enough to create anything.
+    assert.equal(agentCanCreateIn(dir(1000, 1000, 0o655), agent), false);
+  });
+
+  it("refuses anything that is not a directory, and allows any directory without separation", () => {
+    assert.equal(
+      agentCanCreateIn({ ...dir(1000, 1000, 0o777), isDirectory: () => false }, agent),
+      false,
+    );
+    assert.equal(agentCanCreateIn(dir(0, 0, 0o755), {}), true);
+  });
+});
+
+describe("boundaryPruneApplies", () => {
+  it("skips a Codex run, whose session is not a Claude transcript", () => {
+    assert.equal(boundaryPruneApplies("codex"), false);
+  });
+
+  it("keeps every run whose transcript is Claude Code's", () => {
+    // The expensive edge: answering false here stops every run's pruning with
+    // nothing on any page to say so. `null` is a row from before the column,
+    // and a local run is spawned through Claude Code.
+    assert.equal(boundaryPruneApplies("claude"), true);
+    assert.equal(boundaryPruneApplies(null), true);
+    assert.equal(boundaryPruneApplies("local"), true);
   });
 });
 

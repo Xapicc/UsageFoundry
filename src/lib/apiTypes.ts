@@ -72,6 +72,31 @@ export interface PlanUsageDTO {
   fetchedAt: number;
 }
 
+/** Mirror of `CodexPlanUsage` in `codexAccount.ts`. */
+export interface CodexPlanUsageDTO extends PlanUsageDTO {
+  /** Length of `session`, as the backend reported it (300 on the measured plan). */
+  sessionMinutes: number | null;
+  /** Length of `weekly` (10,080 on the measured plan). */
+  weeklyMinutes: number | null;
+  planType: string | null;
+  /** The backend's own word for a wall it says has been hit, or null. */
+  limitReached: string | null;
+}
+
+/**
+ * The Codex account's usage on `GET /api/usage`.
+ *
+ * Its own key beside `snapshot` and never inside it: these are another
+ * provider's percentages, and a field on the snapshot is one a guard or a sum
+ * eventually reads as Claude's. Null when Codex has no stored sign-in.
+ */
+export interface CodexUsageDTO {
+  /** The reading, or null when it could not be had — never a zero. */
+  plan: CodexPlanUsageDTO | null;
+  /** Why the latest read came back empty, or null. */
+  error: string | null;
+}
+
 /**
  * Mirror of `AgentOrigin` in `windows.ts` — where the definition behind an
  * agent bucket lives, as far as this install can see.
@@ -936,6 +961,12 @@ export interface UsageResponse {
    * alike.
    */
   install: InstallSpendDTO;
+  /**
+   * The Codex account's own 5-hour and weekly readings, or null when Codex has
+   * no stored sign-in. Another provider's percentages: never summed with or
+   * compared against the Claude figures above.
+   */
+  codex: CodexUsageDTO | null;
 }
 
 /**
@@ -3412,6 +3443,28 @@ export interface ModelDiscoveryCheckDTO {
   modelCatalogue: ModelCatalogueEntryDTO[];
 }
 
+/**
+ * What Codex model discovery last did — `ModelDiscoveryDTO` for the list read
+ * off the Codex CLI's `model/list`. No credential kind: there is one source,
+ * the container's Codex sign-in.
+ */
+export interface CodexModelDiscoveryDTO {
+  lastSuccessAt: string | null;
+  listed: number | null;
+  added: string[];
+  refused: string[];
+  /** The model the CLI itself defaults to, for the picker's Inherit option. */
+  cliDefault: { id: string; label: string } | null;
+  error: string | null;
+  errorAt: string | null;
+}
+
+/** `POST /api/models/codex-discovery`: the check's outcome and the list it left. */
+export interface CodexModelDiscoveryCheckDTO {
+  discovery: CodexModelDiscoveryDTO;
+  codexModelCatalogue: ModelCatalogueEntryDTO[];
+}
+
 export interface SettingsDTO {
   sessionCostLimit: number | null;
   weeklyCostLimit: number | null;
@@ -3433,6 +3486,13 @@ export interface SettingsDTO {
    * no list and refuses nothing — see `modelCatalogue.ts`.
    */
   modelCatalogue: ModelCatalogueEntryDTO[];
+  /** One of the enabled `codexModelCatalogue` ids, or null for the Codex CLI's own. */
+  codexDefaultModel: string | null;
+  /**
+   * Which models a Codex run may start on. No seed: what Codex model discovery
+   * listed, until the operator edits it. Empty means no list.
+   */
+  codexModelCatalogue: ModelCatalogueEntryDTO[];
   /**
    * The saved agent the new-run form starts on. An id, never a definition, and
    * it carries no capability — see `settings.defaultAgentId`.

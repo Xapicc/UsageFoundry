@@ -16,6 +16,8 @@ import type {
   ClaudeAuthStateDTO,
   CodexAuthDTO,
   CodexAuthStateDTO,
+  CodexModelDiscoveryCheckDTO,
+  CodexModelDiscoveryDTO,
   LocalProviderDTO,
   KnowledgeStatusDTO,
   ModelDiscoveryCheckDTO,
@@ -356,6 +358,7 @@ const EDITABLE_PATHS = [
   "sessionResetOverrideAt",
   "includeSidechains",
   "defaultModel",
+  "codexDefaultModel",
   "defaultAgentId",
   "forwardSubAgentText",
   "runEffort",
@@ -364,6 +367,7 @@ const EDITABLE_PATHS = [
   "maxConcurrentAssists",
   "maxConcurrentLocalRuns",
   "modelCatalogue",
+  "codexModelCatalogue",
   "isolationCopyGlobs",
   "isolationCopyGlobsByRepo",
   "landStrategy",
@@ -1365,6 +1369,29 @@ const DISCOVERY_CREDENTIAL: Record<NonNullable<ModelDiscoveryDTO["credential"]>,
 };
 
 /**
+ * What either list's discovery last did, in the one shape the panel reads.
+ * `source` names what the listing was read with, or null when nothing has
+ * succeeded.
+ */
+type DiscoveryStatusView = Pick<
+  ModelDiscoveryDTO,
+  "lastSuccessAt" | "listed" | "added" | "refused" | "error" | "errorAt"
+> & { source: string | null };
+
+function claudeDiscoveryView(status: ModelDiscoveryDTO | null): DiscoveryStatusView | null {
+  if (!status) return null;
+  return {
+    ...status,
+    source: status.credential ? DISCOVERY_CREDENTIAL[status.credential] : null,
+  };
+}
+
+function codexDiscoveryView(status: CodexModelDiscoveryDTO | null): DiscoveryStatusView | null {
+  if (!status) return null;
+  return { ...status, source: status.lastSuccessAt ? "the Codex sign-in" : null };
+}
+
+/**
  * What model discovery last did, beside the list it writes to.
  *
  * A failure is a warning in words and never only a missing timestamp: the one
@@ -1381,7 +1408,7 @@ function ModelDiscoveryPanel({
   catalogueEmpty,
   onCheck,
 }: {
-  status: ModelDiscoveryDTO | null;
+  status: DiscoveryStatusView | null;
   error: string | null;
   busy: boolean;
   catalogueEdited: boolean;
@@ -1392,10 +1419,10 @@ function ModelDiscoveryPanel({
   // by a press rather than doubled, so there is nothing to wait out first.
   const checking = busy;
   const success =
-    status?.lastSuccessAt && status.credential
+    status?.lastSuccessAt && status.source
       ? {
           age: fmtRelative(Date.parse(status.lastSuccessAt)),
-          credential: DISCOVERY_CREDENTIAL[status.credential],
+          credential: status.source,
           listed: status.listed ?? 0,
           added: status.added,
         }
@@ -2543,6 +2570,11 @@ export default function SettingsPage() {
   const [discovery, setDiscovery] = useState<ModelDiscoveryDTO | null>(null);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
   const [discoveryBusy, setDiscoveryBusy] = useState(false);
+  // The Codex list's twins of the three above and of `modelDraft`.
+  const [codexModelDraft, setCodexModelDraft] = useState("");
+  const [codexDiscovery, setCodexDiscovery] = useState<CodexModelDiscoveryDTO | null>(null);
+  const [codexDiscoveryError, setCodexDiscoveryError] = useState<string | null>(null);
+  const [codexDiscoveryBusy, setCodexDiscoveryBusy] = useState(false);
   const standalone = useStandalone();
   const [sectionHash, setSectionHash] = useSectionHash();
 
@@ -2675,6 +2707,22 @@ export default function SettingsPage() {
     void loadDiscovery();
   }, [loadDiscovery]);
 
+  const loadCodexDiscovery = useCallback(async () => {
+    const res = await jsonRequest<CodexModelDiscoveryDTO>("/api/models/codex-discovery");
+    if (!res.ok) {
+      setCodexDiscoveryError(
+        actionFailureMessage(res, "Codex model discovery's status could not be read."),
+      );
+      return;
+    }
+    setCodexDiscoveryError(null);
+    setCodexDiscovery(res.data);
+  }, []);
+
+  useEffect(() => {
+    void loadCodexDiscovery();
+  }, [loadCodexDiscovery]);
+
   const toggleSkill = useCallback(async (enabled: boolean) => {
     setSkillBusy(true);
     const res = await jsonRequest<{ skillEnabled: boolean }>("/api/knowledge/skill", {
@@ -2769,6 +2817,7 @@ export default function SettingsPage() {
   );
 
   const catalogueEdited = changed.has("modelCatalogue");
+  const codexCatalogueEdited = changed.has("codexModelCatalogue");
 
   /**
    * The one thing standing between an unsaved page and a closed tab.
@@ -2867,6 +2916,7 @@ export default function SettingsPage() {
     // store the list without what it added — which, offered once, never returns.
     const body: Partial<SettingsDTO> = { ...effective };
     if (!catalogueEdited) delete body.modelCatalogue;
+    if (!codexCatalogueEdited) delete body.codexModelCatalogue;
     setBusy(true);
     try {
       const res = await fetch("/api/settings", {
@@ -2899,7 +2949,7 @@ export default function SettingsPage() {
     } finally {
       setBusy(false);
     }
-  }, [effective, catalogueEdited, loadKnowledge]);
+  }, [effective, catalogueEdited, codexCatalogueEdited, loadKnowledge]);
 
   /**
    * Ask `/v1/models` now, and show what it added without reloading the page.
@@ -2932,6 +2982,39 @@ export default function SettingsPage() {
             modelCatalogue: [
               ...prev.modelCatalogue,
               ...appended.filter((entry) => !prev.modelCatalogue.some((e) => e.id === entry.id)),
+            ],
+          }
+        : prev,
+    );
+  }, [savedS]);
+
+  /** `checkForModels` for the Codex list, on the same terms. */
+  const checkForCodexModels = useCallback(async () => {
+    if (!savedS) return;
+    const before = savedS.codexModelCatalogue;
+    setCodexDiscoveryBusy(true);
+    const res = await jsonRequest<CodexModelDiscoveryCheckDTO>("/api/models/codex-discovery", {
+      method: "POST",
+    });
+    setCodexDiscoveryBusy(false);
+    if (!res.ok) {
+      setCodexDiscoveryError(actionFailureMessage(res, "The check could not be started."));
+      return;
+    }
+    setCodexDiscoveryError(null);
+    setCodexDiscovery(res.data.discovery);
+    const after = res.data.codexModelCatalogue;
+    const appended = after.filter((entry) => !before.some((e) => e.id === entry.id));
+    setSavedS((prev) => (prev ? { ...prev, codexModelCatalogue: after } : prev));
+    setS((prev) =>
+      prev
+        ? {
+            ...prev,
+            codexModelCatalogue: [
+              ...prev.codexModelCatalogue,
+              ...appended.filter(
+                (entry) => !prev.codexModelCatalogue.some((e) => e.id === entry.id),
+              ),
             ],
           }
         : prev,
@@ -3054,6 +3137,18 @@ export default function SettingsPage() {
     setModelDraft("");
     if (catalogue.some((e) => e.id === id)) return;
     patch({ modelCatalogue: [...catalogue, { id, label: id, enabled: true }] });
+  }
+
+  const codexCatalogue = effective.codexModelCatalogue;
+  const enabledCodexModels = codexCatalogue.filter((e) => e.enabled);
+
+  /** `addModel` for the Codex list. */
+  function addCodexModel() {
+    const id = codexModelDraft.trim();
+    if (!id) return;
+    setCodexModelDraft("");
+    if (codexCatalogue.some((e) => e.id === id)) return;
+    patch({ codexModelCatalogue: [...codexCatalogue, { id, label: id, enabled: true }] });
   }
   /**
    * How many of a fold's settings this install has moved off the shipped
@@ -3882,6 +3977,42 @@ export default function SettingsPage() {
             </div>
           </SettingRow>
 
+          {/* The Codex provider's own default, beside the Claude one and never
+              a fallback for it: a Codex run that names no model gets this, then
+              the Codex CLI's own. Over the Codex list only, which is what the
+              CLI's `model/list` named. */}
+          <SettingRow
+            htmlFor="codexmodel"
+            edited={isEdited("codexDefaultModel")}
+            label="Default Codex model"
+            description="Used when a Codex run names none"
+          >
+            <div className="w-64">
+              <Select
+                id="codexmodel"
+                value={effective.codexDefaultModel ?? ""}
+                onChange={(e) => patch({ codexDefaultModel: e.target.value || null })}
+              >
+                <option value="">
+                  {codexDiscovery?.cliDefault
+                    ? `Codex's own — ${codexDiscovery.cliDefault.label}`
+                    : "Codex's own default"}
+                </option>
+                {enabledCodexModels.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.label}
+                  </option>
+                ))}
+                {effective.codexDefaultModel !== null &&
+                  !enabledCodexModels.some((e) => e.id === effective.codexDefaultModel) && (
+                    <option value={effective.codexDefaultModel}>
+                      {effective.codexDefaultModel} — no longer enabled
+                    </option>
+                  )}
+              </Select>
+            </div>
+          </SettingRow>
+
           {/* Beside the model and deliberately not among the guards below. An
               agent carries a description and a prompt — the registry refuses a
               tool list at the door and has no column for a permission mode — so
@@ -4091,7 +4222,7 @@ export default function SettingsPage() {
         >
           <div className={`${FOLD_BODY} ${FLUSH}`}>
             <ModelDiscoveryPanel
-              status={discovery}
+              status={claudeDiscoveryView(discovery)}
               error={discoveryError}
               busy={discoveryBusy}
               catalogueEdited={catalogueEdited}
@@ -4190,6 +4321,104 @@ export default function SettingsPage() {
                 </Button>
               </div>
               <Hint>Exactly as the CLI takes it, square brackets included</Hint>
+            </Field>
+          </div>
+        </Disclosure>
+
+        {/* The Codex list, folded for the Claude list's reason. Every row has
+            Remove: nothing here is seeded, and discovery offers an id once, so
+            a removed model stays removed. No Unpriced badge either — no Codex
+            model is priced, and every Codex run already reads its spend as
+            unknown. */}
+        <Disclosure
+          className="mb-3.5 last:mb-0"
+          summaryClassName={`relative ${FOLD_SUMMARY}`}
+          summary={
+            <>
+              <EditedRail on={isEdited("codexModelCatalogue")} />
+              <SettingName
+                label="Codex models this install may use"
+                edited={isEdited("codexModelCatalogue")}
+              />
+            </>
+          }
+          count={movedCount(["codexModelCatalogue"])}
+          defaultOpen={false}
+        >
+          <div className={`${FOLD_BODY} ${FLUSH}`}>
+            <ModelDiscoveryPanel
+              status={codexDiscoveryView(codexDiscovery)}
+              error={codexDiscoveryError}
+              busy={codexDiscoveryBusy}
+              catalogueEdited={codexCatalogueEdited}
+              // Empty-and-stored is the operator's "no list"; empty and still
+              // following the default only means nothing has been listed yet.
+              catalogueEmpty={
+                codexCatalogue.length === 0 && movedKeys.includes("codexModelCatalogue")
+              }
+              onCheck={() => void checkForCodexModels()}
+            />
+
+            {codexCatalogue.length > 0 ? (
+              <ListGroup label="Show on Codex model pickers">
+                {codexCatalogue.map((entry) => (
+                  <ListRow
+                    key={entry.id}
+                    label={entry.label}
+                    description={
+                      entry.label === entry.id ? undefined : (
+                        <span className="mono">{entry.id}</span>
+                      )
+                    }
+                  >
+                    <Switch
+                      checked={entry.enabled}
+                      disabled={entry.enabled && enabledCodexModels.length === 1}
+                      onChange={(on) =>
+                        patch({
+                          codexModelCatalogue: codexCatalogue.map((e) =>
+                            e.id === entry.id ? { ...e, enabled: on } : e,
+                          ),
+                        })
+                      }
+                      label={entry.label}
+                    />
+                    <Button
+                      variant="ghost"
+                      size="compact"
+                      onClick={() =>
+                        patch({
+                          codexModelCatalogue: codexCatalogue.filter((e) => e.id !== entry.id),
+                        })
+                      }
+                    >
+                      Remove
+                    </Button>
+                  </ListRow>
+                ))}
+              </ListGroup>
+            ) : (
+              <Hint className="mb-3">
+                No list yet, so a Codex run&rsquo;s model is free text
+              </Hint>
+            )}
+
+            <Field label="Add a Codex model" htmlFor="codex-model-add">
+              <div className="flex flex-wrap items-start gap-2">
+                <div className="w-64">
+                  <Input
+                    id="codex-model-add"
+                    type="text"
+                    placeholder="gpt-6-astra"
+                    value={codexModelDraft}
+                    onChange={(e) => setCodexModelDraft(e.target.value)}
+                  />
+                </div>
+                <Button variant="secondary" onClick={addCodexModel}>
+                  Add
+                </Button>
+              </div>
+              <Hint>Exactly as <span className="mono">codex exec -m</span> takes it</Hint>
             </Field>
           </div>
         </Disclosure>

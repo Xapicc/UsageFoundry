@@ -1267,6 +1267,11 @@ export function buildArgs(opts: {
    * Appended outside the adapter, a Codex cycle would have been handed a
    * Claude-only flag — which `codex exec` rejects, so every such run would have
    * failed at the spawn with an argv error and no write set at all.
+   *
+   * The two providers are not handed the same list either: a Codex cycle gets
+   * `codexWritableRoots`, which reshapes three entries its sandbox cannot take
+   * as they are and is read whether or not the install has a managed sandbox,
+   * because Codex's own is always on.
    */
   writableRoots?: readonly string[] | null;
   /**
@@ -1503,8 +1508,8 @@ export function buildArgs(opts: {
  * - **`acceptEdits`** → `workspace-write`. The one exact correspondence in the
  *   table: edits inside the workspace proceed without asking, everything
  *   outside it does not. `--add-dir` extends that write set, which is why the
- *   vault and the confinement roots are emitted as `--add-dir` below rather
- *   than as anything of this app's own devising.
+ *   confinement roots are emitted as `--add-dir` below rather than as anything
+ *   of this app's own devising — and why the vault no longer is.
  *
  * - **`bypassPermissions`** → `--dangerously-bypass-approvals-and-sandbox`, and
  *   no `-s` beside it. It is the mode whose whole content is "no sandbox, no
@@ -1644,15 +1649,21 @@ export function buildCodexArgs(opts: Parameters<typeof buildArgs>[0]): string[] 
   if (opts.model) args.push("-m", opts.model);
   if (opts.workDir) args.push("-C", opts.workDir);
   args.push(...CODEX_PERMISSIONS[opts.permissionMode]);
-  // Every directory beyond the working root, in one list rather than two
-  // mechanisms: the vault this run was granted and whatever the install's
-  // sandbox confines it to are the same kind of fact here, where for Claude Code
-  // they are `--add-dir` and a `--settings` overlay respectively. `--add-dir` is
-  // repeatable and takes one directory each time.
-  for (const dir of [
-    ...(opts.vaultSkill ? [opts.vaultSkill.vaultPath] : []),
-    ...(opts.writableRoots ?? []),
-  ]) {
+  // Every directory beyond the working root this cycle may write, one per flag:
+  // `--add-dir` is repeatable and takes one directory each time. The run loop
+  // hands over Codex's own shape of the write set (`codexWritableRoots`), not
+  // the overlay Claude Code takes.
+  //
+  // **The vault is deliberately not among them**, though Claude Code gets it as
+  // `--add-dir`. For Claude that flag is what lets the vault skill's path be
+  // read, and its write grant is the price, bounded only by the skill's own
+  // "never write to the vault". For Codex both halves are different: every
+  // sandbox mode here reads the whole filesystem already — measured: `ls` of the
+  // vault works under `workspace-write` with no `--add-dir`, and `touch` in it
+  // is refused read-only — and a Codex cycle gets no skill (`pluginDirs` is a
+  // Claude flag), so the flag granted nothing but write, with no text anywhere
+  // saying not to use it.
+  for (const dir of opts.writableRoots ?? []) {
     args.push("--add-dir", dir);
   }
   if (opts.lastMessageFile) {

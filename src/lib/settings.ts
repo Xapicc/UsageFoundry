@@ -1,8 +1,10 @@
 import { getJSON, setJSON } from "./db";
 import { normalizePolicy, type BudgetPolicy } from "./budget";
 import {
+  CODEX_MODEL_DISCOVERY_KEY,
   defaultCatalogueWith,
   discoveredEntriesOf,
+  isCodexModelId,
   MODEL_DISCOVERY_KEY,
   SEEDED_MODEL_CATALOGUE,
   type ModelCatalogueEntry,
@@ -114,6 +116,29 @@ export interface Settings {
    * capability.
    */
   modelCatalogue: ModelCatalogueEntry[];
+  /**
+   * The model a Codex run gets when it names none, or null for the Codex CLI's
+   * own default.
+   *
+   * `defaultModel`'s twin for the other provider and never a fallback for it
+   * or from it: a Claude id handed to `codex exec -m` is a run that fails at
+   * the first request, which is what `frozenRunModel` was changed to stop. A
+   * choice over the enabled `codexModelCatalogue` entries, refused at Save
+   * when it names one that is not, for `defaultModel`'s reason.
+   */
+  codexDefaultModel: string | null;
+  /**
+   * Which models a Codex run may start on, in picker order.
+   *
+   * `modelCatalogue`'s rules — an id, a label and a switch, validation and
+   * never a guard, empty means no list — with one difference: there is no
+   * seed. Nothing in this build knows which models a ChatGPT plan reaches, so
+   * the shipped default is empty and `settingsDefaults()` lays over it what
+   * `codexModelDiscovery.ts` has read off the CLI's own `model/list`. Until
+   * the first listing it is empty, and a Codex run's model is free text, as it
+   * was before this list.
+   */
+  codexModelCatalogue: ModelCatalogueEntry[];
   /**
    * The saved agent the new-run form starts on, or null for none.
    *
@@ -1040,6 +1065,8 @@ export const DEFAULTS: Settings = {
   defaultPermissionMode: "acceptEdits",
   defaultModel: null,
   modelCatalogue: SEEDED_MODEL_CATALOGUE,
+  codexDefaultModel: null,
+  codexModelCatalogue: [],
   defaultAgentId: null,
   continuationPrompt: DEFAULT_CONTINUATION_PROMPT,
   includeSidechains: true,
@@ -1123,8 +1150,31 @@ const KEY = "settings";
  */
 export function settingsDefaults(): Settings {
   const added = discoveredEntriesOf(getJSON<unknown>(MODEL_DISCOVERY_KEY, null));
-  if (added.length === 0) return DEFAULTS;
-  return { ...DEFAULTS, modelCatalogue: defaultCatalogueWith(added) };
+  // The Codex list has no seed, so what discovery added *is* its default, in
+  // the order the CLI listed it — the same "moves the default, never the
+  // setting" choice as the line above, for the same reasons.
+  const codexAdded = discoveredEntriesOf(
+    getJSON<unknown>(CODEX_MODEL_DISCOVERY_KEY, null),
+    isCodexModelId,
+  );
+  if (added.length === 0 && codexAdded.length === 0) return DEFAULTS;
+  return {
+    ...DEFAULTS,
+    modelCatalogue: added.length === 0 ? DEFAULTS.modelCatalogue : defaultCatalogueWith(added),
+    codexModelCatalogue: codexAdded,
+  };
+}
+
+/**
+ * Whether the stored blob carries `key`, i.e. this install has moved it off
+ * `settingsDefaults()`.
+ *
+ * Codex model discovery needs the difference between "following the default"
+ * and "a list the operator saved", because both can read as an empty list and
+ * only the second is an answer to leave alone.
+ */
+export function isStoredSetting(key: keyof Settings): boolean {
+  return Object.hasOwn(getJSON<Partial<Settings>>(KEY, {}), key);
 }
 
 export function getSettings(): Settings {

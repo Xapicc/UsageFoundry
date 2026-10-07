@@ -2623,3 +2623,61 @@ describe("a local-model run's session survives the rebuild", () => {
     );
   });
 });
+
+/**
+ * Where the Codex sign-in lives, pinned across the places that have to agree for
+ * it to survive `docker compose up --build`.
+ *
+ * `config.ts` defaults `CODEX_HOME` to `$HOME/.codex`, compose mounts a volume
+ * there, the image creates it as the agents' and the entrypoint re-owns it.
+ * While it was the writable layer every rebuild signed the install out of Codex
+ * and took every thread a Codex run resumes with it, with nothing failing until
+ * the next Codex cycle reported "Not logged in".
+ */
+describe("the Codex sign-in survives the rebuild", () => {
+  const entrypoint = fs.readFileSync(path.join(root, "docker-entrypoint.sh"), "utf8");
+
+  /** The directory the entrypoint treats as Codex's home. */
+  function codexHomeVolume(): string {
+    const match = /^CODEX_HOME_VOLUME=(\S+)$/m.exec(entrypoint);
+    assert.ok(match, "docker-entrypoint.sh no longer names the Codex home");
+    return match[1];
+  }
+
+  it("is the default config.ts derives under the image's HOME", () => {
+    const home = /^\s*HOME=(\S+?)\s*\\?$/m.exec(dockerfile)?.[1];
+    assert.ok(home, "the Dockerfile no longer sets HOME");
+    assert.equal(codexHomeVolume(), path.posix.join(home, ".codex"));
+    assert.doesNotMatch(
+      compose,
+      /^\s*CODEX_HOME:/m,
+      "docker-compose.yml sets CODEX_HOME, so the volume is no longer where Codex looks",
+    );
+  });
+
+  it("mounts a named volume over that directory", () => {
+    const target = codexHomeVolume();
+    assert.match(
+      compose,
+      new RegExp(`^\\s*-\\s*[A-Za-z0-9][\\w.-]*:${target}\\s*$`, "m"),
+      `${target} is not a named volume in docker-compose.yml, so a Codex sign-in ` +
+        `is in the writable layer and \`docker compose up --build\` discards it.`,
+    );
+  });
+
+  it("ships that directory in the image, so a fresh volume is not root's", () => {
+    const target = codexHomeVolume();
+    assert.match(
+      dockerfile,
+      new RegExp(`mkdir -p[^\\n]*(\\\\\\s*\\n[^\\n]*)*${target.replace(/\./g, "\\.")}`),
+      `the image never creates ${target}, so the volume created over it belongs to ` +
+        `root and the agent uid cannot sign in to it`,
+    );
+  });
+
+  it("hands rules/ back to root after re-owning the rest", () => {
+    // The denial an agent must not be able to rewrite lives in that directory;
+    // a plain recursive re-own would give it to the agent uid.
+    assert.match(entrypoint, /chown -R 0:0 "\$CODEX_HOME_VOLUME\/rules"/);
+  });
+});

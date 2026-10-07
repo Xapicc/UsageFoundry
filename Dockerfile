@@ -586,11 +586,11 @@ RUN set -eux; \
 #
 # `CODEX_HOME` is set by neither this file nor `docker-compose.yml`, so
 # `config.ts` resolves it to the CLI's own default under the `HOME` set above,
-# `/home/node/.codex`: neither the `~/.claude` bind mount nor a named volume.
-# The credential and the `sessions/` threads a Codex run resumes therefore live
-# in the container's writable layer, surviving `docker restart` and gone when
-# compose recreates the container, so a sign-in lasts until the next rebuild.
-# Making it persist is a volume at that path, not a line in this file.
+# `/home/node/.codex` — which compose mounts as the `usagefoundry-codex` volume,
+# so the credential and the `sessions/` threads a Codex run resumes survive the
+# rebuild. Until that volume they lived in the writable layer and a sign-in
+# lasted until the next `up --build`. The directory is created with the agents'
+# home below so a fresh volume inherits `node` rather than root.
 #
 # ~335 MB unpacked on amd64 and ~292 MB on arm64, from a 123 MB download: a
 # 259 MB `codex`, a 69 MB `codex-code-mode-host`, and its own `rg`, `bwrap`
@@ -697,6 +697,12 @@ COPY scripts/apply-stacks.mjs ./scripts/
 # directory, so it ships owned by `node` and a fresh volume inherits that.
 # Nothing is put in it here; `ensureLocalConfigDir` fills it per cycle.
 #
+# `/home/node/.codex` is the same arrangement for the Codex CLI: the agent uid
+# signs in there and every Codex cycle authenticates from it, so it ships owned
+# by `node`. Its `rules/` is the exception and is not made here — the server
+# writes it as root every cycle, and `docker-entrypoint.sh` hands it back to
+# root after any recursive re-own.
+#
 # **`/app` is not on that list and must never be put back on it.** It is this
 # server's own bundle — `server.js`, `.next/`, the standalone `node_modules/`
 # and `scripts/` — and root is what executes it, so `node:node` there made the
@@ -721,7 +727,7 @@ COPY scripts/apply-stacks.mjs ./scripts/
 RUN mkdir -p /data /workspace /workspace2 /workspace3 /workspace4 /home/node/.claude \
       /home/node/go/build-cache /home/node/.local/share/gh/extensions \
       /home/node/pytools/tools /home/node/pytools/bin /home/node/pytools/python \
-      /var/lib/winnow /home/node/.claude-local \
+      /var/lib/winnow /home/node/.claude-local /home/node/.codex \
  && chown -R node:node /workspace /workspace2 /workspace3 /workspace4 /home/node \
  && chown root:root /data \
  && chmod 0700 /data

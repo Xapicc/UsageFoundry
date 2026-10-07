@@ -238,6 +238,7 @@ export function enabledModels(
 export function modelRefusal(
   catalogue: readonly ModelCatalogueEntry[],
   model: string | null | undefined,
+  provider: "claude" | "codex" = "claude",
 ): string | null {
   const seen = typeof model === "string" ? model.trim() : "";
   if (!seen) return null;
@@ -248,9 +249,14 @@ export function modelRefusal(
 
   const disabled = catalogue.find((entry) => entry.id === seen);
   const available = enabled.map((entry) => entry.id).join(", ");
+  // Each provider's list is its own, so the sentence names which one refused
+  // and where it is edited — "not on this install's list" for a Codex slug
+  // would send the operator to the Claude list, where adding it does nothing.
+  const list = provider === "codex" ? "Codex models" : "Models";
+  const which = provider === "codex" ? "Codex list" : "list";
   return disabled
-    ? `Model "${seen}" is switched off for this install. Enabled models: ${available}. Switch it back on under Settings → Models.`
-    : `Model "${seen}" is not on this install's list. Enabled models: ${available}. Add it under Settings → Models.`;
+    ? `Model "${seen}" is switched off for this install. Enabled ${list.toLowerCase()}: ${available}. Switch it back on under Settings → ${list}.`
+    : `Model "${seen}" is not on this install's ${which}. Enabled ${list.toLowerCase()}: ${available}. Add it under Settings → ${list}.`;
 }
 
 /**
@@ -421,6 +427,28 @@ export function isDiscoverableModelId(id: unknown): id is string {
 }
 
 /**
+ * The same rule for a slug the Codex CLI's `model/list` names.
+ *
+ * No vendor prefix, because the measured list has none in common —
+ * `gpt-6-astra`, `gpt-5.6-sol`, `codex-auto-review` — and OpenAI has shipped
+ * `o3` before. Everything else is `DISCOVERED_ID`'s argument unchanged: the id
+ * reaches `codex exec -m`, so a leading dash, whitespace and anything a person
+ * could not read as a model id are refused rather than admitted.
+ */
+const CODEX_DISCOVERED_ID = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
+
+export function isCodexModelId(id: unknown): id is string {
+  return (
+    typeof id === "string" &&
+    id.length <= MAX_DISCOVERED_ID_LENGTH &&
+    CODEX_DISCOVERED_ID.test(id)
+  );
+}
+
+/** Which ids a discovery source may turn into entries. */
+export type DiscoverableId = (id: unknown) => id is string;
+
+/**
  * The API's display name, made safe to put on a picker, or the id.
  *
  * A label gates nothing, but it is still text from outside on every page that
@@ -474,20 +502,30 @@ export interface DiscoveryMerge {
  *
  * Matching is exact, as everywhere in this file — `claude-sonnet-4-5-20250929`
  * is not `claude-sonnet-4-5` here, whatever `pricing.ts` makes of the two.
+ *
+ * **Two options, both for the Codex catalogue.** `isDiscoverable` is the id
+ * rule, `isCodexModelId` there. `fillEmpty` is the one case "empty stays
+ * empty" does not cover: the Codex list has no seed, so an install still
+ * following its default reads an empty list until the first listing — and
+ * that empty is "nothing listed yet", not an operator's "no list". The caller
+ * passes it only for an install with no stored list; a stored empty list keeps
+ * the rule above.
  */
 export function mergeDiscoveredModels(
   catalogue: readonly ModelCatalogueEntry[],
   discovered: readonly DiscoveredModel[],
   offered: readonly string[],
+  options: { isDiscoverable?: DiscoverableId; fillEmpty?: boolean } = {},
 ): DiscoveryMerge {
+  const isDiscoverable = options.isDiscoverable ?? isDiscoverableModelId;
   const refused: string[] = [];
   const listed: DiscoveredModel[] = [];
   for (const model of discovered) {
-    if (isDiscoverableModelId(model.id)) listed.push(model);
+    if (isDiscoverable(model.id)) listed.push(model);
     else refused.push(model.id);
   }
 
-  if (catalogue.length === 0) {
+  if (catalogue.length === 0 && !options.fillEmpty) {
     return { catalogue: [], added: [], offered: [...offered], refused };
   }
 
@@ -525,6 +563,9 @@ export function mergeDiscoveredModels(
  */
 export const MODEL_DISCOVERY_KEY = "modelDiscovery";
 
+/** The Codex catalogue's record, its own row for `MODEL_DISCOVERY_KEY`'s reason. */
+export const CODEX_MODEL_DISCOVERY_KEY = "codexModelDiscovery";
+
 /**
  * What discovery has added, off its stored record, for the default to follow.
  *
@@ -533,7 +574,10 @@ export const MODEL_DISCOVERY_KEY = "modelDiscovery";
  * dropped, every label is re-cleaned, and every entry is enabled, which is the
  * only way discovery ever adds one.
  */
-export function discoveredEntriesOf(record: unknown): ModelCatalogueEntry[] {
+export function discoveredEntriesOf(
+  record: unknown,
+  isDiscoverable: DiscoverableId = isDiscoverableModelId,
+): ModelCatalogueEntry[] {
   if (!record || typeof record !== "object") return [];
   const added = (record as { added?: unknown }).added;
   if (!Array.isArray(added)) return [];
@@ -543,7 +587,7 @@ export function discoveredEntriesOf(record: unknown): ModelCatalogueEntry[] {
   for (const raw of added) {
     if (!raw || typeof raw !== "object") continue;
     const { id, label } = raw as { id?: unknown; label?: unknown };
-    if (!isDiscoverableModelId(id) || seen.has(id)) continue;
+    if (!isDiscoverable(id) || seen.has(id)) continue;
     seen.add(id);
     entries.push({ id, label: discoveredLabel(label, id), enabled: true });
   }

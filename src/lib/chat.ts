@@ -1580,18 +1580,22 @@ export function planProposal(
       // answers to one question. A model is a price, and the chat is the
       // surface that knows what this particular job is worth paying for.
       //
-      // Never for a Codex run: every id this could hold is a Claude id — the
-      // tool offers the catalogue and a template's model came from the same
-      // place — and `codex exec -m claude-…` is a spawn that fails. Null runs
-      // Codex's own default, `frozenRunModel`'s reading.
+      // A Codex run takes the proposal's own model and never the template's.
+      // `propose_run` held the proposal's to `codexModelCatalogue`, so it is a
+      // slug the Codex CLI listed; a template's model came from the Claude
+      // catalogue, and `codex exec -m claude-…` is a spawn that fails. Null
+      // falls to `settings.codexDefaultModel` and then Codex's own default,
+      // `frozenRunModel`'s reading.
       //
-      // Nor for a local run, for the same reason from the other side: its
-      // server knows none of these ids. `approveProposal` freezes the
-      // sign-in's model onto it, as the run form's door does.
+      // Never for a local run: its server knows none of these ids.
+      // `approveProposal` freezes the sign-in's model onto it, as the run
+      // form's door does.
       model:
-        provider === "codex" || provider === "local"
+        provider === "local"
           ? null
-          : proposal.model?.trim() || template?.model || null,
+          : provider === "codex"
+            ? proposal.model?.trim() || null
+            : proposal.model?.trim() || template?.model || null,
       // Null stays null — "not recorded", the ordinary Claude run — rather than
       // becoming `'claude'`, which would be this app answering for every chat
       // run a question the chat never asked.

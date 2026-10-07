@@ -40,6 +40,7 @@ import {
   type PermissionMode,
 } from "../../../lib/settings";
 import { modelRefusal } from "../../../lib/modelCatalogue";
+import { codexGuardSnapshot } from "../../../lib/codexAccount";
 import { getLocalSignIn, parseLocalSignIn } from "../../../lib/localProvider";
 import { resolveAgentForRun, runAgentDTO } from "../../../lib/agents";
 import {
@@ -311,10 +312,12 @@ async function postHandler(req: Request) {
   // written. Trimmed first because `--model "  "` is a spawn the CLI refuses and
   // a blank has to keep meaning "named none" so the fallback rungs still run.
   //
-  // Scoped to the Claude provider on purpose. The catalogue is seeded from a
+  // Each provider against its own list. The Claude catalogue is seeded from a
   // table of Anthropic prices and holds Claude Code's own id spellings; a Codex
-  // run names something else entirely, and refusing it against this list would
-  // be this build claiming to know a set it has never been told.
+  // run is held to `codexModelCatalogue`, which is what the Codex CLI's own
+  // `model/list` named — and which, empty until that first listing, refuses
+  // nothing, so a Codex model stays free text exactly as long as this build
+  // has not been told the set.
   let model = text.model?.trim() || null;
   if (provider === "local") {
     // Refused here rather than at the first cycle, which would refuse it too:
@@ -327,7 +330,8 @@ async function postHandler(req: Request) {
         { status: 400 },
       );
     }
-    // Free text for Codex's reason — the catalogue holds Claude ids — but held
+    // Free text, because the catalogue holds Claude ids and nothing lists a
+    // local server's models — but held
     // to the sign-in's own argv rule, and frozen onto the row so the run keeps
     // its model when the sign-in later names another.
     if (model) {
@@ -335,7 +339,10 @@ async function postHandler(req: Request) {
       if (!checked.ok) return NextResponse.json({ error: checked.error }, { status: 400 });
     }
     model ??= signIn.model;
-  } else if (provider !== "codex") {
+  } else if (provider === "codex") {
+    const refusal = modelRefusal(getSettings().codexModelCatalogue, model, "codex");
+    if (refusal) return NextResponse.json({ error: refusal }, { status: 400 });
+  } else {
     const refusal = modelRefusal(getSettings().modelCatalogue, model);
     if (refusal) return NextResponse.json({ error: refusal }, { status: 400 });
   }
@@ -419,7 +426,11 @@ async function postHandler(req: Request) {
   // it: that function runs from entry to INSERT with no `await` at all, and one
   // here would silently reintroduce two agents in one directory.
   if (policy.maxWeeklyFraction !== null || policy.maxSessionFraction !== null) {
-    const refusal = windowGuardRefusal(policy, await currentSnapshot());
+    // A Codex run's guards read the Codex account's windows, so that is the
+    // reading whose absence refuses it here.
+    const snapshot =
+      provider === "codex" ? await codexGuardSnapshot() : await currentSnapshot();
+    const refusal = windowGuardRefusal(policy, snapshot, provider);
     if (refusal) return NextResponse.json({ error: refusal }, { status: 400 });
   }
 

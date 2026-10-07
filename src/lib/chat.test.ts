@@ -340,6 +340,16 @@ describe("planProposal", () => {
     assert.equal(plan.input.provider, "codex");
     assert.equal(plan.input.model, null, "the template's Claude model is not handed to Codex");
 
+    // A Codex model the proposal itself named — held to the Codex list at the
+    // tool — is kept, and still never the template's.
+    const named = planProposal(
+      proposal({ provider: "codex", model: "gpt-6-astra" }),
+      template,
+      defaults,
+      null,
+    );
+    assert.equal(named.ok && named.input.model, "gpt-6-astra");
+
     const ordinary = planProposal(proposal(), template, defaults, null);
     assert.equal(ordinary.ok && ordinary.input.provider, null, "none named stays not recorded");
 

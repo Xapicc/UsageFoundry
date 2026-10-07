@@ -61,6 +61,7 @@ let chat: typeof import("../../../lib/chat");
 let comments: typeof import("../../../lib/taskComments");
 let taskDeps: typeof import("../../../lib/taskDeps");
 let db: typeof import("../../../lib/db").db;
+let saveSettings: typeof import("../../../lib/settings").saveSettings;
 
 before(async () => {
   const config = await import("../../../lib/config");
@@ -75,6 +76,7 @@ before(async () => {
   comments = await import("../../../lib/taskComments");
   taskDeps = await import("../../../lib/taskDeps");
   db = (await import("../../../lib/db")).db;
+  saveSettings = (await import("../../../lib/settings")).saveSettings;
   route = await import("./route");
 });
 
@@ -1669,9 +1671,25 @@ test("propose_run carries a provider, and refuses a Codex card it could not hono
 
   assert.equal(proposals(), 0, "no refusal wrote a card");
 
-  const ok = await propose({ templateId: bounded, provider: "codex" });
+  // A Codex card's model is held to the Codex list, and a Claude id is not on
+  // it — the card would otherwise promise a model `codex exec -m` refuses.
+  saveSettings({
+    codexModelCatalogue: [{ id: "gpt-6-astra", label: "GPT-6-Astra", enabled: true }],
+  });
+  const claudeOnCodex = await propose({
+    templateId: bounded,
+    provider: "codex",
+    model: "claude-sonnet-5",
+  });
+  assert.equal(claudeOnCodex.isError, true);
+  assert.match(claudeOnCodex.text, /not on this install's Codex list/);
+
+  assert.equal(proposals(), 0, "no refusal wrote a card");
+
+  const ok = await propose({ templateId: bounded, provider: "codex", model: "gpt-6-astra" });
   assert.equal(ok.isError, false, ok.text);
   assert.match(ok.text, /spawned as Codex/);
+  saveSettings({ codexModelCatalogue: [] });
   const plain = await propose({ templateId: bounded });
   assert.equal(plain.isError, false, plain.text);
 

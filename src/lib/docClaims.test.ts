@@ -214,6 +214,11 @@ const NUMBER_WORDS: Record<string, number> = {
   eighteen: 18,
   nineteen: 19,
   twenty: 20,
+  "twenty-one": 21,
+  "twenty-two": 22,
+  "twenty-three": 23,
+  "twenty-four": 24,
+  "twenty-five": 25,
 };
 
 function spelledNumber(doc: string, word: string): number {
@@ -491,15 +496,26 @@ describe("docs/agent/security's environment scrubs", () => {
     const accessMissing = openai.filter((rel) => !access.includes(rel));
     const accessOnly = access.filter((rel) => !openai.includes(rel));
 
-    // The count below cannot see this one, since it keeps the two keys the
+    // A copy *of* that copy carries the same deliberate difference, and the
+    // doc names each one as such — `codexAccountEnv`, behind the app-server
+    // reads, is the first.
+    const twins = security.flatMap((file) =>
+      [
+        ...file.text.matchAll(
+          /An? [a-z]+, `\w+` \(`([\w.]+)`[^)]*\), is a byte-identical copy of `codexAuthEnv`/g,
+        ),
+      ].map((m) => m[1]),
+    );
+
+    // The count below cannot see these, since they keep the two keys the
     // count is taken over: `codexAuthEnv` arrived as a seventh copy and the doc
     // did not name it until somebody happened to read the paragraph.
     assert.deepEqual(
-      accessOnly.map((rel) => path.basename(rel)),
-      [differing[1]],
+      accessOnly.map((rel) => path.basename(rel)).sort(),
+      [differing[1], ...twins].sort(),
       stale(
         differingDoc,
-        `the one copy that differs is in \`${differing[1]}\``,
+        `the copies that differ are in \`${[differing[1], ...twins].join("`, `")}\``,
         `${accessOnly.length} strip \`CODEX_ACCESS_TOKEN\` but not the two keys: ${accessOnly.join(", ")}`,
       ),
     );
@@ -543,7 +559,7 @@ describe("docs/agent/testing's rendering tests", () => {
   it("counts every *.test.tsx in the tree", () => {
     const { doc, match: claim } = claimInDocument(
       readDocument("docs/agent/testing.md"),
-      /^([A-Z][a-z]+) are renderings rather than functions/m,
+      /^([A-Z][a-z]+(?:-[a-z]+)?) are renderings rather than functions/m,
     );
     const renderings = sources.filter(({ rel }) => rel.endsWith(".test.tsx")).map(({ rel }) => rel);
 

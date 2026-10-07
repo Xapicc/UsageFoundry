@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 // Relative, not "@/…" — see the note in the login route.
 import { currentSnapshot, getRun, reopenRun } from "../../../../../lib/orchestrator";
+import { codexGuardSnapshot } from "../../../../../lib/codexAccount";
 import {
   ENFORCEMENT_MODES,
   normalizePolicy,
@@ -88,7 +89,11 @@ async function postHandler(req: Request, ctx: Ctx) {
   // touches the row, so a run whose guard cannot be read is left exactly as it
   // was rather than flickering queued → stopped.
   if (policy.maxWeeklyFraction !== null || policy.maxSessionFraction !== null) {
-    const refusal = windowGuardRefusal(policy, await currentSnapshot());
+    // The run's own provider's windows, as the guard will read them.
+    const provider = getRun(id)?.provider ?? null;
+    const snapshot =
+      provider === "codex" ? await codexGuardSnapshot() : await currentSnapshot();
+    const refusal = windowGuardRefusal(policy, snapshot, provider);
     if (refusal) return NextResponse.json({ error: refusal }, { status: 400 });
   }
 

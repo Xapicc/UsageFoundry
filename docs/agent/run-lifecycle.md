@@ -79,6 +79,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - Three flags ride *every* cycle's argv, not the opening one, and `--resume` restores none of them.
 - Which CLI a cycle is, what argv it gets and how its stdout is read are one choice, made once per cycle.
 - `runs.provider` records which CLI a run was admitted as, and `null` on it is a third answer rather than a default.
+- A Codex cycle is handed the run's write set in the shape Codex's sandbox can build, and none of Claude Code's sandbox preparation.
 - An isolated run is told what its worktree does not isolate.
 - A run is told to delegate, and the instruction has a floor in it.
 - A run is told a browser is already here, because the command it reaches for from memory is the one thing that does not work.
@@ -116,6 +117,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - `paybackTurns` takes the suffix *before* the cut.
 - `gentle` is not offered.
 - Pruning and `startsFresh` are independent switches, and the one place they touch is a correction.
+- A Codex run has no boundary to prune, and the whole boundary is skipped rather than failed.
 
 ## [The live context ceiling](run-lifecycle/context-ceiling.md)
 

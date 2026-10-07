@@ -3,7 +3,7 @@
 > Extracted verbatim from `CLAUDE.md`, which grew past the size Claude Code will
 > load into a session. Each paragraph records a correctness or safety decision
 > whose violation is silent — nothing throws, nothing fails to typecheck.
-> **Read before editing src/lib/agents.ts, agentRegistry.ts, templates.ts, modelCatalogue.ts, modelDiscovery.ts.**
+> **Read before editing src/lib/agents.ts, agentRegistry.ts, templates.ts, modelCatalogue.ts, modelDiscovery.ts, codexModelDiscovery.ts.**
 
 Each paragraph is in one topic file under `docs/agent/agents-and-templates/`; the lines below are their lead claims, under the file that holds them.
 
@@ -11,6 +11,10 @@ Each paragraph is in one topic file under `docs/agent/agents-and-templates/`; th
 
 - A template is form input, and the two settings that decide what an agent may do are applied but announced.
 - Model discovery adds to the catalogue and never edits it, and what it adds moves the install's default rather than its setting.
+
+## [The Codex model catalogue](agents-and-templates/codex-model-catalogue.md)
+
+- The Codex catalogue is the same list for the other CLI, and its one difference is that it has no seed.
 
 ## [The model decider](agents-and-templates/model-decider.md)
 
