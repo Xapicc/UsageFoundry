@@ -42,6 +42,9 @@ import { WorkflowSchedule } from "@/components/WorkflowSchedule";
 
 const POLL_MS = 10_000;
 
+/** What Run's `aria-describedby` points at while an earlier press is live. */
+const LIVE_NOTICE_ID = "workflow-live-notice";
+
 type InstanceStatus = WorkflowInstanceDTO["status"];
 
 /**
@@ -336,6 +339,8 @@ export default function WorkflowPage() {
     );
   }
 
+  const runIsRefused = (workflow.liveRunCount ?? 0) > 0;
+
   return (
     <>
       <div className="mb-6">
@@ -358,10 +363,15 @@ export default function WorkflowPage() {
               than Duplicate beside it. The sheet behind it is unchanged and is
               still what actually confirms. */}
           <ButtonRow>
+            {/* Off while an earlier press is still going, with the notice below
+                as its stated reason. The refusal itself stays `startWorkflow`'s:
+                this reads the same fact a poll earlier, so the 400 is left for
+                the press that races it. */}
             <Button
               onClick={() => act("run", `/api/workflows/${id}/run`, "POST")}
               busy={busy === "run"}
-              disabled={busy !== null}
+              disabled={busy !== null || runIsRefused}
+              aria-describedby={runIsRefused ? LIVE_NOTICE_ID : undefined}
             >
               Run
             </Button>
@@ -427,11 +437,18 @@ export default function WorkflowPage() {
         themselves are untouched.
       </Sheet>
 
-      {(workflow.liveRunCount ?? 0) > 0 && (
-        <Notice tone="info">
-          {workflow.liveRunCount} run(s) from this workflow have not finished. It
-          cannot be started again until they do.
-        </Notice>
+      {runIsRefused && (
+        <div id={LIVE_NOTICE_ID}>
+          <Notice tone="info">
+            {workflow.liveRunCount} run(s) from this workflow have not finished, so
+            it cannot be started again until they do.{" "}
+            {workflow.liveInstanceId && (
+              <Link href={`/workflows/${id}/instances/${workflow.liveInstanceId}`}>
+                Open the one still going
+              </Link>
+            )}
+          </Notice>
+        </div>
       )}
 
       {/* Above the blocks, because it is the one thing on this page that bounds

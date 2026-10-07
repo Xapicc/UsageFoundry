@@ -2464,6 +2464,12 @@ export interface WorkflowDTO {
   updatedAt: number;
   /** Runs from this workflow that have not finished. Empty on most reads. */
   liveRunCount?: number;
+  /**
+   * The press of Run that is the reason it cannot be started again, or null.
+   * Null exactly when `liveRunCount` is 0: a block still deciding counts there
+   * and is named here, though it has started no run.
+   */
+  liveInstanceId?: string | null;
   /** When it was last started, or null if it never has been. */
   lastRunAt?: number | null;
   /** Null when nothing starts this workflow but a person. */

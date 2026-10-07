@@ -30,6 +30,8 @@ Counting only the runs is the quiet failure: a node deferred behind an orchestra
 
 The mirror of it is the same shape one status along — a node written off because the block in front of it satisfied nothing is what separates a graph that reached its end from one missing its tail, and reported as `finished` a workflow that did half its work reads exactly like one that did all of it.
 
+Its last suite asks `liveInstanceIdOf` the same question from the page's side: which press of Run to link while a workflow cannot be started again. A lookup over runs alone answers null for a block still deciding and for a loop between two passes, and the page then says it cannot be started again with nothing to open; against a runs-only lookup four of its cases fail. The last case holds the lookup to the counts the page disables Run on, so the two cannot disagree about whether anything is going.
+
 Its last case is the bound the halt needs, `haltedMembers.test.ts`'s reason turned around: `stopping` and `stopped` must stay above both counts, however many members the halt itself wrote off, because what ended a press of Run is the headline and a member says the rest on its own row.
 
 `schedulePut.test.ts` is `retentionSweep.test.ts`' shape one table over: `putSchedule`'s UPDATE carried a literal `paused=0`, so pressing Change on a paused schedule switched the one thing in this app that starts a billed agent with nobody present back on, as a side effect of a form that never asked.

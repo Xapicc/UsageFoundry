@@ -12,6 +12,7 @@ import {
   blockSpendReading,
   lastRunAt,
   liveBlocksOf,
+  liveInstanceIdOf,
   liveRunsOf,
   pickUpsOf,
   reviewItemsOf,
@@ -57,6 +58,7 @@ export function workflowDTO(workflow: Workflow): WorkflowDTO {
     createdAt: workflow.createdAt,
     updatedAt: workflow.updatedAt,
     liveRunCount: liveRunsOf(workflow.id).length + liveBlocksOf(workflow.id),
+    liveInstanceId: liveInstanceIdOf(workflow.id),
     lastRunAt: lastRunAt(workflow.id),
     schedule: schedule ? scheduleDTO(scheduleView(schedule, workflow)) : null,
   };

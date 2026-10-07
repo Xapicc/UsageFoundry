@@ -3307,6 +3307,53 @@ export function liveBlocksOf(workflowId: string): number {
   return row.n;
 }
 
+/**
+ * The press of Run that `startWorkflow` is refusing a second one on account of,
+ * or null when nothing from this workflow is going.
+ *
+ * Asked of both halves at once rather than composed from `liveRunsOf` and
+ * `liveBlocksOf`, because the instance a person needs to be sent to is not
+ * always the one with a live run: a block still deciding, or a loop between two
+ * passes, keeps the refusal standing with no run in flight anywhere, and a
+ * lookup over runs alone would answer null — a page that says it cannot be
+ * started again and names nothing to open. It reads the same two status lists
+ * the counts do, so the three cannot disagree about what "going" means.
+ *
+ * One answer, though the gate above is meant to leave at most one instance
+ * going. Rows written before that gate existed can say otherwise, and the
+ * newest is the one worth opening: it is the press whose runs are still being
+ * created.
+ */
+export function liveInstanceIdOf(workflowId: string): string | null {
+  const row = db()
+    .prepare(
+      `SELECT i.id AS id
+         FROM workflow_instances i
+        WHERE i.workflow_id = ?
+          AND (
+            EXISTS (
+              SELECT 1
+                FROM workflow_instance_runs w
+                JOIN runs r ON r.id = w.run_id
+               WHERE w.instance_id = i.id
+                 AND r.status IN (${LIVE_STATUSES.map(() => "?").join(",")})
+            )
+            OR EXISTS (
+              SELECT 1
+                FROM workflow_instance_blocks b
+               WHERE b.instance_id = i.id
+                 AND b.status IN (${LIVE_BLOCK_STATUSES.map(() => "?").join(",")})
+            )
+          )
+        ORDER BY i.created_at DESC, i.id DESC
+        LIMIT 1`,
+    )
+    .get(workflowId, ...LIVE_STATUSES, ...LIVE_BLOCK_STATUSES) as
+    | { id: string }
+    | undefined;
+  return row?.id ?? null;
+}
+
 /* ------------------------------------------------------------------ */
 /* Instantiating                                                       */
 /* ------------------------------------------------------------------ */

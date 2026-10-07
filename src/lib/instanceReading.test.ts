@@ -191,3 +191,96 @@ describe("what an instance reads as, counted over both halves of a graph", () =>
     assert.equal(read(id).status, "stopped");
   });
 });
+
+/**
+ * A second press of Run in a workflow `instance` already made, so a workflow can
+ * hold a settled history and a live press at once.
+ */
+function pressOf(name: string, key: string, createdAt: number): string {
+  const id = `inst-${key}`;
+  dbMod
+    .db()
+    .prepare(
+      `INSERT INTO workflow_instances (id, workflow_id, workflow_name, graph, created_at, status)
+       VALUES (?, ?, ?, '{"nodes":[],"edges":[]}', ?, 'started')`,
+    )
+    .run(id, `wf-${name}`, name, createdAt);
+  return id;
+}
+
+describe("which press of Run is the reason a workflow cannot be started again", () => {
+  it("is none while every member has settled", () => {
+    const id = instance("lookup-idle");
+    member(id, "completed");
+    ledgerBlock(id, "emitted");
+    assert.equal(workflows.liveInstanceIdOf("wf-lookup-idle"), null);
+  });
+
+  it("is the instance holding a run still going", () => {
+    const id = instance("lookup-run");
+    member(id, "running");
+    assert.equal(workflows.liveInstanceIdOf("wf-lookup-run"), id);
+  });
+
+  it("is the instance holding only a block still to decide", () => {
+    // The case a lookup over runs alone gets wrong: every run has settled and
+    // `startWorkflow` still refuses, so the page says it cannot be started again
+    // and has nothing to link to.
+    const id = instance("lookup-block");
+    member(id, "completed");
+    ledgerBlock(id, "thinking");
+    assert.equal(workflows.liveInstanceIdOf("wf-lookup-block"), id);
+  });
+
+  it("is the instance of a loop between two passes", () => {
+    const id = instance("lookup-loop");
+    ledgerBlock(id, "looping");
+    assert.equal(workflows.liveInstanceIdOf("wf-lookup-loop"), id);
+  });
+
+  it("passes over the settled presses before it", () => {
+    const old = instance("lookup-history");
+    member(old, "completed");
+    const live = pressOf("lookup-history", "lookup-history-live", Date.now() + 10_000);
+    member(live, "queued");
+    assert.equal(workflows.liveInstanceIdOf("wf-lookup-history"), live);
+  });
+
+  it("is the newest when rows from before the gate leave two going", () => {
+    const older = instance("lookup-two");
+    member(older, "running");
+    const newer = pressOf("lookup-two", "lookup-two-newer", Date.now() + 10_000);
+    ledgerBlock(newer, "waiting");
+    assert.equal(workflows.liveInstanceIdOf("wf-lookup-two"), newer);
+  });
+
+  it("does not name another workflow's press", () => {
+    const other = instance("lookup-other");
+    member(other, "running");
+    instance("lookup-quiet");
+    assert.equal(workflows.liveInstanceIdOf("wf-lookup-quiet"), null);
+  });
+
+  it("agrees with the counts about whether anything is going", () => {
+    // The page disables Run on the count and links on this, so the two answering
+    // differently is a notice with no link or a link with no notice.
+    const cases = [
+      { name: "agree-run", run: "running", block: "emitted" },
+      { name: "agree-block", run: "completed", block: "waiting" },
+      { name: "agree-none", run: "completed", block: "emitted" },
+    ];
+    for (const { name, run, block } of cases) {
+      const id = instance(name);
+      member(id, run);
+      ledgerBlock(id, block);
+      const counted =
+        workflows.liveRunsOf(`wf-${name}`).length +
+        workflows.liveBlocksOf(`wf-${name}`);
+      assert.equal(
+        workflows.liveInstanceIdOf(`wf-${name}`) !== null,
+        counted > 0,
+        name,
+      );
+    }
+  });
+});
