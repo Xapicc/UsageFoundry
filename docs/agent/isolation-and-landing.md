@@ -37,11 +37,14 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - The Land card offers it once, and states every refusal instead of discovering one. (was lines 149–165)
 - A branch whose history carries a file seeding copied in leaves by neither exit, and the handoff card offers no merge command for it.
 
-## [Merge previews, the conflicts map and conflict resolution](isolation-and-landing/conflicts-and-resolution.md)
+## [Merge previews and the conflicts map](isolation-and-landing/merge-previews-and-conflict-map.md)
 
 - Finding out whether a merge works must cost the operator nothing. (was line 26)
 - What conflicts comes from the stage records; why comes from the messages, and only the first is trusted. (was line 28)
 - The map at `/runs/[id]/conflicts` draws the preview the land card already fetched, and is allowed to claim less than the list beside it, never more. (was line 30)
+
+## [Conflict resolution](isolation-and-landing/conflicts-and-resolution.md)
+
 - A conflict is resolved on the run's branch, never in the operator's checkout. (was line 66)
 - A resolution past a squash opens its merge from the squash, or it resolves conflicts the card never listed.
 - No marker left is evidence only about a file git wrote markers into, so a conflict it left none in is refused before the spawn.
@@ -54,18 +57,21 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - Nothing on the landing path has a clock on its duration, and that is a rule rather than an omission. (was line 54)
 - A resolution's child has one deadline, and it is an hour of silence rather than any length of run. (was line 56)
 
-## [The merge queue](isolation-and-landing/merge-queue.md)
+## [The merge queue: batches, workers and restarts](isolation-and-landing/merge-queue-batches-workers-and-boot.md)
 
 - Several branches are a queue, never a batch, and the queue re-decides at every turn. (was line 34)
 - The repository is the unit of serialisation, not the process. (was line 36)
 - Every outstanding batch is on the page, because the worker has never known what a batch is. (was line 38)
+- A queued merge is cancelled on boot, never resumed. (was line 50)
+
+## [The merge queue: a row's turn](isolation-and-landing/merge-queue.md)
+
 - A queue tells a branch's problem apart from the checkout's. (was line 40)
 - A checkout something else holds is waited for, and never recorded against the row.
 - Auto-resolution is authorised per batch and recorded per row. (was line 42)
 - The worker answers the row it took, including when this app is the thing that broke. (was line 44)
 - `git()` never rejects, and that is a contract rather than an observation. (was line 46)
 - The queue panel polls whatever it last said. (was line 48)
-- A queued merge is cancelled on boot, never resumed. (was line 50)
 
 ## [Branch inventory, squashes and deleting a branch](isolation-and-landing/branch-inventory-and-deletion.md)
 
