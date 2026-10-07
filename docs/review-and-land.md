@@ -71,8 +71,10 @@ the changes are still there when the events are not.
 
 **The review.** A button that runs Claude once against the diff, the task the run
 was given, and how it ended, and asks what changed, what to look at first, and
-what looks risky. It is on demand only and never automatic — it is billed, and a
-review nobody asked for is spend nobody authorised. It cannot edit anything
+what looks risky. A run never starts one on its own: you press the button, or
+you put a review block in a workflow, which asks for the same review of each
+branch wired into it. It is billed, and a review nobody asked for is spend
+nobody authorised. It cannot edit anything
 (`--permission-mode plan`), and **its cost is shown separately and never added to
 the run's own spend**, which counts work cycles. If the diff was too large to send
 whole, the reviewer is told which files it did not see, and the card repeats that
