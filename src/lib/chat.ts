@@ -3196,10 +3196,11 @@ function launchOrchestratorChild(
   // The folder joins them although a mount already covers it, because the CLI
   // lists each `--add-dir` in the environment it describes to the model, and
   // that list is the one place besides `folderNotice` the folder is named.
-  const addDirs = WORKSPACE_MOUNTS.filter((m) => fs.existsSync(m.path)).map(
+  const mountDirs = WORKSPACE_MOUNTS.filter((m) => fs.existsSync(m.path)).map(
     (m) => m.path,
   );
-  if (folder && !addDirs.includes(folder)) addDirs.push(folder);
+  const addDirs =
+    folder && !mountDirs.includes(folder) ? [...mountDirs, folder] : mountDirs;
   for (const dir of addDirs) args.push("--add-dir", dir);
 
   // The one allowlist this child carries, and it grants nothing: naming
@@ -3221,7 +3222,11 @@ function launchOrchestratorChild(
   // that dies with the turn and `chatTurnBudgetUSD`, not its filesystem.
   // It travels in the one `--settings` `chatSettingsArgs` writes, beside the
   // switch that keeps hooks out of this child.
-  args.push(...chatSettingsArgs(sandboxOverlayFor({ kind: "chat", dirs: addDirs })));
+  //
+  // The mounts and not the folder, which a mount already covers: `writeSet`
+  // withholds the whole set over one entry it reads as a glob, and a folder is
+  // named by whoever saved the block.
+  args.push(...chatSettingsArgs(sandboxOverlayFor({ kind: "chat", dirs: mountDirs })));
 
   // One encoder for every spawn site, so there is one place that knows the
   // shape — silent when a member is only offered, a failed spawn when it is
