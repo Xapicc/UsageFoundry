@@ -28,8 +28,11 @@ import { getSettings } from "./settings";
  * — the operator's default — exactly as it did before the decider existed.
  */
 
-/** Long enough for a queued request behind the decider's own 10s llama timeout. */
-const DECIDER_TIMEOUT_MS = 15_000;
+/**
+ * The decider's own llama-server timeout, which defaults to 30s with queueing
+ * included. Anything shorter here cuts off an answer the decider would still give.
+ */
+const DECIDER_TIMEOUT_MS = 30_000;
 
 /** The decider's reason is text from another process; this bounds what a card or a note carries. */
 const MAX_NOTE_DETAIL = 300;
