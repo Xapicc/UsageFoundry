@@ -209,6 +209,14 @@
   `env | grep -c USAGEFOUNDRY_MCP_TOKEN` in the cycle's shell was 0 and
   `/run/uf-mcp` was empty after it. The test tasks were deleted afterwards.
 
+- **A Codex cycle's commands are offline under `acceptEdits` unless the
+  network is opened, 2026-10-07**, `codex-cli 0.153.4`, `gpt-5.6-luna`: `curl
+  https://example.com` in a `workspace-write` cycle failed (`000`), and with
+  `-c sandbox_workspace_write.network_access=true` answered 200. Through the
+  deployed app (`409f1ba7`) with "Network for Codex runs" switched on by `PUT
+  /api/settings`, a one-cycle `acceptEdits` Codex run got 200 and completed.
+  The switch was left on for this install.
+
 ## Not yet verified by hand
 
 - **No local cycle has been seen compacting under a sign-in window
