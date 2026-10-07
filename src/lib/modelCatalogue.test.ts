@@ -645,7 +645,7 @@ describe("the Codex catalogue's options", () => {
     ];
     assert.equal(modelRefusal(list, "gpt-6-astra", "codex"), null);
     assert.match(modelRefusal(list, "gpt-5.6-luna", "codex") ?? "", /Settings → Codex models/);
-    assert.match(modelRefusal(list, "gpt-9", "codex") ?? "", /not on this install's Codex list/);
+    assert.match(modelRefusal(list, "gpt-9", "codex") ?? "", /not on this install's Codex list\. Enabled Codex models: gpt-6-astra\./);
     assert.equal(modelRefusal([], "anything", "codex"), null);
   });
 });

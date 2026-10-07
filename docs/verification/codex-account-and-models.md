@@ -23,21 +23,37 @@
   file appeared under `~/.codex` beyond the rules file the server writes on
   purpose.
 
+- **A sign-in fills the Codex list, and the deployed routes answer, 2026-10-07**,
+  `2507404a` in the container on a fresh `usagefoundry-codex` volume: the boot
+  check recorded "Codex is not signed in"; after a ChatGPT sign-in from the
+  Settings panel, the record held four models listed, four added and
+  `gpt-6-astra` as the CLI default, with no `codexModelCatalogue` in the stored
+  blob. `GET /api/usage` carried `codex.plan` with both windows (300 and 10,080
+  minutes, 0%, plan `team`) in 915 ms; `GET /api/settings` returned the four as
+  the list with none of the Codex keys reported as moved.
+
+- **The doors and the pre-cycle guard read the Codex list and windows,
+  2026-10-07**, same build: `POST /api/runs` refused a Codex run naming
+  `claude-sonnet-5` and one naming `gpt-9-nope`, each with 400 and the
+  sentence naming the Codex list; a Codex run with `maxSessionFraction` 0.95
+  was admitted, and its pre-cycle `budget` event carried `sessionFraction` 0
+  with `sessionPlanAgeMs` 130,734 — the Codex reading, not a transcript scan.
+
 ## Not yet verified by hand
 
-- **The deployed pages (2026-10-07).** The Codex section of the dashboard's
-  window card, the Codex fold and default under Settings → Runs, and the Codex
-  picker on the run form are typechecked and unit tested, not yet seen in a
-  browser against this build. Settles with a rebuild and one look at each, in
-  both skins and at 390px — `npm run smoke-pages` covers the load half.
+- **The deployed pages have not been looked at (2026-10-07).** `npm run
+  smoke-pages` loaded all 24 pages clean in both skins at both widths against
+  this build, but with no Codex sign-in, so the dashboard's Codex section and
+  the filled Codex picker were not drawn. Settles with one look at each on the
+  live install, in both skins and at 390px.
 
 - **A window that is not empty.** Every reading so far was 0%; a reading above
   0, one over 100% and a `rateLimitReachedType` have only been parsed from
   hand-edited payloads. Settles with readings taken during and after a few
   Codex work cycles, compared against the CLI's own `/status`.
 
-- **A Codex run parked or stopped by a fraction guard.** `codexGuardSnapshot`
-  feeds Codex's windows to every guard site, and that is unit tested only
-  through its parts. Settles with a Codex run under a session guard below the
-  current reading: refused at the door if unreadable, stopped or parked with
-  Codex's reset as the resume instant otherwise.
+- **No Codex run has been parked or stopped by a fraction guard.** The door
+  and the pre-cycle guard are seen reading Codex's windows (above); a verdict
+  over the line, the live ticker and `sweepPaused` resuming at Codex's reset
+  are not. Settles with a Codex run under a session guard below the current
+  reading, once the window reads above 0%.

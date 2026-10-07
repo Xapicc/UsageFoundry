@@ -164,6 +164,16 @@
   `ls /workspace2` succeeds under `codex sandbox -P :workspace`, and `touch` in
   it is refused `Read-only file system`.
 
+- **A Codex work cycle writes, and an isolated one commits, with the fixed
+  write set, 2026-10-07**, `codex-cli 0.153.4`, `gpt-5.6-luna`, ChatGPT team
+  sign-in, through the deployed app (`2507404a`), scratch repository under
+  `/workspace`: a non-isolated `acceptEdits` run wrote `hello.txt` (`hi`) and
+  completed in one cycle, 26,835 tokens, spend reported unknown; an isolated
+  run committed `codex isolated test` on its own `uf/…` branch in one cycle.
+  Neither repository gained a `.claude/` directory, neither log carried a prune
+  attempt, a `Permission denied` or an unknown stream event, and both cycles
+  wrote `$CODEX_HOME/last-message/<run>.txt` owned by uid 1000.
+
 ## Not yet verified by hand
 
 - **No local cycle has been seen compacting under a sign-in window
@@ -217,10 +227,9 @@
   unpacked and a 123 MB download, never pulled here; and signed-out is still
   reasoned from `childEnv`'s strip rather than read off a cycle.
 
-- **The fixed write set has not run in a real cycle (2026-10-07).** It is
-  measured through `codex sandbox --sandbox-state-json`, not `codex exec`; nor
-  has a cycle yet written `--output-last-message` since its directory is handed
-  to the agent uid. Open beside them: whether in-band notices are obeyed, and
-  what a Codex wall looks like. Settles with one two-cycle Codex run that edits
-  a file and runs `npm --version`: `hello.txt` committed, no `Permission
-  denied` on the last-message file, no `.claude/` anywhere.
+- **What a Codex cycle does with the stacks' state and the in-band notices is
+  open (2026-10-07).** The two runs above wrote, committed and ended on DONE
+  in one cycle each, and touched no package cache; whether a cycle can use
+  `~/.npm` and `~/go` under the fixed set, whether it obeys the self-hosting
+  notice, and what a Codex wall looks like are unmeasured. Settles with one
+  Codex run that installs a package and runs `npm --version`.

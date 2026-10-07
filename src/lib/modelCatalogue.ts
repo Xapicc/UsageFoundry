@@ -253,10 +253,11 @@ export function modelRefusal(
   // and where it is edited — "not on this install's list" for a Codex slug
   // would send the operator to the Claude list, where adding it does nothing.
   const list = provider === "codex" ? "Codex models" : "Models";
+  const enabledNoun = provider === "codex" ? "Codex models" : "models";
   const which = provider === "codex" ? "Codex list" : "list";
   return disabled
-    ? `Model "${seen}" is switched off for this install. Enabled ${list.toLowerCase()}: ${available}. Switch it back on under Settings → ${list}.`
-    : `Model "${seen}" is not on this install's ${which}. Enabled ${list.toLowerCase()}: ${available}. Add it under Settings → ${list}.`;
+    ? `Model "${seen}" is switched off for this install. Enabled ${enabledNoun}: ${available}. Switch it back on under Settings → ${list}.`
+    : `Model "${seen}" is not on this install's ${which}. Enabled ${enabledNoun}: ${available}. Add it under Settings → ${list}.`;
 }
 
 /**
