@@ -21,6 +21,7 @@ import { Disclosure } from "@/components/ui/Disclosure";
 import { Input, Select } from "@/components/ui/Field";
 import { Hint } from "@/components/ui/Hint";
 import { Notice } from "@/components/ui/Notice";
+import { RunGitDirNotice } from "@/components/RunGitDirNotice";
 import { Sheet } from "@/components/ui/Sheet";
 import { Spinner } from "@/components/ui/Log";
 import { DiffFileRow, Patch } from "@/components/ui/Patch";
@@ -480,6 +481,10 @@ export function RunLand({ run }: { run: RunDTO }) {
           commit sits, not what it was told to land into
         </Hint>
       )}
+
+      {/* Before the land: landing is the moment the operator goes back to the
+          checkout whose git directory this run may have changed. */}
+      <RunGitDirNotice gitDir={run.gitDir} settled={settled} placement="land" />
 
       {/* Everything below is as of the last read that worked, and while a
           resolution runs that is re-read every three seconds. Said here rather
