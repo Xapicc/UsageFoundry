@@ -139,6 +139,32 @@ The rules these entries back are `docs/agent/security/chat-child-config-files.md
   `GIT_SSH_COMMAND` and `GIT_SSH`, because an agent's own sandbox sets the
   first and it outranks `core.sshCommand`.
 
+- **The pinned CLI runs no git in an `--add-dir`, so a repository there runs
+  no filter at startup, 2026-10-07, Claude Code 2.1.280.** Board task
+  `7764bc65`. `claude -p hi --setting-sources user --settings
+  '{"disableAllHooks":true}' --output-format stream-json --verbose
+  --permission-mode bypassPermissions --strict-mcp-config` ran against a stub
+  API that answered text and `end_turn`, under `GIT_TRACE` and the chat's
+  first two pairs. The scratch repository had a stale, modified `f.txt` under
+  a planted `* filter=x`. With the repository as the cwd, the trace held the
+  six startup commands from the entry above and the filter ran twice. The
+  request said `Is a git repository: true` and carried a `gitStatus` block
+  with the branch, `M f.txt` and the last commit. With a plain directory as
+  the cwd and the repository as `--add-dir`, the trace was empty and the
+  filter did not run. The request said `Is a git repository: false` and listed
+  the repository under `Additional working directories`. A `CLAUDE.md` with a
+  marker in the repository reached neither request; without `--setting-sources
+  user` it reached the request. Caveat: no `--mcp-config`, no sandbox overlay
+  and no tool call; this container's managed policy had the sandbox on.
+
+- **The test for a block's startup git fails with the child standing in its
+  folder, 2026-10-07.** `blockStartupGit.test.ts` was run with the compiled
+  `launchOrchestratorChild` patched to stand in `o.folder` again, as the old
+  `cwd` option did. Its spawn case failed with "the block's child ran the
+  repository's clean filter". With the change, both cases passed. Caveat: one
+  process, not root; the stub runs the measured `git status` rather than the
+  CLI.
+
 ## Not yet verified by hand
 
 - **No booted image has run a chat turn with its own `HOME`.** Unmeasured:

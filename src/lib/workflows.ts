@@ -6529,7 +6529,10 @@ async function startBlockTurn(instanceId: string, nodeId: string): Promise<void>
       // `emitBlockRuns`' own check describe one list.
       listAgents(),
     ),
-    cwd: safeFolder(node),
+    // Named and `--add-dir`ed, never stood in: in a repository the CLI's own
+    // startup `git status` runs filters a work cycle can plant (board task
+    // `7764bc65`).
+    folder: safeFolder(node),
     // What this deciding turn *is*, not a specialist it may call on: the node's
     // agent is selected with `--agent`, so the saved prompt is the turn's own.
     // Everything bounding this child — its tool surface, its capability token,

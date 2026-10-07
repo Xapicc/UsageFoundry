@@ -282,6 +282,7 @@ Units that are about no test file in the tree:
 
 | Test file | Also in |
 |---|---|
+| `blockStartupGit.test.ts` |  |
 | `cliPath.test.ts` |  |
 
 ## [The sandbox, Codex's rules file and the read guard](testing/sandbox-and-read-guard.md)
