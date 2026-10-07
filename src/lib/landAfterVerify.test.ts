@@ -544,4 +544,29 @@ describe("landRun into a checkout another git process holds the index lock of", 
     assert.equal(again.ok, true, again.ok ? "" : again.reason);
     assert.equal(fs.readFileSync(path.join(s.repo, "shared.txt"), "utf8"), "branch\n");
   });
+
+  it("says a squash refused at its commit by the target's ref lock was rolled back", async () => {
+    // `merge --squash` moves no ref, so it stages the branch and the commit is
+    // what meets the lock. `reset --merge` then restores the tree and exits 1
+    // on the same lock, and the card said the squash was still staged.
+    const s = scene("ref-lock-squash");
+    const lock = path.join(s.repo, ".git", "refs", "heads", "main.lock");
+    fs.writeFileSync(lock, "");
+
+    const landed = await land.landRun(s.runId, "squash");
+
+    assert.equal(landed.ok, false, "landed through a held ref lock");
+    const reason = landed.ok ? "" : landed.reason;
+    assert.match(reason, /^The squash could not be committed and was rolled back: /);
+    assert.ok(reason.includes(lock), reason);
+    assert.equal(git(s.repo, "rev-parse", "main").trim(), s.base);
+    assert.equal(git(s.repo, "status", "--porcelain"), "", "the squash was left staged");
+    assert.equal(fs.readFileSync(path.join(s.repo, "shared.txt"), "utf8"), "base\n");
+    assert.equal(landedAt(s.runId), null);
+
+    fs.rmSync(lock);
+    const again = await land.landRun(s.runId, "squash");
+    assert.equal(again.ok, true, again.ok ? "" : again.reason);
+    assert.equal(fs.readFileSync(path.join(s.repo, "shared.txt"), "utf8"), "branch\n");
+  });
 });

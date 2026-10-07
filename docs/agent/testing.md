@@ -243,7 +243,7 @@ Units that are about no test file in the tree:
 | `mergeQueueDrain.test.ts` | [fleet] |
 | `mergeQueueOrder.test.ts` |  |
 | `mergeQueueView.test.ts` |  |
-| `midOperationSlot.test.ts` |  |
+| `midOperationSlot.test.ts` | [landing] |
 | `resolutionBudget.test.ts` |  |
 | `resolutionMarkerless.test.ts` |  |
 | `resolutionSilence.test.ts` |  |

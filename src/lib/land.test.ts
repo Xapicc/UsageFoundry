@@ -736,6 +736,7 @@ describe("commitRefusal", () => {
     branch: "uf/repo-1234abcd",
     checkedOutBranch: "uf/repo-1234abcd",
     operation: null,
+    detached: false,
     readable: true,
     pending: [
       { path: "src/parser.ts", code: " M" },
@@ -783,6 +784,14 @@ describe("commitRefusal", () => {
       commitRefusal({ ...committable, checkedOutBranch: null }) ?? "",
       /checkout this run worked in is gone/,
     );
+  });
+
+  it("names a plain detached HEAD rather than calling the checkout gone", () => {
+    // `git checkout <commit>` leaves no branch and no operation, and the
+    // checkout is still standing there.
+    const refusal = commitRefusal({ ...committable, checkedOutBranch: null, detached: true });
+    assert.match(refusal ?? "", /detached HEAD rather than on uf\/repo-1234abcd/);
+    assert.doesNotMatch(refusal ?? "", /gone/);
   });
 
   it("refuses an unreadable status rather than committing blind", () => {
