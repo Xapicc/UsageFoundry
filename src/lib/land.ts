@@ -9,7 +9,7 @@ import { db } from "./db";
 import { passMemberOf, passNumberOf } from "./passIds";
 import { commitDiff, type DiffFile } from "./diff";
 import { githubTokenFor, WORKSPACE_MOUNTS } from "./config";
-import { getSettings } from "./settings";
+import { getSettings, newWorkPaused } from "./settings";
 import {
   certificationRefusal,
   NOT_REQUIRED,
@@ -2611,6 +2611,15 @@ function resolutionRowRunning(run: RunRow): boolean {
 }
 
 /**
+ * Why the merge queue started no resolution while new work is held. One
+ * sentence for its two doors, the queue's own before the checkout and this
+ * module's before the spawn, so a row reads the same whichever refused it.
+ */
+export const HELD_RESOLUTION_REFUSAL =
+  "New work is held across this install, so no model is started to resolve a " +
+  "conflict until the hold is lifted.";
+
+/**
  * Merge the target *into* the run's branch, and have Claude resolve what git
  * could not.
  *
@@ -2808,6 +2817,15 @@ async function startResolution(
   if (markerless) {
     const rollback = await rollBackResolution(repoRoot, checkout, branch, tipBefore.stdout);
     return { ok: false, reason: `${markerless} ${rollback.sentence}` };
+  }
+
+  // The merge queue asked before every await above, and a hold pressed during
+  // them is not in that answer. After the last of them, so nothing is spawned
+  // into a held install. A button press passes no asker and is not held, a
+  // chat turn's reason: the person is there.
+  if (asker && newWorkPaused()) {
+    const rollback = await rollBackResolution(repoRoot, checkout, branch, tipBefore.stdout);
+    return { ok: false, reason: `${HELD_RESOLUTION_REFUSAL} ${rollback.sentence}` };
   }
 
   // Only where a toolchain can exist. `resolveCheckout` reuses the run's own

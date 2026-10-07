@@ -145,10 +145,10 @@ before(async () => {
   orch = await import("./orchestrator");
   const settings = await import("./settings");
   // No network here, and a fix run is held in the queue rather than spawned:
-  // what the cases below ask is whether one is *created*. Assists do not read
-  // the hold, so the reviews still run.
-  settings.saveSettings({ planUsageFromApi: false });
-  settings.setNewWorkPaused(true);
+  // what the cases below ask is whether one is *created*. A concurrency cap of
+  // none rather than the hold on new work, which a review block reads too and
+  // would keep these reviews from running at all.
+  settings.saveSettings({ planUsageFromApi: false, maxConcurrentRuns: 0 });
 
   // Replaced on the module object, `scheduleFire.test.ts`' way: `review.ts`
   // and `workflows.ts` both call it through that object under the test

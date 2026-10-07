@@ -5084,8 +5084,9 @@ export function ranWorkCycle(
  * A dependency as the release decision reads it: `DependencyState`, and
  * whether a restart closed it out and nobody has picked it up since.
  *
- * Its own type rather than a field on `DependencyState`, which a workflow's
- * scheduler also builds for its edge verdicts and which this does not change.
+ * Its own type rather than a field on `DependencyState`, which `edgeSatisfied`
+ * reads and which this does not change. A workflow's scheduler builds this one
+ * for its edge verdicts, since they ask the same question of the same rows.
  * Required for `refundedCycles`' reason: a state built without it would read a
  * closed-out run as finished, and release what waits on it.
  */

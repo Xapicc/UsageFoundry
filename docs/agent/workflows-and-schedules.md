@@ -12,6 +12,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - A workflow is the third thing here that is form input, and it is not the fourth route to `--permission-mode`.
 - A workflow is instantiated in topological order, in one synchronous pass, all or nothing.
 - A block that emits nothing blocks what is behind it, and that is a decision rather than a fallout.
+- A run a restart closed out blocks every edge out of it until it is picked up, and what it holds back is revived rather than failed.
 
 ## [Orchestrator blocks and merge blocks](workflows-and-schedules/orchestrator-and-merge-blocks.md)
 

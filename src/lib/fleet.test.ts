@@ -18,10 +18,11 @@ import type Database from "better-sqlite3";
  * ordering exists to have none of, and nothing about it throws: the operator
  * gets a page saying everything stopped and an agent working underneath it.
  *
- * **The hold** is read by seven separate call sites — `promoteQueued`,
+ * **The hold** is read by nine separate call sites — `promoteQueued`,
  * `releaseDependents`, `tickSchedules` and `emitBlockRuns`, the sweeper's
- * `sweepPaused` and `releaseStackWaits`, and an orchestrator block's deciding
- * turn — and a fix that misses one is silent in exactly the same way: work
+ * `sweepPaused` and `releaseStackWaits`, an orchestrator block's deciding
+ * turn, a review block's reviews and the merge queue's conflict resolutions —
+ * and a fix that misses one is silent in exactly the same way: work
  * starts, or a turn is billed, while a banner says new work is held, or a park
  * the restart would have kept is closed out by it. So there is a case per
  * site, each driving the real entry point rather than the pure decision
@@ -622,6 +623,173 @@ describe("the hold on an orchestrator block's deciding turn", () => {
       );
       assert.equal(decidingBlock(id).started_at, null);
     }));
+});
+
+/**
+ * A started instance whose one block is a review, behind a run node when `behind`
+ * names a run: with nothing in front it is ready at once, and behind a finished
+ * run it has that run's branch to review.
+ */
+function reviewInstance(id: string, behind: string | null = null): string {
+  const review = {
+    id: "v",
+    name: "Review it",
+    kind: "review",
+    templateId: null,
+    mountId: null,
+    folder: "",
+    task: "",
+    promptOverride: null,
+    agentId: null,
+    fanOut: null,
+    provider: null,
+    fixRounds: 0,
+  };
+  const graph = JSON.stringify(
+    behind
+      ? {
+          nodes: [
+            { id: "a", name: "Build it", kind: "run", mountId: "workspace", folder: "", task: "build" },
+            review,
+          ],
+          edges: [{ from: "a", to: "v", edge: "on-success", continueBranch: false }],
+        }
+      : { nodes: [review], edges: [] },
+  );
+  workflow(`wf-${id}`, `Review ${id}`);
+  const db = dbMod.db();
+  db.prepare(
+    `INSERT INTO workflow_instances (id, workflow_id, workflow_name, graph, created_at, status)
+     VALUES (?, ?, 'Review', ?, ?, 'started')`,
+  ).run(id, `wf-${id}`, graph, Date.now());
+  if (behind) {
+    db.prepare(
+      "INSERT INTO workflow_instance_runs (instance_id, node_id, node_name, position, run_id)" +
+        " VALUES (?, 'a', 'Build it', 0, ?)",
+    ).run(id, behind);
+  }
+  db.prepare(
+    `INSERT INTO workflow_instance_blocks (instance_id, node_id, node_name, position, kind, status)
+     VALUES (?, 'v', 'Review it', 1, 'review', 'waiting')`,
+  ).run(id);
+  return id;
+}
+
+function reviewBlock(id: string): { status: string; started_at: number | null } {
+  return dbMod
+    .db()
+    .prepare(
+      "SELECT status, started_at FROM workflow_instance_blocks WHERE instance_id=? AND node_id='v'",
+    )
+    .get(id) as { status: string; started_at: number | null };
+}
+
+/**
+ * A review block's reviews are billed children nobody is watching, the deciding
+ * turn's case, so the hold reaches them at the same places: the two claim
+ * loops, once more after `startReviewBlock`'s snapshot, and at each review's
+ * own door, where a full assist queue was already waited out. The claim in a
+ * loop pass is `loopSection.test.ts`' case, on that file's section fixture.
+ */
+describe("the hold on a review block's reviews", () => {
+  let assists: number | null;
+  before(() => {
+    assists = settings.getSettings().maxConcurrentAssists;
+    settings.saveSettings({ maxConcurrentAssists: null });
+  });
+  after(() => {
+    settings.setNewWorkPaused(false);
+    settings.saveSettings({ maxConcurrentAssists: assists });
+  });
+
+  async function withInstance(
+    id: string,
+    behind: string | null,
+    body: (id: string) => Promise<void>,
+  ): Promise<void> {
+    reviewInstance(id, behind);
+    try {
+      await body(id);
+    } finally {
+      settings.setNewWorkPaused(false);
+      workflows.stopInstance(id, { kind: "operator" });
+    }
+  }
+
+  it("leaves the block waiting rather than starting reviews nobody is watching", () =>
+    withInstance("hold-review", null, async (id) => {
+      settings.setNewWorkPaused(true);
+      workflows.advanceInstances();
+      assert.equal(reviewBlock(id).status, "waiting", "a held install must not claim the review");
+      assert.equal(reviewBlock(id).started_at, null);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.equal(reviewBlock(id).status, "waiting", "nor claim it a turn later");
+
+      settings.setNewWorkPaused(false);
+      workflows.advanceInstances();
+      assert.equal(reviewBlock(id).status, "thinking", "clearing the hold must let it review");
+    }));
+
+  it("hands the block back when the hold is pressed while it is being prepared", () =>
+    withInstance("hold-review-prepared", null, async (id) => {
+      // `startReviewBlock` awaits the window snapshot for the instance guard
+      // before it seeds anything, and a hold pressed meanwhile is not in the
+      // claim's answer.
+      workflows.advanceInstances();
+      assert.equal(reviewBlock(id).status, "thinking", "the claim lands before the first await");
+
+      settings.setNewWorkPaused(true);
+      await until(() => reviewBlock(id).status !== "thinking", "the block gave up its claim");
+      assert.equal(reviewBlock(id).status, "waiting", "held, so the lift decides it");
+      assert.equal(reviewBlock(id).started_at, null);
+    }));
+
+  it("does not start a review it was still waiting to start when the hold is pressed", async () => {
+    // The block is already reviewing, and its review is waiting for an assist
+    // slot. A slot freeing under the hold would otherwise start it.
+    const built = run("hold-review-door-a", "completed", { iterations: 1 });
+    const busy = "hold-review-door-busy";
+    dbMod
+      .db()
+      .prepare(
+        "INSERT INTO run_reviews (id, run_id, created_at, status, kind) VALUES (?, ?, ?, 'running', 'review')",
+      )
+      .run(busy, built, Date.now());
+    // Full with the row above and nothing else: an earlier case's deciding turn
+    // holds a slot for good, so the cap is read off what is live now.
+    const { liveAssistChildren } = await import("./review");
+    settings.saveSettings({ maxConcurrentAssists: liveAssistChildren() });
+    const item = () =>
+      dbMod
+        .db()
+        .prepare(
+          "SELECT status, review_id FROM workflow_review_items WHERE instance_id=? AND block_id='v'",
+        )
+        .get("hold-review-door") as { status: string; review_id: string | null } | undefined;
+    try {
+      await withInstance("hold-review-door", built, async (id) => {
+        workflows.advanceInstances();
+        assert.equal(reviewBlock(id).status, "thinking");
+        await until(() => item() !== undefined, "the block seeded its branch");
+
+        settings.setNewWorkPaused(true);
+        dbMod.db().prepare("UPDATE run_reviews SET status='completed' WHERE id=?").run(busy);
+        // Past the review door's poll, which is when a freed slot is noticed.
+        await new Promise((resolve) => setTimeout(resolve, 2_500));
+        assert.deepEqual(item(), { status: "reviewing", review_id: null }, "a review started under the hold");
+        assert.equal(reviewBlock(id).status, "thinking");
+
+        settings.setNewWorkPaused(false);
+        const deadline = Date.now() + 5_000;
+        while (item()?.status === "reviewing" && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        assert.notEqual(item()?.status, "reviewing", "the lift must let the review go ahead");
+      });
+    } finally {
+      settings.saveSettings({ maxConcurrentAssists: null });
+    }
+  });
 });
 
 /**

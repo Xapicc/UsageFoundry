@@ -3713,7 +3713,10 @@ function ran(
   status: RunStatus,
   iterations = 1,
 ): InstanceNodeState {
-  return { run: { id, status, iterations, refundedCycles: 0 }, block: null };
+  return {
+    run: { id, status, iterations, refundedCycles: 0, restartClosed: false },
+    block: null,
+  };
 }
 
 /** An orchestrator block's ledger row, with the runs it started. */
@@ -3731,6 +3734,7 @@ function decided(
         status: s,
         iterations: i ?? 1,
         refundedCycles: 0,
+        restartClosed: false,
       })),
       error,
     },
@@ -4124,7 +4128,13 @@ describe("planInstanceStep — a run left behind", () => {
       edges: [edge("build", "land", { edge: "on-success" })],
     };
     const build: InstanceNodeState = {
-      run: { id: "r-b", status: "needs-review", iterations: 1, refundedCycles: 0 },
+      run: {
+        id: "r-b",
+        status: "needs-review",
+        iterations: 1,
+        refundedCycles: 0,
+        restartClosed: false,
+      },
       block: null,
     };
     const stuck = stepOf({ build, land: decided("waiting") }, chain);
@@ -4136,6 +4146,70 @@ describe("planInstanceStep — a run left behind", () => {
     );
     assert.deepEqual(waived.block, []);
     assert.deepEqual(waived.merge, [{ nodeId: "land", runIds: [] }]);
+  });
+});
+
+/**
+ * `releasableRuns`' restart rule, at the scheduler's own edges. A restart's
+ * `stopped` with a cycle counted satisfies `on-finish`, so a merge behind a
+ * fan-in whose other member had been picked up and ended landed the branch of
+ * a run the restart cut off, while the restart notice still offered that run.
+ */
+describe("planInstanceStep — a run a restart closed out", () => {
+  const FAN_IN: WorkflowGraph = {
+    nodes: [
+      graphNode("a", "Build A"),
+      graphNode("c", "Build C"),
+      graphNode("land", "Land both", { kind: "merge", mergeStrategy: "merge" }),
+    ],
+    edges: [
+      edge("a", "land", { edge: "on-finish" }),
+      edge("c", "land", { edge: "on-finish" }),
+    ],
+  };
+  const closedOut = (id: string): InstanceNodeState => {
+    const state = ran(id, "stopped");
+    return { ...state, run: { ...state.run!, restartClosed: true } };
+  };
+
+  it("blocks the block behind it on either edge, naming it, beside one that ended", () => {
+    for (const condition of ["on-finish", "on-success"] as const) {
+      const graph: WorkflowGraph = {
+        ...FAN_IN,
+        edges: FAN_IN.edges.map((e) => ({ ...e, edge: condition })),
+      };
+      const step = stepOf(
+        { a: closedOut("r-a"), c: ran("r-c", "completed"), land: decided("waiting") },
+        graph,
+      );
+      assert.deepEqual(step.merge, [], `${condition}: the merge went ahead`);
+      assert.equal(step.block.length, 1);
+      assert.equal(step.block[0].nodeId, "land");
+      assert.match(step.block[0].reason, /“Build A” \(run r-a\), which the server restart closed out/);
+    }
+  });
+
+  it("releases the same fan-in once the run has been picked up and ended", () => {
+    // The control: the same ending without the flag is an ordinary one.
+    const step = stepOf(
+      { a: ran("r-a", "stopped"), c: ran("r-c", "completed"), land: decided("waiting") },
+      FAN_IN,
+    );
+    assert.deepEqual(step.block, []);
+    assert.deepEqual(step.merge, [{ nodeId: "land", runIds: ["r-a", "r-c"] }]);
+  });
+
+  it("blocks behind an orchestrator block one of whose runs it closed out", () => {
+    const pick = decided("emitted", [
+      ["r-1", "completed"],
+      ["r-2", "stopped"],
+    ]);
+    const emitted = pick.block!.emitted;
+    pick.block!.emitted = [emitted[0], { ...emitted[1], restartClosed: true }];
+    const step = stepOf({ pick });
+    assert.deepEqual(step.create, []);
+    assert.equal(step.block[0]?.nodeId, "review");
+    assert.match(step.block[0].reason, /run r-2 was closed out by the server restart/);
   });
 });
 
@@ -4632,6 +4706,7 @@ function runMember(
       status,
       iterations: opts.iterations ?? 1,
       refundedCycles: 0,
+      restartClosed: false,
       reportedDone: opts.done ?? false,
     },
     block: null,
@@ -4931,7 +5006,7 @@ describe("planLoopPass — a review member", () => {
           runMember("a", "completed", { done: true }),
           runMember("b", "completed", { done: true }),
           reviewMember("v", {
-            approved: [{ id: "r-1-a", status: "completed", iterations: 1, refundedCycles: 0, reportedDone: true }],
+            approved: [{ id: "r-1-a", status: "completed", iterations: 1, refundedCycles: 0, restartClosed: false, reportedDone: true }],
             workSetAside: 1,
           }),
           blockMember("m", "merge", "emitted"),
@@ -4942,7 +5017,7 @@ describe("planLoopPass — a review member", () => {
   });
 
   it("stops done when the review approved the branch", () => {
-    const approved = { id: "r-1-a", status: "completed" as const, iterations: 1, refundedCycles: 0, reportedDone: true };
+    const approved = { id: "r-1-a", status: "completed" as const, iterations: 1, refundedCycles: 0, restartClosed: false, reportedDone: true };
     const decision = loopOf([reviewed(reviewMember("v", { approved: [approved] }))]);
     assert.equal(decision.kind === "stop" && decision.code, "done");
   });
