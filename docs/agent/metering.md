@@ -67,6 +67,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 
 - A sub-agent's words are in the log and are never the run's own report.
 - A tool call that failed is on the log; one that worked is not.
+- A Codex cycle's tool items are written in Claude Code's tool vocabulary, because every reader of a run's calls was written against that one.
 
 ## [Where the bill goes, and this engine against a script loop](metering/cost-measurements.md)
 

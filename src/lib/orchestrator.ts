@@ -9605,6 +9605,218 @@ function handleStreamLine(
 }
 
 /**
+ * One argv word, unquoted the way a POSIX shell would, or null when `s` is not
+ * exactly one word.
+ *
+ * Small on purpose: it reads the quoting `codex exec` writes around a command
+ * and nothing more, so anything it is unsure of — a second word, an unclosed
+ * quote — is a null, and the caller keeps the text as it was.
+ */
+function singleShellWord(s: string): string | null {
+  let out = "";
+  let i = 0;
+  while (i < s.length) {
+    const c = s[i];
+    if (c === "'") {
+      const end = s.indexOf("'", i + 1);
+      if (end < 0) return null;
+      out += s.slice(i + 1, end);
+      i = end + 1;
+    } else if (c === '"') {
+      i += 1;
+      while (i < s.length && s[i] !== '"') {
+        if (s[i] === "\\" && i + 1 < s.length && '"\\$`\n'.includes(s[i + 1])) {
+          out += s[i + 1];
+          i += 2;
+        } else {
+          out += s[i];
+          i += 1;
+        }
+      }
+      if (i >= s.length) return null;
+      i += 1;
+    } else if (c === "\\") {
+      if (i + 1 >= s.length) return null;
+      out += s[i + 1];
+      i += 2;
+    } else if (/\s/.test(c)) {
+      return null;
+    } else {
+      out += c;
+      i += 1;
+    }
+  }
+  return out;
+}
+
+/**
+ * The command a Codex `command_execution` ran, without the shell around it.
+ *
+ * The pinned CLI reports every command as `/bin/bash -lc <one quoted word>` —
+ * `/bin/bash -lc ls` and `/bin/bash -lc 'cat does-not-exist.txt'`, measured —
+ * and stored that way every Codex command would open with the same twelve
+ * characters on the log, and `toolInventory`'s count of how often a stack's
+ * tools are invoked would read `/bin/bash` as the command each time and count
+ * none of them. A wrapper it cannot read cleanly is kept as it was: a command
+ * that reads oddly is better than one that vanished.
+ */
+export function unwrapCodexShell(command: string): string {
+  const m = /^(?:\/usr)?(?:\/bin\/)?(?:bash|sh|zsh) -l?c (.+)$/s.exec(command.trim());
+  if (!m) return command.trim();
+  return singleShellWord(m[1]) ?? m[1];
+}
+
+/** A tool call a Codex item stands for, in the Claude log's vocabulary. */
+export interface CodexToolCall {
+  name: string;
+  input: Record<string, unknown>;
+}
+
+/** What one Codex item says, read the way the Claude stream's tool events are. */
+export type CodexItemReading =
+  | {
+      kind: "tool";
+      calls: CodexToolCall[];
+      /** Set only on a completed item that did not succeed. */
+      failure: Omit<ToolFailure, "toolUseId"> | null;
+    }
+  // Known, with nothing for the log: a reasoning item, which the Claude
+  // parser's `thinking` rule drops by name, or an item that names no type.
+  | { kind: "ignored" }
+  // A type this build has no reading for.
+  | { kind: "unknown" };
+
+/**
+ * Read one Codex item as the `tool` and `tool_error` events a Claude cycle's
+ * log carries. Pure, and under test.
+ *
+ * **One vocabulary, not two.** Every reader of a run's tool calls — the log
+ * (`logLine.ts`), the touched-files scan (`runTouchScan.ts`, which reads the
+ * path at `input.file_path`), the stack tools' invocation count
+ * (`toolInventory.ts`, which reads a `Bash` call's `input.command`) and the
+ * live tile — was written against Claude Code's tool names, so a Codex item is
+ * stated in those names rather than in a second shape each reader would have
+ * to learn and the next reader would forget:
+ *
+ * - `command_execution` is a `Bash` call, its command unwrapped from the
+ *   `/bin/bash -lc` the CLI puts round it.
+ * - `file_change` is one `Write` (`add`), `Edit` (`update`) or `Delete` per
+ *   path, each with `file_path`: one item names every file one patch touched —
+ *   measured with two — and the touched-files scan counts one path per event.
+ * - `mcp_tool_call` is `mcp__<server>__<tool>`, the name Claude Code gives the
+ *   same call, with its arguments as the input.
+ * - `web_search` is `WebSearch` and `todo_list` is `TodoWrite`.
+ *
+ * Codex has no item for a file *read* — it reads with shell commands — so a
+ * Codex run's touched files are what it wrote; a `cat` is a `Bash` row and
+ * guessing a path out of it would be inventing a read.
+ *
+ * **The Claude rule for outcomes holds: a call that failed is on the log as a
+ * `tool_error`, and one that worked is only the call.** Measured on the pinned
+ * 0.153.4: a command that exited 1 came back `status: "failed"` with
+ * `exit_code: 1`, and an MCP tool that answered `isError` came back `status:
+ * "failed"` with `error: null` and its words in `result.content` — so failure
+ * is read off the status and the exit code, and its text off whichever of the
+ * two carries it. `declined` (a command the execpolicy refused) fails too.
+ */
+export function readCodexItem(
+  item: Record<string, unknown>,
+  completed: boolean,
+): CodexItemReading {
+  const type = typeof item.type === "string" ? item.type : "";
+  const status = typeof item.status === "string" ? item.status : "";
+  const unsuccessful = completed && (status === "failed" || status === "declined");
+
+  switch (type) {
+    case "":
+    case "reasoning":
+      return { kind: "ignored" };
+
+    case "command_execution": {
+      const command = unwrapCodexShell(typeof item.command === "string" ? item.command : "");
+      const exit = typeof item.exit_code === "number" ? item.exit_code : null;
+      const failed = unsuccessful || (completed && exit !== null && exit !== 0);
+      const output = toolResultText(item.aggregated_output);
+      return {
+        kind: "tool",
+        calls: [{ name: "Bash", input: { command } }],
+        failure: failed
+          ? {
+              name: "Bash",
+              command: toolArgs({ command }),
+              text: output || (exit !== null ? `exit code ${exit}` : status),
+            }
+          : null,
+      };
+    }
+
+    case "file_change": {
+      const changes = Array.isArray(item.changes) ? item.changes : [];
+      const calls: CodexToolCall[] = [];
+      for (const change of changes) {
+        const c = change as { path?: unknown; kind?: unknown } | null;
+        if (typeof c?.path !== "string" || !c.path) continue;
+        const name = c.kind === "add" ? "Write" : c.kind === "delete" ? "Delete" : "Edit";
+        calls.push({ name, input: { file_path: c.path } });
+      }
+      return {
+        kind: "tool",
+        calls,
+        failure: unsuccessful
+          ? {
+              name: calls[0]?.name ?? "Edit",
+              command: calls.map((call) => String(call.input.file_path)).join(", "),
+              text: "the file change was not applied",
+            }
+          : null,
+      };
+    }
+
+    case "mcp_tool_call": {
+      const server = typeof item.server === "string" ? item.server : "mcp";
+      const tool = typeof item.tool === "string" ? item.tool : "tool";
+      const name = `mcp__${server}__${tool}`;
+      const input =
+        item.arguments && typeof item.arguments === "object" && !Array.isArray(item.arguments)
+          ? (item.arguments as Record<string, unknown>)
+          : {};
+      const error = item.error as { message?: unknown } | null | undefined;
+      const errorText = typeof error?.message === "string" ? error.message : "";
+      const failed = unsuccessful || (completed && errorText !== "");
+      const result = item.result as { content?: unknown } | null | undefined;
+      return {
+        kind: "tool",
+        calls: [{ name, input }],
+        failure: failed
+          ? {
+              name,
+              command: toolArgs(input),
+              text: (errorText ? toolResultText(errorText) : toolResultText(result?.content)) || status,
+            }
+          : null,
+      };
+    }
+
+    case "web_search":
+      return {
+        kind: "tool",
+        calls: [{ name: "WebSearch", input: { query: typeof item.query === "string" ? item.query : "" } }],
+        failure: null,
+      };
+
+    case "todo_list":
+      return {
+        kind: "tool",
+        calls: [{ name: "TodoWrite", input: { todos: Array.isArray(item.items) ? item.items : [] } }],
+        failure: null,
+      };
+
+    default:
+      return { kind: "unknown" };
+  }
+}
+
+/**
  * Interpret one line of `codex exec --json` output.
  *
  * A different vocabulary from `handleStreamLine`'s and not a translation of it.
@@ -9612,7 +9824,9 @@ function handleStreamLine(
  * `turn.failed`, `item.started`, `item.updated`, `item.completed` and `error`,
  * measured off the pinned binary; the item kinds under them are
  * `agent_message`, `reasoning`, `command_execution`, `file_change`,
- * `mcp_tool_call`, `web_search`, `todo_list` and `error`.
+ * `mcp_tool_call`, `web_search`, `todo_list` and `error`. The tool kinds reach
+ * the log in Claude Code's vocabulary — `readCodexItem` says why and how — so
+ * every reader of a run's calls reads a Codex run without knowing it is one.
  *
  * **Nothing here goes silently**, and nothing in the Claude parser does either:
  * both hand a `type` they have no branch for to `noteUnknownStreamEvent`. A
@@ -9657,12 +9871,20 @@ function handleCodexStreamLine(
       return;
     }
 
-    // Nothing to record. Named rather than left to the default so that they are
+    // Nothing to record. Named rather than left to the default so that it is
     // known-and-ignored instead of unrecognised, which is the distinction the
     // log line below exists to make.
     case "turn.started":
+      return;
+
+    // A tool item's *call* is written at its first sight — `item.started`,
+    // which the pinned CLI sends for a command, a file change and an MCP call
+    // before running them — so a twenty-minute build is on the log while it
+    // runs, as a Claude cycle's `tool_use` is. Its outcome waits for
+    // `item.completed`.
     case "item.started":
     case "item.updated":
+      noteCodexItem(runId, ev, false, acc);
       return;
 
     case "turn.completed": {
@@ -9747,6 +9969,8 @@ function handleCodexStreamLine(
       } else if (itemType === "error") {
         const message = item.message;
         if (typeof message === "string" && message) acc.apiError ??= message;
+      } else {
+        noteCodexItem(runId, ev, true, acc);
       }
       return;
     }
@@ -9754,6 +9978,70 @@ function handleCodexStreamLine(
     default: {
       noteUnknownStreamEvent(runId, "Codex", type, ev, acc);
     }
+  }
+}
+
+/**
+ * Write one Codex tool item onto the run's log as a Claude cycle's would be.
+ *
+ * The call at the item's first sight and never again — `acc.toolCalls`, the
+ * Claude parser's own per-cycle map from a call's id to what it was, is the
+ * record of having written it — and a failure when the completed item says
+ * so. An item type this build cannot read is reported once per cycle like an
+ * unknown event, so a renamed item does not turn the log quiet in silence.
+ */
+function noteCodexItem(
+  runId: string,
+  ev: Record<string, unknown>,
+  completed: boolean,
+  acc: IterationResult,
+): void {
+  const item = (ev.item ?? {}) as Record<string, unknown>;
+  // The two kinds read for their words rather than as tool calls; only their
+  // completed form says anything, and the parser reads that itself.
+  if (item.type === "agent_message" || item.type === "error") return;
+
+  const reading = readCodexItem(item, completed);
+  if (reading.kind === "unknown") {
+    noteUnknownStreamEvent(runId, "Codex", `item:${String(item.type)}`, ev, acc);
+    return;
+  }
+  if (reading.kind === "ignored") return;
+
+  const id = typeof item.id === "string" ? item.id : "";
+  if (!id || !acc.toolCalls.has(id)) {
+    for (const call of reading.calls) {
+      // Bounded before it is stored, `handleStreamLine`'s rule for its own
+      // `tool` rows: a todo list or an MCP call's arguments can be long.
+      const stored = clipToolInput(call.input);
+      emit({
+        runId,
+        ts: Date.now(),
+        kind: "tool",
+        payload: {
+          name: call.name,
+          input: stored.input,
+          ...(stored.truncatedFrom !== undefined
+            ? { truncatedFrom: stored.truncatedFrom }
+            : {}),
+        },
+      });
+    }
+    if (id) {
+      acc.toolCalls.set(id, {
+        name: reading.calls[0]?.name ?? "tool",
+        command: reading.calls.map((call) => toolArgs(call.input)).join(", "),
+      });
+    }
+  }
+
+  if (reading.failure) {
+    emit({
+      runId,
+      ts: Date.now(),
+      kind: "tool_error",
+      payload: { ...reading.failure, toolUseId: id },
+    });
   }
 }
 

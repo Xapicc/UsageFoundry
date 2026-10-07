@@ -77,6 +77,8 @@ fs.mkdirSync(process.env.TMPDIR, { recursive: true });
 const {
   buildArgs,
   buildCodexArgs,
+  readCodexItem,
+  unwrapCodexShell,
   frozenRunModel,
   codexPromptPreamble,
   childEnv,
@@ -4183,6 +4185,209 @@ describe("handleCodexStreamLine", () => {
       logs.some((l) => l.includes('"thread.compacted"')),
       true,
     );
+  });
+
+  /**
+   * A Codex cycle's tool items reach the log and the touched-files scan in the
+   * Claude vocabulary those readers were written against. Every miss is
+   * silent: a Codex run's log reads as an agent that did nothing, its Files tab
+   * is empty beside a diff, and a stack's invocation count stays at zero.
+   *
+   * The items are the ones the pinned 0.153.4 printed on 2026-10-07 for a
+   * file edit, a passing and a failing command and a passing and a failing
+   * MCP call, with only the ids shortened.
+   */
+  const MEASURED = {
+    addA: {
+      id: "item_1",
+      type: "file_change",
+      changes: [{ path: "/w/repo/a.txt", kind: "add" }],
+      status: "completed",
+    },
+    editAndAdd: {
+      id: "item_2",
+      type: "file_change",
+      changes: [
+        { path: "/w/repo/a.txt", kind: "update" },
+        { path: "/w/repo/b.txt", kind: "add" },
+      ],
+      status: "completed",
+    },
+    lsStarted: {
+      id: "item_3",
+      type: "command_execution",
+      command: "/bin/bash -lc ls",
+      aggregated_output: "",
+      exit_code: null,
+      status: "in_progress",
+    },
+    ls: {
+      id: "item_3",
+      type: "command_execution",
+      command: "/bin/bash -lc ls",
+      aggregated_output: "a.txt\nb.txt\n",
+      exit_code: 0,
+      status: "completed",
+    },
+    catMissing: {
+      id: "item_4",
+      type: "command_execution",
+      command: "/bin/bash -lc 'cat does-not-exist.txt'",
+      aggregated_output: "cat: does-not-exist.txt: No such file or directory\n",
+      exit_code: 1,
+      status: "failed",
+    },
+    echo: {
+      id: "item_5",
+      type: "mcp_tool_call",
+      server: "probe",
+      tool: "echo",
+      arguments: { text: "hi" },
+      result: { content: [{ type: "text", text: "echo: hi" }], structured_content: null },
+      error: null,
+      status: "completed",
+    },
+    boom: {
+      id: "item_6",
+      type: "mcp_tool_call",
+      server: "probe",
+      tool: "boom",
+      arguments: {},
+      result: {
+        content: [{ type: "text", text: "boom failed on purpose" }],
+        structured_content: null,
+      },
+      error: null,
+      status: "failed",
+    },
+  };
+
+  it("reads each measured item in the Claude log's tool names", () => {
+    assert.deepEqual(readCodexItem(MEASURED.addA, true), {
+      kind: "tool",
+      calls: [{ name: "Write", input: { file_path: "/w/repo/a.txt" } }],
+      failure: null,
+    });
+    // One patch over two files is two calls, so each path is a touched file.
+    const multi = readCodexItem(MEASURED.editAndAdd, true);
+    assert.equal(multi.kind, "tool");
+    assert.deepEqual(multi.kind === "tool" && multi.calls, [
+      { name: "Edit", input: { file_path: "/w/repo/a.txt" } },
+      { name: "Write", input: { file_path: "/w/repo/b.txt" } },
+    ]);
+    assert.deepEqual(readCodexItem(MEASURED.ls, true), {
+      kind: "tool",
+      calls: [{ name: "Bash", input: { command: "ls" } }],
+      failure: null,
+    });
+    assert.deepEqual(readCodexItem(MEASURED.echo, true), {
+      kind: "tool",
+      calls: [{ name: "mcp__probe__echo", input: { text: "hi" } }],
+      failure: null,
+    });
+    assert.deepEqual(readCodexItem({ type: "reasoning", text: "x" }, true), { kind: "ignored" });
+    assert.deepEqual(readCodexItem({ type: "patch_preview" }, true), { kind: "unknown" });
+  });
+
+  it("reads a failed command and a failed MCP call as failures, and a started item as none", () => {
+    const cat = readCodexItem(MEASURED.catMissing, true);
+    assert.deepEqual(cat.kind === "tool" && cat.failure, {
+      name: "Bash",
+      command: "cat does-not-exist.txt",
+      text: "cat: does-not-exist.txt: No such file or directory",
+    });
+    // `error` is null on the measured failure, and the words are in the result.
+    const boom = readCodexItem(MEASURED.boom, true);
+    // `toolArgs` says nothing for a call with no arguments, as it does for a
+    // Claude tool called with none.
+    assert.deepEqual(boom.kind === "tool" && boom.failure, {
+      name: "mcp__probe__boom",
+      command: "",
+      text: "boom failed on purpose",
+    });
+    // A non-zero exit fails a command even under a status this build does not
+    // know, and an MCP error fails a call whatever its status says.
+    const exitOnly = readCodexItem({ ...MEASURED.catMissing, status: "done", aggregated_output: "" }, true);
+    assert.equal(exitOnly.kind === "tool" && exitOnly.failure?.text, "exit code 1");
+    const errored = readCodexItem(
+      { ...MEASURED.echo, error: { message: "requires approval" } },
+      true,
+    );
+    assert.equal(errored.kind === "tool" && errored.failure?.text, "requires approval");
+    // Only a completed item can have failed.
+    assert.equal(readCodexItem(MEASURED.lsStarted, false).kind === "tool", true);
+    const started = readCodexItem({ ...MEASURED.catMissing, status: "in_progress" }, false);
+    assert.equal(started.kind === "tool" && started.failure, null);
+  });
+
+  it("unwraps the shell the CLI puts round a command, and keeps one it cannot read", () => {
+    assert.equal(unwrapCodexShell("/bin/bash -lc ls"), "ls");
+    assert.equal(unwrapCodexShell("/bin/bash -lc 'cat does-not-exist.txt'"), "cat does-not-exist.txt");
+    // The quoting a POSIX shell uses for a single quote inside single quotes.
+    assert.equal(unwrapCodexShell(`/bin/bash -lc 'echo '"'"'hi'"'"''`), "echo 'hi'");
+    assert.equal(unwrapCodexShell('bash -lc "echo \\"x\\""'), 'echo "x"');
+    // Not one word, an unclosed quote, or no wrapper at all: left as it was.
+    assert.equal(unwrapCodexShell("/bin/bash -lc ls -la"), "ls -la");
+    assert.equal(unwrapCodexShell("/bin/bash -lc 'unclosed"), "'unclosed");
+    assert.equal(unwrapCodexShell("npm test"), "npm test");
+  });
+
+  it("writes each call once, at first sight, and each failure on completion", () => {
+    const runId = insertRun();
+    const acc = fresh();
+    const lines = [
+      { type: "item.started", item: { ...MEASURED.addA, status: "in_progress" } },
+      { type: "item.completed", item: MEASURED.addA },
+      { type: "item.completed", item: MEASURED.editAndAdd },
+      { type: "item.started", item: MEASURED.lsStarted },
+      { type: "item.completed", item: MEASURED.ls },
+      { type: "item.started", item: { ...MEASURED.catMissing, status: "in_progress", exit_code: null } },
+      { type: "item.completed", item: MEASURED.catMissing },
+      { type: "item.completed", item: MEASURED.echo },
+      { type: "item.completed", item: MEASURED.boom },
+      { type: "item.completed", item: { id: "item_9", type: "agent_message", text: "DONE" } },
+    ];
+    for (const line of lines) parseLine(runId, JSON.stringify(line), acc, () => {});
+    const events = runEvents(runId).events;
+    const tools = events
+      .filter((e) => e.kind === "tool")
+      .map((e) => {
+        const p = e.payload as { name: string; input: Record<string, unknown> };
+        return `${p.name} ${String(p.input.file_path ?? p.input.command ?? JSON.stringify(p.input))}`;
+      });
+    // Started-then-completed is one call, not two; a two-file patch is two.
+    assert.deepEqual(tools, [
+      "Write /w/repo/a.txt",
+      "Edit /w/repo/a.txt",
+      "Write /w/repo/b.txt",
+      "Bash ls",
+      "Bash cat does-not-exist.txt",
+      'mcp__probe__echo {"text":"hi"}',
+      "mcp__probe__boom {}",
+    ]);
+    const failures = events
+      .filter((e) => e.kind === "tool_error")
+      .map((e) => (e.payload as { name: string; toolUseId: string }).name);
+    assert.deepEqual(failures, ["Bash", "mcp__probe__boom"]);
+    // The agent's words are still the cycle's last word, untouched by the rest.
+    assert.equal(acc.finalText, "DONE");
+    assert.equal(acc.apiError, null);
+  });
+
+  it("reports an item type it cannot read once per cycle, and reads the rest", () => {
+    const runId = insertRun();
+    const acc = fresh();
+    for (const line of [
+      { type: "item.started", item: { id: "x1", type: "patch_preview" } },
+      { type: "item.completed", item: { id: "x1", type: "patch_preview" } },
+      { type: "item.completed", item: MEASURED.ls },
+    ]) {
+      parseLine(runId, JSON.stringify(line), acc, () => {});
+    }
+    assert.deepEqual([...acc.unknownEventTypes], ["item:patch_preview"]);
+    const events = runEvents(runId).events;
+    assert.equal(events.filter((e) => e.kind === "log").length, 1);
+    assert.equal(events.filter((e) => e.kind === "tool").length, 1);
   });
 
   it("logs a line that is not JSON as itself", () => {
