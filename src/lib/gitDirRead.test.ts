@@ -106,7 +106,11 @@ describe("reading a planted repository", () => {
     // Neither may stall or be followed: a FIFO would hold a read for ever, and
     // a symlink would have this server read wherever it points.
     execFileSync("mkfifo", [path.join(gitDir, "hooks", "pre-push")]);
-    fs.symlinkSync("/etc/hostname", path.join(gitDir, "hooks", "pre-rebase"));
+    // git runs a hook through its symlink, so the target's mode is what counts.
+    fs.symlinkSync(
+      path.join(gitDir, "hooks", "post-checkout"),
+      path.join(gitDir, "hooks", "pre-rebase"),
+    );
     // Stat-dirty, so a `status` that refreshed the index would run the filter.
     fs.writeFileSync(path.join(repo, "a.txt"), "two\n");
 
@@ -134,7 +138,7 @@ describe("reading a planted repository", () => {
       [
         ["post-checkout", "file", true],
         ["pre-push", "other", false],
-        ["pre-rebase", "symlink", false],
+        ["pre-rebase", "symlink", true],
         ["reference-transaction", "file", true],
       ],
     );

@@ -100,7 +100,7 @@ async function resolveCommonDir(
     return {
       ok: false,
       commonDir: asked.stdout,
-      reason: `${asked.stdout} could not be resolved: ${(err as Error).message}`,
+      reason: `${asked.stdout} could not be resolved: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
   const roots = await Promise.all(
@@ -114,6 +114,16 @@ async function resolveCommonDir(
     };
   }
   return { ok: true, commonDir: real };
+}
+
+async function executableTarget(file: string): Promise<boolean> {
+  try {
+    const target = await fs.promises.stat(file);
+    return target.isFile() && (target.mode & 0o111) !== 0;
+  } catch {
+    // A dangling link runs nothing.
+    return false;
+  }
 }
 
 /**
@@ -135,7 +145,9 @@ async function identify(
     if (code === "ELOOP") {
       return {
         identity: `symlink:${await fs.promises.readlink(file)}`,
-        executable: false,
+        // git follows a symlinked hook, so whether it runs is the target's
+        // mode. A `stat` reads the mode and opens nothing.
+        executable: await executableTarget(file),
         text: null,
       };
     }
@@ -145,7 +157,8 @@ async function identify(
   }
   try {
     const stat = await handle.stat();
-    const executable = (stat.mode & 0o111) !== 0;
+    // A directory's search bit is not one git can run.
+    const executable = stat.isFile() && (stat.mode & 0o111) !== 0;
     if (stat.isDirectory()) return { identity: "dir", executable, text: null };
     if (!stat.isFile()) return { identity: "other", executable, text: null };
     if (stat.size > MAX_HASHED_BYTES) {
@@ -256,7 +269,10 @@ async function readSnapshot(commonDir: string): Promise<GitDirReading> {
       },
     };
   } catch (err) {
-    return { ok: false, reason: `${commonDir} could not be read: ${(err as Error).message}` };
+    return {
+      ok: false,
+      reason: `${commonDir} could not be read: ${err instanceof Error ? err.message : String(err)}`,
+    };
   }
 }
 
