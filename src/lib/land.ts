@@ -774,7 +774,7 @@ function certificationOf(run: RunRow, tip: string): CertificationState {
 export type SeededRead = { ok: true; paths: string[] } | { ok: false; error: string };
 
 /** The patterns `seedWorktree` copies into this run's checkouts, as Settings names them now. */
-function seedGlobsOf(run: RunRow): string[] {
+export function seedGlobsOf(run: RunRow): string[] {
   const settings = getSettings();
   return copyGlobsFor(
     run.repo_root ?? run.folder,
@@ -815,8 +815,11 @@ function seedGlobsOf(run: RunRow): string[] {
  * cannot be listed subtracts nothing: either can only make this refuse more,
  * where failing would leave a run whose base was collected unable to leave at
  * all.
+ *
+ * Exported for `emitHandoff`, the third door, which reaches it by a dynamic
+ * import.
  */
-async function seededOnBranch(
+export async function seededOnBranch(
   repo: string,
   tip: string,
   target: string,
