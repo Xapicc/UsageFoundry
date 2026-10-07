@@ -5,6 +5,7 @@ import {
   alreadyOnTargetRefusal,
   branchOwnerOf,
   checkoutHeld,
+  HELD_RESOLUTION_REFUSAL,
   landRun,
   landState,
   resolveConflicts,
@@ -17,6 +18,7 @@ import {
 import { resolutionCertificationRefusal } from "./localCertification";
 import { getAssist } from "./review";
 import { dataDirRefusal, mayWriteDataDir } from "./serverLock";
+import { newWorkPaused } from "./settings";
 import { getRun, isShuttingDown, trackLand, type RunRow } from "./orchestrator";
 
 /**
@@ -1070,7 +1072,18 @@ async function processOne(
   // queued it — see `LandAsker`. A batch nothing queued carries no tie and is
   // therefore a person, which is the right reading of the operator's own Land.
   const asker = { batchId: row.batch_id };
-  const plan = planItem(await landState(row.run_id, asker), opts);
+  const state = await landState(row.run_id, asker);
+  // The hold, asked after the read and not cached with the window's answer:
+  // lifting it costs nothing to notice, and the next branch should see the
+  // lift. A resolution refused here fails the row as a batch without
+  // auto-resolve would, rather than waiting in it, because a row waiting would
+  // hold the repository's one drain, and the operator's own lands behind it,
+  // for as long as the hold lasts.
+  const plan = planItem(state, {
+    ...opts,
+    resolutionsRefused:
+      opts.resolutionsRefused ?? (newWorkPaused() ? HELD_RESOLUTION_REFUSAL : null),
+  });
 
   if (plan.action === "halt") return { status: "skipped", message: plan.reason, halt: true };
   if (plan.action === "fail") return { status: "failed", message: plan.reason };

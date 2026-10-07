@@ -1609,16 +1609,21 @@ function BranchTable({
 
                         {/* Delete is the safe door — git can see the work is in
                             the target. Purge is the other one, and it takes a
-                            second press that names what goes with it. */}
+                            second press that names what goes with it. Neither
+                            on a checkout seen mid-rebase or mid-bisect, which
+                            `deleteBranch` refuses: the note says why, and Purge
+                            does not take Delete's place. */}
                         {b.exists && (b.merged || b.landedUnchanged) && !b.active ? (
-                          <Button
-                            variant="ghost"
-                            className="min-w-[92px]"
-                            onClick={() => onAct?.(b, "delete")}
-                            disabled={working}
-                          >
-                            {working ? "Deleting…" : "Delete"}
-                          </Button>
+                          b.operation ? null : (
+                            <Button
+                              variant="ghost"
+                              className="min-w-[92px]"
+                              onClick={() => onAct?.(b, "delete")}
+                              disabled={working}
+                            >
+                              {working ? "Deleting…" : "Delete"}
+                            </Button>
+                          )
                         ) : b.exists && !b.active ? (
                           armedPurge === b.runId ? (
                             <>

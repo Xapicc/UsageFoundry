@@ -4413,7 +4413,7 @@ export function chatHomeEnv(env: NodeJS.ProcessEnv, home: string): NodeJS.Proces
 
 /**
  * The git settings a repository's own `.git/config` can point at a command,
- * cleared for every git this child runs.
+ * pinned for every git this child runs.
  *
  * The chat runs `git status`, `log` and `diff` in the operator's checkouts,
  * whose `.git` every work cycle there writes — a run commits into it — and
@@ -4423,18 +4423,45 @@ export function chatHomeEnv(env: NodeJS.ProcessEnv, home: string): NodeJS.Proces
  * with these pairs in the environment neither did, and `core.hooksPath` here
  * outranked one the repository set itself. `GIT_CONFIG_*` is the
  * highest-precedence configuration git has and, unlike `-c`, reaches every git
- * the child starts. They are the two `gitArgs` clears for this app's own git.
+ * the child starts. The first two are the two `gitArgs` clears for this app's
+ * own git.
  *
- * Measured as **still running** with them: a `diff.external`, and a
- * `filter.<name>.clean` or `diff.<name>.textconv` named from
- * `.git/info/attributes`. The first cannot be cleared by value —
- * `diff.external=` makes `git diff` die with "cannot run" — and the others are
- * keyed by a name the repository chooses.
- * `docs/agent/security/chat-child-config-files.md` lists them as open.
+ * The rest are what `fetch`, `push` and `log` ran from a planted
+ * `.git/config`, each measured running with only the first two and not with
+ * all of them (board task `5219cea7`): `credential.helper` and `core.askPass`
+ * when an HTTP remote asked for a password, `core.sshCommand`, a local
+ * remote's `uploadpack` and `receivepack`, an `ext::` URL the repository
+ * allowed, `core.gitProxy`, and each signature format's program under
+ * `log.showSignature`. Two cannot be pinned by value, so their transport is
+ * refused instead: `core.gitProxy` takes its first match, which is the
+ * repository's, and `uploadpack` is keyed by a remote name the repository
+ * chooses. That costs the chat fetching, cloning or pushing a local path, and
+ * `git://`. An empty `credential.helper` empties the whole list, which is why
+ * `agentGitEnv` puts these ahead of the GitHub helper. The three programs are
+ * git's own defaults, found on `chatPath()`.
+ *
+ * Measured as **still running** with all of them, and left open: a
+ * `diff.external`, and a `filter.<name>.clean`, `diff.<name>.textconv` or
+ * `diff.<name>.command` named from `.git/info/attributes`. The filter runs on
+ * a plain `git status`, and git 2.39 has no variable, pair or flag that turns
+ * a filter off, so closing the other three — `GIT_EXTERNAL_DIFF`, which does
+ * not even outrank `diff.<name>.command`, or a `git` wrapper adding
+ * `--no-ext-diff --no-textconv` — would leave the same commands running a
+ * command the repository chose. `docs/agent/security/chat-child-config-files.md`
+ * lists them as open.
  */
 const CHAT_GIT_CONFIG: ReadonlyArray<readonly [string, string]> = [
   ["core.fsmonitor", ""],
   ["core.hooksPath", "/dev/null"],
+  ["credential.helper", ""],
+  ["core.askPass", ""],
+  ["core.sshCommand", "ssh"],
+  ["protocol.ext.allow", "never"],
+  ["protocol.file.allow", "never"],
+  ["protocol.git.allow", "never"],
+  ["gpg.program", "gpg"],
+  ["gpg.x509.program", "gpgsm"],
+  ["gpg.ssh.program", "ssh-keygen"],
 ];
 
 /**
@@ -4509,10 +4536,11 @@ export function chatSettingsArgs(sandbox: SandboxOverlay | null): string[] {
  * task `6f85c72a`); the stacks' toolbox, which root owns, stays.
  *
  * `HOME` is the chat's own (`chatHome`, `chatHomeEnv`) wherever there is a
- * chat group, and the git block carries `CHAT_GIT_CONFIG` after the GitHub
- * pairs, for the same reason as `PATH`: this child loaded code from the agents'
- * `HOME` and from a repository's `.git` (board task `7dd5f973`). `home` is a
- * parameter so a test can hand it a directory; the spawn takes the default.
+ * chat group, and the git block carries `CHAT_GIT_CONFIG` ahead of the
+ * GitHub pairs, for the same reason as `PATH`: this child loaded code from the agents'
+ * `HOME` and from a repository's `.git` (board task `7dd5f973`). `home` and
+ * `token` are parameters so a test can hand them in; the spawn takes the
+ * defaults.
  *
  * Exported for a test and nothing else, on `childEnv`'s grounds rather than as
  * an exception to them: `PATH` is not on the strip list, and
@@ -4523,7 +4551,10 @@ export function chatSettingsArgs(sandbox: SandboxOverlay | null): string[] {
  * in this app reports. The list moves by hand in six places
  * (`docs/agent/security.md`); the export is what stops it moving here unseen.
  */
-export function chatEnv(home: string | null = chatHome()): NodeJS.ProcessEnv {
+export function chatEnv(
+  home: string | null = chatHome(),
+  token: string = GITHUB_TOKEN,
+): NodeJS.ProcessEnv {
   const base: NodeJS.ProcessEnv = { ...agentEnvironment(), PATH: chatPath(), FORCE_COLOR: "0" };
   const env = home === null ? base : chatHomeEnv(base, home);
   for (const key of Object.keys(env)) {
@@ -4546,7 +4577,7 @@ export function chatEnv(home: string | null = chatHome()): NodeJS.ProcessEnv {
   // it can turn it back on.
   return {
     ...env,
-    ...agentGitEnv(GITHUB_TOKEN, null, CHAT_GIT_CONFIG),
+    ...agentGitEnv(token, null, CHAT_GIT_CONFIG),
     CLAUDE_CODE_HARBOR_KITE: "0",
   };
 }

@@ -34,7 +34,7 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - The other exit. `deliverRun` pushes a run's branch and opens a pull request on the checkout's GitHub remote. (was lines 99–124)
 - Deliver refuses a branch that can still move, in Land's own words.
 - The Land card offers it once, and states every refusal instead of discovering one. (was lines 149–165)
-- A branch whose history carries a file seeding copied in leaves by neither exit.
+- A branch whose history carries a file seeding copied in leaves by neither exit, and the handoff card offers no merge command for it.
 
 ## [Merge previews, the conflicts map and conflict resolution](isolation-and-landing/conflicts-and-resolution.md)
 

@@ -314,6 +314,17 @@ function forcedEnvScene(name: string): Scene {
   return s;
 }
 
+/** The handoff card `s`'s run ends with, as the event the page replays. */
+async function handoffOf(s: Scene): Promise<{ merge: string | null; mergeBlocked: string | null }> {
+  await orchestrator.emitHandoff(s.runId, orchestrator.getRun(s.runId)!, s.slot);
+  const rows = dbMod
+    .db()
+    .prepare("SELECT payload FROM run_events WHERE run_id = ? AND kind = 'handoff'")
+    .all(s.runId) as Array<{ payload: string }>;
+  assert.equal(rows.length, 1);
+  return JSON.parse(rows[0].payload);
+}
+
 /**
  * The operator's own configuration leaving by either exit.
  *
@@ -324,7 +335,7 @@ function forcedEnvScene(name: string): Scene {
  * sentence advised, landed it into `main`. `commitPending` stages a seeded file
  * the repository does not ignore, since its `add -A` skips only ignored ones.
  */
-describe("neither exit lets a file seeding copied in leave on the branch", () => {
+describe("neither exit nor the handoff lets a file seeding copied in leave on the branch", () => {
   it("refuses on the card and at the press a seeded .env committed with git add -f, pushing nothing", async () => {
     const s = forcedEnvScene("seeded-forced");
 
@@ -398,6 +409,44 @@ describe("neither exit lets a file seeding copied in leave on the branch", () =>
     assert.equal(again.ok ? "" : again.reason, state?.blocked);
     assert.equal(git(s.repo, "rev-parse", "main").trim(), base);
     assert.equal(git(s.repo, "ls-tree", "--name-only", "main", ".env").trim(), "");
+  });
+
+  it("withholds the handoff's merge command in the land's sentence", async () => {
+    // The third door, and the one walked through by hand: git refuses the
+    // copyable merge only because the operator's ignored copy is in the way.
+    const control = scene("handoff-control");
+    const s = forcedEnvScene("seeded-handoff");
+
+    const offered = await handoffOf(control);
+    const handoff = await handoffOf(s);
+    const state = await land.landState(s.runId);
+
+    assert.equal(offered.merge, "git merge --no-overwrite-ignore uf/handoff-control");
+    assert.equal(offered.mergeBlocked, null);
+    assert.equal(handoff.merge, null);
+    assert.match(handoff.mergeBlocked ?? "", /^uf\/seeded-handoff carries \.env, .*into main's history/);
+    assert.equal(handoff.mergeBlocked, state?.blocked);
+  });
+
+  it("names the seeded file on the handoff over a dirty checkout, since the card is never read again", async () => {
+    const s = forcedEnvScene("seeded-handoff-dirty");
+    fs.writeFileSync(path.join(s.repo, "scratch.txt"), "the operator's own work\n");
+
+    const handoff = await handoffOf(s);
+
+    assert.equal(handoff.merge, null);
+    assert.match(handoff.mergeBlocked ?? "", /^uf\/seeded-handoff-dirty carries \.env,/);
+  });
+
+  it("offers no handoff merge when there is no branch to read the files against", async () => {
+    const s = forcedEnvScene("seeded-handoff-detached");
+    git(s.repo, "checkout", "-q", "--detach");
+    dbMod.db().prepare("UPDATE runs SET worktree_base_branch = NULL WHERE id = ?").run(s.runId);
+
+    const handoff = await handoffOf(s);
+
+    assert.equal(handoff.merge, null);
+    assert.match(handoff.mergeBlocked ?? "", /^Your checkout has no branch checked out and this run recorded none/);
   });
 
   it("delivers a branch that edits a .env.development the repository tracks", async () => {

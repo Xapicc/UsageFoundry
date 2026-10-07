@@ -331,6 +331,7 @@ describe("verifyTreeVerdict answers the run's own tree or refuses", () => {
         checkedOutBranch: "uf/task-a",
         runBranch: "uf/task-a",
         operation: null,
+        detached: false,
         uncommitted: [],
       }),
       { ok: true, path: "/workspace/.uf-worktrees/acme-1" },
@@ -346,6 +347,7 @@ describe("verifyTreeVerdict answers the run's own tree or refuses", () => {
       checkedOutBranch: "uf/task-b",
       runBranch: "uf/task-a",
       operation: null,
+      detached: false,
       uncommitted: [],
     });
     assert.equal(v.ok, false);
@@ -361,6 +363,7 @@ describe("verifyTreeVerdict answers the run's own tree or refuses", () => {
       checkedOutBranch: null,
       runBranch: "uf/task-a",
       operation: "rebase",
+      detached: true,
       uncommitted: [],
     });
     assert.equal(v.ok, false);
@@ -370,12 +373,31 @@ describe("verifyTreeVerdict answers the run's own tree or refuses", () => {
     assert.doesNotMatch(reason, /taken that checkout over|Settings/);
   });
 
+  it("names a plain detached HEAD rather than calling it taken over", () => {
+    // `git checkout <commit>` detaches the slot with nothing in progress, and
+    // nobody else has it: the way out is in that checkout, not in Settings.
+    const v = verifyTreeVerdict({
+      slotPath: "/workspace/.uf-worktrees/acme-1",
+      checkedOutBranch: null,
+      runBranch: "uf/task-a",
+      operation: null,
+      detached: true,
+      uncommitted: [],
+    });
+    assert.equal(v.ok, false);
+    const reason = v.ok ? "" : v.reason;
+    assert.match(reason, /detached HEAD rather than on uf\/task-a/);
+    assert.match(reason, /Nothing was landed/);
+    assert.doesNotMatch(reason, /taken that checkout over|Settings/);
+  });
+
   it("refuses when the run never had a checkout", () => {
     const v = verifyTreeVerdict({
       slotPath: null,
       checkedOutBranch: null,
       runBranch: "uf/task-a",
       operation: null,
+      detached: false,
       uncommitted: [],
     });
     assert.equal(v.ok, false);
@@ -391,6 +413,7 @@ describe("verifyTreeVerdict answers the run's own tree or refuses", () => {
       checkedOutBranch: null,
       runBranch: null,
       operation: null,
+      detached: false,
       uncommitted: [],
     });
     assert.equal(v.ok, false);
@@ -406,6 +429,7 @@ describe("verifyTreeVerdict answers the run's own tree or refuses", () => {
       checkedOutBranch: "uf/task-a",
       runBranch: "uf/task-a",
       operation: null,
+      detached: false,
       uncommitted: ["src/fix.ts", "test/fix.test.ts"],
     });
     assert.equal(v.ok, false);
@@ -423,6 +447,7 @@ describe("verifyTreeVerdict answers the run's own tree or refuses", () => {
       checkedOutBranch: "uf/task-a",
       runBranch: "uf/task-a",
       operation: null,
+      detached: false,
       uncommitted,
     });
     const reason = v.ok ? "" : v.reason;
@@ -436,6 +461,7 @@ describe("verifyTreeVerdict answers the run's own tree or refuses", () => {
       checkedOutBranch: "uf/task-a",
       runBranch: "uf/task-a",
       operation: null,
+      detached: false,
       uncommitted: null,
     });
     assert.equal(v.ok, false);

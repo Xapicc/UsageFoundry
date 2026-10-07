@@ -2930,8 +2930,11 @@ function strandedDependents(
  */
 function proposeWorkflow(args: Record<string, unknown>, chatId: string) {
   // Asked here and not left to `normalizeWorkflowInput`, which refuses the same
-  // thing: it is handed the name after this line has already made it text.
-  const notString = nonStringArg(args, "name");
+  // thing: it is handed the name after this line has already made it text. The
+  // other two are read after it and nowhere else — a list-wrapped `supersedes`
+  // was quietly the label inside it, which is a card the model never named
+  // decided as replaced, and an object `summary` was the card's task text.
+  const notString = nonStringArg(args, "name", "summary", "supersedes");
   if (notString) return notString;
   const name = String(args.name ?? "").trim();
   if (!name) return text("A workflow needs a name.", true);
@@ -2945,8 +2948,13 @@ function proposeWorkflow(args: Record<string, unknown>, chatId: string) {
   // already uses; a graph is `{nodes, edges}`. Converted here rather than asked
   // for in edge form, so a model that has written one has written the other.
   const edges: Array<Record<string, unknown>> = [];
-  for (const entry of blocks) {
+  for (const [index, entry] of blocks.entries()) {
     const b = (entry ?? {}) as Record<string, unknown>;
+    // `name` is read below only to word a refusal, but it is read before
+    // `normalizeNode` checks it, so it is asked here to keep "[object Object]"
+    // out of the sentence.
+    const notBlockString = nonStringEntry(`Block ${index + 1}`, b, "id", "kind", "name");
+    if (notBlockString) return notBlockString;
     const to = String(b.id ?? "");
 
     // `""` is the mount root, and `normalizeWorkflowInput` is right to treat it
@@ -2978,8 +2986,15 @@ function proposeWorkflow(args: Record<string, unknown>, chatId: string) {
         true,
       );
     }
-    for (const raw of Array.isArray(b.dependsOn) ? b.dependsOn : []) {
+    for (const [at, raw] of (Array.isArray(b.dependsOn) ? b.dependsOn : []).entries()) {
       const d = (raw ?? {}) as Record<string, unknown>;
+      const notEdgeString = nonStringEntry(
+        `Block ${index + 1} dependsOn entry ${at + 1}`,
+        d,
+        "id",
+        "edge",
+      );
+      if (notEdgeString) return notEdgeString;
       edges.push({
         from: String(d.id ?? ""),
         to,
@@ -3111,6 +3126,13 @@ function clockMinutes(raw: unknown): number | null {
  * happened to reach last.
  */
 function proposeSchedule(args: Record<string, unknown>, chatId: string) {
+  // `["daily"]` was read as `daily`, `["<id>"]` as the workflow inside it, and
+  // a list-wrapped `supersedes` as the card it names. `time` and `weekday` are
+  // asked below, only for the kinds that read them: `timeZone` and `hours`
+  // are checked for their type by `normalizeScheduleInput` itself.
+  const notString = nonStringArg(args, "workflowId", "kind", "supersedes");
+  if (notString) return notString;
+
   const workflowId = String(args.workflowId ?? "").trim();
   const workflow = workflowId ? getWorkflow(workflowId) : null;
   if (!workflow) {
@@ -3124,6 +3146,8 @@ function proposeSchedule(args: Record<string, unknown>, chatId: string) {
   const raw: Record<string, unknown> = { kind, timeZone: args.timeZone };
   if (kind === "everyHours") raw.hours = args.hours;
   if (kind === "daily" || kind === "weekly") {
+    const notTime = nonStringArg(args, "time");
+    if (notTime) return notTime;
     const minutes = clockMinutes(args.time);
     if (minutes === null) {
       return text(
@@ -3134,6 +3158,8 @@ function proposeSchedule(args: Record<string, unknown>, chatId: string) {
     raw.minutes = minutes;
   }
   if (kind === "weekly") {
+    const notWeekday = nonStringArg(args, "weekday");
+    if (notWeekday) return notWeekday;
     const weekday = WEEKDAY_NAMES.indexOf(String(args.weekday ?? ""));
     if (weekday < 0) {
       return text("A weekly schedule needs weekday, Sunday through Saturday.", true);
@@ -3876,6 +3902,20 @@ function nonStringArg(args: Record<string, unknown>, ...fields: string[]) {
   for (const field of fields) {
     const problem = notStringRefusal(field, args[field]);
     if (problem) return text(problem, true);
+  }
+  return null;
+}
+
+/**
+ * `nonStringArg` for a field of an object inside an argument — a block, a
+ * `dependsOn` entry — refused with `where` in front, so a model that sent
+ * twelve blocks is told which one. `normalizeNode` opens its own refusals with
+ * the same "Block N".
+ */
+function nonStringEntry(where: string, entry: Record<string, unknown>, ...fields: string[]) {
+  for (const field of fields) {
+    const problem = notStringRefusal(field, entry[field]);
+    if (problem) return text(`${where}: ${problem}`, true);
   }
   return null;
 }
@@ -5310,8 +5350,12 @@ function proposeRun(args: Record<string, unknown>, chatId: string, decision: Mod
     );
   }
   const dependsOn: ProposalDependency[] = [];
-  for (const raw of Array.isArray(args.dependsOn) ? args.dependsOn : []) {
+  for (const [at, raw] of (Array.isArray(args.dependsOn) ? args.dependsOn : []).entries()) {
     const d = (raw ?? {}) as Record<string, unknown>;
+    // `["first"]` was read as the label inside it: an edge onto a card the
+    // model never named, which is a run told to wait for the wrong thing.
+    const notEntryString = nonStringEntry(`dependsOn entry ${at + 1}`, d, "id", "edge");
+    if (notEntryString) return notEntryString;
     const on = String(d.id ?? "").trim();
     if (specId !== null && on === specId) {
       return text("A proposal cannot start after itself.", true);

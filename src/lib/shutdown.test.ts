@@ -79,6 +79,8 @@ const { assistRefusal, getAssist, SHUTDOWN_REFUSAL, startAssist } =
 const { getSettings, saveSettings } =
   require("./settings") as typeof import("./settings");
 const { runVerify } = require("./landGate") as typeof import("./landGate");
+const { blocksOf, reconcileBlocksOnBoot } =
+  require("./workflows") as typeof import("./workflows");
 
 const SESSION = "11111111-2222-3333-4444-555555555555";
 const lockFile = path.join(config.DATA_DIR, "server.lock");
@@ -925,28 +927,29 @@ describe("shutting down with a run waiting on the one it interrupts", () => {
    * read A's restart ending as `on-finish` satisfied and queued B while A was
    * still closed out — so picking A up afterwards ran A and B side by side.
    */
+  /** A run of `label-suffix`'s folder, suspended in its first work cycle. */
+  async function working(label: string, suffix: string) {
+    fs.mkdirSync(path.join(tmp, "workspace", `${label}-${suffix}`), { recursive: true });
+    const run = createRun({
+      folder: `${label}-${suffix}`,
+      mountId: null,
+      prompt: `dependency ${suffix.toUpperCase()}`,
+      budget: { maxIterations: 3 },
+      origin: "form",
+    });
+    if (getRun(run.id)!.status === "queued") void startRun(run.id);
+    await waitFor(
+      () => getRun(run.id)?.active_started_at !== null,
+      `${suffix.toUpperCase()}'s first work cycle`,
+    );
+    return run;
+  }
+
   it("does not release a fan-in dependent when only one of its closed-out runs is picked up", async () => {
     const label = "graceful-fan-in";
-    for (const folder of [`${label}-a`, `${label}-b`, `${label}-c`]) {
-      fs.mkdirSync(path.join(tmp, "workspace", folder), { recursive: true });
-    }
-    const working = async (suffix: string) => {
-      const run = createRun({
-        folder: `${label}-${suffix}`,
-        mountId: null,
-        prompt: `dependency ${suffix.toUpperCase()}`,
-        budget: { maxIterations: 3 },
-        origin: "form",
-      });
-      if (getRun(run.id)!.status === "queued") void startRun(run.id);
-      await waitFor(
-        () => getRun(run.id)?.active_started_at !== null,
-        `${suffix.toUpperCase()}'s first work cycle`,
-      );
-      return run;
-    };
-    const a = await working("a");
-    const c = await working("c");
+    fs.mkdirSync(path.join(tmp, "workspace", `${label}-b`), { recursive: true });
+    const a = await working(label, "a");
+    const c = await working(label, "c");
     const b = createRun({
       folder: `${label}-b`,
       mountId: null,
@@ -1017,6 +1020,99 @@ describe("shutting down with a run waiting on the one it interrupts", () => {
     assert.ok(pickedUp.ok, pickedUp.ok ? "" : pickedUp.reason);
     assert.equal(getRun(b.id)!.status, "waiting");
     assert.ok(!selectPromotable(activeRuns(), null).includes(b.id));
+  });
+
+  /**
+   * The same fan-in one level up: a workflow's merge block behind run nodes A
+   * and C. `edgeVerdict` read the restart's ending on A as `on-finish`
+   * satisfied, so the block was claimed and handed A's branch to land. A merge
+   * block because its claim asks nothing about the shutdown this file has
+   * already begun: an orchestrator block's is held by `isShuttingDown()` and
+   * would pass for that reason instead.
+   */
+  it("does not start a workflow block behind a fan-in while one of its closed-out runs is outstanding", async () => {
+    const label = "graceful-fan-in-block";
+    const a = await working(label, "a");
+    const c = await working(label, "c");
+
+    // Inserted rather than built through `startWorkflow`, which wants a mount
+    // and a git probe; what is under test is the verdict these rows feed.
+    const graph = JSON.stringify({
+      nodes: [
+        { id: "A", name: "Build A", kind: "run" },
+        { id: "C", name: "Build C", kind: "run" },
+        { id: "M", name: "Land both", kind: "merge", mergeStrategy: "merge" },
+      ],
+      edges: [
+        { from: "A", to: "M", edge: "on-finish", continueBranch: false },
+        { from: "C", to: "M", edge: "on-finish", continueBranch: false },
+      ],
+    });
+    const now = Date.now();
+    const instanceId = `inst-${label}`;
+    db().prepare(
+      "INSERT INTO workflows (id, name, graph, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    ).run(`wf-${label}`, label, graph, now, now);
+    db().prepare(
+      `INSERT INTO workflow_instances (id, workflow_id, workflow_name, graph, created_at, status)
+       VALUES (?, ?, ?, ?, ?, 'started')`,
+    ).run(instanceId, `wf-${label}`, label, graph, now);
+    for (const [position, [nodeId, name, runId]] of [
+      ["A", "Build A", a.id],
+      ["C", "Build C", c.id],
+    ].entries()) {
+      db().prepare(
+        "INSERT INTO workflow_instance_runs (instance_id, node_id, node_name, position, run_id)" +
+          " VALUES (?, ?, ?, ?, ?)",
+      ).run(instanceId, nodeId, name, position, runId);
+    }
+    db().prepare(
+      "INSERT INTO workflow_instance_blocks (instance_id, node_id, node_name, position, kind, status)" +
+        " VALUES (?, 'M', 'Land both', 2, 'merge', 'waiting')",
+    ).run(instanceId);
+    const merge = () => blocksOf(instanceId).find((b) => b.nodeId === "M")!;
+
+    await shutdownRuns("SIGTERM");
+    await reconcileOnBoot();
+    reconcileBlocksOnBoot();
+    for (const run of [a, c]) {
+      const row = getRun(run.id)!;
+      assert.equal(row.status, "stopped");
+      assert.equal(row.restart_closed, 1);
+      assert.equal(row.iterations, 1);
+    }
+    assert.equal(
+      merge().status,
+      "blocked",
+      `the block went ahead behind two runs the restart closed out: ${merge().error ?? ""}`,
+    );
+
+    // C alone, by name, which wakes the block, and then run and stopped: an
+    // ending that is not the restart's, so the block decides on A's alone.
+    const reopened = reopenRun(c.id, JSON.parse(getRun(c.id)!.budget) as unknown);
+    assert.ok(reopened.ok, reopened.ok ? "" : reopened.reason);
+    await waitFor(() => merge().status === "waiting", "the block woken by C's pick-up");
+    const loop = startRun(c.id);
+    await waitFor(() => getRun(c.id)?.active_started_at !== null, "C's picked-up cycle");
+    assert.equal(stopRun(c.id), "signalled");
+    await loop;
+    assert.equal(getRun(c.id)!.restart_closed, 0);
+    await waitFor(() => merge().status !== "waiting", "the advance after C's ending");
+
+    assert.equal(getRun(a.id)!.restart_closed, 1, "A has not been picked up");
+    const block = merge();
+    assert.equal(
+      block.status,
+      "blocked",
+      "the block neither waits for nor fails on A: blocked is what picking A up revives",
+    );
+    assert.equal(block.startedAt, null, "the block was claimed behind a run still closed out");
+    assert.match(block.error ?? "", /“Build A”.*restart closed out/);
+
+    // Which is what brings it back, to be decided once A has ended again.
+    const pickedUp = reopenRun(a.id, JSON.parse(getRun(a.id)!.budget) as unknown);
+    assert.ok(pickedUp.ok, pickedUp.ok ? "" : pickedUp.reason);
+    await waitFor(() => merge().status === "waiting", "the block woken by A's pick-up");
   });
 });
 

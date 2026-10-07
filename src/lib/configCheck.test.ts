@@ -18,6 +18,7 @@ import {
   hasAdminKey,
   hasGithubToken,
 } from "./config";
+import { authBootSignal } from "./authGuard";
 import {
   checkConfig,
   explicitlyBlank,
@@ -55,6 +56,8 @@ function view(over: Partial<ConfigView> = {}): ConfigView {
     mounts: [{ id: "workspace", label: "Workspace", path: "/workspace", at: dir }],
     claudeHome: { path: "/home/node/.claude", at: dir, projects: dir },
     blankVars: [],
+    trustedProxyHops: "",
+    auth: "enabled",
     ...over,
   };
 }
@@ -195,6 +198,53 @@ describe("checkConfig", () => {
     assert.equal(of(problems, "DATA_DIR")[0].severity, "refuse");
     assert.equal(of(problems, "CLAUDE_HOME").length, 1);
     assert.equal(of(problems, "CLAUDE_HOME")[0].severity, "warn");
+  });
+
+  it("warns about a UF_TRUSTED_PROXY_HOPS that is not a whole number, and never refuses", () => {
+    // Read as zero either way, which is the safe direction — but an operator
+    // behind nginx who wrote "one" loses per-source lockout and the request
+    // log's address with nothing saying why. Blank is what compose renders on
+    // every stock install, so it has to stay silent.
+    for (const raw of ["", "0", "2"]) {
+      assert.deepEqual(checkConfig(view({ trustedProxyHops: raw })), [], JSON.stringify(raw));
+    }
+    for (const raw of ["one", "-1", "1.5", " 1x"]) {
+      const problems = checkConfig(view({ trustedProxyHops: raw }));
+      assert.equal(problems.length, 1, JSON.stringify(raw));
+      assert.equal(problems[0].severity, "warn");
+      assert.equal(problems[0].variable, "UF_TRUSTED_PROXY_HOPS");
+      assert.ok(problems[0].message.includes(JSON.stringify(raw)), problems[0].message);
+    }
+  });
+
+  it("warns about a short UF_AUTH_TOKEN without naming its length, and not about a long one", () => {
+    // Stdout alone was where this was said, and stdout is rarely read. Fed
+    // through `authBootSignal` with real tokens, so the boundary is the one the
+    // boot block uses: 31 characters warns, the 32 of `openssl rand -hex 16`
+    // and the 64 the docs tell the operator to generate say nothing.
+    const hex32 = "0123456789abcdef".repeat(2);
+    for (const [token, warns] of [
+      ["s3cret", true],
+      [hex32.slice(1), true],
+      [hex32, false],
+      [hex32.repeat(2), false],
+    ] as const) {
+      const problems = checkConfig(
+        view({ auth: authBootSignal({ token, allowNoAuth: "" }).kind }),
+      );
+      if (!warns) {
+        assert.deepEqual(problems, [], `${token.length} characters must say nothing`);
+        continue;
+      }
+      assert.equal(problems.length, 1, `${token.length} characters must warn`);
+      assert.equal(problems[0].severity, "warn");
+      assert.equal(problems[0].variable, "UF_AUTH_TOKEN");
+      assert.match(problems[0].message, /openssl rand -hex 32/);
+      assert.equal(problems[0].message.includes(token), false);
+      assert.doesNotMatch(problems[0].message, new RegExp(`\\b${token.length}\\b`));
+    }
+    // Auth off has its own banner on every page; this list would say it twice.
+    assert.deepEqual(checkConfig(view({ auth: "unauthenticated" })), []);
   });
 
   it("reports every problem rather than the first", () => {
