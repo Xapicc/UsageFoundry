@@ -54,8 +54,15 @@ export function landCardLine(
     | "landedUnchanged"
     | "branchExists"
     | "blocked"
+    | "resolveBlocked"
   >,
 ): LandCardLine {
+  // Beside the conflict rather than instead of it: both refuse the land, and
+  // the second is the only word on why the card offers no Resolve for the first.
+  const refusal =
+    s.blocked !== null && s.resolveBlocked !== null
+      ? `${s.blocked} ${s.resolveBlocked}`
+      : s.blocked;
   if (s.landedAt !== null) {
     const landed = { at: s.landedAt, into: s.landedInto, strategy: s.landedStrategy };
     // `landed_at` is written once and never cleared, and a landed run can be
@@ -64,9 +71,9 @@ export function landCardLine(
     // After that it is history: Land is withheld or offered again, Purge is
     // offered beside it, and the sentence saying why is the one that matters.
     if (s.merged || s.landedUnchanged || !s.branchExists) return { kind: "landed", landed };
-    return { kind: "moved", landed, refusal: s.blocked };
+    return { kind: "moved", landed, refusal };
   }
-  return s.blocked === null ? { kind: "none" } : { kind: "refusal", refusal: s.blocked };
+  return refusal === null ? { kind: "none" } : { kind: "refusal", refusal };
 }
 
 function plural(n: number, word: string): string {

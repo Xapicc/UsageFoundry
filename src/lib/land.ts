@@ -274,6 +274,14 @@ export interface LandState {
    * well as Land, like `certification`.
    */
   seeded: SeededRead | null;
+  /**
+   * Why a resolution of this branch's conflict is refused before it is bought,
+   * or null. Set only beside a conflict, so `blocked` is that conflict or a
+   * refusal ahead of it: a branch carrying a seeded file, which `landRun`
+   * refuses whatever a resolution does. `startResolution` refuses on it and the
+   * card withholds Resolve on it, so the two give one sentence.
+   */
+  resolveBlocked: string | null;
   landedAt: number | null;
   landedInto: string | null;
   landedStrategy: string | null;
@@ -579,6 +587,7 @@ export async function landState(
     blocked: null,
     certification: NOT_REQUIRED,
     seeded: null,
+    resolveBlocked: null,
     landedAt: run.landed_at,
     landedInto: run.landed_into,
     landedStrategy: run.landed_strategy,
@@ -717,6 +726,13 @@ export async function landState(
     checkout,
     pending,
     seeded,
+    // The merge queue's `planItem` makes the same decision for a queued row.
+    // Taking the file out rewrites the history a resolution is bought against,
+    // and its commits change nothing about the file.
+    resolveBlocked:
+      preview.outcome === "conflict"
+        ? seededRefusal(seeded, { branch, target: target.branch, exit: "land" })
+        : null,
   };
   return {
     ...state,
@@ -2770,6 +2786,9 @@ async function startResolution(
           : `${state.branch} does not conflict with ${state.target}, so there is nothing to resolve.`,
     };
   }
+  // Before the spawn, because a resolution is billed and `landRun` refuses the
+  // branch it leaves on the file it still carries.
+  if (state.resolveBlocked) return { ok: false, reason: state.resolveBlocked };
 
   const refusal = await assistRefusal();
   if (refusal) return { ok: false, reason: refusal };
