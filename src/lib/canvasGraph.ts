@@ -7,6 +7,7 @@ import type {
   WorkflowNodeDTO,
   WorkflowNodeKind,
 } from "./apiTypes";
+import { MAX_WORKFLOW_NODES } from "./apiTypes";
 
 /**
  * The canvas's own model: a draft graph, and where its blocks sit on screen.
@@ -438,6 +439,74 @@ export function freeSpot(positions: ReadonlyMap<string, Point>): Point {
   let bottom = -ROW_STRIDE + CANVAS_PAD;
   for (const p of positions.values()) bottom = Math.max(bottom, p.y);
   return { x: CANVAS_PAD, y: bottom + ROW_STRIDE };
+}
+
+/**
+ * Where a copy of a block goes: in its column, under it, and clear of whatever
+ * is already there.
+ *
+ * Under rather than to the right, because the column is how this layout says
+ * "waits for the same things" — a copy has no links, so a card one column over
+ * would read as coming after the original. It steps down past any card in the
+ * way, because a card drawn on another is a block nobody can see and the copy
+ * can still start an agent. Bounded by the number of cards: each step clears at
+ * least one of them or ends the walk.
+ */
+export function spotBeside(
+  origin: Point,
+  positions: ReadonlyMap<string, Point>,
+): Point {
+  const taken = [...positions.values()];
+  const covers = (spot: Point) =>
+    taken.some(
+      (p) => Math.abs(p.x - spot.x) < NODE_W && Math.abs(p.y - spot.y) < NODE_H,
+    );
+  let spot: Point = { x: origin.x, y: origin.y + ROW_STRIDE };
+  for (let step = 0; step < taken.length && covers(spot); step++) {
+    spot = { x: spot.x, y: spot.y + ROW_STRIDE };
+  }
+  return spot;
+}
+
+export type DuplicateBlockResult =
+  | { ok: true; block: BlockDraft }
+  | { ok: false; reason: "loop" | "full" };
+
+/**
+ * A block's own fields under a new id, and nothing of where it sits in the graph.
+ *
+ * **Everything that places a block is a link, and a link is not on the draft**:
+ * what feeds it, what it feeds, the hand-over flag on each, and a loop's
+ * `repeats` link that makes it a member of a section all live in `LinkDraft`,
+ * and `BlockDraft` deliberately holds no node id (see the note under
+ * `ThresholdDraft`). So there is nothing to strip, and the copy is unlinked and
+ * outside every frame by construction. The day a field naming another block is
+ * added to `BlockDraft`, this is where it has to be cleared.
+ *
+ * Refused for a loop, which is a frame made by framing blocks and has no card to
+ * copy, and when the workflow already holds `MAX_WORKFLOW_NODES` — the server
+ * refuses a larger graph at save, and the editor's own palette is disabled at the
+ * same count.
+ */
+export function duplicateBlock(
+  source: BlockDraft,
+  id: string,
+  blockCount: number,
+): DuplicateBlockResult {
+  if (source.kind === "loop") return { ok: false, reason: "loop" };
+  if (blockCount >= MAX_WORKFLOW_NODES) return { ok: false, reason: "full" };
+  return {
+    ok: true,
+    block: {
+      ...source,
+      id,
+      // Each block's list is edited on its own; see `defaultThresholds` in the
+      // editor.
+      stopWhenTasksThresholds: source.stopWhenTasksThresholds.map((t) => ({
+        ...t,
+      })),
+    },
+  };
 }
 
 /* ------------------------------------------------------------------ */

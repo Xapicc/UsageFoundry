@@ -33,6 +33,8 @@ import {
   conditionClause,
   draftSignature,
   draftToGraph,
+  duplicateBlock,
+  freeSpot,
   linkKey,
   linksOfGraph,
   linksWithKind,
@@ -43,6 +45,7 @@ import {
   sectionLink,
   sectionLinkStatement,
   sectionOf,
+  spotBeside,
   worstCaseMembers,
   worstCaseRuns,
   type BlockDraft,
@@ -630,6 +633,28 @@ export function WorkflowEditor({
     [defaultMount],
   );
 
+  const duplicateSelected = useCallback(
+    (sourceId: string) => {
+      const source = blocks.find((b) => b.id === sourceId);
+      if (!source) return;
+      const made = duplicateBlock(source, `block-${nextId.current}`, blocks.length);
+      // The button is hidden for a loop and disabled when the workflow is full,
+      // so a refusal here is a press that raced a state change. There is
+      // nothing to say about it: the panel has already redrawn.
+      if (!made.ok) return;
+      nextId.current++;
+      // Total by construction: `resolveLayout` gives every block a position.
+      const origin = positions.get(sourceId) ?? freeSpot(positions);
+      setBlocks((prev) => [...prev, made.block]);
+      setDragged((prev) => ({
+        ...prev,
+        [made.block.id]: spotBeside(origin, positions),
+      }));
+      setSelection({ kind: "block", id: made.block.id });
+    },
+    [blocks, positions],
+  );
+
   const updateBlock = useCallback(
     (id: string, patch: Partial<BlockDraft>) => {
       setBlocks((prev) =>
@@ -1150,6 +1175,8 @@ export function WorkflowEditor({
                   boards.find((b) => b.nodeId === selectedBlock.id) ?? null
                 }
                 onChange={(patch) => updateBlock(selectedBlock.id, patch)}
+                onDuplicate={() => duplicateSelected(selectedBlock.id)}
+                full={blocks.length >= MAX_WORKFLOW_NODES}
                 onRemove={() => removeBlock(selectedBlock.id)}
               />
             )}
@@ -1612,6 +1639,8 @@ function BlockPanel({
   foldersFor,
   board,
   onChange,
+  onDuplicate,
+  full,
   onRemove,
 }: {
   block: BlockDraft;
@@ -1634,6 +1663,9 @@ function BlockPanel({
   /** What this block's board condition counts today, or null when it sets none. */
   board: LoopBoardReadingDTO | null;
   onChange: (patch: Partial<BlockDraft>) => void;
+  onDuplicate: () => void;
+  /** The graph is at `MAX_WORKFLOW_NODES`, so a copy would be refused at save. */
+  full: boolean;
   onRemove: () => void;
 }) {
   const mount = mounts.find((m) => m.id === block.mountId);
@@ -2556,10 +2588,29 @@ function BlockPanel({
       )}
 
       <ButtonRow className="mt-4 border-t border-line pt-3.5">
+        {/* Not for a loop: it is a frame made by framing blocks, and a copy of
+            one would be a frame round nothing. The copy carries this block's
+            fields and no links — `duplicateBlock` says why. */}
+        {block.kind !== "loop" && (
+          <Button
+            variant="secondary"
+            size="compact"
+            onClick={onDuplicate}
+            disabled={full}
+            aria-describedby={full ? `${block.id}-duplicate-full` : undefined}
+          >
+            Duplicate
+          </Button>
+        )}
         <Button variant="ghost" size="compact" onClick={onRemove}>
           Remove block
         </Button>
         <span className="max-md:hidden text-xs text-ink-faint">or press Delete</span>
+        {full && block.kind !== "loop" && (
+          <span id={`${block.id}-duplicate-full`} className="text-xs text-ink-faint">
+            A workflow runs at most {MAX_WORKFLOW_NODES} blocks
+          </span>
+        )}
       </ButtonRow>
     </>
   );

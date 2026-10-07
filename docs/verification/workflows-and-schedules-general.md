@@ -141,6 +141,21 @@
   four. Caveat: one pass, non-overlapping files so no conflict, and only the
   API door was tried, not the editor.
 
+- **Duplicate in the block inspector, 2026-10-07** (production standalone build
+  of this branch, scratch `DATA_DIR` with one mount, a `CLAUDE_BIN` that exits 1,
+  Chromium at 1280px and 390px): a run block with a name, a task and a workspace
+  and one press of Duplicate gave a second card in the same column 144px below the
+  first (348 to 492px), selected, whose inspector read the same name, task and
+  workspace. `POST /api/workflows` answered 200 with two nodes carrying the same
+  `name`, `task` and `mountId`, `bodyNodeIds` `[]` and no edge. Twenty-four further
+  presses reached 25 blocks, where Duplicate was disabled and "A workflow runs at
+  most 25 blocks" sat beside it, named by `aria-describedby`. A block framed by
+  Repeat opened an inspector with Remove block and no Duplicate. No console error
+  at either width. Caveat: the frame case was driven at 1280px only, a copy of a
+  block that is inside a section was asserted by `canvasGraph.test.ts` and not in
+  the browser, and the copy keeps its original's name, so two cards read alike until
+  one is renamed.
+
 ## Not yet verified by hand
 
 - **No review block has run against a real model (2026-09-28).** The block's

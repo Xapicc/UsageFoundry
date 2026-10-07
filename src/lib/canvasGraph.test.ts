@@ -8,6 +8,7 @@ import {
   bodyRegions,
   draftSignature,
   draftToGraph,
+  duplicateBlock,
   freeSpot,
   layoutBounds,
   linkRefusal,
@@ -23,6 +24,7 @@ import {
   sectionLink,
   sectionLinkStatement,
   sectionOf,
+  spotBeside,
   worstCaseMembers,
   worstCaseRuns,
   type BlockDraft,
@@ -35,7 +37,7 @@ import type {
   WorkflowNodeDTO,
   WorkflowNodeKind,
 } from "./apiTypes";
-import { MAX_LOOP_PASSES, MAX_LOOP_RUNS } from "./apiTypes";
+import { MAX_LOOP_PASSES, MAX_LOOP_RUNS, MAX_WORKFLOW_NODES } from "./apiTypes";
 import { normalizeWorkflowInput } from "./workflowGraph";
 
 /**
@@ -259,6 +261,142 @@ test("a block added without a pointer lands clear of the others", () => {
 test("an empty canvas still offers somewhere to put the first block", () => {
   const spot = freeSpot(new Map());
   assert.ok(spot.x >= 0 && spot.y >= 0);
+});
+
+/* ------------------------------------------------------------------ */
+/* Duplicating a block                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A copy is a new block with the old one's fields and none of its place in the
+ * graph. Each way of getting that wrong saves without complaint: a copy that
+ * kept a link would be a second block fed by the same branch (a billed run the
+ * operator did not draw), and one that kept a loop's `repeats` link would put a
+ * block in a section that `normalizeWorkflowInput` then refuses as "in two
+ * bodies" — naming a block the operator has not seen yet.
+ */
+
+test("a copy has its own id and every other field of the block it was taken from", () => {
+  const source = block("a", {
+    name: "Fix the tests",
+    templateId: "tpl-1",
+    folder: "sub/dir",
+    task: "make them pass",
+    promptOverride: "be brief",
+    agentId: "agent-1",
+    provider: "codex",
+  });
+  const made = duplicateBlock(source, "block-9", 3);
+  assert.ok(made.ok);
+  assert.equal(made.block.id, "block-9");
+  assert.deepEqual({ ...made.block, id: "a" }, source);
+});
+
+test("a copy shares no list with the block it was taken from", () => {
+  // `defaultThresholds` is a function because a shared array is one list behind
+  // every loop; the copy is held to the same rule.
+  const source = block("a", { stopWhenTasksThresholds: [{ priority: "any", atMost: "0" }] });
+  const made = duplicateBlock(source, "block-9", 1);
+  assert.ok(made.ok);
+  assert.notEqual(made.block.stopWhenTasksThresholds, source.stopWhenTasksThresholds);
+  assert.notEqual(
+    made.block.stopWhenTasksThresholds[0],
+    source.stopWhenTasksThresholds[0],
+  );
+});
+
+test("a copy comes with none of the links the block had", () => {
+  // `b` is fed by `a` with the branch handed on, and feeds `m`. The copy of `b`
+  // is none of that until the operator draws it.
+  const blocks = [block("a"), block("b"), block("m", { kind: "merge" })];
+  const links = [
+    link("a", "b", { edge: "on-success", continueBranch: true }),
+    link("b", "m", { edge: "on-finish", continueBranch: true }),
+  ];
+  const made = duplicateBlock(blocks[1], "block-9", blocks.length);
+  assert.ok(made.ok);
+
+  const wire = draftToGraph({ blocks: [...blocks, made.block], links });
+  assert.equal(wire.edges.length, 2, "no link is added for the copy");
+  assert.ok(
+    wire.edges.every((e) => e.from !== "block-9" && e.to !== "block-9"),
+    "and none of the existing ones reaches it",
+  );
+  const [, original, , copy] = wire.nodes;
+  assert.deepEqual({ ...copy, id: original.id }, original);
+  assert.deepEqual(copy.bodyNodeIds, []);
+});
+
+test("a copy of a block inside a section is not in the section", () => {
+  // Membership is the links and nothing else, so a copy with none is outside
+  // every frame however it is placed.
+  const blocks = [block("l", { kind: "loop", maxPasses: "3" }), block("a"), block("b")];
+  const links = [
+    link("l", "a", { edge: "repeats" }),
+    link("a", "b", { edge: "on-success" }),
+  ];
+  const made = duplicateBlock(blocks[1], "block-9", blocks.length);
+  assert.ok(made.ok);
+  assert.deepEqual(sectionOf("l", [...blocks, made.block], links), ["a", "b"]);
+});
+
+test("a copy saves through the same door as the block it was taken from", () => {
+  const blocks = [
+    block("a", { templateId: "tpl-1", agentId: "agent-1", mountId: "main" }),
+  ];
+  const made = duplicateBlock(blocks[0], "block-9", blocks.length);
+  assert.ok(made.ok);
+  const saved = normalizeWorkflowInput(
+    { name: "Fan out", graph: draftToGraph({ blocks: [...blocks, made.block], links: [] }) },
+    {
+      templates: new Map([["tpl-1", { name: "Isolated", isolate: true }]]),
+      mountIds: ["main"],
+      defaultIsolate: true,
+      agents: new Map([["agent-1", { name: "Reviewer", usable: true }]]),
+    },
+  );
+  assert.ok(saved.ok, saved.ok ? "" : saved.error);
+  assert.equal(saved.value.graph.nodes.length, 2);
+});
+
+test("a loop is not copied", () => {
+  // A loop is the frame round a section, made by framing and in no palette; a
+  // copy would be a frame round nothing.
+  const made = duplicateBlock(block("l", { kind: "loop", maxPasses: "3" }), "block-9", 2);
+  assert.deepEqual(made, { ok: false, reason: "loop" });
+});
+
+test("a block is copied up to the last place the workflow has and no further", () => {
+  const source = block("a");
+  assert.ok(duplicateBlock(source, "block-9", MAX_WORKFLOW_NODES - 1).ok);
+  assert.deepEqual(duplicateBlock(source, "block-9", MAX_WORKFLOW_NODES), {
+    ok: false,
+    reason: "full",
+  });
+  assert.deepEqual(duplicateBlock(source, "block-9", MAX_WORKFLOW_NODES + 1), {
+    ok: false,
+    reason: "full",
+  });
+});
+
+test("a copy lands in the original's column, clear of what is already there", () => {
+  const at = resolveLayout([block("a"), block("b"), block("c")], [], null);
+  const origin = at.get("a")!;
+  const spot = spotBeside(origin, at);
+  assert.equal(spot.x, origin.x, "a sibling stays in the column that says nothing waits");
+  for (const p of at.values()) {
+    const overlaps =
+      Math.abs(p.x - spot.x) < NODE_W && Math.abs(p.y - spot.y) < NODE_H;
+    assert.ok(!overlaps, "a copy under another block is a block nobody can see");
+  }
+});
+
+test("a copy beside a block with nothing under it lands directly under it", () => {
+  const origin = { x: 24, y: 24 };
+  const spot = spotBeside(origin, new Map([["a", origin]]));
+  assert.equal(spot.x, 24);
+  assert.ok(spot.y >= 24 + NODE_H, "clear of the original's own box");
+  assert.ok(spot.y < 24 + 2 * NODE_H, "and close enough to read as its sibling");
 });
 
 /* ------------------------------------------------------------------ */
