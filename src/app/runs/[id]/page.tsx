@@ -2065,12 +2065,26 @@ export default function RunDetail({
                   here depends on it, so the card names the run's agent and lets
                   the rows say what they say. */}
               <Section title="Agent work">
-                <RunAgentCost
-                  runId={run.id}
-                  active={active}
-                  now={nowTick}
-                  startedAs={run.agent?.name ?? null}
-                />
+                {/* A Codex run has nothing this split is made of: its session
+                    is not a Claude Code transcript, it names no sub-agents, and
+                    it reports tokens without cost. Said in a sentence rather
+                    than left as an empty card, which would read as a run whose
+                    agents did nothing. */}
+                {run.provider === "codex" ? (
+                  <p className="max-w-[68ch] text-xs leading-snug text-ink-muted">
+                    Not split for a Codex run: Codex reports tokens, not cost, and
+                    names no sub-agents. It has used{" "}
+                    <span className="tabular-nums">{fmtTokens(run.spent_tokens)}</span>{" "}
+                    tokens over its finished work cycles.
+                  </p>
+                ) : (
+                  <RunAgentCost
+                    runId={run.id}
+                    active={active}
+                    now={nowTick}
+                    startedAs={run.agent?.name ?? null}
+                  />
+                )}
               </Section>
 
               {/* A separate measurement, deliberately not folded into the figures

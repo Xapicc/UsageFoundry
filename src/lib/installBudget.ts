@@ -9,6 +9,7 @@ import {
   type InstallProgress,
 } from "./budget";
 import { telemetrySpendSince } from "./otlp";
+import { readCodexCycle } from "./codexRollout";
 import { getSettings } from "./settings";
 
 /**
@@ -242,11 +243,51 @@ export interface InstallSpendReport extends InstallProgress {
   /** null when no limit is configured — the meter is indeterminate, not 0%. */
   limitUSD: number | null;
   windowHours: number;
+  /** Codex runs inside the window, and their tokens. See `installCodexTokens`. */
+  codexRuns: number;
+  codexTokens: number;
+}
+
+/**
+ * The Codex runs `installSpend` counts, in tokens — beside the report and never
+ * in it.
+ *
+ * The same runs on the same rule, alive inside the window or stopped in it,
+ * because a line beside the dollar figure must cover the span that figure
+ * does. Tokens only: Codex reports no cost, so its runs add $0 to `spentUSD`
+ * and nothing here turns tokens into money. **Display only** — the install
+ * limit is a dollar limit, and nothing reads this into a guard. A cycle in
+ * flight adds what its session file has recorded so far.
+ */
+export function installCodexTokens(now = Date.now()): { runs: number; tokens: number } {
+  const since = windowStart(now);
+  const rows = db()
+    .prepare(
+      `SELECT id, status, tokens
+         FROM (SELECT id, status, provider,
+                      spent_tokens + spent_tokens_est AS tokens,
+                      COALESCE(finished_at,
+                               CASE WHEN status IN ('paused', 'waiting-for-stack')
+                                    THEN paused_at END)
+                        AS stoppedAt
+                 FROM runs)
+        WHERE provider = 'codex' AND (stoppedAt IS NULL OR stoppedAt >= ?)`,
+    )
+    .all(since) as Array<{ id: string; status: string; tokens: number }>;
+  let tokens = 0;
+  for (const row of rows) {
+    tokens += row.tokens;
+    if (row.status === "running") tokens += readCodexCycle(row.id)?.tokens ?? 0;
+  }
+  return { runs: rows.length, tokens };
 }
 
 export function installSpendReport(now = Date.now()): InstallSpendReport {
+  const codex = installCodexTokens(now);
   return {
     ...installSpend(now),
+    codexRuns: codex.runs,
+    codexTokens: codex.tokens,
     limitUSD: installBudget().maxInstallCostUSD,
     windowHours: INSTALL_WINDOW_MS / 3_600_000,
   };

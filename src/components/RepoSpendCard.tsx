@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { RepoSpendDTO } from "@/lib/apiTypes";
-import { fmtUSD, pollFailureMessage } from "@/lib/format";
+import { fmtTokens, fmtUSD, pollFailureMessage } from "@/lib/format";
 import { Card, CardTitle, Empty } from "@/components/ui/Card";
 import { ListView, STICKY_HEAD_FLAT } from "@/components/ui/ListView";
 import { Notice } from "@/components/ui/Notice";
@@ -81,6 +81,9 @@ export function RepoSpendCard() {
 
   const total = data?.totals.spentUSD ?? 0;
   const estimated = data?.totals.spentEstUSD ?? 0;
+  // A column only once a Codex run is in the span: on an install that never
+  // ran Codex it would be a column of dashes about nothing.
+  const codexRuns = data?.totals.codexRunCount ?? 0;
 
   return (
     // Quiet: `This install, last N hours` leads the band these two share, and
@@ -135,6 +138,11 @@ export function RepoSpendCard() {
                   <Th num className={STICKY_HEAD_FLAT}>
                     Share
                   </Th>
+                  {codexRuns > 0 && (
+                    <Th num className={STICKY_HEAD_FLAT}>
+                      Codex tokens
+                    </Th>
+                  )}
                 </tr>
               </THead>
               <TBody>
@@ -172,6 +180,14 @@ export function RepoSpendCard() {
                         ? `${Math.round((r.spentUSD / total) * 100)}%`
                         : "—"}
                     </Td>
+                    {/* Tokens, in a column of their own: Codex reports no cost,
+                        so its runs are in none of the dollar columns or the
+                        share, and its tokens are not Claude's. */}
+                    {codexRuns > 0 && (
+                      <Td num label="Codex tokens">
+                        {r.codexRunCount > 0 ? fmtTokens(r.codexTokens) : "—"}
+                      </Td>
+                    )}
                   </Tr>
                 ))}
               </TBody>
@@ -191,6 +207,15 @@ export function RepoSpendCard() {
             )}{" "}
             Never add this to the window meters above, which cover every Claude
             Code transcript on this machine.
+            {codexRuns > 0 && (
+              <>
+                {" "}
+                {codexRuns} of the runs {codexRuns === 1 ? "was" : "were"} Codex,
+                which reports tokens and no cost:{" "}
+                {fmtTokens(data.totals.codexTokens)} tokens, in no dollar figure
+                here.
+              </>
+            )}
           </p>
         </>
       )}

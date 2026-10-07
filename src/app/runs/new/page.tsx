@@ -122,6 +122,7 @@ type RowId =
   | "permission"
   | "cycles"
   | "cost"
+  | "tokens"
   | "time"
   | "session"
   | "weekly"
@@ -137,6 +138,7 @@ const ROW_FIELDS: Record<RowId, ReadonlyArray<keyof FormValues>> = {
   permission: ["permissionMode"],
   cycles: ["iterationsCapped", "maxIterations"],
   cost: ["costLimited", "maxRunCostUSD"],
+  tokens: ["tokensLimited", "maxRunTokens"],
   time: ["timeLimited", "maxDurationMinutes"],
   session: ["maxSessionFraction"],
   weekly: ["maxWeeklyFraction"],
@@ -154,6 +156,7 @@ const ROW_LABEL: Record<RowId, string> = {
   permission: "the permission mode",
   cycles: "the work-cycle limit",
   cost: "the spending limit",
+  tokens: "the token limit",
   time: "the time limit",
   session: "the 5-hour window guard",
   weekly: "the weekly window guard",
@@ -199,6 +202,10 @@ const DEFAULT_VALUES: FormValues = {
   maxIterations: "5",
   costLimited: true,
   maxRunCostUSD: "5",
+  // Off: a Codex run's spend is its plan's windows first, and a token figure
+  // nobody chose would be a limit the operator did not set.
+  tokensLimited: false,
+  maxRunTokens: "2000000",
   timeLimited: true,
   maxDurationMinutes: "60",
   maxSessionFraction: "",
@@ -530,6 +537,8 @@ export default function NewRunPage() {
   const [maxRunCostUSD, setMaxRunCostUSD] = useState(
     DEFAULT_VALUES.maxRunCostUSD,
   );
+  const [tokensLimited, setTokensLimited] = useState(DEFAULT_VALUES.tokensLimited);
+  const [maxRunTokens, setMaxRunTokens] = useState(DEFAULT_VALUES.maxRunTokens);
   const [maxSessionFraction, setMaxSessionFraction] = useState(
     DEFAULT_VALUES.maxSessionFraction,
   );
@@ -903,6 +912,11 @@ export default function NewRunPage() {
     maxIterations,
     costLimited,
     maxRunCostUSD,
+    // Only a Codex run is offered the row, so only a Codex run may send it: a
+    // switch left on before the provider changed must not cap a Claude run
+    // under a limit its form no longer shows.
+    tokensLimited: provider === "codex" && tokensLimited,
+    maxRunTokens,
     timeLimited,
     maxDurationMinutes,
     maxSessionFraction,
@@ -978,6 +992,10 @@ export default function NewRunPage() {
       case "cost":
         setCostLimited(b.costLimited);
         setMaxRunCostUSD(b.maxRunCostUSD);
+        break;
+      case "tokens":
+        setTokensLimited(b.tokensLimited);
+        setMaxRunTokens(b.maxRunTokens);
         break;
       case "time":
         setTimeLimited(b.timeLimited);
@@ -1092,6 +1110,9 @@ export default function NewRunPage() {
       costLimited: b.maxRunCostUSD !== null,
       maxRunCostUSD:
         b.maxRunCostUSD !== null ? String(b.maxRunCostUSD) : maxRunCostUSD,
+      tokensLimited: b.maxRunTokens !== null,
+      maxRunTokens:
+        b.maxRunTokens !== null ? String(b.maxRunTokens) : maxRunTokens,
       timeLimited: b.maxDurationMinutes !== null,
       maxDurationMinutes:
         b.maxDurationMinutes !== null
@@ -1119,6 +1140,8 @@ export default function NewRunPage() {
     setMaxIterations(next.maxIterations);
     setCostLimited(next.costLimited);
     setMaxRunCostUSD(next.maxRunCostUSD);
+    setTokensLimited(next.tokensLimited);
+    setMaxRunTokens(next.maxRunTokens);
     setTimeLimited(next.timeLimited);
     setMaxDurationMinutes(next.maxDurationMinutes);
     setMaxSessionFraction(next.maxSessionFraction);
@@ -2345,6 +2368,17 @@ export default function NewRunPage() {
                       </span>
                     </Toned>
                   )}
+                  {/* Where the person is, for the provider whose cost is never
+                      reported: the limit is accepted, so a template carrying
+                      one still starts, and it never acts. */}
+                  {costLimited && provider === "codex" && (
+                    <Toned tone="warn">
+                      <span className="mt-0.5 block">
+                        Codex reports no cost, so this never stops the run — use
+                        a token limit
+                      </span>
+                    </Toned>
+                  )}
                 </>
               }
             >
@@ -2370,6 +2404,42 @@ export default function NewRunPage() {
                 />
               </div>
             </ListRow>
+
+            {/* The spend limit a Codex run can have. Codex reports tokens and no
+                cost, so this is the figure its finished cycles are measured in
+                and, under live enforcement, what its session file is read
+                against mid-cycle. Offered for Codex alone: a Claude run's spend
+                limit is the dollar one above, which its CLI also enforces. */}
+            {provider === "codex" && (
+              <ListRow
+                htmlFor={tokensLimited ? "tokens" : undefined}
+                label="Token limit for this run"
+                description={
+                  !tokensLimited
+                    ? "Not capped in tokens — the cycle count, the clock and the window guards stop it"
+                    : live
+                      ? "Read mid-cycle from Codex's session file too, so the run stops near this figure"
+                      : "Checked between work cycles, so a cycle that crosses it finishes first"
+                }
+              >
+                {mark("tokens")}
+                <div className="w-72">
+                  <LimitField
+                    id="tokens"
+                    modeLabel="Whether this run's tokens are capped"
+                    onLabel="Stop near…"
+                    offLabel="No token limit"
+                    unit="tokens"
+                    min={1}
+                    step="100000"
+                    enabled={tokensLimited}
+                    onEnabledChange={setTokensLimited}
+                    value={maxRunTokens}
+                    onValueChange={setMaxRunTokens}
+                  />
+                </div>
+              </ListRow>
+            )}
 
             <ListRow
               htmlFor={timeLimited ? "dur" : undefined}

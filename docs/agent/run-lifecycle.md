@@ -145,6 +145,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - The tick's reading is written down, and the one thing it is not gated on is pruning.
 - When the number last moved and when it was last looked at are two facts, and the panel needs both.
 - The read's cadence came off the budget's.
+- A Codex run's samples come off its session rollout, on the same basis, and are drawn against its window rather than a ceiling.
 
 ## [Context composition](run-lifecycle/context-composition.md)
 

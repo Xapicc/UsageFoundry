@@ -5,7 +5,7 @@ import Link from "next/link";
 // rewrites the path alias at runtime, so a tested component has to import the
 // way `Meter` and `RecentBlocksCard` already do.
 import type { InstallSpendDTO } from "../lib/apiTypes";
-import { fmtUSD } from "../lib/format";
+import { fmtTokens, fmtUSD } from "../lib/format";
 import { Meter } from "./Meter";
 import { Card, CardTitle } from "./ui/Card";
 import { Hint } from "./ui/Hint";
@@ -55,7 +55,7 @@ import { Hint } from "./ui/Hint";
  * only what there is to do about it.
  */
 export function InstallSpendCard({ install }: { install: InstallSpendDTO }) {
-  const { limitUSD, spentUSD, spentGuardUSD, windowHours } = install;
+  const { limitUSD, spentUSD, spentGuardUSD, windowHours, codexRuns, codexTokens } = install;
   const guarded = spentGuardUSD > spentUSD;
 
   const detail =
@@ -93,6 +93,15 @@ export function InstallSpendCard({ install }: { install: InstallSpendDTO }) {
           </>
         )}
       </Hint>
+      {/* Said only when there are some: Codex reports no cost, so its runs are
+          in this figure as $0 and no limit set here can stop one. */}
+      {codexRuns > 0 && (
+        <Hint>
+          Plus {codexRuns} Codex {codexRuns === 1 ? "run" : "runs"} using{" "}
+          {fmtTokens(codexTokens)} tokens — Codex reports no cost, so this limit
+          does not bound {codexRuns === 1 ? "it" : "them"}.
+        </Hint>
+      )}
     </Card>
   );
 }

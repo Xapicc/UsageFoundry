@@ -633,6 +633,13 @@ export interface ContextPruneMarkDTO {
  */
 export interface ContextOccupancyDTO {
   ceilingTokens: number;
+  /**
+   * What `ceilingTokens` is. `cycle` is this app's own cycle ceiling — where a
+   * Claude cycle is ended when pruning is on. `window` is the model's whole
+   * context window as a Codex run's CLI reported it: no ceiling acts on a Codex
+   * cycle, so the line it is drawn against must not be labelled as one.
+   */
+  ceilingKind: "cycle" | "window";
   samples: ContextSampleDTO[];
   sampleCount: number;
   prunes: ContextPruneMarkDTO[];
@@ -666,9 +673,10 @@ export interface ContextOccupancyDTO {
    * Why there is no composition, or null when there is one — `off` when context
    * pruning is switched off and winnow is deliberately not spawned, `pending`
    * when it is on and nothing has been read yet. Two blanks that look identical
-   * on the page and have opposite fixes.
+   * on the page and have opposite fixes. `provider` for a Codex run, whose
+   * session file winnow does not read at all.
    */
-  compositionAbsence: "off" | "pending" | null;
+  compositionAbsence: "off" | "pending" | "provider" | null;
 }
 
 /**
@@ -984,6 +992,13 @@ export interface InstallSpendDTO {
   limitUSD: number | null;
   /** The span the two figures cover. Rolling, not a calendar day. */
   windowHours: number;
+  /**
+   * Codex runs in the same window, and their tokens. Beside the dollar figure
+   * and never in it: Codex reports no cost, and the install limit cannot bound
+   * a run that has none.
+   */
+  codexRuns: number;
+  codexTokens: number;
 }
 
 /** One run's first-party total inside the window. */
@@ -1675,6 +1690,15 @@ export interface LiveRunDTO {
   validation_cycles: number;
   /** Finished cycles only, as the CLI's `result` events reported them. */
   spent_usd: number;
+  /** Finished cycles' tokens — the only spend a Codex tile can show. */
+  spent_tokens: number;
+  /**
+   * A Codex cycle in flight, read off its session rollout (`codexRollout.ts`):
+   * requests made and tokens used so far. **Null when nothing has been read**,
+   * on `cycleTelemetry`'s rule, and always null for any other provider. Tokens
+   * only — Codex reports no cost, and none is derived.
+   */
+  cycleCodex: { requests: number; tokens: number } | null;
   /**
    * Claude Code's own OTLP spend since the cycle in flight started.
    *
@@ -3285,6 +3309,9 @@ export interface RepoSpendRowDTO {
   spentEstUSD: number;
   spentTokens: number;
   spentEstTokens: number;
+  /** Codex runs among `runCount`: tokens only, never in the dollar columns. */
+  codexRunCount: number;
+  codexTokens: number;
 }
 
 export interface RepoSpendDTO {

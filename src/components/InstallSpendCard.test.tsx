@@ -36,6 +36,8 @@ function install(over: Partial<InstallSpendDTO> = {}): InstallSpendDTO {
     spentGuardUSD: 8,
     limitUSD: 10,
     windowHours: 24,
+    codexRuns: 0,
+    codexTokens: 0,
     ...over,
   };
 }
@@ -144,4 +146,14 @@ test("no limit still draws the hatch rather than a reading", () => {
   const html = render({ limitUSD: null });
   assert.match(html, /no install limit set/);
   assert.doesNotMatch(html, /aria-valuenow/);
+});
+
+// A Codex run is in the dollar figure as $0, so its tokens are said beside it
+// and the limit is said not to reach it — or an operator reads a limit as
+// bounding work it never will. Nothing about Codex on an install with none.
+test("Codex runs are named in tokens beside the figure, and only when there are some", () => {
+  const html = render({ codexRuns: 2, codexTokens: 1_250_000 });
+  assert.match(html, /2 Codex runs/);
+  assert.match(html, /does not bound them/);
+  assert.doesNotMatch(render(), /Codex/);
 });

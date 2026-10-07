@@ -1,5 +1,6 @@
 import { activeRuns, describeFolder, type RunRow } from "@/lib/orchestrator";
 import { telemetrySpendSince } from "@/lib/otlp";
+import { readCodexCycle } from "@/lib/codexRollout";
 import { contextOccupancy, pruneSavingsByRun } from "@/lib/contextPruning";
 import { contextForTile } from "@/lib/liveStream";
 import { jsonMaybeGzipped } from "@/lib/http";
@@ -66,6 +67,9 @@ function liveRun(r: RunRow, pruning: PruneSavingsDTO | null): LiveRunDTO {
       ? null
       : telemetrySpendSince(r.id, r.active_started_at);
   const context = contextOccupancy(r.id);
+  // The same tracker the run loop's live guard reads, in the same process, so
+  // the tile and the guard see one figure.
+  const codex = r.provider === "codex" ? readCodexCycle(r.id) : null;
   return {
     id: r.id,
     prompt: clipListPrompt(r.prompt),
@@ -86,6 +90,9 @@ function liveRun(r: RunRow, pruning: PruneSavingsDTO | null): LiveRunDTO {
     max_iterations: r.max_iterations,
     validation_cycles: r.validation_cycles,
     spent_usd: r.spent_usd,
+    spent_tokens: r.spent_tokens,
+    cycleCodex:
+      codex && codex.requests > 0 ? { requests: codex.requests, tokens: codex.tokens } : null,
     // Zero requests is "nothing arrived", which is not "$0": most runs export
     // no telemetry at all unless a setting or a mid-cycle guard asks for it.
     cycleTelemetry: spend !== null && spend.requests > 0 ? spend : null,

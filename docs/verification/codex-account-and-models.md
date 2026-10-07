@@ -52,6 +52,17 @@
   Claude run `claude-haiku-5-5`. Not yet seen on a chat proposal's card or a
   block's notes.
 
+- **A Codex rollout's `token_count` is the cycle's running tokens and its
+  context, 2026-10-07**, `codex-cli 0.153.4`, read-only off sessions in the
+  container: `info.total_token_usage` restarts per `codex exec` (a two-cycle
+  thread read 45,285 at its first cycle's end and 16,850 at its second's first
+  request), `last_token_usage.input_tokens` grew 13,463 → 15,511 → 16,023 within
+  a cycle, `model_context_window` was 258,400, and a second `token_count` with
+  the same totals followed a rate-limit-only update. `codexRollout.ts`, compiled
+  and run in the container, read a one-cycle run as 58,596 tokens over four
+  requests and a two-cycle run's cycles as 45,285 + 34,355 — each equal to the
+  run's `spent_tokens` from `turn.completed`.
+
 ## Not yet verified by hand
 
 - **The deployed pages have not been looked at (2026-10-07).** `npm run
@@ -70,3 +81,15 @@
   over the line, the live ticker and `sweepPaused` resuming at Codex's reset
   are not. Settles with a Codex run under a session guard below the current
   reading, once the window reads above 0%.
+
+- **No Codex run has been stopped mid-cycle by its token limit.** The guard's
+  input is measured equal to `turn.completed`'s figure; the live tick acting on
+  it, the "stops a little past" overshoot and the run form's token field are
+  not. Settles with a Codex run under live enforcement and a token limit below
+  one cycle's usage, after a rebuild.
+
+- **The Codex token surfaces have not been seen on a page.** The `/runs/live`
+  tile's token figures, the context chart against the Codex window, the run
+  page's agent sentence, the repository report's Codex column and the install
+  card's Codex line are typechecked and render-tested, not looked at. Settles
+  with one Codex run after a rebuild and a look at each.

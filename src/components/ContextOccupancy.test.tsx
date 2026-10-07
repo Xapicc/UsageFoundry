@@ -76,6 +76,7 @@ function series(over: Partial<ContextOccupancyDTO> = {}): ContextOccupancyDTO {
   ];
   return {
     ceilingTokens: CEILING,
+    ceilingKind: "cycle",
     samples,
     sampleCount: samples.length,
     prunes: [],
