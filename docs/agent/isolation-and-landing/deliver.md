@@ -73,7 +73,7 @@ ways: `sweepRunEvents` deletes a settled run's events after
 kept per run while a chain's links share one ref, so a pull request opened from
 one link was invisible on the card of the link that carried the branch on.
 `deliverRun` writes `runs.delivered_pr_url`/`delivered_pr_number`/`delivered_at`
-beside the event, the row being permanent on `retention.md`'s rule, and
+beside the event, the row being permanent on `retention/design.md`'s rule, and
 `deliveredPullRequest` takes the newest across every run with the same
 `repo_root` and `worktree_branch`. The migration that added the columns
 backfilled them once from each run's newest readable `deliver` event, so a run
