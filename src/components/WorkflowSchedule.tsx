@@ -122,10 +122,18 @@ function draftOf(schedule: WorkflowScheduleDTO | null, browserZone: string): Dra
 export function WorkflowSchedule({
   workflowId,
   schedule,
+  newWorkPaused,
   onChanged,
 }: {
   workflowId: string;
   schedule: WorkflowScheduleDTO | null;
+  /**
+   * The install-wide hold. A held install starts nothing, so a "Next start"
+   * beside it names an occurrence that will be recorded as missed — and looks,
+   * from the only page that owns the schedule, exactly like a schedule that
+   * stopped working.
+   */
+  newWorkPaused: boolean;
   /** Reload the workflow, so the card redraws off the server's own answer. */
   onChanged: () => void | Promise<void>;
 }) {
@@ -300,6 +308,17 @@ export function WorkflowSchedule({
                   What it started
                 </Link>
               </div>
+            )}
+
+            {/* Not for a paused schedule, which would not start either way and
+                already says so: the hold is a second reason only for one that
+                is switched on. */}
+            {newWorkPaused && !schedule.paused && (
+              <Notice tone="warn" className="mt-4">
+                New work is held, so the next start will be recorded as missed
+                and not made up afterwards.{" "}
+                <Link href="/runs">Resume it on the runs page</Link>.
+              </Notice>
             )}
 
             {schedule.refusal && (

@@ -125,6 +125,9 @@ export default function WorkflowPage() {
   const router = useRouter();
 
   const [workflow, setWorkflow] = useState<WorkflowDTO | null>(null);
+  // False until a read says otherwise: the notice it gates is an addition to a
+  // page that works, and a poll that has not answered yet is not a hold.
+  const [newWorkPaused, setNewWorkPaused] = useState(false);
   const [instances, setInstances] = useState<WorkflowInstanceDTO[]>([]);
   // What the poll asks for, and what came back. The second is the server's own
   // reading of the first — it clamps an offset past the end — so the readout and
@@ -162,6 +165,7 @@ export default function WorkflowPage() {
       });
       const data = (await res.json().catch(() => ({}))) as {
         workflow?: WorkflowDTO;
+        newWorkPaused?: boolean;
         instances?: WorkflowInstanceDTO[];
         total?: number;
         offset?: number;
@@ -176,6 +180,7 @@ export default function WorkflowPage() {
         return;
       }
       setWorkflow(data.workflow);
+      setNewWorkPaused(data.newWorkPaused === true);
       setInstances(data.instances ?? []);
       // No pager rather than one that steps by a guess: a payload missing either
       // figure cannot say where this page sits or how far the next one is.
@@ -437,6 +442,17 @@ export default function WorkflowPage() {
         themselves are untouched.
       </Sheet>
 
+      {/* Held rather than refused, so Run stays pressable: the runs are
+          recorded and wait in the queue, which is the one thing the operator
+          cannot see from here without this. The wording is the dashboard's. */}
+      {newWorkPaused && (
+        <Notice tone="warn">
+          <strong>New work is held.</strong> Run records the runs, and they wait
+          in the queue until the hold is lifted.{" "}
+          <Link href="/runs">Resume it on the runs page</Link>.
+        </Notice>
+      )}
+
       {runIsRefused && (
         <div id={LIVE_NOTICE_ID}>
           <Notice tone="info">
@@ -489,6 +505,7 @@ export default function WorkflowPage() {
       <WorkflowSchedule
         workflowId={id}
         schedule={workflow.schedule ?? null}
+        newWorkPaused={newWorkPaused}
         onChanged={load}
       />
 

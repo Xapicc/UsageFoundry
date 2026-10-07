@@ -5,7 +5,7 @@ import path from "node:path";
 import { after, before, describe, it } from "node:test";
 
 import type Database from "better-sqlite3";
-import type { WorkflowInstanceDTO } from "../../../../lib/apiTypes";
+import type { WorkflowDTO, WorkflowInstanceDTO } from "../../../../lib/apiTypes";
 
 /**
  * What `GET /api/workflows/[id]` answers when the caller asks for a *page* of
@@ -33,6 +33,7 @@ import type { WorkflowInstanceDTO } from "../../../../lib/apiTypes";
 
 let route: typeof import("./route");
 let dbMod: typeof import("../../../../lib/db");
+let settings: typeof import("../../../../lib/settings");
 let root: string;
 
 before(async () => {
@@ -53,6 +54,7 @@ before(async () => {
 
   route = await import("./route");
   dbMod = await import("../../../../lib/db");
+  settings = await import("../../../../lib/settings");
 });
 
 after(() => {
@@ -87,6 +89,8 @@ function workflow(id: string, count: number): void {
 }
 
 type Page = {
+  workflow?: WorkflowDTO;
+  newWorkPaused?: boolean;
   instances?: WorkflowInstanceDTO[];
   total?: number;
   offset?: number;
@@ -175,5 +179,56 @@ describe("GET /api/workflows/[id] — the history is a page, not a ceiling", () 
       ids(other).every((id) => id.startsWith("wf-other-")),
       "a page carrying another graph's presses",
     );
+  });
+});
+
+/**
+ * What the page is told so that it can state a refusal before the press.
+ *
+ * `/workflows/[id]` disables Run beside a notice naming the press still going,
+ * and says that a held install will queue a press and miss a schedule's next
+ * start. Both are the route's to send and the page's only source for them, and
+ * neither fails loudly when it goes missing: the page is drawn off `undefined`
+ * as `false`, so a route that stopped sending either one leaves an enabled Run
+ * and a schedule card that reads exactly like a working one.
+ */
+describe("GET /api/workflows/[id] — the facts a press of Run is about to meet", () => {
+  before(() => {
+    workflow("wf-meets", 3);
+    workflow("wf-idle", 2);
+    // A block still deciding in the middle press and no run anywhere: the
+    // refusal stands on it, and the instance to open is not found through runs.
+    dbMod
+      .db()
+      .prepare(
+        "INSERT INTO workflow_instance_blocks (instance_id, node_id, node_name," +
+          " position, kind, status) VALUES (?, 'n1', 'Decide', 0, 'run', 'thinking')",
+      )
+      .run("wf-meets-press-1");
+  });
+
+  after(() => {
+    settings.setNewWorkPaused(false);
+  });
+
+  it("names the press that is still going, and only for that workflow", async () => {
+    const meets = (await get("wf-meets")).workflow;
+    assert.equal(meets?.liveRunCount, 1);
+    assert.equal(meets?.liveInstanceId, "wf-meets-press-1");
+
+    const idle = (await get("wf-idle")).workflow;
+    assert.equal(idle?.liveRunCount, 0);
+    assert.equal(idle?.liveInstanceId, null);
+  });
+
+  it("states the install-wide hold while it is on, and stops when it is lifted", async () => {
+    settings.setNewWorkPaused(false);
+    assert.equal((await get("wf-idle")).newWorkPaused, false);
+
+    settings.setNewWorkPaused(true);
+    assert.equal((await get("wf-idle")).newWorkPaused, true);
+
+    settings.setNewWorkPaused(false);
+    assert.equal((await get("wf-idle")).newWorkPaused, false);
   });
 });
