@@ -42,8 +42,9 @@ export async function GET(req: Request, ctx: Ctx) {
 }
 
 /**
- * Start one. Spends money, so it exists only behind a deliberate POST — there
- * is no code path anywhere that reaches it on its own.
+ * Start one. Spends money, so a review started from the run page exists only
+ * behind a deliberate POST. A workflow review block is the one other thing that
+ * starts one, through `startReview` rather than this route, with nobody pressing.
  *
  * Returns as soon as the child is on its way rather than holding the connection
  * for the minutes a review takes; the row is the handle and the page polls it.

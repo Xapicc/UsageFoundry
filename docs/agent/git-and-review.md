@@ -11,7 +11,7 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 
 - Reviewing a diff is not a work cycle, and the run loop never starts one. (was line 8)
 - A conflict resolution may check its own merge only where a toolchain can exist, and only where an operator named the command. (was line 10)
-- `AssistKind` has a third member and it is the one that is not a person's press. (was line 26)
+- `AssistKind` has a third member and it is the one a run starts by asking, not a person or a workflow block. (was line 26)
 - An assist streams, and every tool call it makes is on the run's log wearing its own name. (was line 28)
 - That field is also a filter, and two readers had to grow it in the same change. (was line 30)
 - `parseReviewOutput` reads the `result` event and refuses anything else, including the last line that happens to parse. (was line 32)
