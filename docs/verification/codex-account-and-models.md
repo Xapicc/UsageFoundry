@@ -45,8 +45,12 @@
   0.989), an endpoint with a test to `gpt-5.6-terra` (routine_engineering,
   0.995), and a race with no reproduction to `gpt-5.6-sol` (hard_engineering,
   0.998), nothing `unrecognised`; the container reached it on
-  `host.docker.internal:8090`. Asked directly, not yet through a chat proposal
-  or a block of the deployed app.
+  `host.docker.internal:8090`. Then through `decideRunModel` itself, compiled
+  from `8f66239e` and run in the container against a backup of the live
+  database: a Codex run's typo fix came back `gpt-5.6-luna` and its race
+  `gpt-5.6-sol`, each held to the live Codex list, and the same typo on a
+  Claude run `claude-haiku-5-5`. Not yet seen on a chat proposal's card or a
+  block's notes.
 
 ## Not yet verified by hand
 
