@@ -28,6 +28,7 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - A branch a live pass of a workflow loop is working on may be landed by that pass's own merge block and by nothing else, and every other refusal names the pass. (was line 52)
 - The check in front of Land, and what an empty one means. (was lines 69–81)
 - Which tree the check runs in is the whole of whether it checks anything. (was lines 83–97)
+- Land is withheld on the gate's refusals that need no command run, and the card says why.
 
 ## [Deliver, and what may leave](isolation-and-landing/deliver.md)
 

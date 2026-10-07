@@ -619,7 +619,8 @@ export async function landState(
   // Read alongside the checkout rather than behind a landable branch: a run
   // that could not commit has *nothing* on its branch, which is exactly the
   // state this answers, and the card has to be able to say so.
-  const pending = await pendingWork(run);
+  const slot = await slotState(run);
+  const pending = pendingWork(run, slot);
   const target = await targetOf(run, repoRoot, checkout);
   // Both refusals below still leave the branch purgeable, and the Purge sheet
   // states this figure as what goes — so it is counted from where the run
@@ -752,6 +753,11 @@ export async function landState(
         target: target.branch,
         exit: "land",
       }) ??
+      // The gate's refusals that need no command run, which a press met only
+      // after the card had drawn Land. Off the slot read above, so the card's
+      // poll pays nothing for it. Ahead of the review, because finishing a
+      // rebase or committing what is there moves the tip.
+      verifyTreeRefusal(run, slot) ??
       certificationRefusal(state.certification, "land"),
   };
 }
@@ -3561,8 +3567,7 @@ async function slotState(run: RunRow): Promise<SlotState> {
 }
 
 /** What the land card shows about uncommitted work, or nothing to show. */
-async function pendingWork(run: RunRow): Promise<PendingWork | null> {
-  const slot = await slotState(run);
+function pendingWork(run: RunRow, slot: SlotState): PendingWork | null {
   if (!slot.path) return null;
   // A slot mid-operation is detached, so the branch comparison below would drop
   // it, and it is still this run's — the state is the news, whatever is in it.
@@ -3724,7 +3729,11 @@ export function verifyTreeVerdict(s: {
 
 /** `verifyTreeVerdict` against the slot as it stands now. */
 async function verifyTree(run: RunRow): Promise<VerifyTree> {
-  const slot = await slotState(run);
+  return verifyTreeIn(run, await slotState(run));
+}
+
+/** `verifyTreeVerdict` against a slot already read. */
+function verifyTreeIn(run: RunRow, slot: SlotState): VerifyTree {
   return verifyTreeVerdict({
     slotPath: slot.path,
     checkedOutBranch: slot.checkedOutBranch,
@@ -3733,6 +3742,19 @@ async function verifyTree(run: RunRow): Promise<VerifyTree> {
     detached: slot.detached,
     uncommitted: slot.readable ? slot.files.map((f) => f.path) : null,
   });
+}
+
+/**
+ * Why the verify gate would refuse before running anything, for `landState`
+ * to say before Land is pressed — or null, always with no command configured.
+ *
+ * `landRun` still asks `verifyTree` of a fresh read before the command runs;
+ * this is the same verdict off the read the card's poll already makes.
+ */
+function verifyTreeRefusal(run: RunRow, slot: SlotState): string | null {
+  if (!getSettings().landVerifyCommand.trim()) return null;
+  const tree = verifyTreeIn(run, slot);
+  return tree.ok ? null : tree.reason;
 }
 
 /**
