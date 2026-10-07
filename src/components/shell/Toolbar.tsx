@@ -8,6 +8,7 @@ import { Button, ButtonLink } from "@/components/ui/Button";
 import { Icon } from "@/components/ui/Icon";
 import { AsciiEdge, AsciiFrame } from "@/components/ui/AsciiFrame";
 import { SIDEBAR_DRAWER_ID, SIDEBAR_ID } from "@/components/shell/Sidebar";
+import { UsageRemaining } from "@/components/shell/UsageRemaining";
 import { toolbarAction, toolbarTitle } from "@/components/shell/panes";
 
 /**
@@ -208,8 +209,21 @@ export function Toolbar({
           There is room for it there, and the pane scrolls under this strip — so
           once a page has been scrolled at all, the <h1> this duplicates is gone
           and this is the only name on screen. */}
-      <div className="min-w-0 truncate text-sm font-semibold text-ink max-md:hidden">
-        {toolbarTitle(pathname)}
+      {/* The usage readout shares the title's row rather than the group on the
+          right, because this row's width is the only one on the strip that is
+          the *leftover*: a container query on it asks "how much is left once
+          every control has its natural width", which a viewport media query
+          cannot, since the source list is 224px or 56px wide and the route
+          action comes and goes. The readout is `shrink-0` and appears only when
+          it fits beside a title of up to ~120px (`UsageRemaining` has the
+          thresholds), so the title is still the one item that gives way and no
+          control is squeezed. The wrapper is `max-md:hidden` with the title it
+          holds; nothing below the breakpoint has width to give. */}
+      <div className="@container flex min-w-0 flex-1 items-center gap-3 max-md:hidden">
+        <div className="min-w-0 truncate text-sm font-semibold text-ink">
+          {toolbarTitle(pathname)}
+        </div>
+        <UsageRemaining />
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-2">
