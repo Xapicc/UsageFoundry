@@ -547,7 +547,7 @@ describe("dependencies", () => {
 
   it("releases a run whose only dependency completed", () => {
     const decision = releasableRuns([done("a"), waiting("b")], [link("b", "a")]);
-    assert.deepEqual(decision, { release: ["b"], block: [] });
+    assert.deepEqual(decision, { release: ["b"], block: [], notNeeded: [] });
   });
 
   it("holds it while the dependency is still going", () => {
@@ -559,7 +559,7 @@ describe("dependencies", () => {
         [{ id: "a", status, iterations: 0, refundedCycles: 0, restartClosed: false }, waiting("b")],
         [link("b", "a")],
       );
-      assert.deepEqual(decision, { release: [], block: [] });
+      assert.deepEqual(decision, { release: [], block: [], notNeeded: [] });
     }
   });
 
@@ -570,18 +570,19 @@ describe("dependencies", () => {
       [done("a"), waiting("b"), waiting("c")],
       [link("b", "a"), link("c", "b")],
     );
-    assert.deepEqual(decision, { release: ["b"], block: [] });
+    assert.deepEqual(decision, { release: ["b"], block: [], notNeeded: [] });
   });
 
   it("waits for both halves of a fan-in", () => {
     const links = [link("c", "a"), link("c", "b")];
     assert.deepEqual(
       releasableRuns([done("a"), { id: "b", status: "running", iterations: 0, refundedCycles: 0, restartClosed: false }, waiting("c")], links),
-      { release: [], block: [] },
+      { release: [], block: [], notNeeded: [] },
     );
     assert.deepEqual(releasableRuns([done("a"), done("b"), waiting("c")], links), {
       release: ["c"],
       block: [],
+      notNeeded: [],
     });
   });
 
@@ -590,7 +591,7 @@ describe("dependencies", () => {
       [done("a"), waiting("b"), waiting("c")],
       [link("b", "a"), link("c", "a")],
     );
-    assert.deepEqual(decision, { release: ["b", "c"], block: [] });
+    assert.deepEqual(decision, { release: ["b", "c"], block: [], notNeeded: [] });
   });
 
   it("terminates the whole chain when a dependency fails under on-success", () => {
@@ -613,7 +614,7 @@ describe("dependencies", () => {
     const links = [link("b", "a", "on-finish")];
     assert.deepEqual(
       releasableRuns([{ id: "a", status: "failed", iterations: 2, refundedCycles: 0, restartClosed: false }, waiting("b")], links),
-      { release: ["b"], block: [] },
+      { release: ["b"], block: [], notNeeded: [] },
     );
     // Refused before its first cycle, stopped before it started, closed out by
     // a restart: all terminal, all having done nothing. Treating those as
@@ -653,7 +654,7 @@ describe("dependencies", () => {
         [{ ...closed, restartClosed: false }, waiting("b")],
         [link("b", "a", "on-finish")],
       ),
-      { release: ["b"], block: [] },
+      { release: ["b"], block: [], notNeeded: [] },
     );
   });
 
@@ -715,8 +716,81 @@ describe("dependencies", () => {
 
     assert.deepEqual(
       releasableRuns([stuck, waiting("b")], [link("b", "a", "on-finish")]),
-      { release: ["b"], block: [] },
+      { release: ["b"], block: [], notNeeded: [] },
     );
+  });
+
+  /**
+   * The third condition, both halves. Release on the wrong ending and a fixer or
+   * a fallback starts on top of work that went fine — or on a run the operator
+   * stopped, undoing the stop with a fresh agent. Never decide the dependent and
+   * it sits `waiting` for ever behind a run that completed hours ago.
+   */
+  it("starts an on-failure dependent only behind a failure that did work", () => {
+    const ended = (status: State["status"], iterations = 1): State => ({
+      id: "a",
+      status,
+      iterations,
+      refundedCycles: 0,
+      restartClosed: false,
+    });
+    const links = [link("b", "a", "on-failure")];
+
+    for (const status of ["failed", "needs-review"] as const) {
+      assert.equal(edgeSatisfied(ended(status), "on-failure"), true, status);
+      assert.deepEqual(
+        releasableRuns([ended(status), waiting("b")], links),
+        { release: ["b"], block: [], notNeeded: [] },
+        status,
+      );
+    }
+
+    // A stop is a decision to stop spending, not a failure: blocked, so picking
+    // the stopped run up revives it, and never released.
+    const stopped = releasableRuns([ended("stopped"), waiting("b")], links);
+    assert.deepEqual(stopped.release, []);
+    assert.deepEqual(stopped.notNeeded, []);
+    assert.equal(stopped.block.length, 1);
+    assert.match(stopped.block[0].reason, /only if run a failed \(on-failure\); it ended stopped/);
+
+    // The never-ran rule comes first here as on the other two edges.
+    const empty = releasableRuns([ended("failed", 0), waiting("b")], links);
+    assert.deepEqual(empty.release, []);
+    assert.match(empty.block[0].reason, /without running a work cycle/);
+
+    // Still going is still pending.
+    assert.deepEqual(
+      releasableRuns([ended("running", 0), waiting("b")], links),
+      { release: [], block: [], notNeeded: [] },
+    );
+  });
+
+  it("passes an on-failure dependent over when its dependency completed, and everything behind it", () => {
+    const decision = releasableRuns(
+      [done("a"), waiting("b"), waiting("c"), waiting("d")],
+      [link("b", "a", "on-failure"), link("c", "b"), link("d", "b", "on-finish")],
+    );
+    assert.deepEqual(decision.release, []);
+    // Never `blocked`: nothing went wrong, and blocked is what an instance
+    // counts as work written off.
+    assert.deepEqual(decision.block, []);
+    assert.deepEqual(
+      decision.notNeeded.map((n) => n.id),
+      ["b", "c", "d"],
+    );
+    assert.match(decision.notNeeded[0].reason, /only if run a failed \(on-failure\), and it completed/);
+    // Each names the run in front of it, the cascade's rule for `blocked`.
+    assert.match(decision.notNeeded[1].reason, /after run b, which was not needed either/);
+    assert.equal(edgeSatisfied(done("a"), "on-failure"), false);
+  });
+
+  it("lets a dependency that blocks outrank one that was not needed", () => {
+    const failed: State = { id: "f", status: "failed", iterations: 1, refundedCycles: 0, restartClosed: false };
+    const links = [link("b", "a", "on-failure"), link("e", "b"), link("e", "f")];
+    const decision = releasableRuns([done("a"), failed, waiting("b"), waiting("e")], links);
+    assert.deepEqual(decision.notNeeded.map((n) => n.id), ["b"]);
+    assert.deepEqual(decision.block.map((n) => n.id), ["e"]);
+    assert.match(decision.block[0].reason, /run f\b/);
   });
 
   it("treats a run that used up its cycle cap as a success", () => {
@@ -727,7 +801,7 @@ describe("dependencies", () => {
       [{ id: "a", status: "completed", iterations: 1, refundedCycles: 0, restartClosed: false }, waiting("b")],
       [link("b", "a")],
     );
-    assert.deepEqual(decision, { release: ["b"], block: [] });
+    assert.deepEqual(decision, { release: ["b"], block: [], notNeeded: [] });
   });
 
   it("blocks on a dependency that is no longer there", () => {
@@ -754,7 +828,7 @@ describe("dependencies", () => {
       [waiting("a"), waiting("b")],
       [link("a", "b"), link("b", "a")],
     );
-    assert.deepEqual(decision, { release: [], block: [] });
+    assert.deepEqual(decision, { release: [], block: [], notNeeded: [] });
   });
 
   /**

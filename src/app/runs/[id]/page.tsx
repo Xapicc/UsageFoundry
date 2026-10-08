@@ -424,6 +424,14 @@ function describeRun(
         detail: "It has spent nothing.",
       };
 
+    case "not-needed":
+      return {
+        tone: "neutral",
+        headline: "Not needed",
+        detail:
+          "It was on the branch for a failure that did not happen, so it never started and has spent nothing.",
+      };
+
     case "failed":
       return {
         tone: "danger",

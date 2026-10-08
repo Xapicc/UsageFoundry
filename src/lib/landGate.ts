@@ -53,6 +53,16 @@ export type VerifyOutcome = {
   passed: boolean;
   /** What to show the operator. Empty when there is nothing to say. */
   reason: string;
+  /**
+   * How a command that ran and did not pass ended, as a clause after "the
+   * verify command" — "exited 1", "was killed by SIGTERM" — and `""` for a
+   * pass or a command that never ran. `reason` is Land's sentence about it; a
+   * review block words its own from this and `tail`, because Land's says the
+   * branch "was not landed", which a review block is not the one to decide.
+   */
+  ending: string;
+  /** The last of its output, trimmed, and `""` when there was none. */
+  tail: string;
 };
 
 /**
@@ -70,7 +80,7 @@ export function landVerdict(o: {
   timeoutMs?: number;
   tail: string;
 }): VerifyOutcome {
-  if (!o.configured) return { ran: false, passed: true, reason: "" };
+  if (!o.configured) return { ran: false, passed: true, reason: "", ending: "", tail: "" };
   if (!o.parse.ok) {
     // A command that cannot be parsed is NOT a pass. The operator asked for a
     // gate; handing them an open door because their string was malformed is the
@@ -79,20 +89,24 @@ export function landVerdict(o: {
       ran: false,
       passed: false,
       reason: `The verify command is not runnable: ${o.parse.reason}.`,
+      ending: "",
+      tail: "",
     };
   }
+  const tail = o.tail.trim();
   if (o.timedOut) {
+    const after = spokenDuration(o.timeoutMs ?? VERIFY_TIMEOUT_MS);
     return {
       ran: true,
       passed: false,
       reason:
-        "The verify command did not finish in time and was killed after " +
-        `${spokenDuration(o.timeoutMs ?? VERIFY_TIMEOUT_MS)}, so nothing here ` +
-        "knows whether this branch is good. Land refused rather than guessed.",
+        `The verify command did not finish in time and was killed after ${after}, ` +
+        "so nothing here knows whether this branch is good. Land refused rather than guessed.",
+      ending: `did not finish in time and was killed after ${after}`,
+      tail,
     };
   }
-  if (o.exitCode === 0) return { ran: true, passed: true, reason: "" };
-  const tail = o.tail.trim();
+  if (o.exitCode === 0) return { ran: true, passed: true, reason: "", ending: "", tail };
   // A signal death has no exit code, and "exited -1" named a number the
   // command never returned.
   const ending = o.signal ? `was killed by ${o.signal}` : `exited ${o.exitCode ?? -1}`;
@@ -102,6 +116,8 @@ export function landVerdict(o: {
     reason:
       `The verify command ${ending}, so this branch was not ` +
       `landed.` + (tail ? ` Its last output was: ${tail}` : ""),
+    ending,
+    tail,
   };
 }
 
@@ -302,6 +318,8 @@ export function runVerify(
         reason: `The verify command could not start: ${
           err instanceof Error ? err.message : String(err)
         }.`,
+        ending: "",
+        tail: "",
       });
       return;
     }
@@ -335,6 +353,8 @@ export function runVerify(
         ran: false,
         passed: false,
         reason: `The verify command could not start: ${err.message}.`,
+        ending: "",
+        tail: "",
       });
     });
     child.on("exit", (code, sig) => {

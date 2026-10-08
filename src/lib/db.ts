@@ -503,7 +503,7 @@ function migrate(db: Database.Database) {
     CREATE TABLE IF NOT EXISTS run_deps (
       run_id     TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
       depends_on TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-      -- 'on-success' | 'on-finish'
+      -- 'on-success' | 'on-finish' | 'on-failure'
       edge       TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       PRIMARY KEY (run_id, depends_on)
@@ -634,7 +634,8 @@ function migrate(db: Database.Database) {
       position      INTEGER NOT NULL,
       -- 'orchestrator' | 'loop' | 'run'. See above.
       kind          TEXT NOT NULL,
-      -- 'waiting' | 'thinking' | 'looping' | 'emitted' | 'failed' | 'blocked'.
+      -- 'waiting' | 'thinking' | 'looping' | 'emitted' | 'failed' | 'blocked'
+      -- | 'not-needed'.
       -- 'looping' is a loop with passes in flight or another one to decide on;
       -- it is live wherever 'thinking' is, and deliberately not a settled
       -- status — a block behind it must not be released while the loop can
@@ -1688,6 +1689,13 @@ function migrate(db: Database.Database) {
   // taking passes the operator had already said to stop. Null is "keep going",
   // and every row written before the column existed reads that way.
   addColumn(db, "workflow_instance_blocks", "stop_after_pass", "INTEGER");
+
+  // When a gate block was reached and began waiting for a person. A gate is a
+  // `waiting` row for the whole of that wait, so the status cannot say whether
+  // it has been reached yet; this can, and it is what lets the notification go
+  // out once, the boot sweep spare the row, and the page offer Continue. Null
+  // on every other kind and on a gate not yet reached.
+  addColumn(db, "workflow_instance_blocks", "held_at", "INTEGER");
 
   // Whether this run was closed out because the server went down under it,
   // rather than for any reason of its own.

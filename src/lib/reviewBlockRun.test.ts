@@ -25,6 +25,7 @@ let workflows: typeof import("./workflows");
 let dbMod: typeof import("./db");
 let installBudget: typeof import("./installBudget");
 let orch: typeof import("./orchestrator");
+let landGate: typeof import("./landGate");
 let root: string;
 let base: string;
 
@@ -143,6 +144,7 @@ before(async () => {
   workflows = await import("./workflows");
   installBudget = await import("./installBudget");
   orch = await import("./orchestrator");
+  landGate = await import("./landGate");
   const settings = await import("./settings");
   // No network here, and a fix run is held in the queue rather than spawned:
   // what the cases below ask is whether one is *created*. A concurrency cap of
@@ -337,7 +339,7 @@ function reviewScene(
   instanceId: string,
   opts: {
     fixRounds?: number;
-    verdictSource?: { kind: string };
+    verdictSource?: { kind: string; command?: string };
     budget?: Record<string, number>;
     runs: Array<{
       id: string;
@@ -347,6 +349,8 @@ function reviewScene(
       member?: boolean;
       status?: string;
       model?: string;
+      /** The run's own checkout, `worktree_path`. None unless given. */
+      slot?: string;
     }>;
   },
 ): void {
@@ -394,9 +398,9 @@ function reviewScene(
   const insertRun = db.prepare(
     `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
        created_at, isolation, worktree_branch, worktree_base, worktree_base_branch,
-       repo_root, provider, spent_usd, model)
+       repo_root, provider, spent_usd, model, worktree_path)
      VALUES (?, ?, ?, ?, '{"maxIterations":1}', 1, 1, ?, 'worktree', ?, ?, 'main', ?,
-             'claude', ?, ?)`,
+             'claude', ?, ?, ?)`,
   );
   const insertMember = db.prepare(
     `INSERT INTO workflow_instance_runs (instance_id, node_id, node_name, position, run_id)
@@ -414,6 +418,7 @@ function reviewScene(
       repoRoot(),
       run.spent ?? 0,
       run.model ?? null,
+      run.slot ?? null,
     );
     if (run.member) insertMember.run(instanceId, `w${i}`, i + 1, run.id);
   });
@@ -795,5 +800,128 @@ describe("a review block over a Claude run on a below-frontier model", () => {
     } finally {
       settings.saveSettings({ defaultModel: null });
     }
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* A review block that judges by a verify command                      */
+/* ------------------------------------------------------------------ */
+
+describe("a review block that judges by a verify command", () => {
+  /** A branch whose `check.js` is `body`, checked out in a slot of its own. */
+  function branchWithCheck(branch: string, body: string): string {
+    git(repoRoot(), "switch", "-q", "-c", branch);
+    fs.writeFileSync(path.join(repoRoot(), "check.js"), body);
+    git(repoRoot(), "add", "check.js");
+    git(repoRoot(), "commit", "-q", "-m", `check for ${branch}`);
+    git(repoRoot(), "switch", "-q", "main");
+    const slot = path.join(root, MOUNT_DIR, ".uf-worktrees", branch.replace(/\W/g, "-"));
+    git(repoRoot(), "worktree", "add", "-q", slot, branch);
+    return slot;
+  }
+
+  it("approves on exit 0, and sets aside with the tail on a failure, a timeout and no checkout", async () => {
+    // One command for every branch, and each branch's own `check.js` deciding
+    // how it ends: so a pass and a failure side by side prove the command ran
+    // in each run's checkout. Run anywhere else — the operator's tree, which
+    // holds no `check.js`, or one slot for all three — they would all end alike.
+    const pass = branchWithCheck("uf/cmd-pass", "console.log('all green');\n");
+    const fail = branchWithCheck(
+      "uf/cmd-fail",
+      "console.error('FAIL a.test.ts');\nconsole.error('1 of 3 failed');\nprocess.exitCode = 3;\n",
+    );
+    const hang = branchWithCheck(
+      "uf/cmd-hang",
+      "console.log('running the slow suite');\nsetInterval(() => {}, 1000);\n",
+    );
+    reviewScene("inst-command", {
+      verdictSource: { kind: "command", command: `${process.execPath} check.js` },
+      runs: [
+        { id: "cmd-pass", prompt: "Do it.", branch: "uf/cmd-pass", slot: pass },
+        { id: "cmd-fail", prompt: "Do it.", branch: "uf/cmd-fail", slot: fail },
+        { id: "cmd-hang", prompt: "Do it.", branch: "uf/cmd-hang", slot: hang },
+        { id: "cmd-noslot", prompt: "Do it.", branch: "uf/repo-good" },
+      ],
+    });
+    const db = dbMod.db();
+    db.prepare(
+      `INSERT INTO tasks (id, title, body, status, priority, origin, claimed_by_run_id,
+         created_at, updated_at)
+       VALUES ('task-cmd-held', 'Held', 'brief', 'claimed', 'normal', 'operator',
+         'cmd-fail', 0, 0)`,
+    ).run();
+    db.prepare(
+      "INSERT INTO run_tasks (run_id, task_id, position) VALUES ('cmd-fail', 'task-cmd-held', 0)",
+    ).run();
+
+    // A second rather than `VERIFY_TIMEOUT_MS`'s quarter of an hour, through the
+    // same `runVerify` and its own timer: replaced on the module object, which
+    // `land.ts` calls it through under the test build's CommonJS emit.
+    const realRunVerify = landGate.runVerify;
+    (landGate as { runVerify: typeof realRunVerify }).runVerify = (cwd, raw, deps = {}) =>
+      realRunVerify(cwd, raw, { ...deps, timeoutMs: 1_000 });
+    try {
+      await settledWithin(
+        workflows.startReviewBlock("inst-command", "r", ["cmd-pass", "cmd-fail", "cmd-hang", "cmd-noslot"]),
+        30_000,
+        "startReviewBlock",
+      );
+    } finally {
+      (landGate as { runVerify: typeof realRunVerify }).runVerify = realRunVerify;
+    }
+
+    const items = workflows.reviewItemsOf("inst-command", "r");
+    assert.deepEqual(
+      items.map((i) => [i.origin_run_id, i.status, i.note, i.review_id, i.committed_nothing]),
+      [
+        ["cmd-pass", "approved", null, null, 0],
+        ["cmd-fail", "set-aside", "its verify command exited 3\nFAIL a.test.ts\n1 of 3 failed", null, 0],
+        [
+          "cmd-hang",
+          "set-aside",
+          "its verify command did not finish in time and was killed after 1 second\nrunning the slow suite",
+          null,
+          0,
+        ],
+        [
+          "cmd-noslot",
+          "set-aside",
+          // Land's own refusal, without Land's last sentence: "clear the
+          // command in Settings" names a setting this command is not.
+          "it could not be verified: A verify command is configured, but this run has no " +
+            "checkout of its own to run it in, so nothing here can tell whether its branch is good.",
+          null,
+          0,
+        ],
+      ],
+    );
+    for (const id of ["cmd-pass", "cmd-fail", "cmd-hang", "cmd-noslot"]) {
+      assert.deepEqual(reviewsOf(id), [], `a reviewer was started for ${id} under a command verdict`);
+    }
+
+    const block = db
+      .prepare(
+        "SELECT status, error, cost_usd FROM workflow_instance_blocks WHERE instance_id='inst-command' AND node_id='r'",
+      )
+      .get() as { status: string; error: string; cost_usd: number };
+    assert.equal(block.status, "emitted");
+    // One line a branch: the output is on the branch's own row, not here.
+    assert.ok(
+      block.error.startsWith(
+        "Approved 1 of 4 branch(es); set aside uf/cmd-fail — its verify command exited 3; " +
+          "uf/cmd-hang — its verify command did not finish in time and was killed after 1 second; " +
+          "uf/repo-good — it could not be verified: ",
+      ),
+      block.error,
+    );
+    assert.doesNotMatch(block.error, /FAIL a\.test\.ts|slow suite|Settings/);
+    assert.equal(block.cost_usd, 0);
+
+    // `statusVerdict`'s rule: no model judged the work, so nothing is marked,
+    // reopened or commented on.
+    const task = db
+      .prepare("SELECT status, claimed_by_run_id, needs_frontier FROM tasks WHERE id='task-cmd-held'")
+      .get() as { status: string; claimed_by_run_id: string | null; needs_frontier: number };
+    assert.deepEqual(task, { status: "claimed", claimed_by_run_id: "cmd-fail", needs_frontier: 0 });
   });
 });

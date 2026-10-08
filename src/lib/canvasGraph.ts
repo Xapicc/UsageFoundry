@@ -82,6 +82,12 @@ export interface BlockDraft {
   agentId: string;
   /** Orchestrator blocks only, held as typed so a blank field stays blank. */
   fanOut: string;
+  /**
+   * Orchestrator blocks only: how many times a failed deciding turn is started
+   * again, held as typed. Blank goes over as 0, which is "never" and so spends
+   * nothing — the one direction a blank can fail in without costing anyone.
+   */
+  turnRetries: string;
   /** Merge blocks only: how each branch is put onto its target. */
   mergeStrategy: MergeStrategyDTO;
   /** Merge blocks only: whether a conflict may be reconciled by a model. */
@@ -134,6 +140,12 @@ export interface BlockDraft {
    * kind as picked.
    */
   verdictSource: string;
+  /**
+   * Review blocks only: the verify command a `command` verdict runs, as typed.
+   * Kept while another kind is picked, `fixRounds`' rule, and sent only under
+   * `command`.
+   */
+  verifyCommand: string;
 }
 
 /** One of a board condition's numbers, held as the panel holds it. */
@@ -173,7 +185,7 @@ export interface LinkDraft {
    * `repeats` is only ever drawn out of a loop block, and it states what that
    * loop contains rather than what waits for what. See `EDGE_OPTION_LABEL`.
    */
-  edge: "" | "on-success" | "on-finish" | "repeats";
+  edge: "" | "on-success" | "on-finish" | "on-failure" | "repeats";
   continueBranch: boolean;
 }
 
@@ -959,6 +971,7 @@ export function linksWithKind(
 export function conditionClause(edge: LinkDraft["edge"]): string | null {
   if (edge === "on-success") return ", only if it completes.";
   if (edge === "on-finish") return ", once it finishes either way.";
+  if (edge === "on-failure") return ", only if it fails.";
   return null;
 }
 
@@ -1014,7 +1027,9 @@ export function sectionLinkStatement(
     refusal:
       clause === null
         ? "This link has no condition, so the graph is refused. Remove it and draw it again."
-        : null,
+        : link.edge === "on-failure"
+          ? "A pass has no reading for a block that was not needed, so a link inside a loop that starts only on a failure is refused. Remove it and draw it again."
+          : null,
   };
 }
 
@@ -1380,14 +1395,14 @@ export function worstCaseMembers(
 /**
  * A review draft's fix rounds as Save sends them, and null on every other kind.
  *
- * 0 under a status verdict whatever the hidden picker still holds: the panel
- * stops showing it, so sending it would make the block unsavable over a control
- * the operator can no longer see — and the statement above reads this too, so
- * it never counts fix runs Save would not send.
+ * 0 under a status or command verdict whatever the hidden picker still holds:
+ * the panel stops showing it, so sending it would make the block unsavable over
+ * a control the operator can no longer see — and the statement above reads this
+ * too, so it never counts fix runs Save would not send.
  */
 function draftFixRounds(b: BlockDraft): number | null {
   if (b.kind !== "review") return null;
-  return b.verdictSource === "status" ? 0 : Number(b.fixRounds);
+  return b.verdictSource === "model" ? Number(b.fixRounds) : 0;
 }
 
 export interface EdgeGeometry {
@@ -1504,7 +1519,8 @@ export function draftToGraph(draft: CanvasDraft): WireGraph {
       b.kind === "merge" ||
       b.kind === "deliver" ||
       b.kind === "loop" ||
-      b.kind === "review";
+      b.kind === "review" ||
+      b.kind === "gate";
     return {
       id: b.id,
       name: b.name.trim(),
@@ -1516,6 +1532,7 @@ export function draftToGraph(draft: CanvasDraft): WireGraph {
       promptOverride: startsNoRun ? null : b.promptOverride.trim() || null,
       agentId: startsNoRun ? null : b.agentId || null,
       fanOut: b.kind === "orchestrator" ? Number(b.fanOut) : null,
+      turnRetries: b.kind === "orchestrator" ? Number(b.turnRetries) : null,
       // Sent only for the kind that holds them, so switching a block back to a run
       // cannot leave a merge setting on the wire for the server to ignore — the
       // treatment `fanOut` beside them already gets.
@@ -1572,11 +1589,14 @@ export function draftToGraph(draft: CanvasDraft): WireGraph {
           : null,
       fixRounds: draftFixRounds(b),
       // Cast, not checked: the picker offers only `REVIEW_VERDICT_KINDS`, and
-      // `normalizeNode` refuses any other kind by name.
+      // `normalizeNode` refuses any other kind by name. The command is sent as
+      // typed and judged there, by the parser the panel's own hint uses.
       verdictSource:
-        b.kind === "review"
-          ? ({ kind: b.verdictSource } as ReviewVerdictSourceDTO)
-          : null,
+        b.kind !== "review"
+          ? null
+          : b.verdictSource === "command"
+            ? { kind: "command", command: b.verifyCommand }
+            : ({ kind: b.verdictSource } as ReviewVerdictSourceDTO),
     };
   });
   const edges = draft.links.map((l) => ({

@@ -17,6 +17,7 @@ import {
   type AgentKnowledge,
 } from "./agents";
 import { jsonKind, notStringRefusal } from "./http";
+import { parseVerifyCommand } from "./verifyCommand";
 import { chatGuards } from "./settings";
 import { listTemplates } from "./templates";
 import { WORKSPACE_MOUNTS } from "./config";
@@ -26,6 +27,7 @@ import {
   MAX_LOOP_PASSES,
   MAX_LOOP_RUNS,
   MAX_REVIEW_FIX_ROUNDS,
+  MAX_TURN_RETRIES,
   MAX_WORKFLOW_NAME,
   MAX_WORKFLOW_NODES,
   REVIEW_VERDICT_KINDS,
@@ -165,6 +167,19 @@ export interface WorkflowNode {
    * is an unbounded number of billed agents from one press of Run.
    */
   fanOut: number | null;
+  /**
+   * How many times an orchestrator block's deciding turn is started again when
+   * the turn itself failed having decided nothing, 0 to `MAX_TURN_RETRIES`.
+   * Null on every other kind.
+   *
+   * Optional, and absent is 0: every graph saved before the field existed — and
+   * every instance started from one — says nothing here, and reading that as
+   * anything but "never" would bill turns nobody agreed to. It is on the node
+   * for `fanOut`'s reason: it is spend with nobody looking, so the number is
+   * the one a person fixed when they saved the graph, and nothing a model emits
+   * can raise it.
+   */
+  turnRetries?: number | null;
   /**
    * How a merge block puts each branch onto its target. Null on every other
    * kind, never null on a merge one.
@@ -339,7 +354,8 @@ const GROWING_TASK_STATUSES: readonly TaskStatusDTO[] = ["done", "dropped"];
 export const REPEATS_EDGE = "repeats";
 
 /**
- * Every answer a link may carry: the two dependency conditions and containment.
+ * Every answer a link may carry: the three dependency conditions and
+ * containment.
  *
  * Deliberately *not* added to `DEPENDENCY_EDGES`, which is what a `runs` row
  * stores and what `admitDependencies` reads. Widening that would put "repeats"
@@ -456,7 +472,7 @@ export const NODE_ID = /^[A-Za-z0-9_-]{1,64}$/;
  * scheduler has no branch for — the `as const` makes every reader exhaustive
  * against `WorkflowNodeKind` at the same time.
  */
-const NODE_KINDS = ["run", "orchestrator", "merge", "deliver", "loop", "review"] as const satisfies readonly WorkflowNodeKind[];
+const NODE_KINDS = ["run", "orchestrator", "merge", "deliver", "loop", "review", "gate"] as const satisfies readonly WorkflowNodeKind[];
 
 const MAX_NODE_NAME = 60;
 
@@ -618,6 +634,20 @@ export function normalizeWorkflowInput(
           "“repeats” link.",
       };
     }
+    // Only a run block's ending is read as a failure. Every other kind settles
+    // in words of its own — a merge that did not land everything, a turn that
+    // decided nothing, a review that set work aside, a loop that stopped on a
+    // pass — and which of those a fixer should start on is a decision nobody
+    // has made, so it is refused by name rather than given a meaning here.
+    if (edge === "on-failure" && source.kind !== "run") {
+      return {
+        ok: false,
+        error:
+          `“${target.name}” is set to start only if “${source.name}” fails, ` +
+          "and only a run block's failure can start anything. Set this link " +
+          "to on-success or on-finish.",
+      };
+    }
     // Refused rather than ignored, this file's standing treatment of a field
     // that would otherwise be read by nothing: a `repeats` link hands over no
     // branch, because it starts no run. What a pass does with the branch is
@@ -669,9 +699,13 @@ export function normalizeWorkflowInput(
                     ? `“${node.name}” pushes other blocks' branches and opens a ` +
                       "pull request for each, so it has no branch of its own to " +
                       "hand over or carry on."
-                    : `“${node.name}” lands other blocks' branches rather than ` +
-                      "working in a checkout of its own, so it has no branch to " +
-                      "hand over or carry on.",
+                    : node.kind === "gate"
+                      ? `“${node.name}” only waits for a person to continue and ` +
+                        "works in no checkout, so it has no branch to hand over or " +
+                        "carry on. Start after it without carrying a branch."
+                      : `“${node.name}” lands other blocks' branches rather than ` +
+                        "working in a checkout of its own, so it has no branch to " +
+                        "hand over or carry on.",
         };
       }
 
@@ -763,6 +797,23 @@ const LOOP_IS_TOLD_NOTHING = [
   { key: "mountId", missing: "no workspace for it to work in", instead: "Each block inside the section names its own." },
   { key: "folder", missing: "no folder for it to work in", instead: "Each block inside the section names its own." },
   { key: "promptOverride", missing: "no standing instructions for it to stand above", instead: "Put them on the blocks inside the section." },
+] as const;
+
+/**
+ * What a gate may not be told, and what each field would have decided.
+ *
+ * `LOOP_IS_TOLD_NOTHING`'s treatment and for its reason, shorter because every
+ * field has one answer: a gate holds the workflow for a person and starts
+ * nothing, so a task, a template, an agent, a workspace, a folder and a prompt
+ * each describe a run that will not exist. The keys are the wire's.
+ */
+const GATE_IS_TOLD_NOTHING = [
+  { key: "task", missing: "no task for it to do" },
+  { key: "templateId", missing: "no guards for it to run under" },
+  { key: "agentId", missing: "nothing for that agent to be" },
+  { key: "mountId", missing: "no workspace for it to work in" },
+  { key: "folder", missing: "no folder for it to work in" },
+  { key: "promptOverride", missing: "no standing instructions for it to stand above" },
 ] as const;
 
 /** Whether a node says nothing at all about a board condition. */
@@ -1060,6 +1111,29 @@ function normalizeNode(
       }
     }
 
+    // A gate is told nothing either, and for the loop's reason: it waits for a
+    // person and starts no run, so each of these describes a run it does not
+    // have. Refused by name rather than coerced away, because a template or an
+    // agent chosen for a block that never starts anything is a choice no
+    // process will act on, and this is the door built to answer one out loud.
+    if (kind === "gate") {
+      for (const field of GATE_IS_TOLD_NOTHING) {
+        const notString = notStringRefusal(field.key, n[field.key]);
+        if (notString) return { ok: false, error: `“${nodeName}”: ${notString}` };
+      }
+      const told = GATE_IS_TOLD_NOTHING.find(
+        (field) => String(n[field.key] ?? "").trim() !== "",
+      );
+      if (told) {
+        return {
+          ok: false,
+          error:
+            `“${nodeName}” waits for a person to continue and starts no run of ` +
+            `its own, so there is ${told.missing}. Put it on the block that does the work.`,
+        };
+      }
+    }
+
     // The two kinds that start no child of their own hold none of the fields
     // that describe one. They get there differently — a merge block has these
     // coerced away, a loop has them refused by name above — and past this point
@@ -1068,7 +1142,11 @@ function normalizeNode(
     // started on branches the blocks in front of it cut, and it names no
     // workspace, template, task or agent of its own.
     const startsNoRun =
-      kind === "merge" || kind === "deliver" || kind === "loop" || kind === "review";
+      kind === "merge" ||
+      kind === "deliver" ||
+      kind === "loop" ||
+      kind === "review" ||
+      kind === "gate";
 
     // A merge block is told nothing. What it lands is whatever the blocks in
     // front of it left on a branch, and where each branch belongs was recorded
@@ -1128,6 +1206,31 @@ function normalizeNode(
       fanOut = raw;
     }
 
+    // How many times a failed deciding turn is started again, on an orchestrator
+    // block and nowhere else. Absent and null are 0, which is what every graph
+    // saved before the field says. Only a whole JS number is accepted: this
+    // authorises billed turns, so `true` (which `Number` reads as 1) and a
+    // numeric string must fail loudly rather than quietly become a setting.
+    let turnRetries: number | null = null;
+    if (kind === "orchestrator") {
+      const given: unknown = n.turnRetries ?? 0;
+      if (
+        typeof given !== "number" ||
+        !Number.isInteger(given) ||
+        given < 0 ||
+        given > MAX_TURN_RETRIES
+      ) {
+        return {
+          ok: false,
+          error:
+            `“${nodeName}” may start a failed deciding turn again 0 to ` +
+            `${MAX_TURN_RETRIES} times, as a whole number; it is set to ` +
+            `${typeof given === "number" ? given : jsonKind(given)}.`,
+        };
+      }
+      turnRetries = given;
+    }
+
     // How a merge block lands, and whether it may pay for a resolution.
     //
     // The strategy is required rather than defaulted to `settings.landStrategy`
@@ -1179,13 +1282,18 @@ function normalizeNode(
       verdictSource = read.value;
       // Refused rather than coerced to 0: rounds the operator set are billed
       // runs they expect, and a status verdict has no review for one to answer.
-      if (verdictSource.kind === "status" && fixRounds !== 0) {
+      // Nor does a command's, yet: a fix run briefed with its failing output is
+      // a later decision, and rounds saved now would be rounds nothing starts.
+      if (verdictSource.kind !== "model" && fixRounds !== 0) {
         return {
           ok: false,
           error:
-            `“${nodeName}” judges each branch by how its run ended, so there is ` +
-            "no review for a fix round to answer. Set its fix rounds to 0, or " +
-            "have a frontier model review the branches.",
+            (verdictSource.kind === "status"
+              ? `“${nodeName}” judges each branch by how its run ended, so there is ` +
+                "no review for a fix round to answer."
+              : `“${nodeName}” judges each branch by its verify command, and a ` +
+                "branch that fails it is set aside rather than sent back for a fix.") +
+            " Set its fix rounds to 0, or have a frontier model review the branches.",
         };
       }
     }
@@ -1403,7 +1511,9 @@ function normalizeNode(
             : `“${nodeName}” ${
                 verdictSource?.kind === "status"
                   ? "judges the branches in front of it by how their runs ended"
-                  : "reviews the branches in front of it with a frontier model this app chooses"
+                  : verdictSource?.kind === "command"
+                    ? "judges the branches in front of it by its verify command"
+                    : "reviews the branches in front of it with a frontier model this app chooses"
               }, so there is nothing for that agent to be. ` +
               "Remove it, or put it on the block that does the work.",
       };
@@ -1453,6 +1563,7 @@ function normalizeNode(
           task,
           promptOverride: promptOverride || null,
           fanOut,
+          turnRetries,
           mergeStrategy,
           mergeAutoResolve,
           maxPasses,
@@ -1473,7 +1584,14 @@ function normalizeNode(
  * the field existed was saved to pay for a frontier review, and any other
  * reading would hand on branches nobody looked at. A bare word is refused
  * rather than read as the kind it names, so the one shape on the wire is the
- * one a source with settings of its own will need.
+ * one a source with settings of its own needs.
+ *
+ * A `command` is held to `parseVerifyCommand`, the rule `landVerifyCommand` is
+ * held to and the one `runVerify` applies again before it spawns: argv split
+ * on whitespace, and every shell metacharacter refused rather than escaped. It
+ * is refused here, at the save, because a command that could not run would
+ * otherwise be found a pass in, as every branch of it set aside. Kept as typed
+ * rather than as the argv, so what the person reads back is what they wrote.
  */
 function normalizeVerdictSource(
   raw: unknown,
@@ -1500,7 +1618,46 @@ function normalizeVerdictSource(
         `have: ${kind || "(blank)"}. It is ${REVIEW_VERDICT_KINDS.join(" or ")}.`,
     };
   }
+  if (kind === "command") {
+    const notCommandString = notStringRefusal("verdictSource.command", o.command);
+    if (notCommandString) return { ok: false, error: `“${nodeName}”: ${notCommandString}` };
+    const command = String(o.command ?? "").trim();
+    const parsed = parseVerifyCommand(command);
+    if (!parsed.ok) {
+      return {
+        ok: false,
+        error: `“${nodeName}” judges each branch by a verify command, and ${parsed.reason}.`,
+      };
+    }
+    return { ok: true, value: { kind: "command", command } };
+  }
   return { ok: true, value: kind === "status" ? { kind: "status" } : { kind: "model" } };
+}
+
+/**
+ * Why a graph a model wrote may not be saved because a review block in it runs
+ * a verify command, or null when none does.
+ *
+ * The command is a program this app spawns in every branch's checkout, with no
+ * approval at the moment it runs: the approval is the save. So it is a person's
+ * to write, in the workflow editor, and never a model's — asked of
+ * `propose_workflow`'s graph and again of the proposal as it is approved,
+ * because a card reads "no agent" for a review block and a person approving it
+ * would not be shown a command at all. Asked of the normalized graph rather
+ * than of the model's text, so no spelling `normalizeVerdictSource` accepts can
+ * slip past it.
+ */
+export function commandVerdictRefusal(graph: WorkflowGraph): string | null {
+  const node = graph.nodes.find(
+    (n) => n.kind === "review" && n.verdictSource?.kind === "command",
+  );
+  if (!node) return null;
+  return (
+    `“${node.name}” judges branches by a verify command, and only a person may ` +
+    "save one: it is a program this app runs in every branch's checkout. Give " +
+    "the review a frontier-model or run-status verdict, and tell the operator " +
+    "to set the command in the workflow editor if they want one."
+  );
 }
 
 /**
@@ -2021,6 +2178,20 @@ function loopBodyRefusal(
 }
 
 /**
+ * What to add to a "nothing in front of it to land, push or review" refusal
+ * when a gate is what is in front of it. A gate hands on no branches, so the
+ * operator who drew `run → gate → merge` has drawn a block that holds the merge
+ * and gives it nothing to land — and the refusal alone does not say what to
+ * draw instead.
+ */
+function gateHint(sources: readonly WorkflowNode[], node: WorkflowNode): string {
+  return sources.some((s) => s.kind === "gate")
+    ? " A gate holds what is behind it but hands on no branches, so link the " +
+        `block that built them straight to “${node.name}” as well as to the gate.`
+    : "";
+}
+
+/**
  * Why a graph as a whole could never run, or null when nothing is wrong with it.
  *
  * The checks a single block or a single link cannot see: two links carrying on
@@ -2059,6 +2230,24 @@ function graphRefusal(
     continued.add(e.from);
   }
 
+  // A pass runs its section as a graph of its own, and a member that was not
+  // needed is a reading `planLoopPass`' exit conditions do not have — neither
+  // unfinished nor DONE — so a pass whose fixer was passed over would neither
+  // stop nor carry on. Refused rather than given one. A link *into* the loop
+  // block is outside every section, and is a run block's like any other.
+  const owners = loopBodyOwners({ nodes: [...nodes], edges: [...edges] });
+  for (const e of edges) {
+    if (e.edge !== "on-failure") continue;
+    const loop = owners.get(e.from) ?? owners.get(e.to);
+    if (!loop) continue;
+    return (
+      `“${byId.get(e.to)!.name}” is set to start only if “${byId.get(e.from)!.name}” ` +
+      `fails, inside what “${loop.name}” repeats. A pass has no reading for a ` +
+      "block that was not needed, so links inside a loop start on-success or " +
+      "on-finish."
+    );
+  }
+
   // A merge block lands what is in front of it, so what is in front of it has to
   // exist and has to have left a branch.
   //
@@ -2092,7 +2281,7 @@ function graphRefusal(
       return (
         `“${node.name}” has no block in front of it whose branches it could ` +
         "review. A review block reviews what its predecessors built, so it " +
-        "needs at least one predecessor that runs something."
+        `needs at least one predecessor that runs something.${gateHint(sources, node)}`
       );
     }
     const bare = producers.find(
@@ -2142,14 +2331,18 @@ function graphRefusal(
       .filter((e) => e.to === node.id && isDependencyEdge(e))
       .map((e) => byId.get(e.from)!);
     const producers = sources.filter(
-      (s) => s.kind !== "merge" && s.kind !== "loop" && s.kind !== "deliver",
+      (s) =>
+        s.kind !== "merge" &&
+        s.kind !== "loop" &&
+        s.kind !== "deliver" &&
+        s.kind !== "gate",
     );
     if (producers.length === 0) {
       return (
         `“${node.name}” has no block in front of it whose branches it could ` +
         "push. A deliver block pushes what its predecessors built, so it needs " +
         "at least one predecessor that runs something — a merge block lands its " +
-        "branches on their target and hands none on."
+        `branches on their target and hands none on.${gateHint(sources, node)}`
       );
     }
     // A review is not asked about a template it does not have; its own sources
@@ -2172,13 +2365,17 @@ function graphRefusal(
       .filter((e) => e.to === node.id)
       .map((e) => byId.get(e.from)!);
     const producers = sources.filter(
-      (s) => s.kind !== "merge" && s.kind !== "deliver" && s.kind !== "loop",
+      (s) =>
+        s.kind !== "merge" &&
+        s.kind !== "deliver" &&
+        s.kind !== "loop" &&
+        s.kind !== "gate",
     );
     if (producers.length === 0) {
       return (
         `“${node.name}” has no block in front of it whose work it could ` +
         "land. A merge block lands the branches its predecessors left, so it " +
-        "needs at least one predecessor that runs something."
+        `needs at least one predecessor that runs something.${gateHint(sources, node)}`
       );
     }
     // A review block produces branches too — the approved ones in front of it —
@@ -2192,6 +2389,20 @@ function graphRefusal(
         `“${bare.name}” leaves no branch for “${node.name}” to land — its ` +
         "guards work directly in the folder rather than in a checkout of " +
         "their own."
+      );
+    }
+  }
+
+  // A gate holds what is behind it, so it needs something behind it. One with
+  // no link out would stop the instance for a person to press Continue and then
+  // release nothing — a pause with no purpose, which on a scheduled workflow is
+  // also the only thing that ever holds the next window up.
+  for (const node of nodes) {
+    if (node.kind !== "gate") continue;
+    if (!edges.some((e) => e.from === node.id && isDependencyEdge(e))) {
+      return (
+        `“${node.name}” is a gate with nothing after it, so there is nothing ` +
+        "for it to hold. Link the blocks that should wait for it, or remove it."
       );
     }
   }
@@ -2316,7 +2527,8 @@ export function folderRefusal(graph: WorkflowGraph): string | null {
       node.kind === "merge" ||
       node.kind === "deliver" ||
       node.kind === "loop" ||
-      node.kind === "review"
+      node.kind === "review" ||
+      node.kind === "gate"
     ) {
       continue;
     }

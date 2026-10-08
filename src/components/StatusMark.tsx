@@ -100,20 +100,27 @@ const GLYPH: Record<RunDTO["status"], ReactNode> = {
       strokeLinecap="round"
     />
   ),
+  // A dash: passed over. Nothing about it is a fault or a decision, so it
+  // borrows neither the cross, the slash through `blocked`'s circle, nor the
+  // stop square.
+  "not-needed": (
+    <path d="M2.4 5h5.2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+  ),
 };
 
 /**
- * The same ten marks as characters, for the skin that has no vector in it.
+ * The same eleven marks as characters, for the skin that has no vector in it.
  *
  * Each one echoes the shape above it rather than starting a vocabulary of its
  * own — hollow `o` for the run that is only alive, `=` for the pause bars, `!`
  * for the bang that asks the reader for something — because the shapes were
  * chosen to be separable at a glance and that is the property the port has to
- * keep. Ten distinct marks, checked against each other and not only against
+ * keep. Eleven distinct marks, checked against each other and not only against
  * the SVG each replaces: `+` and `x` are the two endings and read as opposites,
  * `#` is the stop square, `blocked`'s `/` is the slash through the circle it is
  * drawn as, and `waiting-for-stack`'s `?` is the run asking for something, the
- * way `!` is the run saying it could not get past something.
+ * way `!` is the run saying it could not get past something; `not-needed`'s
+ * `-` is the dash it is drawn as.
  *
  * `running` is the one that is not a character. It was a motionless `*` while
  * the same skin left a vector ring turning two components away, and it is now
@@ -137,6 +144,7 @@ const ASCII: Record<RunDTO["status"], ReactNode> = {
   stopped: "#",
   blocked: "/",
   failed: "x",
+  "not-needed": "-",
 };
 
 /**

@@ -668,10 +668,10 @@ function groupBy(
  *
  * Exact rather than approximate, and only because `pricing.ts` keeps its
  * date-dependent rates in the shape it does: every one of them turns over at a
- * UTC midnight (`SONNET_5_INTRO_ENDS` is the only one today), so two turns on
- * the same UTC day and at the same speed always resolve to the same price.
- * Flattening a future rate onto some other boundary would silently make this
- * memo wrong for the turns either side of it, which is one more reason that
+ * UTC midnight (`SONNET_5_5_CACHE_READ_CUT_AT` is the only one today), so two
+ * turns on the same UTC day and at the same speed always resolve to the same
+ * price. Flattening a future rate onto some other boundary would silently make
+ * this memo wrong for the turns either side of it, which is one more reason that
  * module's note about keeping the shape is worth obeying.
  */
 const PRICE_MEMO_DAY_MS = 86_400_000;
