@@ -31,6 +31,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - `reconcileDreamingNotes` is keyed on the run and never on the night.
 - `reconcileDreamingNotes` maps `NOTE n` on the stored `prompt_item`, never on a row's position among the run's rows that are left.
 - An item's row records the note the item is about, never the hub that links it.
+- Rows attached before that change are repaired once, by a pass that is not `reconcileDreamingNotes`.
 - `recordNight`'s `selected` is sticky.
 - A night's `outcome` is its decision and never its run's ending; the Nights tab reads the ending from `runs` at list time.
 

@@ -77,6 +77,7 @@ function landState(over: Partial<LandStateDTO> = {}): LandStateDTO {
     checkout: null,
     pending: null,
     blocked: null,
+    verifySwitch: null,
     resolveBlocked: null,
     landedAt: null,
     landedInto: null,

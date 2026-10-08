@@ -15,6 +15,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - An `on-failure` link is drawn only out of a run block and only outside a loop, and a node on the branch it did not take is `not-needed` in the ledger as it is in `runs`.
 - A run a restart closed out blocks every edge out of it until it is picked up, and what it holds back is revived rather than failed.
 - One saved graph may run against more than one folder, and every folder it may work in is one a person saved on it.
+- Two presses of one workflow run at the same time only when they share no folder — an authorisation rule, since it decides where unattended agents work side by side.
 
 ## [Gate blocks](workflows-and-schedules/gate-blocks.md)
 
@@ -41,7 +42,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - Four of an instance's six readings are derived, and `started` is not a word for a press of Run that is over.
 - A held gate leaves the instance `started`, and it is the operator's to end — Continue lets it through, Stop halts through the same door as every other halt.
 - A stuck workflow run is picked up one named obstacle at a time, and never through a halt.
-- The page that presses Run states the refusal to press it again before it is pressed, and the instance it links is found in both halves of the graph.
+- The page that presses Run states the refusal to press it again before it is pressed, per folder, and the instance it links is found in both halves of the graph.
 
 ## [The instance budget and the instance total](workflows-and-schedules/instance-budget.md)
 
@@ -84,6 +85,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 
 - A pass is the section instantiated, and there is one scheduler.
 - `MAX_LOOP_RUNS` is the arithmetic nobody does, and an orchestrator member's fan-out is spent per pass.
+- `MAX_FAN_OUT` stays 10 though the taskboard sweep fills it, because a wider batch lands worse and the pass cap is not what runs out.
 - Nothing is manufactured within a pass, and nothing at all is carried between passes.
 - The instance page draws a pass as the group of members it is, and `passesOf` is the one reader that decides what is in one.
 - `passMemberId` owns the spelling of a member id and `passNumberOf` is the only thing that reads one back.

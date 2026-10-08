@@ -389,6 +389,53 @@ describe("a workflow saved against more than one folder", () => {
     assert.equal(count.n, 0);
   });
 
+  it("starts presses against two saved folders side by side, and refuses one into the same folder", async () => {
+    const workflow = saveTwoFolderWorkflow("Both projects at once");
+    // One snapshot and no await between the presses, so the first press's run
+    // is still live when the second and third are asked.
+    const snapshot = await orch.currentSnapshot();
+    const first = workflows.startWorkflow(workflow.id, snapshot, { kind: "manual", folder: FOLDERS[0] });
+    assert.ok(first.ok, `start refused: ${!first.ok && first.reason}`);
+
+    const again = workflows.startWorkflow(workflow.id, snapshot, { kind: "manual", folder: FOLDERS[0] });
+    assert.ok(!again.ok);
+    assert.match(again.reason, /share no folder/);
+
+    const beside = workflows.startWorkflow(workflow.id, snapshot, { kind: "manual", folder: FOLDERS[1] });
+    assert.ok(beside.ok, `start refused: ${!beside.ok && beside.reason}`);
+    assert.equal(path.basename(folderOf(beside.instance.id)), "second");
+    assert.equal(workflows.liveInstancesOf(workflow.id).length, 2);
+  });
+
+  it("refuses a press against another folder while a block with its own folder is shared", async () => {
+    fs.mkdirSync(path.join(workspace, "second"), { recursive: true });
+    fs.mkdirSync(path.join(workspace, "tools"), { recursive: true });
+    const workflow = workflows.createWorkflow({
+      name: "Both projects, one toolbox",
+      graph: {
+        nodes: [
+          block("run", "run", { followsChosenFolder: true }),
+          block("lint", "run", { folder: "tools" }),
+        ],
+        edges: [],
+      },
+      instanceBudget: {
+        maxInstanceCostUSD: null,
+        maxSessionFraction: null,
+        maxWeeklyFraction: null,
+      },
+      folders: FOLDERS,
+    });
+    const snapshot = await orch.currentSnapshot();
+    const first = workflows.startWorkflow(workflow.id, snapshot, { kind: "manual", folder: FOLDERS[0] });
+    assert.ok(first.ok, `start refused: ${!first.ok && first.reason}`);
+
+    const other = workflows.startWorkflow(workflow.id, snapshot, { kind: "manual", folder: FOLDERS[1] });
+    assert.ok(!other.ok);
+    assert.match(other.reason, /“Do lint” names its own folder/);
+    assert.equal(workflows.liveInstancesOf(workflow.id).length, 1);
+  });
+
   it("starts a schedule in the first saved folder", async () => {
     const workflow = saveTwoFolderWorkflow("Nightly, either project");
     const outcome = workflows.startWorkflow(workflow.id, await orch.currentSnapshot(), {

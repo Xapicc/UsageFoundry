@@ -83,13 +83,22 @@ What moves, and what does not:
   name the folder it works in, and a block that follows the choice is also told
   that this folder is the project its brief is about — so one brief, written as
   "the project in your folder", serves every saved folder.
+- **Two folders can run at the same time.** A press against one saved folder
+  starts while a press against another is still going, as long as the two
+  share no folder. A second press into a folder a press is still working in is
+  refused, and Run is off for that folder with the reason beside it and a link
+  to the press in the way; pick another folder and it comes back on. "Share"
+  includes a folder inside another and two workspaces that are one directory.
+- **A block with its own folder keeps it one at a time.** Every press of the
+  workflow works in that block's folder whichever folder is chosen, so while
+  one press is going every other press is refused. Switch the block to follow
+  the choice, or move it to a workflow of its own, if the folders should run
+  side by side.
 
 A workflow saved before this, or one whose blocks each name their own folder,
-asks nothing at Run and behaves exactly as it always did. Two limits of this
-first version: the chat cannot propose a workflow with a folder list (add the
-list in the editor after approving), and a workflow still runs **one** press at
-a time — a press against a second folder waits until the first one's runs have
-finished, as below.
+asks nothing at Run and behaves exactly as it always did — including running
+one press at a time. One limit of this first version: the chat cannot propose
+a workflow with a folder list (add the list in the editor after approving).
 
 ## A block that decides what to run
 
@@ -1029,7 +1038,9 @@ card says what was missed and when.
 
 **An overlap is skipped, not queued.** A workflow that is still running when its
 next occurrence comes round is skipped with a reason, and the occurrence after
-that is the next chance. Repeated skips read as one state with a count —
+that is the next chance. Only a press that shares a folder with the one the
+schedule would start counts: a press you started by hand against another saved
+folder does not cost the schedule its window. Repeated skips read as one state with a count —
 `skipped ×14 since 03:00` — rather than fourteen rows saying the same thing.
 
 **Pause and remove.** *Pause* stops it firing and keeps everything else; the card

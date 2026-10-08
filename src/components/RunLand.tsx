@@ -558,6 +558,13 @@ export function RunLand({ run }: { run: RunDTO }) {
               {fmtDateTime(line.landed.at)} ({line.landed.strategy})
             </Hint>
           )}
+          {state.verifySwitch && (
+            <Hint>
+              The check switches{" "}
+              <span className="mono">{state.verifySwitch.path.split("/").pop()}</span> from{" "}
+              <span className="mono">{state.verifySwitch.holds}</span> to this branch and back
+            </Hint>
+          )}
 
           {state.preview.outcome === "conflict" && (
             <>

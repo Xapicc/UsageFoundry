@@ -32,7 +32,7 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - A review block's verify command is the one gate that switches a slot a later run took over; Land and Deliver refuse it.
 - Land is withheld on the gate's refusals that need no command run, and the card says why.
 
-## [A review block's verify command](isolation-and-landing/review-verify-command.md)
+## [A verify command on a slot a later run reused](isolation-and-landing/review-verify-command.md)
 
 - A review block's verify command takes the same two steps, and nothing about the slot is read twice.
 - A slot a later run reused is switched back to the run's branch for the command, and put back after, because the block judges when every branch has finished and by then the early slots are somebody else's.
@@ -40,7 +40,7 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - The borrow is exclusive, and the writers it keeps out are the reason, not a convenience.
 - The switch back is best effort and never a verdict.
 - What the check still cannot tell from the work, and the options not taken.
-- Land and Deliver still refuse a slot a later run took over.
+- Land and Deliver switch a slot a later run took over, as the block does (decided 2026-10-08, board task 4b2c2080; a concurrency change).
 
 ## [Deliver, and what may leave](isolation-and-landing/deliver.md)
 

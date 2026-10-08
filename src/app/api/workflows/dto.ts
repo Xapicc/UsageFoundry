@@ -26,11 +26,11 @@ import {
   lastInstanceOf,
   lastRunAt,
   liveBlocksOf,
-  liveInstanceIdOf,
   liveRunsOf,
   pickUpsOf,
   reviewItemsOf,
   runStateOf,
+  startRefusalsOf,
   type Workflow,
   type WorkflowInstance,
 } from "../../../lib/workflows";
@@ -86,7 +86,11 @@ export function workflowDTO(workflow: Workflow): WorkflowDTO {
     createdAt: workflow.createdAt,
     updatedAt: workflow.updatedAt,
     liveRunCount: liveRunsOf(workflow.id).length + liveBlocksOf(workflow.id),
-    liveInstanceId: liveInstanceIdOf(workflow.id),
+    startRefusals: startRefusalsOf(workflow).map((refusal) => ({
+      folder: refusal.folder && { mountId: refusal.folder.mountId, folder: refusal.folder.folder },
+      reason: refusal.reason,
+      instanceId: refusal.instanceId,
+    })),
     lastRunAt: lastRunAt(workflow.id),
     schedule: schedule ? scheduleDTO(scheduleView(schedule, workflow)) : null,
     scheduleRefusal: scheduleRefusal(workflow),
@@ -100,9 +104,9 @@ export function workflowDTO(workflow: Workflow): WorkflowDTO {
  * `WorkflowListItemDTO` argues that out, and the detail route, the editor and
  * the duplicate route all still need the whole graph. Derived from `workflowDTO`
  * rather than restated so the fields the two shapes share cannot drift apart:
- * what this drops is the graph, the instance budget and the schedule card's
- * refusal sentence — a page-sized paragraph per row on a list that polls — and
- * nothing else.
+ * what this drops is the graph, the instance budget, the saved folders and the
+ * two kinds of refusal sentence the detail page draws — a page-sized paragraph
+ * per row on a list that polls — and nothing else.
  *
  * What it adds is the newest press of Run, one `LIMIT 1` read per row beside the
  * ones `workflowDTO` already makes, so the list can link it and say how it ended.
@@ -114,6 +118,7 @@ export function workflowListDTO(workflow: Workflow): WorkflowListItemDTO {
     instanceBudget: _instanceBudget,
     scheduleRefusal: _scheduleRefusal,
     folders: _folders,
+    startRefusals: _startRefusals,
     ...rest
   } = workflowDTO(workflow);
   return {

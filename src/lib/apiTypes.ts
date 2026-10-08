@@ -2155,6 +2155,11 @@ export const MAX_WORKFLOW_NODES = 25;
  * by a model and start with no approval between the decision and the spawn. The
  * per-block cap an operator sets is what actually bounds a graph; this is the
  * limit on what they may set.
+ *
+ * Kept at 10 after the taskboard sweep was found filling it: a batch's later
+ * siblings conflict at landing more often, and under `MAX_LOOP_RUNS` a wider
+ * fan-out buys fewer passes rather than more runs. The measurement is in
+ * `docs/agent/workflows-and-schedules/loop-passes.md`.
  */
 export const MAX_FAN_OUT = 10;
 
@@ -2666,6 +2671,16 @@ export interface WorkflowFolderDTO {
   label: string;
 }
 
+/** A press of Run that would be refused, and the earlier press it is refused on account of. */
+export interface WorkflowStartRefusalDTO {
+  /** The saved folder a press against would be refused, or null when none are saved. */
+  folder: Pick<WorkflowFolderDTO, "mountId" | "folder"> | null;
+  /** `startWorkflow`'s own sentence. */
+  reason: string;
+  /** The instance still going in a folder this press would share. */
+  instanceId: string;
+}
+
 export interface WorkflowDTO {
   id: string;
   name: string;
@@ -2679,14 +2694,19 @@ export interface WorkflowDTO {
   folders: WorkflowFolderDTO[];
   createdAt: number;
   updatedAt: number;
-  /** Runs from this workflow that have not finished. Empty on most reads. */
+  /**
+   * Runs and blocks from this workflow that have not finished, across every
+   * press of Run still going. Empty on most reads.
+   */
   liveRunCount?: number;
   /**
-   * The press of Run that is the reason it cannot be started again, or null.
-   * Null exactly when `liveRunCount` is 0: a block still deciding counts there
-   * and is named here, though it has started no run.
+   * The presses of Run that would be refused right now because an earlier one
+   * still works in a folder they would — at most one per saved folder, or one
+   * with a null `folder` on a workflow that saves none. Empty when Run is free
+   * whichever folder is picked. A reading, never the gate: `startWorkflow`
+   * asks again when Run is pressed.
    */
-  liveInstanceId?: string | null;
+  startRefusals: WorkflowStartRefusalDTO[];
   /** When it was last started, or null if it never has been. */
   lastRunAt?: number | null;
   /** Null when nothing starts this workflow but a person. */
@@ -2726,7 +2746,7 @@ export interface WorkflowDTO {
  */
 export type WorkflowListItemDTO = Omit<
   WorkflowDTO,
-  "nodes" | "edges" | "instanceBudget" | "scheduleRefusal" | "folders"
+  "nodes" | "edges" | "instanceBudget" | "scheduleRefusal" | "folders" | "startRefusals"
 > & {
   /** How many blocks the saved graph holds. Both lists print exactly this. */
   nodeCount: number;
@@ -3468,6 +3488,12 @@ export interface LandStateDTO {
   pending: PendingWorkDTO | null;
   /** Why landing is refused right now. Null means it is offered. */
   blocked: string | null;
+  /**
+   * The run's checkout, reused by a later run, that Land's and Deliver's verify
+   * command will switch to this branch and back. Null when it need not be, and
+   * when something else already refuses the land.
+   */
+  verifySwitch: { path: string; holds: string } | null;
   /**
    * Why a resolution of the conflict is refused before it is bought — the
    * branch carries a file seeding copied in. Null when Resolve may be offered.

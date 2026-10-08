@@ -245,34 +245,34 @@ function pressOf(name: string, key: string, createdAt: number): string {
   return id;
 }
 
-describe("which press of Run is the reason a workflow cannot be started again", () => {
+describe("which presses of Run are still going", () => {
   it("is none while every member has settled", () => {
     const id = instance("lookup-idle");
     member(id, "completed");
     ledgerBlock(id, "emitted");
-    assert.equal(workflows.liveInstanceIdOf("wf-lookup-idle"), null);
+    assert.deepEqual(workflows.liveInstancesOf("wf-lookup-idle"), []);
   });
 
   it("is the instance holding a run still going", () => {
     const id = instance("lookup-run");
     member(id, "running");
-    assert.equal(workflows.liveInstanceIdOf("wf-lookup-run"), id);
+    assert.deepEqual(workflows.liveInstancesOf("wf-lookup-run").map((i) => i.id), [id]);
   });
 
   it("is the instance holding only a block still to decide", () => {
-    // The case a lookup over runs alone gets wrong: every run has settled and
-    // `startWorkflow` still refuses, so the page says it cannot be started again
-    // and has nothing to link to.
+    // The case a lookup over runs alone gets wrong: every run has settled, yet
+    // the press is still going — a second press into its folder must still be
+    // refused, and the page must have it to link to.
     const id = instance("lookup-block");
     member(id, "completed");
     ledgerBlock(id, "thinking");
-    assert.equal(workflows.liveInstanceIdOf("wf-lookup-block"), id);
+    assert.deepEqual(workflows.liveInstancesOf("wf-lookup-block").map((i) => i.id), [id]);
   });
 
   it("is the instance of a loop between two passes", () => {
     const id = instance("lookup-loop");
     ledgerBlock(id, "looping");
-    assert.equal(workflows.liveInstanceIdOf("wf-lookup-loop"), id);
+    assert.deepEqual(workflows.liveInstancesOf("wf-lookup-loop").map((i) => i.id), [id]);
   });
 
   it("passes over the settled presses before it", () => {
@@ -280,27 +280,28 @@ describe("which press of Run is the reason a workflow cannot be started again", 
     member(old, "completed");
     const live = pressOf("lookup-history", "lookup-history-live", Date.now() + 10_000);
     member(live, "queued");
-    assert.equal(workflows.liveInstanceIdOf("wf-lookup-history"), live);
+    assert.deepEqual(workflows.liveInstancesOf("wf-lookup-history").map((i) => i.id), [live]);
   });
 
-  it("is the newest when rows from before the gate leave two going", () => {
+  it("lists two going newest first, the one worth opening", () => {
     const older = instance("lookup-two");
     member(older, "running");
     const newer = pressOf("lookup-two", "lookup-two-newer", Date.now() + 10_000);
     ledgerBlock(newer, "waiting");
-    assert.equal(workflows.liveInstanceIdOf("wf-lookup-two"), newer);
+    assert.deepEqual(workflows.liveInstancesOf("wf-lookup-two").map((i) => i.id), [newer, older]);
   });
 
   it("does not name another workflow's press", () => {
     const other = instance("lookup-other");
     member(other, "running");
     instance("lookup-quiet");
-    assert.equal(workflows.liveInstanceIdOf("wf-lookup-quiet"), null);
+    assert.deepEqual(workflows.liveInstancesOf("wf-lookup-quiet"), []);
   });
 
   it("agrees with the counts about whether anything is going", () => {
-    // The page disables Run on the count and links on this, so the two answering
-    // differently is a notice with no link or a link with no notice.
+    // The list page counts with the totals and the gate reads these presses, so
+    // the two answering differently is a count of work Run would not wait for,
+    // or a press refused on account of work the page says is not there.
     const cases = [
       { name: "agree-run", run: "running", block: "emitted" },
       { name: "agree-block", run: "completed", block: "waiting" },
@@ -313,9 +314,10 @@ describe("which press of Run is the reason a workflow cannot be started again", 
       const counted =
         workflows.liveRunsOf(`wf-${name}`).length +
         workflows.liveBlocksOf(`wf-${name}`);
+      const presses = workflows.liveInstancesOf(`wf-${name}`);
       assert.equal(
-        workflows.liveInstanceIdOf(`wf-${name}`) !== null,
-        counted > 0,
+        presses.reduce((sum, p) => sum + p.liveRuns + p.liveBlocks, 0),
+        counted,
         name,
       );
     }

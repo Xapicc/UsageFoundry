@@ -34,6 +34,7 @@ import { notifyGateHeld } from "./notify";
 import {
   blockWaitingRun,
   clampRunOffset,
+  conflictKey,
   createRun,
   currentSnapshot,
   dependencyCycle,
@@ -270,7 +271,12 @@ import {
   normalizeBoardCondition,
   normalizeWorkflowFolders,
   normalizeWorkflowInput,
+  sharedFolderRefusal,
   withChosenFolder,
+  workingFolders,
+  type BlockFolder,
+  type LivePress,
+  type SharedFolder,
   type TemplateFacts,
   type WorkflowFolder,
   type WorkflowDependencyEdge,
@@ -3806,9 +3812,9 @@ export function workflowOriginOf(runId: string): RunWorkflowOrigin | null {
 /**
  * Runs this workflow started that have not finished.
  *
- * Both gates read it: starting a second instance while the first is still going
- * would aim the same nodes at the same folders, and deleting a workflow while
- * its runs are in flight throws away the only record of where they came from.
+ * Deleting a workflow is refused while there are any, since that throws away
+ * the only record of where they came from. A second press of Run is not: it is
+ * refused per folder, by `sharedFolderOf`, which counts the same rows per press.
  */
 export function liveRunsOf(
   workflowId: string,
@@ -3835,10 +3841,9 @@ export function liveRunsOf(
  *
  * The other half of "is anything from this workflow still going", and it is not
  * covered by the runs: a block still deciding has started nothing yet and is
- * about to start several. A second press of Run while one is thinking would
- * point the same blocks at the same folders and put two deciding turns on one
- * repository, which is the collision `liveRunsOf` exists to refuse one step
- * earlier than it can see.
+ * about to start several. A second press of Run into the same folder while one
+ * is thinking would put two deciding turns on one repository, which is the
+ * collision a live run is counted for, one step earlier than a run can see.
  *
  * A pass's members are rows in this table too, which is what makes a loop that
  * is between two passes — no child in flight, no live run anywhere — still a
@@ -3859,51 +3864,149 @@ export function liveBlocksOf(workflowId: string): number {
   return row.n;
 }
 
+/** A press of Run of one workflow that still has a run or a block going. */
+export interface LiveInstance {
+  id: string;
+  liveRuns: number;
+  liveBlocks: number;
+  /** The graph it was started from; null when the stored copy cannot be read. */
+  graph: WorkflowGraph | null;
+}
+
 /**
- * The press of Run that `startWorkflow` is refusing a second one on account of,
- * or null when nothing from this workflow is going.
+ * Every press of Run of this workflow with something still going, newest first.
  *
  * Asked of both halves at once rather than composed from `liveRunsOf` and
- * `liveBlocksOf`, because the instance a person needs to be sent to is not
- * always the one with a live run: a block still deciding, or a loop between two
- * passes, keeps the refusal standing with no run in flight anywhere, and a
- * lookup over runs alone would answer null — a page that says it cannot be
- * started again and names nothing to open. It reads the same two status lists
- * the counts do, so the three cannot disagree about what "going" means.
- *
- * One answer, though the gate above is meant to leave at most one instance
- * going. Rows written before that gate existed can say otherwise, and the
- * newest is the one worth opening: it is the press whose runs are still being
- * created.
+ * `liveBlocksOf`, because a press is not always going through a live run: a
+ * block still deciding, or a loop between two passes, keeps it going with no
+ * run in flight anywhere, and a lookup over runs alone would let a second press
+ * into its folder and give the page nothing to open. It reads the same two
+ * status lists the counts do, so the three cannot disagree about what "going"
+ * means. Newest first because that is the press worth opening: the one whose
+ * runs are still being created.
  */
-export function liveInstanceIdOf(workflowId: string): string | null {
-  const row = db()
+export function liveInstancesOf(workflowId: string): LiveInstance[] {
+  const rows = db()
     .prepare(
-      `SELECT i.id AS id
-         FROM workflow_instances i
-        WHERE i.workflow_id = ?
-          AND (
-            EXISTS (
-              SELECT 1
-                FROM workflow_instance_runs w
-                JOIN runs r ON r.id = w.run_id
-               WHERE w.instance_id = i.id
-                 AND r.status IN (${LIVE_STATUSES.map(() => "?").join(",")})
-            )
-            OR EXISTS (
-              SELECT 1
-                FROM workflow_instance_blocks b
-               WHERE b.instance_id = i.id
-                 AND b.status IN (${LIVE_BLOCK_STATUSES.map(() => "?").join(",")})
-            )
-          )
-        ORDER BY i.created_at DESC, i.id DESC
-        LIMIT 1`,
+      `SELECT id, graph, liveRuns, liveBlocks
+         FROM (
+           SELECT i.id AS id, i.graph AS graph, i.created_at AS createdAt,
+                  (SELECT COUNT(*)
+                     FROM workflow_instance_runs w
+                     JOIN runs r ON r.id = w.run_id
+                    WHERE w.instance_id = i.id
+                      AND r.status IN (${LIVE_STATUSES.map(() => "?").join(",")})
+                  ) AS liveRuns,
+                  (SELECT COUNT(*)
+                     FROM workflow_instance_blocks b
+                    WHERE b.instance_id = i.id
+                      AND b.status IN (${LIVE_BLOCK_STATUSES.map(() => "?").join(",")})
+                  ) AS liveBlocks
+             FROM workflow_instances i
+            WHERE i.workflow_id = ?
+         )
+        WHERE liveRuns > 0 OR liveBlocks > 0
+        ORDER BY createdAt DESC, id DESC`,
     )
-    .get(workflowId, ...LIVE_STATUSES, ...LIVE_BLOCK_STATUSES) as
-    | { id: string }
-    | undefined;
-  return row?.id ?? null;
+    .all(...LIVE_STATUSES, ...LIVE_BLOCK_STATUSES, workflowId) as Array<{
+    id: string;
+    graph: string;
+    liveRuns: number;
+    liveBlocks: number;
+  }>;
+  return rows.map((row) => ({
+    id: row.id,
+    liveRuns: row.liveRuns,
+    liveBlocks: row.liveBlocks,
+    graph: storedGraphOrNull(row.graph),
+  }));
+}
+
+/**
+ * An instance's copy of its graph, or null when it cannot be read.
+ *
+ * Null rather than `rowToInstance`'s empty graph: an empty graph works in no
+ * folder, so reading an unreadable copy as one would let a second press into
+ * whatever folder the first is working in.
+ */
+function storedGraphOrNull(blob: string): WorkflowGraph | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(blob);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  if (!("nodes" in parsed) || !("edges" in parsed)) return null;
+  const { nodes, edges } = parsed;
+  // Element shapes are trusted as `rowToInstance` trusts them: the copy was
+  // normalized before `startWorkflow` stored it.
+  if (!Array.isArray(nodes) || !Array.isArray(edges)) return null;
+  return { nodes, edges };
+}
+
+/** Every block of a graph that works in a folder, placed as the folder claim places it. */
+function placedWorkingFolders(graph: WorkflowGraph): BlockFolder[] {
+  return workingFolders(graph).map((block) => {
+    try {
+      const key = conflictKey(resolveWorkspaceFolder(block.folder.folder, block.folder.mountId));
+      return { ...block, identity: { ok: true, key } };
+    } catch (err) {
+      // Not swallowed: `sharedFolderRefusal` reads an unplaced folder as
+      // sharing every folder, and its sentence carries this message.
+      const error = err instanceof Error ? err.message : String(err);
+      return { ...block, identity: { ok: false, error } };
+    }
+  });
+}
+
+/** The presses of this workflow still going, as `sharedFolderRefusal` reads them. */
+function livePressesOf(workflowId: string): LivePress[] {
+  return liveInstancesOf(workflowId).map((instance) => ({
+    instanceId: instance.id,
+    liveRuns: instance.liveRuns,
+    liveBlocks: instance.liveBlocks,
+    blocks: instance.graph && placedWorkingFolders(instance.graph),
+  }));
+}
+
+/**
+ * The press of this workflow still going that a press working through `graph`
+ * would share a folder with, or null — `sharedFolderRefusal` over what is on
+ * disk and in the database now.
+ *
+ * `graph` is the one the new press would copy, with the chosen folder already
+ * applied by `withChosenFolder`. `startWorkflow` asks this as its gate; the
+ * detail page and a schedule's overlap rule ask it as a reading.
+ */
+export function sharedFolderOf(workflowId: string, graph: WorkflowGraph): SharedFolder | null {
+  const live = livePressesOf(workflowId);
+  if (live.length === 0) return null;
+  return sharedFolderRefusal(live, placedWorkingFolders(graph));
+}
+
+/**
+ * Which presses of Run would be refused right now, one per saved folder — or
+ * one with no folder, for a workflow that saves none.
+ *
+ * A reading for the detail page, so it can turn Run off for the folder picked
+ * and say why before it is pressed. `startWorkflow` still asks on its own
+ * account, so a press that races the page's poll is refused as it always was.
+ */
+export function startRefusalsOf(
+  workflow: Workflow,
+): Array<{ folder: WorkflowFolder | null; instanceId: string; reason: string }> {
+  const live = livePressesOf(workflow.id);
+  if (live.length === 0) return [];
+  const saved = workflow.folders ?? [];
+  const choices: Array<WorkflowFolder | null> = saved.length > 0 ? saved : [null];
+  return choices.flatMap((folder) => {
+    const shared = sharedFolderRefusal(
+      live,
+      placedWorkingFolders(withChosenFolder(workflow.graph, folder)),
+    );
+    return shared ? [{ folder, instanceId: shared.instanceId, reason: shared.reason }] : [];
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -3990,24 +4093,6 @@ export function startWorkflow(
 
   const workflow = getWorkflow(id);
   if (!workflow) return { ok: false, reason: "No such workflow." };
-
-  // A second instance would aim the same blocks at the same folders: the runs
-  // would queue behind the first instance's on the folder claim, and a block
-  // set to carry on a branch would be refused by `admitDependencies` because
-  // the first instance's run already continues it. Refused here as a sentence,
-  // rather than discovered four nodes into the pass.
-  const live = liveRunsOf(id);
-  const liveBlocks = liveBlocksOf(id);
-  if (live.length + liveBlocks > 0) {
-    return {
-      ok: false,
-      reason:
-        `${live.length} run(s) and ${liveBlocks} block(s) from an earlier press ` +
-        "of Run have not finished yet. Starting this workflow again would point " +
-        "the same blocks at the same folders. Wait for them, or stop that run of " +
-        "the workflow.",
-    };
-  }
 
   // The install's spend limit, before anything else about this workflow is
   // decided. `createRun` refuses every member individually, which would abort
@@ -4116,6 +4201,17 @@ export function startWorkflow(
   // of aborting a half-built graph.
   const missing = folderRefusal(graph);
   if (missing) return { ok: false, reason: missing };
+
+  // A press already going in any folder this one would work in. Two presses
+  // that share none are two projects and run side by side; two that share one
+  // would aim the same blocks at the same folder, queued behind each other on
+  // the folder claim or, isolated, doing one job twice. Asked after the choice
+  // is applied, since the chosen folder is what decides it, and after
+  // `folderRefusal`, so every folder of this press can be placed. Nothing is
+  // awaited from here to the last `createRun`, so no other press can start in
+  // between and share a folder this one did not see.
+  const shared = sharedFolderOf(id, graph);
+  if (shared) return { ok: false, reason: shared.reason };
 
   // The one remaining thing that can only be answered by looking at the disk: a
   // hand-over needs a *branch* at both ends, and whether a folder can have one

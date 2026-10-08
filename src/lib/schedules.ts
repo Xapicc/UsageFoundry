@@ -4,14 +4,13 @@ import { getProposal, markProposal } from "./chat";
 import { db } from "./db";
 import { fmtDateTimeInZone } from "./format";
 import { mayWriteDataDir } from "./serverLock";
-import type { WorkflowGraph } from "./workflowGraph";
+import { chooseFolder, withChosenFolder, type WorkflowGraph } from "./workflowGraph";
 import { currentSnapshot } from "./orchestrator";
 import { newWorkPaused } from "./settings";
 import { isTimeZone, zonedParts, zoneOffset } from "./windows";
 import {
   getWorkflow,
-  liveBlocksOf,
-  liveRunsOf,
+  sharedFolderOf,
   startWorkflow,
   type Workflow,
 } from "./workflows";
@@ -405,7 +404,10 @@ export interface ScheduleContext {
   paused: boolean;
   /** `WorkflowSchedule.cursorAt`. */
   lastFireAt: number | null;
-  /** Runs and blocks of this workflow that have not finished. */
+  /**
+   * Runs and blocks that have not finished of the earlier press this fire
+   * would share a folder with; 0 when it would share none.
+   */
   liveCount: number;
   now: number;
 }
@@ -418,9 +420,9 @@ export interface ScheduleContext {
  * schedule looks like between occurrences.
  *
  * The overlap answer is a **skip with a reason** rather than a retry, because
- * `startWorkflow` already refuses a second instance while the first still has
- * live members and a schedule that fired into that refusal every hour would be
- * fifty identical failures in the record. The next occurrence is the next
+ * `startWorkflow` already refuses a press that shares a folder with one whose
+ * members are still live, and a schedule that fired into that refusal every
+ * hour would be fifty identical failures in the record. The next occurrence is the next
  * chance; nothing is queued, because a queued press of Run is a press of Run
  * nobody is present for by the time it happens.
  */
@@ -483,8 +485,8 @@ export function decideSchedule(ctx: ScheduleContext): ScheduleDecision {
         code: "overlap",
         reason:
           `${ctx.liveCount} run(s) and block(s) from an earlier press of Run ` +
-          "have not finished. Skipped rather than queued — the next occurrence " +
-          "is the next chance.",
+          "that shares a folder with this one have not finished. Skipped rather " +
+          "than queued — the next occurrence is the next chance.",
       },
       missed: older,
       cursorAt: newest,
@@ -941,6 +943,23 @@ export async function tickSchedules(): Promise<void> {
 }
 
 /**
+ * Runs and blocks of the earlier press a fire of this schedule would share a
+ * folder with, or 0.
+ *
+ * The fire's own press, chosen the way `startWorkflow` will choose it — the
+ * first saved folder — so a press a person started against another saved
+ * folder does not cost the schedule its window, and its own last fire still
+ * does. A choice refused here is left to `startWorkflow`, which refuses it with
+ * its own sentence and the outcome records it.
+ */
+function overlapCount(workflow: Workflow): number {
+  const choice = chooseFolder(workflow.folders ?? [], { kind: "schedule" });
+  if (!choice.ok) return 0;
+  const shared = sharedFolderOf(workflow.id, withChosenFolder(workflow.graph, choice.folder));
+  return shared?.liveCount ?? 0;
+}
+
+/**
  * One schedule's turn.
  *
  * The cursor is advanced **before** the snapshot is awaited, so a tick that
@@ -976,8 +995,7 @@ async function fireIfDue(schedule: WorkflowSchedule, now: number): Promise<void>
     // SQL, and `claimWindow` below refuses one pressed since that read.
     paused: newWorkPaused(),
     lastFireAt: schedule.cursorAt,
-    liveCount:
-      liveRunsOf(schedule.workflowId).length + liveBlocksOf(schedule.workflowId),
+    liveCount: overlapCount(workflow),
     now,
   });
 
