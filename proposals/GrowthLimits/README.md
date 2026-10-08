@@ -203,7 +203,7 @@ than refuted: its mechanism is exactly right and its rate premise is not, becaus
 `auditMutation` wraps no `GET` handler and a polling browser therefore writes
 nothing to `request_log`.
 
-[UnattendedOperation](<../implemented - UnattendedOperation/>) established `/api/status` as the
+UnattendedOperation (`git show a74a1bb:"proposals/implemented - UnattendedOperation/"`) established `/api/status` as the
 app's designed pull-based position and enumerated twelve alertable conditions in
 `README.md`. [Option A](03-option-a-instrument-the-axes.md) puts its two fields
 there for that reason and makes a thirteenth possible without adding a channel.
