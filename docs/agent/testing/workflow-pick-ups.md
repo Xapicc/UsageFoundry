@@ -2,7 +2,7 @@
 
 [← testing index](../testing.md)
 
-Read before adding or editing tests of `pickUpsOf` or of a door it offers (`retryOrchestratorBlock`, `retryMergeBlock`, `leaveRunBehind`, `resumeLoop`) in `src/lib/workflows.ts`.
+Read before adding or editing tests of `pickUpsOf` or of a door it offers (`retryOrchestratorBlock`, `retryMergeBlock`, `retryDeliverBlock`, `leaveRunBehind`, `resumeLoop`) in `src/lib/workflows.ts`; the deliver one's cases are in [delivery.md](delivery.md).
 
 `workflows.test.ts`' `orchestratorRetryRefusal` cases pin which failed deciding turns the pick-up may run again, and both wrong answers are silent. Offered for a block that had decided, the retry is a second turn deciding the same runs over a first whose specs are still stored — reachable only after a restart, which writes a `thinking` block `failed` without settling it. Refused for one that had not, the only way past a turn that failed for want of a signed-in provider is a fresh Run, which repeats every block that already finished. The cases are the nothing-decided turn, the count in the sentence (singular and plural, because the operator reads it to decide whether to run the workflow again), `started` above zero with no specs, and each of the four other statuses named in the refusal the route returns. The empty-list decision is not a case here: it is `emitted: 0` and so the same input as the first, and what makes it different is a column the DB file below reads.
 

@@ -94,3 +94,33 @@ downgrades a night that has written; a later `selected` moves the row to the
 newer run, because that is the one whose report the reconciler will read, and
 adds to the count. `dreaming_notes` stays the authoritative record of what each
 run claimed.
+
+**A night's `outcome` is its decision and never its run's ending; the Nights tab
+reads the ending from `runs` at list time.** `dreaming_nights.outcome` is written
+once per pass, before the run has done anything: `failed` only when
+`runDreamingNight` threw, with no run to name, and a run that was created and
+then failed, was stopped or was killed stays `selected` for ever. The tab used to
+claim "wrote" for it, then "run started", and neither could say that the run
+ended badly, so the only way to learn that a night wrote nothing was to open the
+Log link of every `selected` row. `listNights` now LEFT JOINs `runs` on `run_id`
+and carries `runStatus`; `/api/dreaming` passes it on as `runEnding` and the tab
+draws it as a second badge beside `run started`. Three choices there fail
+silently. The status is **read, not copied** into the night's row, because a copy
+is stale the moment the run moves and would need a writer in the run loop, which
+this feature does not reach into. It is a **LEFT JOIN**, because retention
+deletes old runs and an inner join would take the night out of the list with its
+run. And the route **nulls any status not in `TERMINAL_STATUSES`**: the pane
+reads once and never polls, so a `running` badge would still be on screen hours
+after the run ended, while an ending cannot go stale. "Has this run ended" has one
+answer in the codebase and this asks that constant rather than keeping a list of
+the live statuses.
+
+The status is the **latest** run's, by `recordNight`'s sticky rule above: a second
+pass that also selects overwrites `run_id`, so a first run that failed under a
+second that completed shows `completed`, and the Log link beside it opens the same
+run. The tab says nothing about this on the row; the earlier run's status was
+never reachable from the table and the link already behaves the same way, so the
+only new fact is that the badge and the link agree. `dreaming_notes` still holds
+which run claimed which signature. `dreamingLedger.test.ts` pins the join, the
+null for a night with no run, the null for a run row that is gone, and the
+latest-run rule.

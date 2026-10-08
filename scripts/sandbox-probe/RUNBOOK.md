@@ -35,6 +35,7 @@ of the CLI.
 | `seccomp-diff.mjs` | Proves that file is your Docker's default plus four named blocks. Step 1 below. |
 | `probe.sh` | The nine questions. One `Q<n>: TOKEN` line each. |
 | `probe.test.sh` | Drives `probe.sh`'s answer logic against stubbed binaries. No Docker, no money. |
+| `chat-denyread-probe.mjs` | Not one of the nine questions. Run inside the *booted app container* at uid 1000, not in the probe images: whether a `denyRead` over the chat's capability directory keeps a git driver started from a sandboxed `Bash` call from reading a file there (board task `f3cb882a`). Its header has the command. |
 
 Nothing here ships. `docker-compose.yml`, `Dockerfile`, `docker-entrypoint.sh`
 and `src/` are untouched by this directory, and **no sandbox is enabled by

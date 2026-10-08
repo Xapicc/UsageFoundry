@@ -70,6 +70,12 @@ export interface BlockDraft {
   templateId: string;
   mountId: string;
   folder: string;
+  /**
+   * Run and orchestrator blocks only: work in the folder a press of Run chose
+   * from the workflow's list instead of `mountId`/`folder`. Those two are kept
+   * while it is on, so turning it off gives the block its own folder back.
+   */
+  followsChosenFolder: boolean;
   task: string;
   promptOverride: string;
   /**
@@ -1498,6 +1504,23 @@ export function resolveLinkRelease(
 /* ------------------------------------------------------------------ */
 
 /**
+ * Whether a block works in the folder chosen at Run rather than its own.
+ *
+ * The kind is asked as well as the flag because the flag outlives a switch of
+ * kind on the draft, and on any kind but these two `normalizeNode` refuses it
+ * by name — so a block switched to a merge with it still on would otherwise be
+ * unsavable over a switch the panel no longer shows, `provider`'s reason.
+ */
+export function worksInChosenFolder(
+  block: Pick<BlockDraft, "kind" | "followsChosenFolder">,
+): boolean {
+  return (
+    block.followsChosenFolder &&
+    (block.kind === "run" || block.kind === "orchestrator")
+  );
+}
+
+/**
  * The draft as the save and validate routes read it.
  *
  * Nothing here supplies a value the operator has not given. A blank fan-out
@@ -1528,6 +1551,9 @@ export function draftToGraph(draft: CanvasDraft): WireGraph {
       templateId: startsNoRun ? null : b.templateId || null,
       mountId: startsNoRun ? "" : b.mountId,
       folder: startsNoRun ? "" : b.folder,
+      // Absent rather than false when off, so a graph saved before the field
+      // existed goes back exactly as it was read.
+      ...(worksInChosenFolder(b) ? { followsChosenFolder: true } : {}),
       task: startsNoRun ? "" : b.task,
       promptOverride: startsNoRun ? null : b.promptOverride.trim() || null,
       agentId: startsNoRun ? null : b.agentId || null,
@@ -1624,6 +1650,8 @@ export interface WorkflowDraftBody {
     maxSessionFraction: number | null;
     maxWeeklyFraction: number | null;
   };
+  /** The folders Run chooses among, in saved order; the first is a schedule's. */
+  folders: { mountId: string; folder: string }[];
 }
 
 /**
@@ -1652,5 +1680,8 @@ export function draftSignature(body: WorkflowDraftBody): string {
     name: body.name.trim(),
     graph: body.graph,
     instanceBudget: body.instanceBudget,
+    // In order, because the order is saved: the first is the one a schedule
+    // starts in, so a reordered list is a change a save would keep.
+    folders: body.folders,
   });
 }

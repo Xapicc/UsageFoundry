@@ -3229,7 +3229,18 @@ function launchOrchestratorChild(
   // The mounts and not the folder, which a mount already covers: `writeSet`
   // withholds the whole set over one entry it reads as a glob, and a folder is
   // named by whoever saved the block.
-  args.push(...chatSettingsArgs(sandboxOverlayFor({ kind: "chat", dirs: mountDirs })));
+  //
+  // And the directory the capability file is in, which a sandboxed `Bash` call
+  // may not read (`chatCapabilityDenyRead`).
+  args.push(
+    ...chatSettingsArgs(
+      sandboxOverlayFor({
+        kind: "chat",
+        dirs: mountDirs,
+        denyRead: chatCapabilityDenyRead(),
+      }),
+    ),
+  );
 
   // One encoder for every spawn site, so there is one place that knows the
   // shape — silent when a member is only offered, a failed spawn when it is
@@ -4678,6 +4689,43 @@ function mcpConfigBase(): string {
   // directory already exists, so the mode is set rather than requested.
   fs.chmodSync(MCP_CONFIG_BASE, 0o711);
   return MCP_CONFIG_BASE;
+}
+
+/**
+ * What the chat's sandboxed `Bash` calls may not read: the directory its
+ * capability file is in.
+ *
+ * The child holds `UF_CHAT_GID`, which reads that file, and a `Bash` call
+ * running `git` in a checkout runs whatever `filter.<name>.clean`, `smudge`,
+ * `diff.<name>.textconv`, `diff.<name>.command` or `diff.external` a work cycle
+ * planted in that checkout's `.git` — as the child, group included. Git 2.39
+ * has no setting that turns those off (`CHAT_GIT_CONFIG`), so what is left is
+ * keeping the token out of reach of the process that runs them. The CLI reads
+ * `--mcp-config` itself, outside the sandbox, so the tools are unaffected.
+ *
+ * **The base and not the turn's directory**, because the base is fixed and
+ * exists before any turn starts. The sandbox has to bind a mount point over the
+ * path, and the turn's directory is a random name that is gone again when the
+ * turn lands.
+ *
+ * Named only where there is a chat group (`mcpConfigOwnership`). Without one
+ * the file is written under `os.tmpdir()` as the agents' own, which the chat's
+ * write set names and every work cycle can read anyway: denying the temporary
+ * directory would take away the CLI's own scratch space, and would protect
+ * nothing, since this child then holds no capability a work cycle does not.
+ *
+ * **It does nothing where the CLI has no sandbox**, which is every install with
+ * `UF_SANDBOX` unset: `sandboxOverlayFor` withholds the whole overlay there, so
+ * a stock install keeps this gap. That is a decision (board task `f3cb882a`),
+ * recorded in `docs/agent/security/chat-child-config-files.md`.
+ *
+ * @param ownership defaulted from `privsep.ts`; a parameter so the answer can be
+ *   tested without a second uid.
+ */
+export function chatCapabilityDenyRead(
+  ownership: McpConfigOwnership | null = mcpConfigOwnership(),
+): readonly string[] {
+  return ownership === null ? [] : [MCP_CONFIG_BASE];
 }
 
 /**

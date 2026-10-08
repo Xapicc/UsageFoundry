@@ -62,6 +62,7 @@ import {
 } from "./workflows";
 import { modelRefusal, type ModelCatalogueEntry } from "./modelCatalogue";
 import type { LoopBoardCondition } from "./workflowGraph";
+import { chooseFolder, withChosenFolder } from "./workflowGraph";
 import { topologicalOrder, type RunStatus } from "./orchestrator";
 import { readTaskLinks } from "./tasks";
 import type { QueueStatus } from "./mergeQueue";
@@ -785,6 +786,196 @@ describe("normalizeWorkflowInput — templates and mounts", () => {
 });
 
 /* ------------------------------------------------------------------ */
+/* Folders a press of Run chooses among                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One saved graph run against more than one folder.
+ *
+ * Every failure here starts an agent in a repository nobody pointed it at, and
+ * none of them throws: a block that silently followed a choice it was never
+ * set to follow moves a saved graph to another repository, a folder accepted
+ * off the wire that nobody saved is a free path at the press of Run, and a
+ * schedule reading the wrong entry does either with nobody present.
+ */
+describe("normalizeWorkflowInput — folders to choose from at Run", () => {
+  const FOLDERS = [
+    { mountId: "work", folder: "alpha" },
+    { mountId: "other", folder: "" },
+  ];
+
+  it("stores the first saved folder on a block that follows the choice, whatever it sent", () => {
+    const v = value({
+      ...graph([node("a", { followsChosenFolder: true, mountId: "other", folder: "stale" })]),
+      folders: FOLDERS,
+    });
+    assert.deepEqual(v.folders, FOLDERS);
+    assert.equal(v.graph.nodes[0].followsChosenFolder, true);
+    assert.equal(v.graph.nodes[0].mountId, "work");
+    assert.equal(v.graph.nodes[0].folder, "alpha");
+  });
+
+  it("leaves a block with its own folder exactly as it was saved", () => {
+    const v = value({
+      ...graph([node("a", { followsChosenFolder: true }), node("b", { folder: "mine" })]),
+      folders: FOLDERS,
+    });
+    assert.equal(v.graph.nodes[1].folder, "mine");
+    assert.equal("followsChosenFolder" in v.graph.nodes[1], false);
+  });
+
+  it("reads a graph saved before the field as no list and no follower", () => {
+    const v = value(graph([node("a")]));
+    assert.deepEqual(v.folders, []);
+    assert.equal("followsChosenFolder" in v.graph.nodes[0], false);
+    assert.equal(v.graph.nodes[0].folder, "repo");
+  });
+
+  it("refuses a block that follows the choice when no folders are saved", () => {
+    assert.match(
+      error(graph([node("a", { followsChosenFolder: true })])),
+      /“A” follows the folder chosen at Run, but this workflow saves no folders/,
+    );
+  });
+
+  it("refuses a list that no block follows, a choice that would move nothing", () => {
+    assert.match(
+      error({ ...graph([node("a")]), folders: FOLDERS }),
+      /no block follows the chosen folder/,
+    );
+  });
+
+  it("refuses the flag on a block that names no folder of its own", () => {
+    assert.match(
+      error({
+        ...graph([node("a", { followsChosenFolder: true }), gater("g", { followsChosenFolder: true })], [edge("a", "g")]),
+        folders: FOLDERS,
+      }),
+      /“G” is a gate block, which names no folder/,
+    );
+  });
+
+  it("refuses a flag that is not a boolean rather than reading it as one", () => {
+    assert.match(
+      error({ ...graph([node("a", { followsChosenFolder: "yes" })]), folders: FOLDERS }),
+      /followsChosenFolder is true or false/,
+    );
+  });
+
+  it("refuses a saved folder on a workspace that is not mounted", () => {
+    assert.match(
+      error({
+        ...graph([node("a", { followsChosenFolder: true })]),
+        folders: [{ mountId: "elsewhere", folder: "x" }],
+      }),
+      /Folder 1 names a workspace that is not mounted/,
+    );
+  });
+
+  it("refuses the same folder saved twice", () => {
+    assert.match(
+      error({
+        ...graph([node("a", { followsChosenFolder: true })]),
+        folders: [FOLDERS[0], { ...FOLDERS[0] }],
+      }),
+      /Folder 2 is already on the list/,
+    );
+  });
+
+  it("refuses a folder list that is not a list", () => {
+    assert.match(
+      error({ ...graph([node("a")]), folders: "work/alpha" }),
+      /folders: expected a list/,
+    );
+  });
+});
+
+describe("chooseFolder — which saved folder a press of Run works in", () => {
+  const ALPHA = { mountId: "work", folder: "alpha" };
+  const BETA = { mountId: "work", folder: "beta" };
+
+  it("takes a person's choice when it is exactly a saved folder", () => {
+    const choice = chooseFolder([ALPHA, BETA], { kind: "manual", folder: { ...BETA } });
+    assert.deepEqual(choice, { ok: true, folder: BETA });
+  });
+
+  it("refuses a folder that is not on the saved list", () => {
+    const choice = chooseFolder([ALPHA, BETA], {
+      kind: "manual",
+      folder: { mountId: "work", folder: "alpha/../elsewhere" },
+    });
+    assert.ok(!choice.ok);
+    assert.match(choice.reason, /is not one of the folders saved on this workflow/);
+  });
+
+  it("refuses the right path on the wrong workspace", () => {
+    const choice = chooseFolder([ALPHA], { kind: "manual", folder: { mountId: "other", folder: "alpha" } });
+    assert.equal(choice.ok, false);
+  });
+
+  it("refuses to guess when several are saved and none was chosen", () => {
+    const choice = chooseFolder([ALPHA, BETA], { kind: "manual" });
+    assert.ok(!choice.ok);
+    assert.match(choice.reason, /saved against 2 folders/);
+  });
+
+  it("takes the one saved folder when a person chose none", () => {
+    assert.deepEqual(chooseFolder([BETA], { kind: "manual" }), { ok: true, folder: BETA });
+  });
+
+  it("starts a schedule in the first saved folder", () => {
+    assert.deepEqual(chooseFolder([BETA, ALPHA], { kind: "schedule" }), { ok: true, folder: BETA });
+  });
+
+  it("chooses nothing for a workflow that saves no folders, as before", () => {
+    assert.deepEqual(chooseFolder([], { kind: "manual" }), { ok: true, folder: null });
+    assert.deepEqual(chooseFolder([], { kind: "schedule" }), { ok: true, folder: null });
+  });
+
+  it("refuses a choice sent to a workflow that saves no folders", () => {
+    const choice = chooseFolder([], { kind: "manual", folder: ALPHA });
+    assert.ok(!choice.ok);
+    assert.match(choice.reason, /saves no folders to choose from/);
+  });
+});
+
+describe("withChosenFolder — the graph an instance copies", () => {
+  const saved = value({
+    ...graph(
+      [
+        decider("plan", { followsChosenFolder: true }),
+        node("fixed", { mountId: "other", folder: "tools" }),
+        merger("land"),
+      ],
+      [edge("plan", "land"), edge("fixed", "land")],
+    ),
+    folders: [
+      { mountId: "work", folder: "alpha" },
+      { mountId: "other", folder: "beta" },
+    ],
+  });
+
+  it("points every block that follows the choice at the chosen folder", () => {
+    const resolved = withChosenFolder(saved.graph, { mountId: "other", folder: "beta" });
+    const plan = resolved.nodes.find((n) => n.id === "plan")!;
+    assert.equal(plan.mountId, "other");
+    assert.equal(plan.folder, "beta");
+  });
+
+  it("leaves a block with its own folder, and a merge block, where they were", () => {
+    const resolved = withChosenFolder(saved.graph, { mountId: "other", folder: "beta" });
+    const fixed = resolved.nodes.find((n) => n.id === "fixed")!;
+    const land = resolved.nodes.find((n) => n.id === "land")!;
+    assert.deepEqual([fixed.mountId, fixed.folder], ["other", "tools"]);
+    assert.deepEqual([land.mountId, land.folder], ["", ""]);
+  });
+
+  it("returns the saved graph unchanged when nothing was chosen", () => {
+    assert.equal(withChosenFolder(saved.graph, null), saved.graph);
+  });
+});
+
+/* ------------------------------------------------------------------ */
 /* Agents                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -1310,6 +1501,86 @@ describe("normalizeWorkflowInput — continuing a branch", () => {
       ),
       /cannot extend one branch/,
     );
+  });
+
+  it("lets an on-success block and an on-failure block both carry on one branch", () => {
+    // Only one of the two conditions can ever be met, so the two never both
+    // commit: a fixer can carry on the branch its sibling would have.
+    for (const [first, second] of [
+      ["on-success", "on-failure"],
+      ["on-failure", "on-success"],
+    ] as const) {
+      const v = value(
+        graph(
+          [node("a"), node("b"), node("c")],
+          [
+            edge("a", "b", { edge: first, continueBranch: true }),
+            edge("a", "c", { edge: second, continueBranch: true }),
+          ],
+        ),
+      );
+      assert.equal(v.graph.edges.filter((e) => e.continueBranch).length, 2, `${first} then ${second}`);
+    }
+  });
+
+  it("refuses any other pair of conditions carrying on one branch", () => {
+    // on-finish is met by every ending, so it overlaps both halves of the
+    // exempt pair as well as itself; the same condition twice overlaps itself.
+    for (const [first, second] of [
+      ["on-success", "on-success"],
+      ["on-failure", "on-failure"],
+      ["on-finish", "on-success"],
+      ["on-failure", "on-finish"],
+      ["on-finish", "on-finish"],
+    ] as const) {
+      assert.match(
+        error(
+          graph(
+            [node("a"), node("b"), node("c")],
+            [
+              edge("a", "b", { edge: first, continueBranch: true }),
+              edge("a", "c", { edge: second, continueBranch: true }),
+            ],
+          ),
+        ),
+        /cannot extend one branch/,
+        `${first} then ${second}`,
+      );
+    }
+  });
+
+  it("refuses a third block carrying on the branch beside the exempt pair", () => {
+    // Whichever condition it waits on, it overlaps one of the two: and the
+    // refusal names all three, not the pair it would have joined.
+    for (const third of ["on-success", "on-failure", "on-finish"] as const) {
+      const message = error(
+        graph(
+          [node("a"), node("b"), node("c"), node("d")],
+          [
+            edge("a", "b", { edge: "on-success", continueBranch: true }),
+            edge("a", "c", { edge: "on-failure", continueBranch: true }),
+            edge("a", "d", { edge: third, continueBranch: true }),
+          ],
+        ),
+      );
+      assert.match(message, /cannot extend one branch/, third);
+      assert.match(message, /“B”.*“C”.*“D”/, third);
+    }
+  });
+
+  it("does not read an exempt pair out of the same block's other links", () => {
+    // The pair is two links out of *one* block. Two different blocks each
+    // carrying on a different predecessor are two branches, not a rival.
+    const v = value(
+      graph(
+        [node("a"), node("b"), node("c"), node("d")],
+        [
+          edge("a", "c", { edge: "on-success", continueBranch: true }),
+          edge("b", "d", { edge: "on-failure", continueBranch: true }),
+        ],
+      ),
+    );
+    assert.equal(v.graph.edges.length, 2);
   });
 
   it("refuses a hand-over from guards that work in the folder", () => {

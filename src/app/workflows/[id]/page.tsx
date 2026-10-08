@@ -7,6 +7,7 @@ import { useParams, useRouter } from "next/navigation";
 import type {
   RunTemplateDTO,
   WorkflowDTO,
+  WorkflowFolderDTO,
   WorkflowInstanceDTO,
 } from "@/lib/apiTypes";
 import { boardThresholds } from "@/lib/apiTypes";
@@ -28,6 +29,7 @@ import { startPoll } from "@/lib/poll";
 import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonLink, ButtonRow } from "@/components/ui/Button";
 import { Card, CardTitle, Empty, SkeletonText } from "@/components/ui/Card";
+import { Select } from "@/components/ui/Field";
 import { ListGroup, ListRow } from "@/components/ui/List";
 import { Notice } from "@/components/ui/Notice";
 import { Sheet } from "@/components/ui/Sheet";
@@ -63,6 +65,15 @@ function LimitValue({ set, children }: { set: boolean; children: ReactNode }) {
 /** What Run's `aria-describedby` points at while an earlier press is live. */
 const LIVE_NOTICE_ID = "workflow-live-notice";
 
+/**
+ * A saved folder's identity, as the Run picker holds it. Both halves, because
+ * one mount may be saved at several folders; NUL between them because neither
+ * a mount id nor a path can hold one, so no two entries share a key.
+ */
+function folderKey(entry: Pick<WorkflowFolderDTO, "mountId" | "folder">): string {
+  return `${entry.mountId}\u0000${entry.folder}`;
+}
+
 export default function WorkflowPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
@@ -93,6 +104,9 @@ export default function WorkflowPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState<"run" | "duplicate" | "delete" | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // A `folderKey`, or null for "the first saved one". Never trusted on its own:
+  // `runFolder` below reads it against the folders the newest read saved.
+  const [chosenFolderKey, setChosenFolderKey] = useState<string | null>(null);
   /** Which read is allowed to write; see `load`. */
   const loadRequest = useRef(0);
 
@@ -225,11 +239,20 @@ export default function WorkflowPage() {
     kind: "run" | "duplicate" | "delete",
     path: string,
     method: string,
+    body?: unknown,
   ) {
     setBusy(kind);
     setActionError(null);
     try {
-      const res = await fetch(path, { method });
+      const res = await fetch(path, {
+        method,
+        ...(body === undefined
+          ? {}
+          : {
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(body),
+            }),
+      });
       const data = (await res.json().catch(() => ({}))) as {
         error?: string;
         instance?: WorkflowInstanceDTO;
@@ -289,6 +312,13 @@ export default function WorkflowPage() {
   }
 
   const runIsRefused = (workflow.liveRunCount ?? 0) > 0;
+  // Derived on every render rather than reset by an effect: an edit elsewhere
+  // can drop the chosen entry between two polls, and the picker then shows the
+  // first saved folder — so that is what Run sends, never the stale choice the
+  // server would refuse.
+  const runFolder =
+    workflow.folders.find((f) => folderKey(f) === chosenFolderKey) ??
+    workflow.folders.at(0);
 
   return (
     <>
@@ -312,12 +342,48 @@ export default function WorkflowPage() {
               than Duplicate beside it. The sheet behind it is unchanged and is
               still what actually confirms. */}
           <ButtonRow>
+            {/* Beside Run because it is what Run is pressed with. The width is
+                on the wrapper, for `RunLand`'s reason; `max-w-full` rather than
+                its `shrink-0`, because a label is a path of any length and a
+                select that cannot narrow past it pushes the pane sideways. */}
+            {workflow.folders.length > 1 && runFolder && (
+              <div className="max-w-full">
+                <Select
+                  value={folderKey(runFolder)}
+                  onChange={(e) => setChosenFolderKey(e.target.value)}
+                  aria-label="Folder to run against"
+                >
+                  {workflow.folders.map((f) => (
+                    <option key={folderKey(f)} value={folderKey(f)}>
+                      {f.label}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            )}
+            {workflow.folders.length === 1 && runFolder && (
+              <span className="min-w-0 break-words text-sm text-ink-muted">
+                Runs in {runFolder.label}
+              </span>
+            )}
             {/* Off while an earlier press is still going, with the notice below
                 as its stated reason. The refusal itself stays `startWorkflow`'s:
                 this reads the same fact a poll earlier, so the 400 is left for
                 the press that races it. */}
             <Button
-              onClick={() => act("run", `/api/workflows/${id}/run`, "POST")}
+              onClick={() =>
+                act(
+                  "run",
+                  `/api/workflows/${id}/run`,
+                  "POST",
+                  // No body at all without saved folders: that is the request
+                  // every press sent before they existed, and the one the
+                  // server still reads as "no choice".
+                  runFolder && {
+                    folder: { mountId: runFolder.mountId, folder: runFolder.folder },
+                  },
+                )
+              }
               busy={busy === "run"}
               disabled={busy !== null || runIsRefused}
               aria-describedby={runIsRefused ? LIVE_NOTICE_ID : undefined}
@@ -454,6 +520,14 @@ export default function WorkflowPage() {
         newWorkPaused={newWorkPaused}
         onChanged={load}
       />
+      {/* A schedule has nobody to choose, so the server gives it the first
+          entry whatever the picker beside Run is showing. */}
+      {workflow.folders.length > 0 && (
+        <div className="mt-3 text-sm text-ink-muted">
+          A scheduled start works in {workflow.folders[0].label}, the first saved
+          folder.
+        </div>
+      )}
 
       {/* `default` rather than `primary`, and no card on this page takes that
           weight: the subject here is the graph, and the graph is on the canvas
@@ -649,9 +723,16 @@ export default function WorkflowPage() {
                         n.kind !== "review" &&
                         n.kind !== "gate" && (
                         <>
-                          <div className="mono mt-0.5 break-words text-ink-muted">
-                            {n.mountId} / {n.folder || "."}
-                          </div>
+                          {/* Its stored folder is only the first saved one, a
+                              placeholder: printed as a path, it names a folder
+                              a press of Run may well not choose. */}
+                          {n.followsChosenFolder ? (
+                            <div className="mt-0.5 text-ink-muted">Chosen at Run</div>
+                          ) : (
+                            <div className="mono mt-0.5 break-words text-ink-muted">
+                              {n.mountId} / {n.folder || "."}
+                            </div>
+                          )}
                           <div
                             className="mt-1 max-w-[56ch] truncate text-ink-muted"
                             title={n.task}

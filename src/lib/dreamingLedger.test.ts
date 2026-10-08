@@ -41,8 +41,18 @@ before(async () => {
 });
 
 beforeEach(() => {
-  dbMod.db().exec("DELETE FROM dreaming_notes; DELETE FROM dreaming_nights;");
+  dbMod.db().exec("DELETE FROM dreaming_notes; DELETE FROM dreaming_nights; DELETE FROM runs;");
 });
+
+/** Just the NOT NULL columns of `runs`; every other column has a default. */
+function insertRun(id: string, status: string): void {
+  dbMod
+    .db()
+    .prepare(
+      "INSERT INTO runs (id, folder, prompt, status, budget, created_at) VALUES (?,?,?,?,?,?)",
+    )
+    .run(id, "/tmp/vault", "dream", status, "{}", 1_700_000_000_000);
+}
 
 const rollup = (signature: string, days: number): SignatureRollup => ({
   signature,
@@ -146,6 +156,69 @@ describe("recordNight", () => {
     const [row] = ledger.listNights();
     assert.equal(row.outcome, "refused");
     assert.equal(row.reason, "No knowledge base is configured.");
+  });
+});
+
+describe("listNights run status", () => {
+  const night = (extra = {}) => ({
+    night: "2026-09-02",
+    startedAt: 1_700_000_000_000,
+    outcome: "selected" as const,
+    reason: null,
+    runId: null,
+    selected: 3,
+    ...extra,
+  });
+
+  it("reports a failed run on a night still recorded as selected", () => {
+    // The row is never rewritten from the run, so 'selected' is all the night
+    // says about a run that was created and then failed. The status has to come
+    // from the run's own row.
+    insertRun("run-1", "failed");
+    ledger.recordNight(night({ runId: "run-1" }));
+
+    const [row] = ledger.listNights();
+    assert.equal(row.outcome, "selected");
+    assert.equal(row.runStatus, "failed");
+  });
+
+  it("says nothing about a night that never created a run", () => {
+    ledger.recordNight(night({ outcome: "quiet", selected: 0 }));
+    assert.equal(ledger.listNights()[0].runStatus, null);
+  });
+
+  it("keeps a night whose run row has been deleted", () => {
+    // Retention deletes old runs. An inner join would drop the night from the
+    // list along with the run; the night happened either way.
+    ledger.recordNight(night({ runId: "run-gone" }));
+
+    const rows = ledger.listNights();
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].runId, "run-gone");
+    assert.equal(rows[0].runStatus, null);
+  });
+
+  it("reads the newer run's status when a second pass also selected", () => {
+    // `recordNight` moves run_id to the newer run, so the first run's failure is
+    // no longer reachable from this row and must not be the one shown.
+    insertRun("run-1", "failed");
+    insertRun("run-2", "completed");
+    ledger.recordNight(night({ runId: "run-1" }));
+    ledger.recordNight(night({ runId: "run-2" }));
+
+    assert.equal(ledger.listNights()[0].runStatus, "completed");
+  });
+
+  it("keeps the run's status through a later quiet pass", () => {
+    // A quiet pass does not downgrade the night and does not clear run_id, so
+    // the failed run is still the night's run.
+    insertRun("run-1", "failed");
+    ledger.recordNight(night({ runId: "run-1" }));
+    ledger.recordNight(night({ outcome: "quiet", selected: 0 }));
+
+    const [row] = ledger.listNights();
+    assert.equal(row.outcome, "selected");
+    assert.equal(row.runStatus, "failed");
   });
 });
 

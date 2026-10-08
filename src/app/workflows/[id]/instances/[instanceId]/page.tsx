@@ -429,6 +429,8 @@ function pickUpRequest(p: WorkflowPickUpDTO): Record<string, string> {
       return { action: "leave-behind", runId: p.runId };
     case "merge":
       return { action: "retry-merge", nodeId: p.nodeId };
+    case "deliver":
+      return { action: "retry-deliver", nodeId: p.nodeId };
     case "orchestrator":
       return { action: "retry-orchestrator", nodeId: p.nodeId };
     case "loop":
@@ -452,6 +454,12 @@ const PICK_UP_SHEET: Record<
     confirm: "Retry merge",
     body:
       "Every branch it was given that is not on its target yet goes back through the merge queue, into your checkout; a branch already landed is skipped. If the section repeats, its next pass starts once this one has landed.",
+  },
+  deliver: {
+    title: (name) => `Retry “${name}”?`,
+    confirm: "Retry delivery",
+    body:
+      "Pushes the branches it missed and opens a pull request for each. A branch that already has one is skipped, so nothing is pushed twice.",
   },
   orchestrator: {
     title: (name) => `Retry “${name}”?`,
@@ -478,9 +486,9 @@ const PICK_UP_SHEET: Record<
  * completes. The actions here are the ones no other page can take.
  *
  * Each goes through a `Sheet`: each releases work straight away — a merge into
- * the operator's checkout, a deciding turn whose runs start unattended, a
- * loop's next pass — which is the kind of action the grouping vocabulary
- * reserves one for.
+ * the operator's checkout, a push to a remote, a deciding turn whose runs start
+ * unattended, a loop's next pass — which is the kind of action the grouping
+ * vocabulary reserves one for.
  */
 function PickUpCard({
   pickUps,
@@ -591,9 +599,18 @@ function PickUpCard({
                 key={p.nodeId}
                 label={<span className="font-medium text-ink">{p.nodeName}</span>}
                 description={
-                  p.retryRefusal ??
-                  p.error ??
-                  (p.kind === "merge" ? "The merge failed" : "The turn failed")
+                  // A deliver block's note names the pull requests it opened, and
+                  // a URL has no break opportunity: without `anywhere` the row
+                  // runs under its button at phone width.
+                  <span className="[overflow-wrap:anywhere]">
+                    {p.retryRefusal ??
+                      p.error ??
+                      (p.kind === "merge"
+                        ? "The merge failed"
+                        : p.kind === "deliver"
+                          ? "The delivery failed"
+                          : "The turn failed")}
+                  </span>
                 }
               >
                 {p.retryRefusal === null && (
@@ -603,7 +620,7 @@ function PickUpCard({
                     onClick={() => setPending(p)}
                     disabled={busy}
                   >
-                    {p.kind === "merge" ? "Retry merge" : "Decide again"}
+                    {PICK_UP_SHEET[p.kind].confirm}
                   </Button>
                 )}
               </ListRow>
@@ -1364,6 +1381,11 @@ export default function WorkflowInstancePage() {
                 : (instance.status === "started" || instance.status === "blocked") &&
                   ` ${instanceOutcomeDetail(instance)}`}
             </span>
+            {instance.chosenFolder && (
+              <span className="text-sm text-ink-muted">
+                Folder: {instance.chosenFolder.label}
+              </span>
+            )}
           </div>
           {/* Not disabled by `confirmStop`: that lands in the same commit that
               opens the sheet, so the button is blurred to <body> before

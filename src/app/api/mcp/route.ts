@@ -2934,6 +2934,10 @@ function workflowReport() {
           liveRuns: liveRunsOf(w.id).length,
           liveBlocks: liveBlocksOf(w.id),
           instanceBudget: w.instanceBudget,
+          // The saved folders Run chooses among. Reported so a model reading a
+          // block that follows the choice does not take the stored first folder
+          // for the only one it works in.
+          folders: w.folders ?? [],
           // Reported so a schedule is proposed against what is already there
           // rather than beside it: a workflow holds one, and a proposal for a
           // scheduled workflow replaces its recurrence on approval.
@@ -2956,6 +2960,7 @@ function workflowReport() {
               n.kind === "merge" || n.kind === "deliver" || n.kind === "gate"
                 ? null
                 : n.folder,
+            ...(n.followsChosenFolder ? { followsChosenFolder: true } : {}),
             fanOut: n.fanOut,
             after: w.graph.edges
               // A `repeats` link is containment, not a wait: the loop it names
@@ -5638,6 +5643,7 @@ function proposeRun(args: Record<string, unknown>, chatId: string, decision: Mod
     // refuses the correction of any card that carries a branch on.
     const rival = rivalContinuation(
       continuing[0].specId,
+      continuing[0].edge,
       proposals.filter((p) => p.id !== superseded?.id).map((p) => ({
         specId: p.spec_id,
         title: p.title,
@@ -5652,7 +5658,8 @@ function proposeRun(args: Record<string, unknown>, chatId: string, decision: Mod
         : "That one carries no id, so nothing can be chained behind it: drop ";
       return text(
         `${named} is already waiting to carry on "${continuing[0].specId}"'s ` +
-          `branch, and two runs cannot extend the same one. ${instead}` +
+          "branch, and two runs cannot extend the same one unless one starts only " +
+          `on success and the other only on failure. ${instead}` +
           "continueBranch so this one cuts a branch of its own.",
         true,
       );

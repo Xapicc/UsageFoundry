@@ -1851,6 +1851,16 @@ function migrate(db: Database.Database) {
   addColumn(db, "workflow_instances", "origin", "TEXT");
   addColumn(db, "workflow_instances", "origin_ref", "TEXT");
 
+  // The folders a press of Run may choose among, as a JSON list of
+  // `{mountId, folder}`, and the one an instance was started against. Null on
+  // every row written before this, which reads as "no list" and "no choice":
+  // such a workflow's blocks each name their own folder and Run asks nothing,
+  // exactly as before. Two places for the instance budget's reason — the
+  // workflow's is what a person edits, the instance's is what this press of
+  // Run chose, and no route writes the instance's copy.
+  addColumn(db, "workflows", "folders", "TEXT");
+  addColumn(db, "workflow_instances", "chosen_folder", "TEXT");
+
   // The one correction ever made to `runs.origin` after the fact, and the only
   // rewrite of it that should exist. Until `INSTANCE_COLUMNS` selected the
   // instance's own `origin`, every run a *scheduled* instance created after

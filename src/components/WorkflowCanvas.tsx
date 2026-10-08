@@ -25,6 +25,7 @@ import {
   regionBounds,
   resolveLinkRelease,
   resolveRepeat,
+  worksInChosenFolder,
   type BlockDraft,
   type Box,
   type LinkDraft,
@@ -1463,7 +1464,9 @@ export function WorkflowCanvas({
                       ? "every branch in front of it"
                       : block.kind === "gate"
                         ? "holds what is behind it"
-                        : `${block.mountId || "—"} / ${block.folder || "."}`}
+                        : worksInChosenFolder(block)
+                          ? "Chosen at Run"
+                          : `${block.mountId || "—"} / ${block.folder || "."}`}
                   </div>
                   <div className="mt-0.5 flex-1 overflow-hidden text-xs leading-snug text-ink-faint">
                     <span className="line-clamp-2">
@@ -1706,13 +1709,15 @@ export function WorkflowCanvas({
                   block.kind !== "deliver" &&
                   block.kind !== "review" &&
                   !isLoop &&
-                  block.mountId ? (
+                  (block.mountId || worksInChosenFolder(block)) ? (
                     /* `truncate` for the card's reason: a folder is the one
                        fact on this row with no length a reader can predict,
                        and four wrapped lines of it would bury the name above
                        it. The whole path is one tap away in the panel. */
                     <span className="mono mt-0.5 block truncate text-xs text-ink-muted">
-                      {block.mountId} / {block.folder || "."}
+                      {worksInChosenFolder(block)
+                        ? "Chosen at Run"
+                        : `${block.mountId} / ${block.folder || "."}`}
                     </span>
                   ) : null}
                 </button>

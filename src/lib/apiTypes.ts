@@ -2300,6 +2300,12 @@ export interface WorkflowNodeDTO {
   /** Path within the mount. `""` is the mount root, and is a real answer. */
   folder: string;
   /**
+   * True when the block works in the folder a press of Run chose from the
+   * workflow's `folders`; `mountId`/`folder` then hold the first saved one.
+   * Absent is false. Only on a run or orchestrator block.
+   */
+  followsChosenFolder?: boolean;
+  /**
    * A run block's task; an orchestrator block's brief for what to decide.
    */
   task: string;
@@ -2634,12 +2640,28 @@ export interface WorkflowScheduleDTO {
   refusal: string | null;
 }
 
+/**
+ * One folder a workflow is saved against, as the Run control and the editor
+ * read it. `mountId` and `folder` are what a press of Run sends back, exactly;
+ * `label` is for reading and is never sent.
+ */
+export interface WorkflowFolderDTO {
+  mountId: string;
+  folder: string;
+  label: string;
+}
+
 export interface WorkflowDTO {
   id: string;
   name: string;
   nodes: WorkflowNodeDTO[];
   edges: WorkflowEdgeDTO[];
   instanceBudget: InstanceBudgetDTO;
+  /**
+   * The folders Run chooses among, in saved order; the first is the one a
+   * schedule uses. Empty on a workflow whose blocks each name their own.
+   */
+  folders: WorkflowFolderDTO[];
   createdAt: number;
   updatedAt: number;
   /** Runs from this workflow that have not finished. Empty on most reads. */
@@ -2689,7 +2711,7 @@ export interface WorkflowDTO {
  */
 export type WorkflowListItemDTO = Omit<
   WorkflowDTO,
-  "nodes" | "edges" | "instanceBudget" | "scheduleRefusal"
+  "nodes" | "edges" | "instanceBudget" | "scheduleRefusal" | "folders"
 > & {
   /** How many blocks the saved graph holds. Both lists print exactly this. */
   nodeCount: number;
@@ -2936,7 +2958,8 @@ export type WorkflowPickUpDTO =
       leaveBehindRefusal: string | null;
     }
   | {
-      kind: "merge";
+      /** A merge or deliver block that failed; the page words the press by `kind`. */
+      kind: "merge" | "deliver";
       nodeId: string;
       nodeName: string;
       error: string | null;
@@ -3018,6 +3041,8 @@ export interface WorkflowInstanceDTO {
   blockedCount: number;
   /** The limits it was started under — a copy, not the live workflow's. */
   instanceBudget: InstanceBudgetDTO;
+  /** The saved folder this press of Run chose, or null if it chose none. */
+  chosenFolder: WorkflowFolderDTO | null;
   /**
    * What its blocks have spent together.
    *
@@ -4863,6 +4888,18 @@ export interface DreamingNightDTO {
   reason: string | null;
   runId: string | null;
   selected: number;
+  /**
+   * How `runId`'s run ended, as `RunDTO["status"]`; null while it is still live.
+   * Also null when the night created no run or its run row has been deleted.
+   *
+   * Ended runs only, because the pane reads once on mount and never polls: a
+   * `running` shown here would be a claim about a moment that has passed, and an
+   * ending cannot go stale. `outcome` above is the night's decision and stays
+   * `selected` whatever happens to the run; this is the run's own word. It
+   * belongs to the **latest** run of the night — a second pass that also selects
+   * replaces `runId`, and this follows it.
+   */
+  runEnding: RunDTO["status"] | null;
 }
 
 /**

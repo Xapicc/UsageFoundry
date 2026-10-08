@@ -4,6 +4,7 @@ import {
   boardReadings,
   currentKnowledge,
   folderRefusal,
+  listedFolderRefusal,
   normalizeWorkflowInput,
 } from "../../../../lib/workflows";
 import { readJsonObject } from "../../../../lib/http";
@@ -56,7 +57,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: parsed.error, boards });
   }
 
-  const missing = folderRefusal(parsed.value.graph);
+  const missing =
+    folderRefusal(parsed.value.graph) ?? listedFolderRefusal(parsed.value.folders);
   if (missing) return NextResponse.json({ ok: false, error: missing, boards });
 
   return NextResponse.json({ ok: true, boards });

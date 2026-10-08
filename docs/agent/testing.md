@@ -22,6 +22,7 @@ Twenty-two are renderings rather than functions — every `*.test.tsx` in the tr
 
 | Test file | Also in |
 |---|---|
+| `branchRival.test.ts` |  |
 | `budget.test.ts` | [harnesses] |
 | `cutOffCheckout.test.ts` |  |
 | `diff.test.ts` |  |

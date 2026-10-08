@@ -218,10 +218,23 @@ The rules these entries back are `docs/agent/security/chat-child-config-files.md
   output as without the variables.
 
 - **Whether `denyRead` keeps a capability file from a chat `Bash` call.**
-  Board task `f3cb882a` would add `/run/uf-mcp` to the chat's overlay, and
-  nothing here could start the CLI's sandbox to observe it. To settle it, in a
-  booted `UF_SANDBOX=1` container and never against the live app's
-  `/run/uf-mcp`, run the stub-API probe as uid 1000 with the chat's flags. Use
-  an overlay denying a scratch directory that holds a marker file, and a
-  `Bash` call running `git status` in a scratch repository whose planted
-  `filter.x.clean` copies that file out. Expect the copy to fail.
+  Board task `f3cb882a` put `/run/uf-mcp` into the chat's overlay
+  (`chatCapabilityDenyRead`, under a chat group only), and nothing in an agent's
+  sandbox can start the CLI's sandbox to observe it. Unmeasured: that a `Bash`
+  call cannot read the denied directory, that a planted git driver is the
+  process that fails, and that `--mcp-config` still connects from inside it.
+  `scripts/sandbox-probe/chat-denyread-probe.mjs` does the whole of it in one
+  command, and was run only as far as the nested failure above: it reached the
+  stub API, connected the stub MCP server from its config file, and got the
+  `Bash` call to a sandbox that answered `Sandbox is required but failed to
+  initialize` (exit 2, nothing measured). To settle it, in a booted
+  `UF_SANDBOX=1` container, never against the live app's `/run/uf-mcp`, run
+  `docker compose cp scripts/sandbox-probe/chat-denyread-probe.mjs usagefoundry:/tmp/chat-denyread-probe.mjs`
+  and `docker compose exec -u 1000:1000 usagefoundry node /tmp/chat-denyread-probe.mjs`.
+  Expect `PASSED` and exit 0: the control turn leaked a marker out of a scratch
+  directory through a planted `filter.x.clean`, the turn with `denyRead` over
+  that directory did not, the MCP server connected from a config file inside
+  it, and a second directory denied from the user scope's `settings.json`
+  stayed denied beside the overlay's (the stand-in for the managed policy's own
+  `denyRead`, which an overlay that replaced it would drop). Exit 2 means
+  nothing was measured, and the output says which part.

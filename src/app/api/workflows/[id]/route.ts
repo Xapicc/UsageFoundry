@@ -4,6 +4,7 @@ import {
   deleteWorkflow,
   findInstances,
   folderRefusal,
+  listedFolderRefusal,
   getWorkflow,
   liveBlocksOf,
   liveRunsOf,
@@ -72,7 +73,8 @@ async function putHandler(req: Request, ctx: Ctx) {
     return NextResponse.json({ error: parsed.error }, { status: 400 });
   }
 
-  const missing = folderRefusal(parsed.value.graph);
+  const missing =
+    folderRefusal(parsed.value.graph) ?? listedFolderRefusal(parsed.value.folders);
   if (missing) return NextResponse.json({ error: missing }, { status: 400 });
 
   try {
