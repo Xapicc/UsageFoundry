@@ -13,7 +13,7 @@ import {
   type BadgeTone,
 } from "@/lib/format";
 import { Badge } from "@/components/ui/Badge";
-import { Button, ButtonRow } from "@/components/ui/Button";
+import { Button, ButtonLink, ButtonRow } from "@/components/ui/Button";
 import { Card, CardTitle } from "@/components/ui/Card";
 import { Input, Select } from "@/components/ui/Field";
 import { ListGroup, ListRow } from "@/components/ui/List";
@@ -141,11 +141,19 @@ function draftOf(schedule: WorkflowScheduleDTO | null, browserZone: string): Dra
 export function WorkflowSchedule({
   workflowId,
   schedule,
+  refusal,
   newWorkPaused,
   onChanged,
 }: {
   workflowId: string;
   schedule: WorkflowScheduleDTO | null;
+  /**
+   * Why a schedule on this workflow would be refused, in the server's own
+   * words (`WorkflowDTO.scheduleRefusal`), or null. Said instead of the form
+   * rather than after it is filled in; the browser works none of it out, and the
+   * server asks again at the save and at every fire.
+   */
+  refusal: string | null;
   /**
    * The install-wide hold. A held install starts nothing, so a "Next start"
    * beside it names an occurrence that will be recorded as missed — and looks,
@@ -257,10 +265,27 @@ export function WorkflowSchedule({
             <div className="text-sm text-ink-muted">
               Nothing starts this workflow but you.
             </div>
-            <Button variant="secondary" size="compact" onClick={openEditor}>
-              Add schedule
-            </Button>
+            {refusal === null ? (
+              <Button variant="secondary" size="compact" onClick={openEditor}>
+                Add schedule
+              </Button>
+            ) : (
+              // The limits the sentence points at are edited in the editor, not
+              // on this page, which only shows them.
+              <ButtonLink
+                href={`/workflows/${workflowId}/edit`}
+                variant="secondary"
+                size="compact"
+              >
+                Edit workflow
+              </ButtonLink>
+            )}
           </div>
+        )}
+        {!schedule && !editing && refusal !== null && (
+          <Notice tone="warn" className="mt-4">
+            {refusal}
+          </Notice>
         )}
 
         {schedule && !editing && (

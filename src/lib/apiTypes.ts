@@ -2553,6 +2553,16 @@ export interface WorkflowDTO {
   lastRunAt?: number | null;
   /** Null when nothing starts this workflow but a person. */
   schedule?: WorkflowScheduleDTO | null;
+  /**
+   * Why a schedule on this workflow would be refused as things stand, or null.
+   *
+   * The server's own `scheduleRefusal(workflow)`, sent so the schedule card can
+   * say so before it offers a form that would only be answered with it — and so
+   * the browser decides nothing about it. A reading and never the gate: the same
+   * check runs again when a schedule is saved and at every fire. Distinct from
+   * `schedule.refusal`, which is about a schedule that already exists.
+   */
+  scheduleRefusal: string | null;
 }
 
 /**
@@ -2578,7 +2588,7 @@ export interface WorkflowDTO {
  */
 export type WorkflowListItemDTO = Omit<
   WorkflowDTO,
-  "nodes" | "edges" | "instanceBudget"
+  "nodes" | "edges" | "instanceBudget" | "scheduleRefusal"
 > & {
   /** How many blocks the saved graph holds. Both lists print exactly this. */
   nodeCount: number;

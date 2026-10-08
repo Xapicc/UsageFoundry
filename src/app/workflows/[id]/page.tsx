@@ -449,6 +449,7 @@ export default function WorkflowPage() {
       <WorkflowSchedule
         workflowId={id}
         schedule={workflow.schedule ?? null}
+        refusal={workflow.scheduleRefusal}
         newWorkPaused={newWorkPaused}
         onChanged={load}
       />
