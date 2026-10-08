@@ -68,6 +68,7 @@ function block(id: string, over: Partial<BlockDraft> = {}): BlockDraft {
     templateId: "",
     mountId: "main",
     folder: "",
+    followsChosenFolder: false,
     task: "do the thing",
     promptOverride: "",
     agentId: "",
@@ -526,6 +527,7 @@ function signature(
   links: LinkDraft[] = [],
   over: Partial<WorkflowDraftBody["instanceBudget"]> = {},
   name = "Nightly maintenance",
+  folders: WorkflowDraftBody["folders"] = [],
 ): string {
   return draftSignature({
     name,
@@ -536,6 +538,7 @@ function signature(
       maxWeeklyFraction: null,
       ...over,
     },
+    folders,
   });
 }
 
@@ -556,6 +559,11 @@ test("every value a block's kind carries moves the signature", () => {
     { what: "templateId", base: {}, edit: { templateId: "tpl-1" } },
     { what: "mountId", base: {}, edit: { mountId: "other" } },
     { what: "folder", base: {}, edit: { folder: "sub/dir" } },
+    {
+      what: "followsChosenFolder",
+      base: {},
+      edit: { followsChosenFolder: true },
+    },
     { what: "task", base: {}, edit: { task: "something else entirely" } },
     { what: "promptOverride", base: {}, edit: { promptOverride: "be brief" } },
     { what: "agentId", base: {}, edit: { agentId: "agent-1" } },
@@ -692,6 +700,11 @@ test("a value the block's kind does not carry is not unsaved work", () => {
     signature([block("a", { kind: "merge", agentId: "agent-1" })]),
     signature([block("a", { kind: "merge" })]),
   );
+  // And the folder chosen at Run, which a merge block has none of its own for.
+  assert.equal(
+    signature([block("a", { kind: "merge", followsChosenFolder: true })]),
+    signature([block("a", { kind: "merge" })]),
+  );
 });
 
 test("a link's condition and its branch flag are both work", () => {
@@ -709,6 +722,40 @@ test("the workflow name and each of its limits are work", () => {
   assert.notEqual(signature(blocks, [], { maxInstanceCostUSD: "40" }), bare);
   assert.notEqual(signature(blocks, [], { maxSessionFraction: 0.5 }), bare);
   assert.notEqual(signature(blocks, [], { maxWeeklyFraction: 0.5 }), bare);
+});
+
+test("the folders Run chooses among, and their order, are work", () => {
+  // The first is the one a schedule starts in, so a reorder is a saved edit
+  // that moves the schedule, and leaving must not discard it without a word.
+  const blocks = [block("a", { followsChosenFolder: true })];
+  const app = { mountId: "main", folder: "app" };
+  const docs = { mountId: "main", folder: "docs" };
+  const both = signature(blocks, [], {}, undefined, [app, docs]);
+  assert.notEqual(signature(blocks, [], {}, undefined, [app]), both);
+  assert.notEqual(signature(blocks, [], {}, undefined, [docs, app]), both);
+});
+
+/**
+ * A flag dropped on the way out is a block that silently works in its own
+ * folder while the rest of the graph follows the one chosen at Run. A flag
+ * sent for another kind is refused by name over a switch the panel no longer
+ * shows. And a flag sent as `false` is a graph saved before it existed going
+ * back different from how it was read.
+ */
+test("only a run or orchestrator block that follows the chosen folder says so on the wire", () => {
+  const [run, orchestrator, merge, own] = draftToGraph({
+    blocks: [
+      block("r", { followsChosenFolder: true }),
+      block("o", { kind: "orchestrator", followsChosenFolder: true }),
+      block("m", { kind: "merge", followsChosenFolder: true }),
+      block("own"),
+    ],
+    links: [],
+  }).nodes;
+  assert.equal(run.followsChosenFolder, true);
+  assert.equal(orchestrator.followsChosenFolder, true);
+  assert.ok(!("followsChosenFolder" in merge));
+  assert.ok(!("followsChosenFolder" in own));
 });
 
 test("whitespace either side of the name is not work", () => {
@@ -1736,6 +1783,7 @@ test("a frame built and a member moved are both changes a save would keep", () =
       maxSessionFraction: null,
       maxWeeklyFraction: null,
     },
+    folders: [],
   });
 
   const framed: CanvasDraft = {

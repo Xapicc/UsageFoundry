@@ -1364,6 +1364,11 @@ export default function WorkflowInstancePage() {
                 : (instance.status === "started" || instance.status === "blocked") &&
                   ` ${instanceOutcomeDetail(instance)}`}
             </span>
+            {instance.chosenFolder && (
+              <span className="text-sm text-ink-muted">
+                Folder: {instance.chosenFolder.label}
+              </span>
+            )}
           </div>
           {/* Not disabled by `confirmStop`: that lands in the same commit that
               opens the sheet, so the button is blurred to <body> before

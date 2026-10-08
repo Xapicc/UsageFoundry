@@ -49,6 +49,7 @@ import {
   sectionLinkStatement,
   sectionOf,
   spotBeside,
+  worksInChosenFolder,
   worstCaseMembers,
   worstCaseRuns,
   type BlockDraft,
@@ -330,6 +331,7 @@ function emptyBlock(id: string, mountId: string, kind: WorkflowNodeKind): BlockD
     templateId: "",
     mountId,
     folder: "",
+    followsChosenFolder: false,
     task: "",
     promptOverride: "",
     agentId: "",
@@ -359,6 +361,9 @@ function toBlocks(workflow: WorkflowDTO): BlockDraft[] {
     templateId: n.templateId ?? "",
     mountId: n.mountId,
     folder: n.folder,
+    // Absent on every graph saved before the field existed, which is a block
+    // working in its own folder — `normalizeNode`'s reading.
+    followsChosenFolder: n.followsChosenFolder === true,
     task: n.task,
     promptOverride: n.promptOverride ?? "",
     agentId: n.agentId ?? "",
@@ -463,6 +468,19 @@ export function WorkflowEditor({
   const [maxWeeklyFraction, setMaxWeeklyFraction] = useState(
     pctField(workflow?.instanceBudget.maxWeeklyFraction),
   );
+  // The folders a press of Run chooses among. Each row carries an id because
+  // Move up reorders them, and a key on the position would hand one row's
+  // controls, and the focus in them, to its neighbour. Seeded by position,
+  // which is the same on the server pass and at hydration; a row added later
+  // takes its id on the press, for `nextId`'s reason below.
+  const [runFolders, setRunFolders] = useState<RunFolderDraft[]>(() =>
+    (workflow?.folders ?? []).map(({ mountId, folder }, i) => ({
+      id: `folder-${i}`,
+      mountId,
+      folder,
+    })),
+  );
+  const nextFolderId = useRef(workflow?.folders.length ?? 0);
   /**
    * Whether a fraction guard would have anything to measure against.
    *
@@ -866,6 +884,14 @@ export function WorkflowEditor({
     );
   }, []);
 
+  const addRunFolder = useCallback(() => {
+    const id = `folder-${nextFolderId.current++}`;
+    setRunFolders((prev) => [
+      ...prev,
+      { id, mountId: defaultMount(), folder: "" },
+    ]);
+  }, [defaultMount]);
+
   /* ---------------------------------------------------------------- */
   /* What the server says about it                                     */
   /* ---------------------------------------------------------------- */
@@ -883,6 +909,7 @@ export function WorkflowEditor({
         maxSessionFraction: pctSubmit(maxSessionFraction),
         maxWeeklyFraction: pctSubmit(maxWeeklyFraction),
       },
+      folders: runFolders.map(({ mountId, folder }) => ({ mountId, folder })),
     }),
     [
       name,
@@ -892,6 +919,7 @@ export function WorkflowEditor({
       maxInstanceCostUSD,
       maxSessionFraction,
       maxWeeklyFraction,
+      runFolders,
     ],
   );
 
@@ -1338,6 +1366,15 @@ export function WorkflowEditor({
 
             <Hint>{WORKFLOW_LIMIT_TIMING_NOTE}</Hint>
           </Card>
+
+          <RunFoldersCard
+            folders={runFolders}
+            loaded={loaded}
+            mounts={mounts}
+            foldersFor={foldersFor}
+            onChange={setRunFolders}
+            onAdd={addRunFolder}
+          />
         </div>
       </div>
 
@@ -1412,6 +1449,159 @@ export function WorkflowEditor({
         {workflow ? "Save changes" : "Create workflow"} is pressed.
       </Sheet>
     </>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* The folders Run chooses among                                       */
+/* ------------------------------------------------------------------ */
+
+/** One saved folder as the card holds it. `id` is the row's and is never sent. */
+interface RunFolderDraft {
+  id: string;
+  mountId: string;
+  folder: string;
+}
+
+function RunFoldersCard({
+  folders,
+  loaded,
+  mounts,
+  foldersFor,
+  onChange,
+  onAdd,
+}: {
+  folders: readonly RunFolderDraft[];
+  /** Whether the workspaces have been read; until then no row can be drawn. */
+  loaded: boolean;
+  mounts: WorkspaceMountDTO[];
+  foldersFor: (mountId: string) => WorkspaceFolderDTO[];
+  onChange: (next: RunFolderDraft[]) => void;
+  onAdd: () => void;
+}) {
+  const patch = (id: string, change: Partial<Omit<RunFolderDraft, "id">>) =>
+    onChange(folders.map((f) => (f.id === id ? { ...f, ...change } : f)));
+  const moveUp = (i: number) =>
+    onChange([
+      ...folders.slice(0, i - 1),
+      folders[i],
+      folders[i - 1],
+      ...folders.slice(i + 1),
+    ]);
+  const remove = (id: string) => onChange(folders.filter((f) => f.id !== id));
+
+  return (
+    <Card emphasis="quiet">
+      <CardTitle>Folders to choose from at Run</CardTitle>
+
+      {!loaded && folders.length > 0 ? (
+        <>
+          <span className="sr-only">Reading workspaces…</span>
+          <SkeletonText lines={2} />
+        </>
+      ) : (
+        folders.map((row, i) => {
+          const mount = mounts.find((m) => m.id === row.mountId);
+          const listed = foldersFor(row.mountId);
+          return (
+            // Numbered because the server's refusals name an entry by its
+            // place, "Folder 2 is already on the list".
+            <ListGroup key={row.id} className="mb-4" label={`Folder ${i + 1}`}>
+              <ListRow label="Workspace" htmlFor={`${row.id}-mount`}>
+                <div className={ROW_CONTROL}>
+                  <Select
+                    id={`${row.id}-mount`}
+                    value={row.mountId}
+                    // The folder belongs to the mount, so it cannot survive the
+                    // mount changing under it.
+                    onChange={(e) =>
+                      patch(row.id, { mountId: e.target.value, folder: "" })
+                    }
+                  >
+                    {/* A row added on an install with no mounts, or a saved one
+                        whose mount is gone from the config, names no option.
+                        Without one for it the select draws the first mount
+                        while the row holds something else, and picking that
+                        mount fires no change — so the row could not be
+                        answered at all. */}
+                    {!mount && (
+                      <option value={row.mountId} disabled>
+                        Choose a workspace
+                      </option>
+                    )}
+                    {mounts.map((m) => (
+                      <option key={m.id} value={m.id} disabled={!m.available}>
+                        {m.label}
+                        {m.available ? "" : "  (not mounted)"}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              </ListRow>
+
+              <ListRow label="Folder" htmlFor={`${row.id}-folder`}>
+                <div className={ROW_CONTROL}>
+                  <Select
+                    id={`${row.id}-folder`}
+                    value={row.folder}
+                    onChange={(e) => patch(row.id, { folder: e.target.value })}
+                    disabled={!mount}
+                  >
+                    <option value="">
+                      {mount ? `${mount.label} — the whole workspace` : "—"}
+                    </option>
+                    {listed.map((f) => (
+                      <option key={f.path} value={f.path}>
+                        {f.path}
+                        {f.isGitRepo ? "  (git)" : ""}
+                      </option>
+                    ))}
+                    {/* A saved folder the scan no longer lists — deleted, or
+                        past the per-mount cap — is kept as an option for the
+                        same reason: the select would otherwise draw the whole
+                        workspace while the row still saves this folder. */}
+                    {row.folder !== "" &&
+                      !listed.some((f) => f.path === row.folder) && (
+                        <option value={row.folder}>{row.folder}</option>
+                      )}
+                  </Select>
+                </div>
+              </ListRow>
+
+              <div className="flex min-h-[var(--control-h-lg)] max-md:min-h-11 items-center px-3.5 py-2.5">
+                <ButtonRow>
+                  {i > 0 && (
+                    <Button
+                      variant="ghost"
+                      size="compact"
+                      onClick={() => moveUp(i)}
+                    >
+                      Move up
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="compact"
+                    onClick={() => remove(row.id)}
+                  >
+                    Remove
+                  </Button>
+                </ButtonRow>
+              </div>
+            </ListGroup>
+          );
+        })
+      )}
+
+      <Button variant="secondary" size="compact" onClick={onAdd}>
+        Add folder
+      </Button>
+
+      <Hint>
+        Run asks which one to work in and a schedule uses the first; only
+        blocks set to follow the chosen folder move
+      </Hint>
+    </Card>
   );
 }
 
@@ -1975,7 +2165,9 @@ function BlockPanel({
   // will not break on its own: it has no spaces, and `/` is not a break
   // opportunity, so a deep path is a single unbreakable run that pushes the
   // sentence past a 390px viewport and takes the page sideways with it.
-  const where: ReactNode = (
+  const where: ReactNode = worksInChosenFolder(block) ? (
+    <strong className="font-semibold text-ink">the folder chosen at Run</strong>
+  ) : (
     <strong className="mono break-words font-semibold text-ink">
       {mount?.label ?? (block.mountId || "no workspace")}
       {block.folder ? ` / ${block.folder}` : " — the whole workspace"}
@@ -2706,61 +2898,86 @@ function BlockPanel({
               </div>
             </ListRow>
 
-            <ListRow label="Workspace" htmlFor={`${block.id}-mount`}>
-              <div className={ROW_CONTROL}>
-                <Select
-                  id={`${block.id}-mount`}
-                  value={block.mountId}
-                  // The folder belongs to the mount, so it cannot survive the
-                  // mount changing under it.
-                  onChange={(e) =>
-                    onChange({ mountId: e.target.value, folder: "" })
-                  }
-                >
-                  {mounts.map((m) => (
-                    <option key={m.id} value={m.id} disabled={!m.available}>
-                      {m.label}
-                      {m.available ? "" : "  (not mounted)"}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-            </ListRow>
-
-            {/* On the row, not in a footnote: this is a fact about what is in
-                the picker, and only a row's description reaches the control. */}
+            {/* Allowed with no folders saved yet: the check under the canvas
+                then states the server's refusal, which is how every other
+                refusal in this editor is surfaced. The block's own workspace
+                and folder stay on the draft, so turning this off restores
+                them. */}
             <ListRow
-              label="Folder"
-              htmlFor={`${block.id}-folder`}
+              label="Work in the folder chosen at Run"
+              htmlFor={`${block.id}-follows`}
               description={
-                orchestrator ? (
-                  "Where it looks; the runs it starts must be in this workspace"
-                ) : block.folder === "" ? (
-                  <span className="text-warn">
-                    No other run in this workspace can start meanwhile
-                  </span>
-                ) : undefined
+                block.followsChosenFolder
+                  ? "Its own workspace and folder are not used"
+                  : undefined
               }
             >
-              <div className={ROW_CONTROL}>
-                <Select
-                  id={`${block.id}-folder`}
-                  value={block.folder}
-                  onChange={(e) => onChange({ folder: e.target.value })}
-                  disabled={!mount}
-                >
-                  <option value="">
-                    {mount ? `${mount.label} — the whole workspace` : "—"}
-                  </option>
-                  {folders.map((f) => (
-                    <option key={f.path} value={f.path}>
-                      {f.path}
-                      {f.isGitRepo ? "  (git)" : ""}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+              <Switch
+                id={`${block.id}-follows`}
+                checked={block.followsChosenFolder}
+                onChange={(next) => onChange({ followsChosenFolder: next })}
+              />
             </ListRow>
+
+            {!block.followsChosenFolder && (
+              <>
+                <ListRow label="Workspace" htmlFor={`${block.id}-mount`}>
+                  <div className={ROW_CONTROL}>
+                    <Select
+                      id={`${block.id}-mount`}
+                      value={block.mountId}
+                      // The folder belongs to the mount, so it cannot survive the
+                      // mount changing under it.
+                      onChange={(e) =>
+                        onChange({ mountId: e.target.value, folder: "" })
+                      }
+                    >
+                      {mounts.map((m) => (
+                        <option key={m.id} value={m.id} disabled={!m.available}>
+                          {m.label}
+                          {m.available ? "" : "  (not mounted)"}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                </ListRow>
+
+                {/* On the row, not in a footnote: this is a fact about what is in
+                    the picker, and only a row's description reaches the control. */}
+                <ListRow
+                  label="Folder"
+                  htmlFor={`${block.id}-folder`}
+                  description={
+                    orchestrator ? (
+                      "Where it looks; the runs it starts must be in this workspace"
+                    ) : block.folder === "" ? (
+                      <span className="text-warn">
+                        No other run in this workspace can start meanwhile
+                      </span>
+                    ) : undefined
+                  }
+                >
+                  <div className={ROW_CONTROL}>
+                    <Select
+                      id={`${block.id}-folder`}
+                      value={block.folder}
+                      onChange={(e) => onChange({ folder: e.target.value })}
+                      disabled={!mount}
+                    >
+                      <option value="">
+                        {mount ? `${mount.label} — the whole workspace` : "—"}
+                      </option>
+                      {folders.map((f) => (
+                        <option key={f.path} value={f.path}>
+                          {f.path}
+                          {f.isGitRepo ? "  (git)" : ""}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                </ListRow>
+              </>
+            )}
           </ListGroup>
 
           {/* A group of its own rather than a row in the guards one, because an
