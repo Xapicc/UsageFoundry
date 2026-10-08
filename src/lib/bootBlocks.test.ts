@@ -722,3 +722,54 @@ describe("a run waiting on another run across the restart", () => {
     }
   });
 });
+
+/**
+ * What a restart and a halt write on a deliver block that was working.
+ *
+ * Both sweeps pick a sentence by block kind in SQL, with the parameters passed
+ * in the order of the `CASE` arms, and an arm left out falls through to the
+ * deciding block's wording: a deliver block written off as "while it was
+ * deciding what to start". Nothing fails to typecheck or throws, and the page
+ * renders it as an ordinary failed block with a sentence about the wrong thing.
+ */
+describe("a deliver block a restart or a halt caught working", () => {
+  function deliverScene(name: string, status: "waiting" | "thinking"): string {
+    const now = Date.now();
+    const instanceId = `inst-${name}`;
+    const db = dbMod.db();
+    db.prepare(
+      "INSERT INTO workflows (id, name, graph, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    ).run(`wf-${name}`, name, '{"nodes":[],"edges":[]}', now, now);
+    db.prepare(
+      `INSERT INTO workflow_instances (id, workflow_id, workflow_name, graph, created_at, status)
+       VALUES (?, ?, ?, ?, ?, 'started')`,
+    ).run(instanceId, `wf-${name}`, name, '{"nodes":[],"edges":[]}', now);
+    db.prepare(
+      "INSERT INTO workflow_instance_blocks (instance_id, node_id, node_name, position, kind, status, started_at)" +
+        " VALUES (?, 'D', 'Open PRs', 0, 'deliver', ?, ?)",
+    ).run(instanceId, status, status === "thinking" ? now : null);
+    return instanceId;
+  }
+
+  it("writes off a delivery the restart interrupted in its own words", async () => {
+    const instanceId = deliverScene("Deliver boot", "thinking");
+
+    await boot();
+
+    const block = blockOf(instanceId, "D");
+    assert.equal(block.status, "failed");
+    assert.match(block.error ?? "", /while this block was delivering branches/);
+    assert.doesNotMatch(block.error ?? "", /deciding|landing|reviewing/);
+  });
+
+  it("says a stop caught it delivering, or before it delivered anything", () => {
+    const working = deliverScene("Deliver halt working", "thinking");
+    const waiting = deliverScene("Deliver halt waiting", "waiting");
+
+    workflows.stopInstance(working, { kind: "operator" });
+    workflows.stopInstance(waiting, { kind: "operator" });
+
+    assert.match(blockOf(working, "D").error ?? "", /while it was delivering branches/);
+    assert.match(blockOf(waiting, "D").error ?? "", /before it delivered anything/);
+  });
+});

@@ -7,11 +7,17 @@ import type {
   WorkflowListItemDTO,
   WorkflowScheduleDTO,
 } from "../../../lib/apiTypes";
-import { getSchedule, scheduleView, type ScheduleView } from "../../../lib/schedules";
+import {
+  getSchedule,
+  scheduleRefusal,
+  scheduleView,
+  type ScheduleView,
+} from "../../../lib/schedules";
 import { passMemberIn } from "../../../lib/passIds";
 import { isDependencyEdge, type WorkflowEdge } from "../../../lib/workflowGraph";
 import {
   blockSpendReading,
+  lastInstanceOf,
   lastRunAt,
   liveBlocksOf,
   liveInstanceIdOf,
@@ -63,6 +69,7 @@ export function workflowDTO(workflow: Workflow): WorkflowDTO {
     liveInstanceId: liveInstanceIdOf(workflow.id),
     lastRunAt: lastRunAt(workflow.id),
     schedule: schedule ? scheduleDTO(scheduleView(schedule, workflow)) : null,
+    scheduleRefusal: scheduleRefusal(workflow),
   };
 }
 
@@ -73,16 +80,26 @@ export function workflowDTO(workflow: Workflow): WorkflowDTO {
  * `WorkflowListItemDTO` argues that out, and the detail route, the editor and
  * the duplicate route all still need the whole graph. Derived from `workflowDTO`
  * rather than restated so the fields the two shapes share cannot drift apart:
- * what this drops is the graph and the instance budget, and nothing else.
+ * what this drops is the graph, the instance budget and the schedule card's
+ * refusal sentence — a page-sized paragraph per row on a list that polls — and
+ * nothing else.
+ *
+ * What it adds is the newest press of Run, one `LIMIT 1` read per row beside the
+ * ones `workflowDTO` already makes, so the list can link it and say how it ended.
  */
 export function workflowListDTO(workflow: Workflow): WorkflowListItemDTO {
   const {
     nodes,
     edges: _edges,
     instanceBudget: _instanceBudget,
+    scheduleRefusal: _scheduleRefusal,
     ...rest
   } = workflowDTO(workflow);
-  return { ...rest, nodeCount: nodes.length };
+  return {
+    ...rest,
+    nodeCount: nodes.length,
+    lastInstance: lastInstanceOf(workflow.id),
+  };
 }
 
 /**
@@ -206,6 +223,7 @@ export function instanceDTO(instance: WorkflowInstance): WorkflowInstanceDTO {
       bodyNodeIds: snapshot?.bodyNodeIds ?? [],
       maxPasses: snapshot?.kind === "loop" ? snapshot.maxPasses : null,
       maxLoopCostUSD: snapshot?.kind === "loop" ? snapshot.maxLoopCostUSD : null,
+      stopAfterPass: b.stopAfterPass,
       passMember: passMemberIn(instance.graph, b.nodeId),
     };
   });
@@ -217,6 +235,9 @@ export function instanceDTO(instance: WorkflowInstance): WorkflowInstanceDTO {
     createdAt: instance.createdAt,
     status: instance.status,
     error: instance.error,
+    // A null origin is an instance from before the column, which only a person
+    // could have pressed (see the backfill note beside `addColumn` in `db.ts`).
+    origin: instance.origin === "schedule" ? "schedule" : "workflow",
     stoppedAt: instance.stoppedAt,
     stopCause: instance.stopCause,
     stopReason: instance.stopReason,

@@ -284,3 +284,48 @@ describe("which press of Run is the reason a workflow cannot be started again", 
     }
   });
 });
+
+describe("what the workflows list is told about the newest press of Run", () => {
+  it("reads the derived status, not the stored column", () => {
+    // The column says `started` for a graph that finished an hour ago, because
+    // nothing writes the second fact. A list that took it raw would call the
+    // press working for ever, and the badge is the one place that is read.
+    const id = instance("last-finished");
+    member(id, "completed");
+    const last = workflows.lastInstanceOf("wf-last-finished");
+    assert.equal(last?.id, id);
+    assert.equal(last?.status, "finished");
+    assert.equal(last?.status, read(id).status);
+  });
+
+  it("is the newest press, and its status is its own", () => {
+    const old = instance("last-newest");
+    member(old, "running");
+    const newest = pressOf("last-newest", "last-newest-newer", Date.now() + 10_000);
+    member(newest, "completed");
+    const last = workflows.lastInstanceOf("wf-last-newest");
+    assert.equal(last?.id, newest);
+    assert.equal(last?.status, "finished");
+  });
+
+  it("is null for a workflow that has never been pressed", () => {
+    // `lastRunAt` answers null here, and the list prints "never" for both.
+    dbMod
+      .db()
+      .prepare(
+        "INSERT INTO workflows (id, name, graph, created_at, updated_at) VALUES (?, ?, '{}', 1, 1)",
+      )
+      .run("wf-last-never", "last-never");
+    assert.equal(workflows.lastInstanceOf("wf-last-never"), null);
+    assert.equal(workflows.lastRunAt("wf-last-never"), null);
+  });
+
+  it("carries the time the list used to print", () => {
+    const id = instance("last-time");
+    member(id, "completed");
+    assert.equal(
+      workflows.lastInstanceOf("wf-last-time")?.createdAt,
+      workflows.lastRunAt("wf-last-time"),
+    );
+  });
+});

@@ -16,7 +16,7 @@ import {
   currentAgentKnowledge,
   type AgentKnowledge,
 } from "./agents";
-import { notStringRefusal } from "./http";
+import { jsonKind, notStringRefusal } from "./http";
 import { chatGuards } from "./settings";
 import { listTemplates } from "./templates";
 import { WORKSPACE_MOUNTS } from "./config";
@@ -28,6 +28,8 @@ import {
   MAX_REVIEW_FIX_ROUNDS,
   MAX_WORKFLOW_NAME,
   MAX_WORKFLOW_NODES,
+  REVIEW_VERDICT_KINDS,
+  type ReviewVerdictSourceDTO,
   boardThresholds,
   type LoopBoardConditionDTO,
   type LoopBoardThresholdDTO,
@@ -268,7 +270,20 @@ export interface WorkflowNode {
    * other kind, and never null on a review block.
    */
   fixRounds: number | null;
+  /**
+   * Where a review block's verdict on each branch comes from. Null on every
+   * other kind, and set on every review block a save produced.
+   *
+   * Optional because a graph saved before the field existed — and every
+   * instance started from one — carries nothing here, and that reads as
+   * `model`: the frontier review those graphs were saved to pay for. A reader
+   * asks `?.kind === "status"` and never the reverse.
+   */
+  verdictSource?: ReviewVerdictSource | null;
 }
+
+/** Where a review block's verdict comes from. See the DTO. */
+export type ReviewVerdictSource = ReviewVerdictSourceDTO;
 
 /** Which tasks a loop counts, and the numbers it stops at. See the DTO. */
 export type LoopBoardCondition = LoopBoardConditionDTO;
@@ -441,7 +456,7 @@ export const NODE_ID = /^[A-Za-z0-9_-]{1,64}$/;
  * scheduler has no branch for — the `as const` makes every reader exhaustive
  * against `WorkflowNodeKind` at the same time.
  */
-const NODE_KINDS = ["run", "orchestrator", "merge", "loop", "review"] as const satisfies readonly WorkflowNodeKind[];
+const NODE_KINDS = ["run", "orchestrator", "merge", "deliver", "loop", "review"] as const satisfies readonly WorkflowNodeKind[];
 
 const MAX_NODE_NAME = 60;
 
@@ -650,9 +665,13 @@ export function normalizeWorkflowInput(
                   ? `“${node.name}” reviews other blocks' branches and hands on ` +
                     "the ones it approves, so it has no branch of its own to hand " +
                     "over or carry on. Start after it without carrying a branch."
-                  : `“${node.name}” lands other blocks' branches rather than ` +
-                    "working in a checkout of its own, so it has no branch to " +
-                    "hand over or carry on.",
+                  : node.kind === "deliver"
+                    ? `“${node.name}” pushes other blocks' branches and opens a ` +
+                      "pull request for each, so it has no branch of its own to " +
+                      "hand over or carry on."
+                    : `“${node.name}” lands other blocks' branches rather than ` +
+                      "working in a checkout of its own, so it has no branch to " +
+                      "hand over or carry on.",
         };
       }
 
@@ -787,6 +806,12 @@ export function normalizeBoardCondition(
   }
   const o = raw as Record<string, unknown>;
 
+  // Asked before the `String(…)` that reads each one: `["work"]` was the
+  // workspace `work`, and a list-wrapped folder a project nobody named.
+  for (const field of ["mountId", "folder"]) {
+    const notString = notStringRefusal(`stopWhenTasks.${field}`, o[field]);
+    if (notString) return { ok: false, error: `“${nodeName}”: ${notString}` };
+  }
   const mountId = String(o.mountId ?? "").trim();
   if (!mountId) {
     return {
@@ -807,7 +832,10 @@ export function normalizeBoardCondition(
 
   const rawStatuses = Array.isArray(o.statuses) ? o.statuses : [];
   const statuses: TaskStatusDTO[] = [];
-  for (const entry of rawStatuses) {
+  for (const [at, entry] of rawStatuses.entries()) {
+    // `["open"]` was the status `open`, for `String()`'s reason above.
+    const notString = notStringRefusal(`stopWhenTasks.statuses[${at}]`, entry);
+    if (notString) return { ok: false, error: `“${nodeName}”: ${notString}` };
     const status = String(entry ?? "").trim();
     if (GROWING_TASK_STATUSES.includes(status as TaskStatusDTO)) {
       return {
@@ -869,11 +897,17 @@ export function normalizeBoardCondition(
   }
 
   const thresholds: LoopBoardThreshold[] = [];
-  for (const entry of rawThresholds) {
+  for (const [at, entry] of rawThresholds.entries()) {
     const raw = (entry ?? {}) as Record<string, unknown>;
     // Missing is `any` rather than a refusal: that is what the single-number
     // shape meant, and it is the only reading a threshold with no priority on
-    // it could have.
+    // it could have. A list-wrapped one is neither, and was read as the
+    // priority inside it.
+    const notString = notStringRefusal(
+      `stopWhenTasks.thresholds[${at}].priority`,
+      raw.priority,
+    );
+    if (notString) return { ok: false, error: `“${nodeName}”: ${notString}` };
     const priority = String(raw.priority ?? "any").trim() || "any";
     if (!THRESHOLD_PRIORITIES.includes(priority as TaskPriorityDTO)) {
       return {
@@ -1033,7 +1067,8 @@ function normalizeNode(
     // A review block is the third: its reviews and its fix runs are this app's,
     // started on branches the blocks in front of it cut, and it names no
     // workspace, template, task or agent of its own.
-    const startsNoRun = kind === "merge" || kind === "loop" || kind === "review";
+    const startsNoRun =
+      kind === "merge" || kind === "deliver" || kind === "loop" || kind === "review";
 
     // A merge block is told nothing. What it lands is whatever the blocks in
     // front of it left on a branch, and where each branch belongs was recorded
@@ -1103,6 +1138,9 @@ function normalizeNode(
     let mergeStrategy: LandStrategy | null = null;
     let mergeAutoResolve = false;
     if (kind === "merge") {
+      // `["squash"]` was the strategy inside the list.
+      const notStrategy = notStringRefusal("mergeStrategy", n.mergeStrategy);
+      if (notStrategy) return { ok: false, error: `“${nodeName}”: ${notStrategy}` };
       const raw = String(n.mergeStrategy ?? "");
       if (raw !== "merge" && raw !== "squash") {
         return {
@@ -1132,9 +1170,32 @@ function normalizeNode(
       fixRounds = raw;
     }
 
+    // Where a review block's verdict comes from, read on a review block and
+    // dropped unread on every other kind, `promptOverride`'s rule.
+    let verdictSource: ReviewVerdictSource | null = null;
+    if (kind === "review") {
+      const read = normalizeVerdictSource(n.verdictSource, nodeName);
+      if (!read.ok) return read;
+      verdictSource = read.value;
+      // Refused rather than coerced to 0: rounds the operator set are billed
+      // runs they expect, and a status verdict has no review for one to answer.
+      if (verdictSource.kind === "status" && fixRounds !== 0) {
+        return {
+          ok: false,
+          error:
+            `“${nodeName}” judges each branch by how its run ended, so there is ` +
+            "no review for a fix round to answer. Set its fix rounds to 0, or " +
+            "have a frontier model review the branches.",
+        };
+      }
+    }
+
     // Which CLI does the work, on the two kinds whose work is runs. Refused by
     // name anywhere else, on `agentId`'s grounds below: a provider named on a
-    // block that starts no run is a choice no process will ever act on.
+    // block that starts no run is a choice no process will ever act on. Typed
+    // on every kind for that reason: every kind reads it, if only to refuse it.
+    const notProvider = notStringRefusal("provider", n.provider);
+    if (notProvider) return { ok: false, error: `“${nodeName}”: ${notProvider}` };
     const rawProvider =
       n.provider === null || n.provider === undefined ? "" : String(n.provider).trim();
     if (rawProvider && !(RUN_PROVIDERS as readonly string[]).includes(rawProvider)) {
@@ -1203,10 +1264,14 @@ function normalizeNode(
       // Absent, null and a non-array all read as "this loop repeats its own
       // task", which is what every graph saved before the field existed says.
       // Nothing more is decided here: whether these ids name blocks, and
-      // whether the blocks they name can be a body, is `graphRefusal`'s.
-      bodyNodeIds = Array.isArray(n.bodyNodeIds)
-        ? n.bodyNodeIds.map((entry) => String(entry ?? "").trim())
-        : [];
+      // whether the blocks they name can be a body, is `graphRefusal`'s — once
+      // each is an id: `["a"]` was the block `a`.
+      const rawBody: unknown[] = Array.isArray(n.bodyNodeIds) ? n.bodyNodeIds : [];
+      for (const [at, entry] of rawBody.entries()) {
+        const notString = notStringRefusal(`bodyNodeIds[${at}]`, entry);
+        if (notString) return { ok: false, error: `“${nodeName}”: ${notString}` };
+      }
+      bodyNodeIds = rawBody.map((entry) => String(entry ?? "").trim());
     } else if (Array.isArray(n.bodyNodeIds) && n.bodyNodeIds.length > 0) {
       // Refused rather than dropped, on `stopWhenTasks`' grounds one field
       // over: a body is a section of the graph the operator said to repeat, and
@@ -1247,6 +1312,14 @@ function normalizeNode(
     // `resolveConflicts`' — runs under that function's own fixed mode. A loop
     // names none for the same reason, so `guardsFor` is never asked about one;
     // the guards a pass runs under are each member's own.
+    //
+    // Typed only where it is read, `promptOverride`'s rule, and the same for
+    // the workspace and folder below: on a block that starts no run all three
+    // are dropped unread, and a loop's were asked above.
+    for (const field of ["templateId", "mountId", "folder"]) {
+      const notString = startsNoRun ? null : notStringRefusal(field, n[field]);
+      if (notString) return { ok: false, error: `“${nodeName}”: ${notString}` };
+    }
     const templateId =
       startsNoRun ||
       n.templateId === null ||
@@ -1307,6 +1380,14 @@ function normalizeNode(
     // objection was that there was nobody to hand the subtask to, and under
     // `--agent` it is that there is no child for the agent to *be*. Both ends
     // of a `continueBranch` edge are refused by name below on the same grounds.
+    //
+    // Typed on the kinds that read it — the two whose child is started as it,
+    // and the two that refuse it by name — since `["a-rev"]` was the agent
+    // inside the list. A loop's was asked above.
+    const readsAgent =
+      kind === "run" || kind === "orchestrator" || kind === "merge" || kind === "review";
+    const notAgent = readsAgent ? notStringRefusal("agentId", n.agentId) : null;
+    if (notAgent) return { ok: false, error: `“${nodeName}”: ${notAgent}` };
     const namedAgent =
       n.agentId === null || n.agentId === undefined || String(n.agentId).trim() === ""
         ? null
@@ -1319,9 +1400,21 @@ function normalizeNode(
             ? `“${nodeName}” lands the branches in front of it and starts no agent ` +
               "of its own, so there is nothing for that agent to be. Remove it, or " +
               "put it on the block that does the work."
-            : `“${nodeName}” reviews the branches in front of it with a frontier ` +
-              "model this app chooses, so there is nothing for that agent to be. " +
+            : `“${nodeName}” ${
+                verdictSource?.kind === "status"
+                  ? "judges the branches in front of it by how their runs ended"
+                  : "reviews the branches in front of it with a frontier model this app chooses"
+              }, so there is nothing for that agent to be. ` +
               "Remove it, or put it on the block that does the work.",
+      };
+    }
+    if (namedAgent !== null && kind === "deliver") {
+      return {
+        ok: false,
+        error:
+          `“${nodeName}” pushes the branches in front of it and starts no agent ` +
+          "of its own, so there is nothing for that agent to be. Remove it, or " +
+          "put it on the block that does the work.",
       };
     }
     // A saved agent's prompt reaches Claude Code's `--agent` and nothing else,
@@ -1368,8 +1461,46 @@ function normalizeNode(
           bodyNodeIds,
           provider,
           fixRounds,
+          verdictSource,
     },
   };
+}
+
+/**
+ * A review block's verdict source off the wire, or the sentence refusing it.
+ *
+ * Absent and null are `model`, and have to be: every review block saved before
+ * the field existed was saved to pay for a frontier review, and any other
+ * reading would hand on branches nobody looked at. A bare word is refused
+ * rather than read as the kind it names, so the one shape on the wire is the
+ * one a source with settings of its own will need.
+ */
+function normalizeVerdictSource(
+  raw: unknown,
+  nodeName: string,
+): { ok: true; value: ReviewVerdictSource } | { ok: false; error: string } {
+  if (raw === null || raw === undefined) return { ok: true, value: { kind: "model" } };
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    return {
+      ok: false,
+      error:
+        `“${nodeName}”: "verdictSource" has to be an object when it is given; ` +
+        `got ${jsonKind(raw)}.`,
+    };
+  }
+  const o = raw as Record<string, unknown>;
+  const notString = notStringRefusal("verdictSource.kind", o.kind);
+  if (notString) return { ok: false, error: `“${nodeName}”: ${notString}` };
+  const kind = String(o.kind ?? "").trim();
+  if (!(REVIEW_VERDICT_KINDS as readonly string[]).includes(kind)) {
+    return {
+      ok: false,
+      error:
+        `“${nodeName}” takes its verdict from a source this app does not ` +
+        `have: ${kind || "(blank)"}. It is ${REVIEW_VERDICT_KINDS.join(" or ")}.`,
+    };
+  }
+  return { ok: true, value: kind === "status" ? { kind: "status" } : { kind: "model" } };
 }
 
 /**
@@ -1633,6 +1764,20 @@ function loopBodyRefusal(
       // pass and that is stated at Save in the arithmetic below rather than
       // discovered on the bill. A merge block is in, because a section *ends*
       // in one — each pass lands what it produced.
+      // A deliver block is the other kind a section may not hold, and for the
+      // opposite reason: it multiplies nothing, it *publishes*. Each pass would
+      // push its branches and open pull requests with nobody pressing anything,
+      // up to the pass cap, and a pass does not even need the push — it lands
+      // its own work through the section's merge block.
+      if (member.kind === "deliver") {
+        return (
+          `“${member.name}” is repeated by “${loop.name}”, and a deliver block ` +
+          "pushes branches and opens a pull request every time it is reached — " +
+          "once per pass, with nobody pressing anything. A section lands its own " +
+          "work through its merge block, and what a loop hands on afterwards is " +
+          "already on its target, so there is no branch left to deliver."
+        );
+      }
       if (member.kind === "loop") {
         return (
           `“${member.name}” is itself a loop, and a loop inside a section ` +
@@ -1960,6 +2105,65 @@ function graphRefusal(
         "their own."
       );
     }
+    // A status verdict sets aside a run that did not complete, so it has to be
+    // handed those runs. Behind an on-success link the first one blocks the
+    // whole block instead — the stop this verdict exists to remove — and a Run
+    // would find that out a pass in rather than here.
+    if (node.verdictSource?.kind === "status") {
+      const strict = edges.find(
+        (e) => e.to === node.id && isDependencyEdge(e) && e.edge !== "on-finish",
+      );
+      if (strict) {
+        return (
+          `“${node.name}” judges each branch by how its run ended, so it has ` +
+          `to be handed the runs that did not complete as well. Behind an ` +
+          `on-success link from “${byId.get(strict.from)!.name}”, the first ` +
+          "of them blocks it instead. Set that link to on-finish."
+        );
+      }
+    }
+  }
+
+  // A deliver block pushes what is in front of it, so the merge block's two
+  // halves apply to it unchanged: something has to be there, and it has to have
+  // cut a branch. `continueBranch` is the one rule that does not carry over as
+  // written — it is refused on the edge, where it is drawn — and neither does
+  // the landing exit: a pass is landed by its merge block, and a deliver block
+  // is not allowed in a section at all.
+  //
+  // A merge block, a loop and another deliver block are the three that hand on
+  // no runs (see `edgeVerdict`), so none of them counts as something to push. A
+  // deliver block whose only predecessor is a merge block would have nothing to
+  // be handed; and what a merge landed is on its target, where a pull request
+  // from it has no commits to show.
+  for (const node of nodes) {
+    if (node.kind !== "deliver") continue;
+    const sources = edges
+      .filter((e) => e.to === node.id && isDependencyEdge(e))
+      .map((e) => byId.get(e.from)!);
+    const producers = sources.filter(
+      (s) => s.kind !== "merge" && s.kind !== "loop" && s.kind !== "deliver",
+    );
+    if (producers.length === 0) {
+      return (
+        `“${node.name}” has no block in front of it whose branches it could ` +
+        "push. A deliver block pushes what its predecessors built, so it needs " +
+        "at least one predecessor that runs something — a merge block lands its " +
+        "branches on their target and hands none on."
+      );
+    }
+    // A review is not asked about a template it does not have; its own sources
+    // are held to this rule by the review rule above.
+    const bare = producers.find(
+      (s) => s.kind !== "review" && !isolatedTemplate(s.templateId, known),
+    );
+    if (bare) {
+      return (
+        `“${bare.name}” leaves no branch for “${node.name}” to push — its ` +
+        "guards work directly in the folder rather than in a checkout of " +
+        "their own."
+      );
+    }
   }
 
   for (const node of nodes) {
@@ -1968,7 +2172,7 @@ function graphRefusal(
       .filter((e) => e.to === node.id)
       .map((e) => byId.get(e.from)!);
     const producers = sources.filter(
-      (s) => s.kind !== "merge" && s.kind !== "loop",
+      (s) => s.kind !== "merge" && s.kind !== "deliver" && s.kind !== "loop",
     );
     if (producers.length === 0) {
       return (
@@ -2108,7 +2312,14 @@ export function folderRefusal(graph: WorkflowGraph): string | null {
     // run. A loop names none either — it frames the blocks it repeats and each
     // of those resolves its own, so asking here would be resolving `""` against
     // no mount at all and refusing the graph over a folder nobody chose.
-    if (node.kind === "merge" || node.kind === "loop" || node.kind === "review") continue;
+    if (
+      node.kind === "merge" ||
+      node.kind === "deliver" ||
+      node.kind === "loop" ||
+      node.kind === "review"
+    ) {
+      continue;
+    }
     try {
       resolveWorkspaceFolder(node.folder, node.mountId);
     } catch (err) {

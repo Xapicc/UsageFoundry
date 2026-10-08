@@ -230,3 +230,18 @@
 
 - **The rollback path.** Its stop-everything-and-record-`failed` branch has
   never run; read it rather than trust it.
+
+- **"Stop after this pass" has not been pressed in a browser against a loop that
+  was really `looping` (2026-10-08).** The card was rendered at 1280 and 390px
+  from a built standalone server over a seeded instance with the loop's status
+  and `stopAfterPass` patched into the page's own `GET` in the browser — the
+  server restarts reconcile a seeded `looping` loop to `failed`, so a real one
+  could not be held there — and the route's refusals were read by `curl` (409
+  for an ended loop, 400 for a missing or non-boolean field, 404 for an unknown
+  block or workflow). `loopSection.test.ts` drives `setLoopStopAfter` and the
+  loop's real advance through the pass, its landing and the block behind it, so
+  what is open is the click and the page's re-read on a refusal, never the
+  decision. Settle: a stub `CLAUDE_BIN` that holds one cycle open, a loop over a
+  run and a merge with a run block behind it, press Run, press the control while
+  pass 1 works, release the cycle, and read the loop's stop reason and the block
+  behind it.

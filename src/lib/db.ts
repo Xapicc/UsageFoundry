@@ -1677,6 +1677,18 @@ function migrate(db: Database.Database) {
     "INTEGER NOT NULL DEFAULT 0",
   );
 
+  // The pass after which a looping loop block ends, when the operator asked it
+  // to finish the pass in flight and start no more.
+  //
+  // A column rather than a field of the graph blob: the instance's graph is a
+  // frozen copy of what was saved, and this is a fact about the press of Run
+  // that no edit of the workflow may reach. Persisted rather than held in
+  // memory because a restart reconciles a `looping` block, and a request that
+  // lived only in the process would be lost across it — the loop would carry on
+  // taking passes the operator had already said to stop. Null is "keep going",
+  // and every row written before the column existed reads that way.
+  addColumn(db, "workflow_instance_blocks", "stop_after_pass", "INTEGER");
+
   // Whether this run was closed out because the server went down under it,
   // rather than for any reason of its own.
   //

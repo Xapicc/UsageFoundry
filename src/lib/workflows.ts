@@ -25,6 +25,7 @@ import {
   fixRunPrompt,
   nextReviewStep,
   reviewBlockSummary,
+  statusVerdict,
 } from "./reviewBlock";
 import { addTaskComment } from "./taskComments";
 import { installBudgetRefusal } from "./installBudget";
@@ -66,7 +67,12 @@ import {
   isQueueActive,
   type QueueRow,
 } from "./mergeQueue";
-import { landState, type LandStrategy } from "./land";
+import {
+  deliveredPullRequest,
+  deliverRun,
+  landState,
+  type LandStrategy,
+} from "./land";
 import {
   INSTANCE_ENFORCEABLE_CODES,
   evaluateInstanceBudget,
@@ -376,7 +382,7 @@ export function summarizeProposedGraph(
     name: node.name,
     kind: node.kind,
     guardsLabel:
-      node.kind === "merge" || node.kind === "review"
+      node.kind === "merge" || node.kind === "deliver" || node.kind === "review"
         ? "no agent"
         : node.templateId === null
           ? untemplatedLabel
@@ -387,7 +393,7 @@ export function summarizeProposedGraph(
       ? (known.agents.get(node.agentId)?.name ?? "agent deleted")
       : null,
     folderLabel:
-      node.kind === "merge" || node.kind === "review"
+      node.kind === "merge" || node.kind === "deliver" || node.kind === "review"
         ? null
         : `${mountById(node.mountId)?.label ?? node.mountId}${
             node.folder ? `/${node.folder}` : " (mount root)"
@@ -1173,6 +1179,14 @@ export interface LoopPassInput {
    * happens rather than here.
    */
   boardCounts: LoopBoardCounts | null;
+  /**
+   * The pass the operator asked the loop to end after, or null for no request.
+   *
+   * Required rather than optional: a caller that forgot it would typecheck and
+   * read as "keep going", which is the one answer that spends another whole
+   * pass the operator had refused.
+   */
+  stopAfterPass: number | null;
 }
 
 /** Why a loop stopped, in a word the caller can branch on. */
@@ -1182,7 +1196,8 @@ export type LoopStopCode =
   | "passes"
   | "cost"
   | "empty"
-  | "tasks";
+  | "tasks"
+  | "requested";
 
 export type LoopDecision =
   /** Create pass `pass`. Nothing else has to be true for it to go ahead. */
@@ -1252,7 +1267,16 @@ export type LoopDecision =
  *      would run every loop with a review in it to its pass cap.
  *      It outranks the two caps, so a loop that got there on its last pass says
  *      it finished rather than that it ran out.
- *   5. **The board condition**, below the agent's own word and above the caps.
+ *   5. **The operator's request to end after this pass**, below everything that
+ *      is a fact about the pass and above everything that is a limit. Below the
+ *      failures and `done` because those say how the pass went and this says
+ *      only that nobody wants another: a pass that did not land, reported as a
+ *      stop the operator asked for, would be `emitted` instead of `failed` and
+ *      start an `on-success` successor on work that never arrived. Above the
+ *      board and the caps because it is the more specific sentence — the
+ *      operator pressed it, and a loop that was also at its cap would otherwise
+ *      tell them it ran out.
+ *   6. **The board condition**, below the agent's own word and above the caps.
  *      An agent that said the work is done outranks a board that has not caught
  *      up with it; a board that is clear is the loop *finishing* rather than
  *      running out, so it must not be reported as a cap. It is also the one
@@ -1260,7 +1284,7 @@ export type LoopDecision =
  *      pass that ended, where this is a fact about the board at this moment, so
  *      a loop pointed at a backlog that is already clear starts no run at all —
  *      which is most of what the condition is for.
- *   6. **The caps.** The pass cap before the spend cap: it is the one a person
+ *   7. **The caps.** The pass cap before the spend cap: it is the one a person
  *      always set, and the one that has to hold when nothing else does.
  */
 /**
@@ -1401,6 +1425,17 @@ export function planLoopPass(input: LoopPassInput): LoopDecision {
         reason: `“${input.blockName}” reported the work complete on pass ${last.pass}.`,
       };
     }
+
+    // `>=` rather than `===`: a request recorded for pass 2 that is read when
+    // pass 3 is the latest — a pick-up reopened a later pass — still means "no
+    // more than this", and an exact match would let the loop run on for ever.
+    if (input.stopAfterPass !== null && last.pass >= input.stopAfterPass) {
+      return {
+        kind: "stop",
+        code: "requested",
+        reason: `“${input.blockName}” stopped after pass ${input.stopAfterPass}, as the operator asked.`,
+      };
+    }
   }
 
   const board = input.stopWhenTasks;
@@ -1467,7 +1502,10 @@ export function planLoopPass(input: LoopPassInput): LoopDecision {
  * that failed, or one withheld after a loop that finished.
  *
  * Running out of passes or of money is `emitted`: the passes that happened
- * completed, and "it did not get there in time" is what the caps are for. A
+ * completed, and "it did not get there in time" is what the caps are for. So is
+ * an operator's "stop after this pass" (`requested`): the pass it let finish was
+ * judged complete before that rung is reached, and the blocks behind the loop
+ * proceed per their edges exactly as after a pass cap. A
  * failed pass and a pass that produced nothing are `failed`, which is the only
  * reading under which `on-success` after a loop means what it says.
  */
@@ -1637,6 +1675,11 @@ export interface InstanceStep {
   /** Merge blocks whose branches may now be queued. */
   merge: InstanceMerge[];
   /**
+   * Deliver blocks whose branches may now be pushed, in `InstanceMerge`'s shape
+   * and for its reason.
+   */
+  deliver: InstanceMerge[];
+  /**
    * Review blocks whose branches may now be reviewed, in `InstanceMerge`'s
    * shape and for its reason: which runs an orchestrator block turned out to
    * emit is a fact only `edgeVerdict` has.
@@ -1734,6 +1777,7 @@ export function planInstanceStep(
   const step: InstanceStep = {
     spawn: [],
     merge: [],
+    deliver: [],
     review: [],
     create: [],
     loop: [],
@@ -1787,6 +1831,14 @@ export function planInstanceStep(
           nodeId: node.id,
           runIds: [...new Set(dependsOn.map((d) => d.runId))],
         });
+      } else if (node.kind === "deliver") {
+        // Deduplicated for the merge block's reason: a diamond meeting again
+        // here would push one branch twice, and the second push would open a
+        // pull request GitHub refuses as already existing.
+        step.deliver.push({
+          nodeId: node.id,
+          runIds: [...new Set(dependsOn.map((d) => d.runId))],
+        });
       } else if (node.kind === "review") {
         // Deduplicated for the merge block's reason: a diamond meeting again
         // here would review one branch twice, and the item table would refuse
@@ -1835,7 +1887,7 @@ function edgeVerdict(
   edge: WorkflowDependencyEdge,
   dependsOn: InstanceCreation["dependsOn"],
 ): EdgeVerdict {
-  if (from.kind === "merge") {
+  if (from.kind === "merge" || from.kind === "deliver") {
     const block = state.block;
     if (!block || block.status === "waiting" || block.status === "thinking") {
       return PENDING;
@@ -1846,6 +1898,9 @@ function edgeVerdict(
         reason: `“${from.name}” never ran: ${block.error ?? "no reason recorded."}`,
       };
     }
+    // A deliver block reads exactly as a merge block does, and for the same
+    // reason: it created no run, so its edge carries a condition and no branch.
+    //
     // A merge block that failed still *finished*, having tried, which is what
     // separates it from one that never ran — the same distinction
     // `edgeSatisfied` draws between a run that did a cycle and a run that did
@@ -1856,7 +1911,10 @@ function edgeVerdict(
     if (block.status === "failed" && edge.edge === "on-success") {
       return {
         kind: "blocked",
-        reason: `“${from.name}” did not land everything it was given: ${block.error ?? "the merge failed."}`,
+        reason:
+          from.kind === "merge"
+            ? `“${from.name}” did not land everything it was given: ${block.error ?? "the merge failed."}`
+            : `“${from.name}” did not deliver everything it was given: ${block.error ?? "the delivery failed."}`,
       };
     }
     // Nothing is pushed onto `dependsOn`: a merge block created no run, so a
@@ -2421,6 +2479,12 @@ export interface WorkflowInstanceBlock {
    * "landed three of three" are different facts and only one needs attention.
    */
   branchesFailed: number;
+  /**
+   * The pass a loop block was asked to end after, or null for no request and for
+   * every other kind. Recorded by `setLoopStopAfter`, read by `advanceLoop`, and
+   * left on the row after the loop ends as the record of why it did.
+   */
+  stopAfterPass: number | null;
   error: string | null;
 }
 
@@ -2749,6 +2813,123 @@ function loopSpend(instanceId: string, nodeId: string): number {
   return addBlockSpend(members, blocks).spentGuardUSD;
 }
 
+/** The pass a loop was asked to end after, or null for no such request. */
+function loopStopAfter(instanceId: string, nodeId: string): number | null {
+  const row = db()
+    .prepare(
+      "SELECT stop_after_pass AS pass FROM workflow_instance_blocks" +
+        " WHERE instance_id = ? AND node_id = ?",
+    )
+    .get(instanceId, nodeId) as { pass: number | null } | undefined;
+  return row?.pass ?? null;
+}
+
+/** What a press of "Stop after this pass", or of "Keep going", answered. */
+export type LoopStopAfterOutcome =
+  | { ok: true; stopAfterPass: number | null }
+  | { ok: false; status: 404 | 409; error: string };
+
+/**
+ * Why a loop cannot be asked to end after its pass, or null when it can.
+ *
+ * Pure for `haltPlan`'s reason: the cases that matter here are the ones a press
+ * races, and each is a silent wrong answer if missed. A loop already ended has no
+ * pass left to stop after, and recording one would show a request the page can
+ * never act on. A halted instance is refused **whole**, which is what makes Stop
+ * win over this control: the halt has already written the loop `failed`, so
+ * "Keep going" must not read as having revived a loop the operator took down,
+ * and no sentence here may suggest the halt is something less than a halt.
+ *
+ * One condition serves both directions. Undoing the request is allowed exactly
+ * while it can still change what the loop does, and that is the same window in
+ * which making it can.
+ */
+export function loopStopAfterRefusal(input: {
+  instanceStatus: WorkflowInstanceStatus;
+  /** Null when the instance has no loop block by that id. */
+  loop: { name: string; status: BlockStatus } | null;
+  /** The latest pass the loop has opened, or null when it has opened none. */
+  latestPass: number | null;
+}): Extract<LoopStopAfterOutcome, { ok: false }> | null {
+  const { loop, latestPass } = input;
+  if (!loop) {
+    return { ok: false, status: 404, error: "That loop is not part of this workflow run." };
+  }
+  if (!instanceIsOpen(input.instanceStatus)) {
+    return {
+      ok: false,
+      status: 409,
+      error: `This workflow run is ${input.instanceStatus}, so no loop in it will take another pass.`,
+    };
+  }
+  if (loop.status !== "looping") {
+    return {
+      ok: false,
+      status: 409,
+      error: `“${loop.name}” is ${loop.status}, so it has no pass left to stop after.`,
+    };
+  }
+  if (latestPass === null) {
+    return {
+      ok: false,
+      status: 409,
+      error: `“${loop.name}” has not started a pass yet, so there is none to stop after.`,
+    };
+  }
+  return null;
+}
+
+/**
+ * Ask a looping loop to end after the pass it is on, or take the request back.
+ *
+ * **Not a halt, and it must never go through `stopInstance`.** That door closes
+ * the instance before anything is signalled and takes every member down; this
+ * signals nothing and halts nothing — the pass in flight carries on exactly as
+ * it was, its merge included, and the request is read only when that pass has
+ * settled, by `planLoopPass`. A halt pressed as well wins without this knowing:
+ * it writes the loop `failed`, `settleLoop` is latched on `looping`, and the
+ * refusal above keeps the page from offering either press on a halted run.
+ *
+ * Recorded as the pass **number** rather than as a flag, so a request made on
+ * pass 2 cannot be satisfied by a pass 3 that a pick-up later reopens as the
+ * latest — see the `>=` in `planLoopPass`.
+ *
+ * Advances afterwards, `resumeLoop`'s reason in the other direction: a press
+ * that arrives while the latest pass has already settled (the fleet hold keeps a
+ * loop `looping` between passes) must take effect now, not at the next terminal
+ * run anywhere.
+ */
+export function setLoopStopAfter(
+  instanceId: string,
+  loopNodeId: string,
+  stop: boolean,
+): LoopStopAfterOutcome {
+  const instance = getInstance(instanceId);
+  if (!instance) return { ok: false, status: 404, error: "No such workflow run." };
+
+  const loop = instance.blocks.find((b) => b.nodeId === loopNodeId && b.kind === "loop");
+  const latestPass = loop ? (loopPasses(instanceId, loopNodeId).at(-1)?.pass ?? null) : null;
+  const refusal = loopStopAfterRefusal({
+    instanceStatus: instance.status,
+    loop: loop ? { name: loop.nodeName, status: loop.status } : null,
+    latestPass,
+  });
+  if (refusal) return refusal;
+
+  // No `await` between the read above and this write, so the loop cannot have
+  // settled in between — the same single-turn property `stepPass` relies on.
+  const value = stop ? latestPass : null;
+  db()
+    .prepare(
+      "UPDATE workflow_instance_blocks SET stop_after_pass = ?" +
+        " WHERE instance_id = ? AND node_id = ? AND kind = 'loop'",
+    )
+    .run(value, instanceId, loopNodeId);
+
+  advanceInstances();
+  return { ok: true, stopAfterPass: value };
+}
+
 /** A board condition read, or why this app could not read one. */
 export type LoopBoardReading =
   | { ok: true; counts: LoopBoardCounts | null }
@@ -2961,6 +3142,7 @@ export function blocksOf(instanceId: string): WorkflowInstanceBlock[] {
               cost_usd AS costUSD, cost_unreported AS unreported,
               tokens, emitted_specs AS specs, error,
               merge_batch_id AS batchId, reply, notes,
+              stop_after_pass AS stopAfterPass,
               -- Read back off the queue's own rows rather than counted into the
               -- block as it went: those rows carry git's answer for each branch,
               -- and a copy on the block would be a second thing to keep in step
@@ -3251,6 +3433,34 @@ export function lastRunAt(workflowId: string): number | null {
     )
     .get(workflowId) as { at: number | null } | undefined;
   return row?.at ?? null;
+}
+
+/**
+ * The newest press of Run and where it has got to, for the list that polls.
+ *
+ * One row and one member tally rather than `rowToInstance`, which parses the
+ * graph snapshot and reads the node, block and spend rows for a detail nothing
+ * on the list draws. The status goes through `instanceStatus` over that
+ * instance's own members, because the stored column only says what was done *to*
+ * the instance: read raw, a graph that finished an hour ago is "started" for
+ * ever and the list calls it working. Ordered as `findInstances` orders, so the
+ * row the list links is the first one the workflow's own page shows.
+ */
+export function lastInstanceOf(
+  workflowId: string,
+): { id: string; createdAt: number; status: WorkflowInstanceStatus } | null {
+  const row = db()
+    .prepare(
+      `SELECT id, created_at AS createdAt, status FROM workflow_instances
+        WHERE workflow_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+    )
+    .get(workflowId) as { id: string; createdAt: number; status: string } | undefined;
+  if (!row) return null;
+  return {
+    id: row.id,
+    createdAt: row.createdAt,
+    status: instanceStatus(row.status, memberTally(row.id)),
+  };
 }
 
 export function getInstance(id: string): WorkflowInstance | null {
@@ -3556,7 +3766,14 @@ export function startWorkflow(
   const defaults = chatGuards();
   const plans = new Map<string, Omit<CreateRunInput, "dependsOn" | "origin">>();
   for (const node of graph.nodes) {
-    if (node.kind === "merge" || node.kind === "loop" || node.kind === "review") continue;
+    if (
+      node.kind === "merge" ||
+      node.kind === "deliver" ||
+      node.kind === "loop" ||
+      node.kind === "review"
+    ) {
+      continue;
+    }
     const plan = planNode(
       node,
       node.templateId ? getTemplate(node.templateId) : null,
@@ -4240,12 +4457,13 @@ function haltBlocks(instanceId: string, cause: string): number {
     db()
       .prepare(
         "UPDATE workflow_instance_blocks SET status='blocked', finished_at=?," +
-          " error = CASE kind WHEN 'merge' THEN ? WHEN 'review' THEN ? ELSE ? END" +
+          " error = CASE kind WHEN 'merge' THEN ? WHEN 'deliver' THEN ? WHEN 'review' THEN ? ELSE ? END" +
           " WHERE instance_id=? AND status='waiting'",
       )
       .run(
         now,
         `${cause} before it landed anything.`,
+        `${cause} before it delivered anything.`,
         `${cause} before it reviewed anything.`,
         `${cause} before it started deciding.`,
         instanceId,
@@ -4253,7 +4471,7 @@ function haltBlocks(instanceId: string, cause: string): number {
     db()
       .prepare(
         "UPDATE workflow_instance_blocks SET status='failed', finished_at=?," +
-          " error = CASE kind WHEN 'merge' THEN ? WHEN 'review' THEN ? ELSE ? END" +
+          " error = CASE kind WHEN 'merge' THEN ? WHEN 'deliver' THEN ? WHEN 'review' THEN ? ELSE ? END" +
           " WHERE instance_id=? AND status='thinking'",
       )
       .run(
@@ -4262,6 +4480,12 @@ function haltBlocks(instanceId: string, cause: string): number {
         // later; one in flight is left to finish, exactly as `cancelBatch` has
         // it, so the batch's own rows stay the record of which branches landed.
         `${cause} while it was landing branches.`,
+        // A push already under way is not cancelled: `deliverRun` writes the
+        // pull request to the run's row, which is the record of what was
+        // delivered, and a halt that killed it between the push and that write
+        // would leave a published branch with no record. The block stops before
+        // it starts the next branch.
+        `${cause} while it was delivering branches.`,
         `${cause} while it was reviewing branches.`,
         `${cause} while it was deciding what to start.`,
         instanceId,
@@ -4913,6 +5137,14 @@ export type PickUp =
       retryRefusal: string | null;
     }
   | {
+      kind: "orchestrator";
+      nodeId: string;
+      nodeName: string;
+      error: string | null;
+      /** Why `retryOrchestratorBlock` would refuse it, or null when it would not. */
+      retryRefusal: string | null;
+    }
+  | {
       /**
        * A stopped loop whose latest pass would now go through: what blocked
        * its members has since cleared — most often a run resumed and completed
@@ -4928,8 +5160,8 @@ export type PickUp =
 
 /**
  * What is holding this workflow run up — each run whose ending wrote off
- * something behind it, and each merge block that failed — for the page to offer
- * one at a time.
+ * something behind it, each merge block that failed and each orchestrator block
+ * whose deciding turn failed — for the page to offer one at a time.
  *
  * Answered here rather than on the page, because "did this ending write
  * anything off" is the revive's own reachability and the refusals are the
@@ -5009,16 +5241,29 @@ export function pickUpsOf(instance: WorkflowInstance): PickUp[] {
           : null,
     });
   }
+  for (const block of instance.blocks) {
+    if (block.kind !== "orchestrator" || block.status !== "failed") continue;
+    const pass = passMemberIn(instance.graph, block.nodeId);
+    if (pass && stoppedPasses.get(pass.loopNodeId) !== pass.pass) continue;
+    out.push({
+      kind: "orchestrator",
+      nodeId: block.nodeId,
+      nodeName: block.nodeName,
+      error: block.error,
+      retryRefusal: orchestratorRetryRefusalIn(instance, block),
+    });
+  }
   for (const loop of instance.blocks) {
     const pass = stoppedPasses.get(loop.nodeId);
     if (pass === undefined) continue;
-    // Only once nothing above is offered for this pass: a stuck run or a failed
-    // merge is the obstacle to name, and carrying the loop on underneath one
-    // would stop it again on the same sentence.
+    // Only once nothing above is offered for this pass: a stuck run, a failed
+    // merge or a deciding turn that failed is the obstacle to name, and
+    // carrying the loop on underneath one would stop it again on the same
+    // sentence.
     const named = out.some((p) => {
       const id = p.kind === "run"
         ? instance.nodes.find((n) => n.runId === p.runId)?.nodeId
-        : p.kind === "merge" ? p.nodeId : undefined;
+        : p.kind === "merge" || p.kind === "orchestrator" ? p.nodeId : undefined;
       const member = id ? passMemberIn(instance.graph, id) : null;
       return member?.loopNodeId === loop.nodeId && member.pass === pass;
     });
@@ -5281,6 +5526,122 @@ export function retryMergeBlock(instanceId: string, nodeId: string): PickUpOutco
 }
 
 /**
+ * Why a failed deciding turn cannot be run again on the block's own record, or
+ * null when it can.
+ *
+ * Pure and unit-tested, `mergeBlockOutcome`'s reason: the list and the door
+ * both ask it, and a wrong answer in either direction is silent — a button the
+ * route then refuses, or a retry that starts the same runs twice.
+ *
+ * **A block that decided is not retried.** `blockSettlement` records `failed`
+ * only for a turn that failed *and* emitted nothing, so a failed block normally
+ * has no decision on it. The exception is a restart: `reconcileBlocksOnBoot`
+ * writes any `thinking` block `failed` without settling it, so a turn that had
+ * already called `emit_runs` is `failed` with its specs still stored and
+ * nothing created from them. A new turn would decide from nothing and replace
+ * that decision rather than carry it out, and if any run did exist from the
+ * first it would start the same work again — so both counts are asked, and the
+ * way through is a new press of Run. A turn that called `emit_runs` with an
+ * empty list decided nothing, and is retried like one that never got that far.
+ */
+export function orchestratorRetryRefusal(
+  block: Pick<WorkflowInstanceBlock, "nodeName" | "status" | "emitted" | "started">,
+): string | null {
+  if (block.status !== "failed") {
+    return `“${block.nodeName}” is ${block.status}, so there is no failed turn to run again.`;
+  }
+  const decided = Math.max(block.emitted, block.started);
+  if (decided > 0) {
+    return (
+      `“${block.nodeName}” had already decided on ${decided} run${decided === 1 ? "" : "s"} ` +
+      "when its turn failed, so another turn could start the same work again. " +
+      "Run the workflow again instead."
+    );
+  }
+  return null;
+}
+
+/**
+ * Whether a failed orchestrator block may be decided again, in its instance's
+ * terms: its own record first, then what is around it.
+ *
+ * The one place the list and `retryOrchestratorBlock` get their answer, so the
+ * page cannot offer a press the route refuses. Around it is `retryMergeBlock`'s
+ * test: inside a pass, whether the loop can take the pass back; outside one,
+ * whether a successor has started — which would put new runs behind a block
+ * that has already acted on the old ending.
+ */
+function orchestratorRetryRefusalIn(
+  instance: WorkflowInstance,
+  block: WorkflowInstanceBlock,
+): string | null {
+  const own = orchestratorRetryRefusal(block);
+  if (own) return own;
+  const pass = passMemberIn(instance.graph, block.nodeId);
+  if (pass) return loopPassRefusal(instance, pass.loopNodeId, pass.pass);
+  const started = startedBehind(instance, block.nodeId);
+  return started === null
+    ? null
+    : `“${started}” has already started after “${block.nodeName}” failed, so deciding again now would put new runs behind a block that has moved on.`;
+}
+
+/**
+ * Run a failed orchestrator block's deciding turn again, and only that turn.
+ *
+ * `retryMergeBlock`'s shape: the row goes back to `waiting`, what its failure
+ * wrote off behind it is revived, and the next advance claims it and starts the
+ * turn through `startBlockTurn` — so the fan-out cap, the instance budget, the
+ * hold and the process budget all apply to it exactly as they did the first
+ * time, and nothing here has a second reading of any of them. Blocks already
+ * finished are not repeated, which is the whole of what a fresh Run cannot offer.
+ *
+ * `emitted_specs` goes back to NULL because `emitBlockRuns` refuses a second
+ * `emit_runs` on a block whose column is set, and `[]` is a set column: left
+ * alone, a turn that had named nothing would be retried into a block that
+ * refuses everything it decides. `error` and `finished_at` clear for the reason
+ * the merge's do. The cost columns are not touched, and are the point: the
+ * failed turn was billed, its figure stays on the row, and the retry adds to
+ * it, so the block's Spent and the instance's total are what the block has cost
+ * in all — `claimBlock` clears the reply and notes, which belonged to a turn
+ * that is over.
+ */
+export function retryOrchestratorBlock(instanceId: string, nodeId: string): PickUpOutcome {
+  const opened = openInstanceFor(instanceId);
+  if ("refusal" in opened) return opened.refusal;
+  const { instance } = opened;
+
+  const block = instance.blocks.find((b) => b.nodeId === nodeId && b.kind === "orchestrator");
+  if (!block) {
+    return { ok: false, status: 404, error: "That orchestrator block is not part of this workflow run." };
+  }
+  const refusal = orchestratorRetryRefusalIn(instance, block);
+  if (refusal) return { ok: false, status: 409, error: refusal };
+
+  const pass = passMemberIn(instance.graph, nodeId);
+  db().transaction(() => {
+    db()
+      .prepare(
+        "UPDATE workflow_instance_blocks SET status='waiting', error=NULL, finished_at=NULL," +
+          " emitted_specs=NULL WHERE instance_id=? AND node_id=? AND status='failed'",
+      )
+      .run(instanceId, nodeId);
+    if (pass) {
+      reopenLoopPass(instance, pass.loopNodeId, pass.pass);
+      noteBlock(
+        instanceId,
+        pass.loopNodeId,
+        `Picked up at pass ${pass.pass}: “${block.nodeName}” was decided again.`,
+      );
+    } else {
+      reviveGraphDependents(instance, [nodeId]);
+    }
+  })();
+
+  advanceInstances();
+  return { ok: true };
+}
+
+/**
  * Move every started instance as far as it can go, right now.
  *
  * Synchronous from end to end, and that is the same requirement `createRun`'s
@@ -5457,6 +5818,23 @@ function advanceInstance(instanceId: string): void {
       finishMergeBlock(instanceId, merge.nodeId, {
         ok: false,
         note: `This block could not start merging: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      });
+    });
+  }
+
+  // The merge's shape and its claim, for its reason: `startDeliverBlock` reads
+  // git and then pushes, and two advance passes arriving together would
+  // otherwise both push the same branch. Not held by the install-wide hold,
+  // which stops new *spending* and which a push does none of — the merge block
+  // is not held by it either, when no resolution is authorised.
+  for (const deliver of step.deliver) {
+    if (!claimBlock(instanceId, deliver.nodeId)) continue;
+    void startDeliverBlock(instanceId, deliver.nodeId, deliver.runIds).catch((err) => {
+      finishMergeBlock(instanceId, deliver.nodeId, {
+        ok: false,
+        note: `This block could not start delivering: ${
           err instanceof Error ? err.message : String(err)
         }`,
       });
@@ -5997,6 +6375,7 @@ function advanceLoop(
       spentGuardUSD: loopSpend(instanceId, nodeId),
       stopWhenTasks: node.stopWhenTasks,
       boardCounts: board.counts,
+      stopAfterPass: loopStopAfter(instanceId, nodeId),
     });
 
     if (decision.kind === "stop") {
@@ -6685,7 +7064,9 @@ export interface BlockSettlement {
  * accepted while the child was alive are a decision it took deliberately, and a
  * CLI that errored on its way out afterwards says nothing about them — but a
  * block recorded `failed` blocks what is behind it, so a turn whose runs are
- * about to start must not be.
+ * about to start must not be. And when such a turn also ended with no `result`
+ * event at all, what it ended on goes in `notes` and `error` stays empty: that
+ * sentence is how the turn finished, not a verdict on what it decided.
  */
 export function blockSettlement(
   result: TurnResult,
@@ -6706,11 +7087,28 @@ export function blockSettlement(
     );
   }
 
+  // A turn that ended with no `result` event is the one failure `turnResultOf`
+  // returns without a `costUSD`: killed, crashed, timed out, or a stream the
+  // reader could not use. When it had already emitted, the block is `emitted`
+  // and its runs are about to start, so what it ended on is this app's account
+  // of how the turn finished and not the verdict on the decision — written as
+  // `error` it sat on a block whose runs went ahead, and was the only sentence
+  // the operator got. Which is why this is a note, and why it says what is
+  // missing: the cost shows as unreported (`blockTurnSpend`) and there is no
+  // reply to read.
+  const endedWithoutResult = result.status === "failed" && result.costUSD === undefined;
+  if (endedWithoutResult && emitted > 0) {
+    notes.push(
+      "The turn ended without a result, so no reply was kept and its cost is " +
+        `shown as unreported. What it ended on: ${result.error ?? "nothing recorded"}`,
+    );
+  }
+
   return {
     status: result.status === "failed" && emitted === 0 ? "failed" : "emitted",
     reply: result.text?.trim() || null,
     notes,
-    error: result.error ?? null,
+    error: endedWithoutResult && emitted > 0 ? null : (result.error ?? null),
   };
 }
 
@@ -7128,6 +7526,9 @@ function withNote(
  */
 async function branchVerdict(
   runId: string,
+  // Only the wording differs between the two exits: whether a branch has
+  // anything to put anywhere is the same question of git for both.
+  exit: "land" | "deliver" = "land",
 ): Promise<{ result: "queue" } | { result: "settled"; outcome: BranchOutcome }> {
   const label = branchLabel(runId);
   const skip = (reason: string) => ({
@@ -7157,7 +7558,7 @@ async function branchVerdict(
   if (!state) {
     return fail(
       "it worked directly in the folder rather than on a branch of its own, so " +
-        "there is no branch to land",
+        `there is no branch to ${exit}`,
     );
   }
   if (!state.branchExists) return fail("its branch no longer exists");
@@ -7204,7 +7605,7 @@ async function awaitBatch(
 }
 
 /**
- * Record what a merge block did.
+ * Record what a merge block did — or a deliver block, which settles the same way.
  *
  * `settleBlock`'s shape and its latch: guarded on `status='thinking'`, so a halt
  * that wrote the block off while the queue was draining keeps its own wording.
@@ -7239,6 +7640,185 @@ function finishMergeBlock(
 
   promoteQueued();
   advanceInstances();
+}
+
+/* ------------------------------------------------------------------ */
+/* Deliver blocks: pushing what the blocks in front of them built       */
+/* ------------------------------------------------------------------ */
+
+/** What became of one branch a deliver block was handed. */
+export interface DeliveryOutcome {
+  /** The branch, or the run's short id when it never had one to name. */
+  branch: string;
+  /**
+   * `delivered` — it is pushed and has a pull request, whose address is the
+   * reason. `skipped` — there was nothing to open one for, which is not a
+   * failure. `failed` — there was, and it did not leave.
+   */
+  result: "delivered" | "skipped" | "failed";
+  reason: string | null;
+}
+
+/**
+ * Whether a deliver block succeeded, and the sentence that says what happened.
+ *
+ * `mergeBlockOutcome`'s sibling, pure and unit-tested for its reason: this
+ * decides whether the blocks *behind* the deliver block start, and both ways of
+ * being wrong are silent. Read as failed, a chain whose branches are all
+ * published stops with nothing to do; read as succeeded, a follow-up run starts
+ * as though a pull request existed that does not.
+ *
+ * **A branch with nothing to deliver is a success**, on the merge block's
+ * ground: a run that committed nothing, a branch already on its target and a
+ * branch that already has a pull request all leave the operator with what they
+ * asked for. What is not a success is a predecessor that should have had a
+ * branch and has none — isolation having degraded at run time — and a push or a
+ * pull request that was refused, however the refusal was worded.
+ *
+ * **Unlike a merge block's, the note is never null when something was
+ * delivered**, because the pull request's address is the whole product of this
+ * block and the instance page shows nothing else it could be read from.
+ */
+export function deliverBlockOutcome(branches: readonly DeliveryOutcome[]): {
+  ok: boolean;
+  note: string | null;
+} {
+  if (branches.length === 0) {
+    return { ok: true, note: "There was no branch to deliver." };
+  }
+
+  const failed = branches.filter((b) => b.result === "failed");
+  const skipped = branches.filter((b) => b.result === "skipped");
+  const delivered = branches.filter((b) => b.result === "delivered");
+
+  const named = (list: readonly DeliveryOutcome[], none: string) => {
+    const shown = list
+      .slice(0, MAX_NAMED_BRANCHES)
+      .map((b) => `${b.branch} — ${b.reason ?? none}`);
+    const rest = list.length - shown.length;
+    return shown.join("; ") + (rest > 0 ? `; and ${rest} more` : "");
+  };
+
+  const parts: string[] = [];
+  if (failed.length > 0) {
+    parts.push(
+      `Delivered ${delivered.length} of ${branches.length - skipped.length} branch(es).`,
+    );
+    if (delivered.length > 0) parts.push(`Delivered: ${named(delivered, "no address recorded")}.`);
+    parts.push(`Not delivered: ${named(failed, "no reason recorded")}.`);
+  } else if (delivered.length > 0) {
+    parts.push(`Delivered ${delivered.length} branch(es): ${named(delivered, "no address recorded")}.`);
+  }
+  if (skipped.length > 0) {
+    parts.push(
+      delivered.length === 0 && failed.length === 0
+        ? `Nothing to deliver: ${named(skipped, "nothing to deliver")}.`
+        : `${skipped.length} had nothing to deliver: ${named(skipped, "nothing to deliver")}.`,
+    );
+  }
+  return { ok: failed.length === 0, note: parts.join(" ") };
+}
+
+/**
+ * Push the branches the blocks in front of this one left behind, and open a
+ * pull request for each.
+ *
+ * Everything that decides whether a branch may leave is `deliverRun`'s and is
+ * deliberately not restated here: the verify gate, the seeded-file refusal, the
+ * certification gate, the per-repository credential, the `landing` claim on the
+ * checkout and the shutdown gate. This function's whole job is choosing *which*
+ * runs go to it, one at a time, and reading back what happened.
+ *
+ * **One at a time**, and that is not caution: `deliverRun` takes the checkout's
+ * `landing` claim and refuses a second delivery to the same folder while it is
+ * held, so two in flight would fail the second for a reason that has nothing to
+ * do with its branch. The order is the graph's, as the merge queue's is.
+ *
+ * **It does not need the operator's checkout clean.** `deliverRun` reads the
+ * checkout for its remote and runs `push --set-upstream` in it, which writes
+ * `.git/config` and nothing in the working tree, so the dirty-checkout refusal
+ * that fails a merge block never applies. It does refuse while a run is working
+ * *in that folder* — an agent without an isolated checkout — and that arrives
+ * here as a failed branch with its sentence.
+ *
+ * The halt latch is read before each branch rather than once: a push is not
+ * something to begin in a workflow that is being taken down, and the branches
+ * already pushed are recorded on their own runs whatever this block says.
+ */
+async function startDeliverBlock(
+  instanceId: string,
+  nodeId: string,
+  runIds: readonly string[],
+): Promise<void> {
+  const instance = getInstance(instanceId);
+  const node = instance ? blockNode(instance, nodeId) : undefined;
+  if (!instance || !node || node.kind !== "deliver") {
+    finishMergeBlock(instanceId, nodeId, {
+      ok: false,
+      note: "This block is no longer in the workflow this run was started from.",
+    });
+    return;
+  }
+
+  const outcomes: DeliveryOutcome[] = [];
+  for (const runId of runIds) {
+    const fresh = getInstance(instanceId);
+    if (
+      !fresh ||
+      !instanceIsOpen(fresh.status) ||
+      getBlock(instanceId, nodeId)?.status !== "thinking"
+    ) {
+      // The halt has already written the block off with its own wording, and
+      // `finishMergeBlock`'s latch would refuse ours.
+      return;
+    }
+    outcomes.push(await deliverBranch(runId));
+  }
+
+  finishMergeBlock(instanceId, nodeId, deliverBlockOutcome(outcomes));
+}
+
+/** One predecessor run, delivered or the reason it was not. */
+async function deliverBranch(runId: string): Promise<DeliveryOutcome> {
+  const branch = branchLabel(runId);
+
+  // Ahead of the git reads: the card's own rule, one pull request per branch.
+  // A second push would update that pull request and then be refused by
+  // GitHub's "already exists", so what it reported and what it did would
+  // disagree.
+  const already = deliveredPullRequest(runId);
+  if (already) {
+    return {
+      branch,
+      result: "skipped",
+      reason: `it already has pull request #${already.number} (${already.url})`,
+    };
+  }
+
+  const verdict = await branchVerdict(runId, "deliver");
+  if (verdict.result === "settled") {
+    return {
+      branch,
+      result: verdict.outcome.result === "failed" ? "failed" : "skipped",
+      reason: verdict.outcome.reason,
+    };
+  }
+
+  // Caught here and not left to the caller, which would write the whole block
+  // off as one that "could not start delivering" and lose the branches already
+  // pushed from its note.
+  try {
+    const delivery = await deliverRun(runId);
+    return delivery.ok
+      ? { branch, result: "delivered", reason: delivery.url }
+      : { branch, result: "failed", reason: delivery.reason };
+  } catch (err) {
+    return {
+      branch,
+      result: "failed",
+      reason: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -7403,6 +7983,14 @@ export async function startReviewBlock(
     });
     return;
   }
+  // A status verdict reads each run's row and nothing else: it starts no review
+  // and spends nothing, so there is no budget boundary to cross — a merge
+  // block's free case — and no `await` between the claim and the settlement
+  // for a halt to land in.
+  if (node.verdictSource?.kind === "status") {
+    settleReviewByStatus(instanceId, node, nodeId, runIds);
+    return;
+  }
   const fixRounds = node.fixRounds ?? 0;
 
   // The workflow-wide guard, at this kind of block boundary — and always,
@@ -7427,17 +8015,7 @@ export async function startReviewBlock(
     return;
   }
 
-  // Seeded once. `INSERT OR IGNORE` because a retried block finds its rows.
-  const now = Date.now();
-  runIds.forEach((runId, position) => {
-    db()
-      .prepare(
-        `INSERT OR IGNORE INTO workflow_review_items
-           (instance_id, block_id, origin_run_id, run_id, position, round, status, updated_at)
-         VALUES (?, ?, ?, ?, ?, 0, 'reviewing', ?)`,
-      )
-      .run(instanceId, nodeId, runId, runId, position, now);
-  });
+  seedReviewItems(instanceId, nodeId, runIds);
 
   await Promise.all(
     runIds.map((runId) =>
@@ -7453,11 +8031,30 @@ export async function startReviewBlock(
   );
 
   if (!reviewStillOpen(instanceId, nodeId)) return;
-  const items = reviewItemsOf(instanceId, nodeId);
   // No cost here: `bankReviewSpend` put each review's on the row as it ended.
+  finishReviewBlock(instanceId, nodeId, guardNote);
+}
+
+/** One row per branch, seeded once. `INSERT OR IGNORE` because a retried block finds its rows. */
+function seedReviewItems(instanceId: string, blockId: string, runIds: readonly string[]): void {
+  const now = Date.now();
+  runIds.forEach((runId, position) => {
+    db()
+      .prepare(
+        `INSERT OR IGNORE INTO workflow_review_items
+           (instance_id, block_id, origin_run_id, run_id, position, round, status, updated_at)
+         VALUES (?, ?, ?, ?, ?, 0, 'reviewing', ?)`,
+      )
+      .run(instanceId, blockId, runId, runId, position, now);
+  });
+}
+
+/** Settle a review block with the sentence its branches add up to. */
+function finishReviewBlock(instanceId: string, blockId: string, guardNote: string | null): void {
+  const items = reviewItemsOf(instanceId, blockId);
   finishMergeBlock(
     instanceId,
-    nodeId,
+    blockId,
     withNote(
       {
         ok: true,
@@ -7472,6 +8069,37 @@ export async function startReviewBlock(
       guardNote,
     ),
   );
+}
+
+/**
+ * A status verdict on every branch, and the block settled, in one synchronous
+ * pass: each run's row read through `statusVerdict`, approved or set aside.
+ *
+ * Through `setAside` with the verdict's `needsFrontier`, which is always false,
+ * so a status set-aside marks no task and reopens none. No model judged the
+ * work, and `reopenRejectedTask` is the one move off the transition table no
+ * actor asks for, kept for a frontier model's rejection; a claim a run still
+ * holds when it ends is the operator's to release everywhere else on the board.
+ * `committed_nothing` stays 0 because no diff is read, so every branch set aside
+ * here counts as work turned down and a loop's DONE rung does not read the pass
+ * as finished.
+ */
+function settleReviewByStatus(
+  instanceId: string,
+  node: WorkflowNode,
+  blockId: string,
+  runIds: readonly string[],
+): void {
+  seedReviewItems(instanceId, blockId, runIds);
+  for (const runId of runIds) {
+    const verdict = statusVerdict(getRun(runId)?.status ?? null);
+    if (verdict.kind === "approve") {
+      updateReviewItem(instanceId, blockId, runId, { status: "approved", note: null });
+    } else {
+      setAside(instanceId, blockId, runId, runId, verdict.reason, verdict.needsFrontier, node.name);
+    }
+  }
+  finishReviewBlock(instanceId, blockId, null);
 }
 
 /**
@@ -8424,7 +9052,7 @@ export function reconcileBlocksOnBoot(): void {
   const thinking = db()
     .prepare(
       "UPDATE workflow_instance_blocks SET status='failed', finished_at=?," +
-        " error = CASE kind WHEN 'merge' THEN ? WHEN 'review' THEN ? ELSE ? END," +
+        " error = CASE kind WHEN 'merge' THEN ? WHEN 'deliver' THEN ? WHEN 'review' THEN ? ELSE ? END," +
         // A turn the restart killed was billed and never reported, so it is
         // counted the way `blockTurnSpend` counts one killed any other way: a
         // deciding block's own child always, and a review block's when a
@@ -8448,6 +9076,11 @@ export function reconcileBlocksOnBoot(): void {
       // never resumed: a server coming back up must not merge into a checkout
       // somebody works in. So the block really is finished, however far it got.
       "The server restarted while this block was landing branches. Its queued merges were cancelled — check the branches before queueing them again.",
+      // No queue behind it to cancel: a delivery is one push and one pull
+      // request per branch, written to the run's row as each completes, so what
+      // the restart left is a prefix of the branches. A run that was delivered
+      // is skipped on the next try, which is what makes saying so safe.
+      "The server restarted while this block was delivering branches. Those it had already delivered have a pull request on their run pages; check the rest there before delivering them again.",
       // A review block's reviews and fix runs are reconciled by their own
       // tables' boot passes; what is lost is the loop driving them, and nothing
       // behind it may land work it had not finished judging — `reviewVerdict`

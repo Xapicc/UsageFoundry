@@ -957,6 +957,60 @@ export function passRuns(row: PassRow): WorkflowInstanceNodeDTO[] {
 }
 
 /**
+ * What one pass spent, as the clause beside its run count.
+ *
+ * Empty where **nothing** in the pass reported a cost, rather than `$0.00`: a
+ * null `spentUSD` is a provider that reports no cost, which the rows under it
+ * already draw as a dash, and a zero here would be a figure nobody measured.
+ * A pass where some runs reported and others did not is summed from the ones
+ * that did — the same partial reading the workflow's own meter takes, and the
+ * count beside it says how many runs the figure is over.
+ */
+export function passSpend(runs: readonly WorkflowInstanceNodeDTO[]): { usd: number | null; reported: number } {
+  const reported = runs
+    .map((n) => n.run?.spentUSD)
+    .filter((usd): usd is number => usd !== null && usd !== undefined);
+  if (reported.length === 0) return { usd: null, reported: 0 };
+  return {
+    usd: reported.reduce((total, usd) => total + usd, 0),
+    reported: reported.length,
+  };
+}
+
+/**
+ * What the loop card's "Spent" figure sums: its runs, and the turns of the
+ * blocks that decide and land them.
+ *
+ * The cost limit is checked against `loopSpend`, which counts an orchestrator
+ * member's deciding turn and a merge member's conflict resolution as well as the
+ * runs, so a figure of runs alone could sit well under a limit the loop had just
+ * stopped on. A turn nothing measured is left out rather than counted as `$0.00`,
+ * for `passSpend`'s reason, and `reported` stays a count of runs — it is read
+ * beside the run count and means nothing against a mixed total.
+ *
+ * Still the figure the rows show and never the guard's: that one adds estimates
+ * for cycles killed before they reported and is not rendered anywhere, so the
+ * card says the limit is measured on more than it shows instead of showing it.
+ */
+export function loopSpendShown(
+  passes: readonly PassRow[],
+): { usd: number | null; reported: number } {
+  const ofRuns = passSpend(passes.flatMap(passRuns));
+  const turns = passes
+    .flatMap((pass) => pass.members)
+    .flatMap((member) =>
+      member.kind === "block" && member.block.costUSD !== null
+        ? [member.block.costUSD]
+        : [],
+    );
+  if (ofRuns.usd === null && turns.length === 0) return { usd: null, reported: 0 };
+  return {
+    usd: (ofRuns.usd ?? 0) + turns.reduce((total, usd) => total + usd, 0),
+    reported: ofRuns.reported,
+  };
+}
+
+/**
  * The two answers a drawn link may carry, and the unanswered state beside them.
  *
  * **The `""` key is a real option and must never be dropped.** A drawn link

@@ -6,7 +6,9 @@ import {
   fixRunPrompt,
   nextReviewStep,
   reviewBlockSummary,
+  statusVerdict,
 } from "./reviewBlock";
+import type { RunStatus } from "./orchestrator";
 
 /**
  * What a workflow's review block does with one branch, step by step.
@@ -85,6 +87,48 @@ describe("afterFixRun", () => {
       const step = afterFixRun(status, iterations);
       assert.equal(step.kind, "set-aside", status);
       assert.equal(step.kind === "set-aside" && step.needsFrontier, false, status);
+    }
+  });
+});
+
+/**
+ * A review block whose verdict is the run's own status. Silent both ways: a
+ * non-completed run approved lands work that asked for review with nobody
+ * looking, and a set-aside marked needs-frontier keeps a local pass off a task
+ * no model ever judged.
+ */
+describe("statusVerdict", () => {
+  it("approves a run that completed", () => {
+    assert.deepEqual(statusVerdict("completed"), { kind: "approve" });
+  });
+
+  it("sets every other ending aside by name, and never marks its tasks", () => {
+    const endings: RunStatus[] = ["needs-review", "failed", "stopped", "blocked"];
+    for (const status of endings) {
+      assert.deepEqual(
+        statusVerdict(status),
+        {
+          kind: "set-aside",
+          reason: `its run ended ${status} rather than completed`,
+          needsFrontier: false,
+        },
+        status,
+      );
+    }
+    assert.deepEqual(statusVerdict(null), {
+      kind: "set-aside",
+      reason: "its run has been deleted",
+      needsFrontier: false,
+    });
+  });
+
+  it("approves nothing but completed, whatever status a run could hold", () => {
+    // The live ones cannot reach a review block — its links release it only
+    // on terminal runs — but a verdict that approved one would be a branch
+    // handed to the merge while its run is still writing to it.
+    const live: RunStatus[] = ["waiting", "queued", "running", "paused"];
+    for (const status of live) {
+      assert.equal(statusVerdict(status).kind, "set-aside", status);
     }
   });
 });

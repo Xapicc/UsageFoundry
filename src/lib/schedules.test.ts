@@ -13,6 +13,7 @@ import {
   type ScheduleContext,
   type ScheduleSpec,
 } from "./schedules";
+import type { WorkflowNode } from "./workflowGraph";
 
 /**
  * The decision a schedule makes, and only that.
@@ -459,8 +460,12 @@ describe("scheduleRefusal", () => {
     maxWeeklyFraction: null,
   };
 
+  const graph = (...kinds: Array<WorkflowNode["kind"]>) => ({
+    nodes: kinds.map((kind, i) => ({ id: `n${i}`, name: `Block ${i}`, kind }) as WorkflowNode),
+  });
+
   it("refuses a workflow that bounds a press of Run with nothing", () => {
-    const reason = scheduleRefusal({ name: "Nightly", instanceBudget: off });
+    const reason = scheduleRefusal({ name: "Nightly", instanceBudget: off, graph: graph("run") });
     assert.ok(reason);
     assert.match(reason, /Nightly/);
   });
@@ -471,8 +476,23 @@ describe("scheduleRefusal", () => {
       { ...off, maxSessionFraction: 0.5 },
       { ...off, maxWeeklyFraction: 0.5 },
     ]) {
-      assert.equal(scheduleRefusal({ name: "Nightly", instanceBudget: budget }), null);
+      assert.equal(
+        scheduleRefusal({ name: "Nightly", instanceBudget: budget, graph: graph("run", "merge") }),
+        null,
+      );
     }
+  });
+
+  it("refuses a budgeted workflow that publishes, and names the block", () => {
+    const reason = scheduleRefusal({
+      name: "Nightly",
+      instanceBudget: { ...off, maxInstanceCostUSD: 5 },
+      graph: graph("run", "deliver"),
+    });
+    assert.ok(reason);
+    assert.match(reason, /Nightly/);
+    assert.match(reason, /Block 1/);
+    assert.match(reason, /deliver block/);
   });
 });
 
@@ -644,6 +664,7 @@ describe("planScheduleProposal — a cadence a model wrote becomes a schedule", 
     id: "wf-1",
     name: "Nightly",
     instanceBudget: { maxInstanceCostUSD: 5, maxSessionFraction: null, maxWeeklyFraction: null },
+    graph: { nodes: [], edges: [] },
   };
   const row = (spec: ScheduleSpec, timeZone = BERLIN, workflowId = "wf-1") => ({
     schedule: proposedScheduleBlob(workflowId, spec, timeZone),
@@ -681,6 +702,19 @@ describe("planScheduleProposal — a cadence a model wrote becomes a schedule", 
     );
     assert.equal(plan.ok, false);
     assert.match((plan as { reason: string }).reason, /Nightly/);
+  });
+
+  it("refuses a workflow that has gained a deliver block since the card was written", () => {
+    const publishing = {
+      ...limited,
+      graph: {
+        nodes: [{ id: "d", name: "Open PRs", kind: "deliver" } as WorkflowNode],
+        edges: [],
+      },
+    };
+    const plan = planScheduleProposal(row(DAILY_0900), publishing, 0);
+    assert.equal(plan.ok, false);
+    assert.match((plan as { reason: string }).reason, /Open PRs/);
   });
 
   it("refuses by name when the workflow is gone, rather than scheduling another", () => {

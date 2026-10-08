@@ -1611,6 +1611,26 @@ test("propose_workflow refuses a block whose folder is null, and takes \"\" as t
   assert.equal(proposals(), 1);
 });
 
+test("propose_workflow refuses a deliver block, which publishes, and writes no card", async () => {
+  const { token, proposals } = proposingChat();
+
+  // `normalizeWorkflowInput` accepts the kind from the editor, so the refusal is
+  // the tool's own: a card for this block would read "no agent" beside blocks
+  // that only write to disk, over a step that pushes branches and opens pull
+  // requests with nothing asking first.
+  const deliver = await callTool(token, "propose_workflow", {
+    name: `Publishes ${randomUUID()}`,
+    blocks: [
+      { id: "a", name: "Build", mountId: MOUNT, folder: "", task: "Do a thing." },
+      { id: "ship", name: "Open the PRs", kind: "deliver", dependsOn: [{ id: "a", edge: "on-success" }] },
+    ],
+  });
+  assert.equal(deliver.isError, true);
+  assert.match(deliver.text, /“Open the PRs” is a deliver block/);
+  assert.match(deliver.text, /workflow editor/);
+  assert.equal(proposals(), 0, "and wrote no card");
+});
+
 test("ask_operator refuses a question too long to be answered, and asks nothing", async () => {
   const chatId = chat.createChat().id;
   const token = chat.mintCapability({ kind: "chat", chatId });

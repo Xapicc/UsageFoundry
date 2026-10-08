@@ -1,5 +1,6 @@
 import type {
   MergeStrategyDTO,
+  ReviewVerdictSourceDTO,
   RunProviderDTO,
   TaskPriorityDTO,
   TaskStatusDTO,
@@ -128,6 +129,11 @@ export interface BlockDraft {
   provider: string;
   /** Review blocks only: how many fix rounds a rejected branch gets, as typed. */
   fixRounds: string;
+  /**
+   * Review blocks only: where the verdict comes from, a `ReviewVerdictSourceDTO`
+   * kind as picked.
+   */
+  verdictSource: string;
 }
 
 /** One of a board condition's numbers, held as the panel holds it. */
@@ -1367,8 +1373,21 @@ export function worstCaseMembers(
   return body.map((member) => ({
     kind: member.kind,
     fanOut: member.fanOut.trim() === "" ? null : Number(member.fanOut),
-    fixRounds: member.kind === "review" ? Number(member.fixRounds) : null,
+    fixRounds: draftFixRounds(member),
   }));
+}
+
+/**
+ * A review draft's fix rounds as Save sends them, and null on every other kind.
+ *
+ * 0 under a status verdict whatever the hidden picker still holds: the panel
+ * stops showing it, so sending it would make the block unsavable over a control
+ * the operator can no longer see — and the statement above reads this too, so
+ * it never counts fix runs Save would not send.
+ */
+function draftFixRounds(b: BlockDraft): number | null {
+  if (b.kind !== "review") return null;
+  return b.verdictSource === "status" ? 0 : Number(b.fixRounds);
 }
 
 export interface EdgeGeometry {
@@ -1481,7 +1500,11 @@ export function draftToGraph(draft: CanvasDraft): WireGraph {
     // the panel is about to stop showing. Either way this is the same treatment
     // `mergeStrategy`, `fanOut` and `stopWhenTasks` below get: a value only ever
     // goes over the wire for the kind that holds it.
-    const startsNoRun = b.kind === "merge" || b.kind === "loop" || b.kind === "review";
+    const startsNoRun =
+      b.kind === "merge" ||
+      b.kind === "deliver" ||
+      b.kind === "loop" ||
+      b.kind === "review";
     return {
       id: b.id,
       name: b.name.trim(),
@@ -1547,7 +1570,13 @@ export function draftToGraph(draft: CanvasDraft): WireGraph {
         (b.kind === "run" || b.kind === "orchestrator") && b.provider !== ""
           ? (b.provider as RunProviderDTO)
           : null,
-      fixRounds: b.kind === "review" ? Number(b.fixRounds) : null,
+      fixRounds: draftFixRounds(b),
+      // Cast, not checked: the picker offers only `REVIEW_VERDICT_KINDS`, and
+      // `normalizeNode` refuses any other kind by name.
+      verdictSource:
+        b.kind === "review"
+          ? ({ kind: b.verdictSource } as ReviewVerdictSourceDTO)
+          : null,
     };
   });
   const edges = draft.links.map((l) => ({

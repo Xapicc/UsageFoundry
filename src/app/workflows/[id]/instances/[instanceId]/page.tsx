@@ -20,7 +20,9 @@ import {
   instanceCanMove,
   instanceOutcomeDetail,
   landingSummary,
+  loopSpendShown,
   passRuns,
+  passSpend,
   passesOf,
   pollFailureMessage,
   STATUS_LABEL,
@@ -99,6 +101,7 @@ const STATUS_BY_KIND: Partial<
   Record<BlockKind, Partial<Record<BlockStatus, string>>>
 > = {
   merge: { thinking: "merging", emitted: "landed" },
+  deliver: { thinking: "delivering", emitted: "delivered" },
   loop: { emitted: "repeated" },
 };
 
@@ -116,27 +119,6 @@ const BLOCK_TONE: Record<BlockStatus, BadgeTone> = {
 
 type BlockDTO = WorkflowInstanceDTO["blocks"][number];
 type NodeDTO = WorkflowInstanceDTO["nodes"][number];
-
-/**
- * What one pass spent, as the clause beside its run count.
- *
- * Empty where **nothing** in the pass reported a cost, rather than `$0.00`: a
- * null `spentUSD` is a provider that reports no cost, which the rows under it
- * already draw as a dash, and a zero here would be a figure nobody measured.
- * A pass where some runs reported and others did not is summed from the ones
- * that did — the same partial reading the workflow's own meter takes, and the
- * count beside it says how many runs the figure is over.
- */
-function passSpend(runs: readonly NodeDTO[]): { usd: number | null; reported: number } {
-  const reported = runs
-    .map((n) => n.run?.spentUSD)
-    .filter((usd): usd is number => usd !== null && usd !== undefined);
-  if (reported.length === 0) return { usd: null, reported: 0 };
-  return {
-    usd: reported.reduce((total, usd) => total + usd, 0),
-    reported: reported.length,
-  };
-}
 
 /**
  * How a set of runs ended, most common first: "9 completed · 1 needs-review".
@@ -423,6 +405,8 @@ function pickUpRequest(p: WorkflowPickUpDTO): Record<string, string> {
       return { action: "leave-behind", runId: p.runId };
     case "merge":
       return { action: "retry-merge", nodeId: p.nodeId };
+    case "orchestrator":
+      return { action: "retry-orchestrator", nodeId: p.nodeId };
     case "loop":
       return { action: "resume-loop", nodeId: p.nodeId };
   }
@@ -445,6 +429,12 @@ const PICK_UP_SHEET: Record<
     body:
       "Every branch it was given that is not on its target yet goes back through the merge queue, into your checkout; a branch already landed is skipped. If the section repeats, its next pass starts once this one has landed.",
   },
+  orchestrator: {
+    title: (name) => `Retry “${name}”?`,
+    confirm: "Decide again",
+    body:
+      "Only its turn runs again; blocks already finished are not repeated. It is held to the same fan-out limit and workflow budget as the first time, and what the failed turn spent stays on the block. Every run it decides on starts with nobody watching.",
+  },
   loop: {
     title: (name) => `Carry on “${name}”?`,
     confirm: "Carry on the loop",
@@ -461,11 +451,12 @@ const PICK_UP_SHEET: Record<
  * asked is the operator's to answer by name. Resume is a link rather than a
  * button because resuming is `reopenRun`, which asks for the budget and the note
  * on the run's own page — and already carries the workflow on once the run
- * completes. The two actions here are the ones no other page can take.
+ * completes. The actions here are the ones no other page can take.
  *
- * Both go through a `Sheet`: each releases work straight away — a merge into
- * the operator's checkout, a loop's next pass — which is the kind of action the
- * grouping vocabulary reserves one for.
+ * Each goes through a `Sheet`: each releases work straight away — a merge into
+ * the operator's checkout, a deciding turn whose runs start unattended, a
+ * loop's next pass — which is the kind of action the grouping vocabulary
+ * reserves one for.
  */
 function PickUpCard({
   pickUps,
@@ -575,7 +566,11 @@ function PickUpCard({
               <ListRow
                 key={p.nodeId}
                 label={<span className="font-medium text-ink">{p.nodeName}</span>}
-                description={p.retryRefusal ?? p.error ?? "The merge failed"}
+                description={
+                  p.retryRefusal ??
+                  p.error ??
+                  (p.kind === "merge" ? "The merge failed" : "The turn failed")
+                }
               >
                 {p.retryRefusal === null && (
                   <Button
@@ -584,7 +579,7 @@ function PickUpCard({
                     onClick={() => setPending(p)}
                     disabled={busy}
                   >
-                    Retry merge
+                    {p.kind === "merge" ? "Retry merge" : "Decide again"}
                   </Button>
                 )}
               </ListRow>
@@ -631,15 +626,69 @@ function LoopCard({
   passes,
   nodeName,
   emphasis,
+  workflowId,
+  instanceId,
+  onChanged,
+  onRefused,
 }: {
   loop: BlockDTO;
   passes: PassRow[];
   nodeName: Map<string, string>;
   emphasis: "primary" | "default";
+  workflowId: string;
+  instanceId: string;
+  /** The instance as the server now records it, after a press that took. */
+  onChanged: (instance: WorkflowInstanceDTO) => void;
+  /** A press the server declined: read the page again rather than wait a poll. */
+  onRefused: () => void;
 }) {
   const runs = passes.flatMap(passRuns);
-  const spend = passSpend(runs);
+  const spend = loopSpendShown(passes);
   const waits = loop.waitsFor.map((wait) => fmtInstanceWait(wait, nodeName));
+  const [pressing, setPressing] = useState(false);
+  const [pressError, setPressError] = useState<string | null>(null);
+
+  // Offered while the loop is repeating and a pass exists to stop after. A halt
+  // writes the loop `failed`, so Stop pressed as well removes the control
+  // rather than leaving a button that would be refused.
+  const canAskStop = loop.status === "looping" && passes.length > 0;
+  const stopRequested = loop.stopAfterPass !== null;
+
+  /**
+   * Record the request, or take it back.
+   *
+   * Guarded like `stopAll`: an unguarded rejection out of a handler that sets a
+   * busy flag leaves the button disabled with no cue. A refusal also re-reads the
+   * page, because the usual cause is the pass having settled under the press and
+   * the card is then showing a control for a loop that has ended.
+   */
+  async function ask(stop: boolean) {
+    setPressing(true);
+    setPressError(null);
+    try {
+      const res = await fetch(
+        `/api/workflows/${workflowId}/instances/${instanceId}/stop-after-pass`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ nodeId: loop.nodeId, stop }),
+        },
+      );
+      const data = (await res.json().catch(() => ({}))) as {
+        instance?: WorkflowInstanceDTO;
+        error?: string;
+      };
+      if (!res.ok) {
+        onRefused();
+        throw new Error(data.error ?? `Request failed (${res.status})`);
+      }
+      if (data.instance) onChanged(data.instance);
+    } catch (err) {
+      setPressError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPressing(false);
+    }
+  }
 
   return (
     <Card emphasis={emphasis}>
@@ -650,7 +699,32 @@ function LoopCard({
             started {fmtDateTime(loop.startedAt)}
           </span>
         )}
+        {canAskStop && (
+          <div className="ml-auto flex items-center gap-3">
+            {stopRequested && (
+              <span className="text-sm text-ink-muted">
+                Ends after pass {loop.stopAfterPass}
+              </span>
+            )}
+            <Button
+              size="compact"
+              variant="secondary"
+              busy={pressing}
+              onClick={() => void ask(!stopRequested)}
+            >
+              {stopRequested ? "Keep going" : "Stop after this pass"}
+            </Button>
+          </div>
+        )}
       </div>
+      {canAskStop && stopRequested && (
+        <Hint>The pass in flight finishes and lands; no further pass starts</Hint>
+      )}
+      {pressError && (
+        <Notice tone="danger" live className="mt-3">
+          {pressError}
+        </Notice>
+      )}
 
       {passes.length === 0 ? (
         <Empty>
@@ -673,7 +747,7 @@ function LoopCard({
             <StatSub>{statusTally(runs)}</StatSub>
           </div>
           <div>
-            <div className="text-xs text-ink-muted">Spent by its runs</div>
+            <div className="text-xs text-ink-muted">Spent by its passes</div>
             {/* A dash rather than $0.00 when nothing reported: see `passSpend`. */}
             <Stat>{spend.usd === null ? "—" : fmtUSD(spend.usd)}</Stat>
             <StatSub>
@@ -683,6 +757,14 @@ function LoopCard({
               {spend.reported < runs.length &&
                 ` · ${spend.reported} of ${runs.length} reported a cost`}
             </StatSub>
+            {/* Said only beside a limit, and without the figure: the guard's
+                number is never rendered, so the card names the difference. */}
+            {loop.maxLoopCostUSD !== null && (
+              <StatSub>
+                Checked against a figure that also counts cycles cut short before
+                they reported
+              </StatSub>
+            )}
           </div>
         </div>
       )}
@@ -781,7 +863,8 @@ function LoopCard({
 
       <Hint>
         Stops when every run of a pass reports the work complete, a pass does
-        not complete or does not land, or one of its limits is reached
+        not complete or does not land, one of its limits is reached, or you ask
+        it to stop after a pass
       </Hint>
     </Card>
   );
@@ -806,6 +889,12 @@ function blockSummary(b: BlockDTO, waits: string[]): string {
     // Only for a merge that finished: one that failed with nothing queued has
     // not established that there was nothing to land, and its error says more.
     if (b.status === "emitted") return "no branches to land";
+  } else if (b.kind === "deliver") {
+    // No counts to read back: a delivery has no queue behind it, and what each
+    // branch came to is in the block's note beneath this line.
+    if (b.status === "thinking") return "delivering branches";
+    if (b.status === "emitted") return "delivered every branch it had one for";
+    if (b.status === "failed") return "did not deliver every branch";
   } else if (b.kind === "review") {
     const items = b.reviewItems;
     const approved = items.filter((i) => i.status === "approved").length;
@@ -1080,6 +1169,15 @@ export default function WorkflowInstancePage() {
           </Hint>,
         ]
       : []),
+    ...(instance.blocks.some((b) => b.kind === "deliver")
+      ? [
+          <Hint key="deliver">
+            A deliver block&rsquo;s pull requests are listed in its note, and on
+            each run&rsquo;s Land card; a branch it pushed stays on the remote
+            whatever happens to the pull request
+          </Hint>,
+        ]
+      : []),
     ...(instance.blocks.some((b) => b.kind === "review")
       ? [
           <Hint key="review">
@@ -1297,7 +1395,7 @@ export default function WorkflowInstancePage() {
               <Table stack>
                 <caption className="sr-only">
                   Blocks that decide what to run, blocks that repeat one, blocks
-                  that land branches, and blocks waiting on any of them
+                  that land or deliver branches, and blocks waiting on any of them
                 </caption>
                 {/* `min-w` for `RunTableHead`'s reason, one table over: a
                     `width` is traded away against the `w-full` column's own
@@ -1479,6 +1577,10 @@ export default function WorkflowInstancePage() {
             emphasis={
               savedRuns.length === 0 && index === 0 ? "primary" : "default"
             }
+            workflowId={id}
+            instanceId={instanceId}
+            onChanged={setInstance}
+            onRefused={() => void load()}
           />
         </Fragment>
       ))}

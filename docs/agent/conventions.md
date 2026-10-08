@@ -15,6 +15,7 @@ Each rule is in one topic file under `docs/agent/conventions/`; the lines below 
 - Twenty-four routes answer through `jsonMaybeGzipped` (`grep -rl 'jsonMaybeGzipped(' src/app/api`), and the streaming ones are excluded by name
 - Module state survives dev hot reload via `globalThis` singletons: `__ufDb`, `__ufBus`, `__ufProcs`, `__ufInterrupts`, `__ufTranscriptCacheV2`.
 - Schema changes go in `migrate()` in `db.ts` as idempotent `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` statements, or as an `addColumn` that reads the live schema — there is no …
+- A control that records a request on a running subject is a route of its own beside `stop`, never a mode of it, and the page that presses it re-reads on a refusal.
 - `better-sqlite3` is a native addon — it must stay in `serverExternalPackages` in `next.config.ts`, and the Dockerfile's `deps` stage carries the build toolchain for it.
 - Comments in this codebase explain *why* a decision was made (usually a correctness or safety trade-off), not what the code does.
 
