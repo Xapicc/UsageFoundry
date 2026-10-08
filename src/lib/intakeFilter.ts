@@ -4,7 +4,7 @@ import { BYTES_PER_TOKEN } from "./fileCostNotice";
 import {
   CACHE_WRITE_1H_MULTIPLIER,
   cacheReadMultiplierOf,
-  resolvePrice,
+  resolveFlatPrice,
 } from "./pricing";
 import { scanUsage, type UsageEntry } from "./transcripts";
 
@@ -736,7 +736,9 @@ export const NO_FILTER_NET: FilterNet = {
  * `netReceipt`'s rule: a rate read at display time prices last month's saving
  * at this month's list. A model with no price here contributes tokens and no
  * dollars, so `pricedResults` below `results` is the gap to render rather than
- * a reason to guess.
+ * a reason to guess. A model priced by prompt length (`resolveFlatPrice`) is
+ * such a model: the saving is a count of tokens over later turns whose prompts
+ * are not known here, and the tier they were billed at is not a guess to make.
  */
 export function netFilterSavings(results: UniqueResult[]): FilterNet {
   const net: FilterNet = { ...NO_FILTER_NET };
@@ -753,7 +755,7 @@ export function netFilterSavings(results: UniqueResult[]): FilterNet {
 
     const anchor = result.anchor;
     const price = anchor
-      ? resolvePrice(anchor.model, { at: anchor.ts, speed: anchor.speed })
+      ? resolveFlatPrice(anchor.model, { at: anchor.ts, speed: anchor.speed })
       : null;
     if (!anchor || !price) continue;
 

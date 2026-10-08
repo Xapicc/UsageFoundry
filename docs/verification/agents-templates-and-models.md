@@ -45,6 +45,12 @@
   nine as above. That is why `claude-sonnet-5-5` is priced and labelled but
   seeded off, with no `[1m]` variant. Caveat: the same arm64 package as above.
 
+- **The pinned 2.1.280 binary does not name Claude Haiku 5.5, 2026-10-08.**
+  `grep -a -c` over the installed `claude.exe` finds 0 `haiku-5-5`, 0 `haiku-5`,
+  0 `claude-haiku-5` and 0 `Haiku 5.5`, and the `claude-…[1m]` list is the same
+  nine. That is why `claude-haiku-5-5` is priced and labelled but seeded off,
+  with no `[1m]` variant. Caveat: the same arm64 package as above.
+
 - **The sandbox's config-directory binds re-read on the pinned 2.1.280,
   2026-09-27, and the bound set is not identical: one name was added.**
   `sandboxMountPoints.test.ts` threw at "the config-directory bind loop" against

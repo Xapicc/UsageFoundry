@@ -1244,6 +1244,34 @@ describe("cheaper-model counterfactual", () => {
     );
   });
 
+  it("picks a prompt-length tier from each turn, not from the bucket's sum", () => {
+    // Claude Haiku 5.5 charges $0.10/MTok of input up to a 100,000-token prompt
+    // and $0.50 above it. Two 60,000-token turns in one bucket are two cheap
+    // ones, though the bucket holds 120,000; a 100,001-token turn is one dear
+    // one. The memo above keys on speed and day only, so this also pins that
+    // it does not need a prompt-size key.
+    const at = now - HOUR;
+    const snap = buildSnapshot(
+      [
+        tokenEntry(at, undefined, 60_000),
+        tokenEntry(at + 1, undefined, 60_000),
+        tokenEntry(at + 2, "Reviewer", 100_001),
+      ],
+      NO_LIMITS,
+      now,
+      null,
+      null,
+      null,
+      [],
+      "claude-haiku-5-5",
+    );
+    const byName = new Map(snap.byAgent.map((r) => [r.agent, r]));
+    const main = byName.get(MAIN_THREAD_BUCKET)?.counterfactualUSD ?? NaN;
+    const reviewer = byName.get("Reviewer")?.counterfactualUSD ?? NaN;
+    assert.ok(Math.abs(main - 120_000 * 0.1e-6) < 1e-12, `main thread: ${main}`);
+    assert.ok(Math.abs(reviewer - 100_001 * 0.5e-6) < 1e-12, `reviewer: ${reviewer}`);
+  });
+
   it("reprices a turn upwards when the target is dearer than what ran", () => {
     // Correct, and the reason the actual figure stays beside it rather than
     // being replaced: this is a comparison, not a correction.

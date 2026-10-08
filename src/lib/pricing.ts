@@ -23,13 +23,21 @@
  * thing that may read either. The write multipliers are still constants
  * because no model has departed from them; when one does, it takes the same
  * shape rather than a second mechanism.
+ *
+ * **A rate can also depend on how long the request's prompt was.** Claude Haiku
+ * 5.5 is the first model that does: every column, the output one included,
+ * steps up once a request's prompt passes 100,000 tokens. The tier belongs to
+ * one API request and is chosen from *that request's own* prompt size, before
+ * anything is summed — two 60k-token turns are two short-prompt turns, though
+ * their sum is 120k. See `ModelPrice.longPrompt`, `PromptBasis` and `costOf`.
  */
 
 export const CACHE_READ_MULTIPLIER = 0.1;
 export const CACHE_WRITE_5M_MULTIPLIER = 1.25;
 export const CACHE_WRITE_1H_MULTIPLIER = 2.0;
 
-export interface ModelPrice {
+/** One set of per-million-token rates, with no say in which prompts it applies to. */
+export interface FlatPrice {
   /** USD per million input tokens. */
   input: number;
   /** USD per million output tokens. */
@@ -42,6 +50,23 @@ export interface ModelPrice {
   cacheReadMultiplier?: number;
 }
 
+export interface ModelPrice extends FlatPrice {
+  /**
+   * The rates for a request whose prompt is **longer than** `above` tokens,
+   * replacing the ones above for all of that request's tokens — output
+   * included. Absent on every model but Claude Haiku 5.5, whose rates are the
+   * `FlatPrice` fields up to and including `above` tokens, so "up to 100,000"
+   * is the low tier.
+   *
+   * It rides on the price `resolvePrice` returns rather than being asked for
+   * there, because `resolvePrice` is called without a request and memoised
+   * without one (`windows.ts` keys on speed and UTC day): the same object is
+   * right for every prompt length, and `costOf` picks the tier from the tokens
+   * it is handed.
+   */
+  longPrompt?: { above: number; price: FlatPrice };
+}
+
 /**
  * The cache read multiplier in force for a price, default included.
  *
@@ -51,7 +76,7 @@ export interface ModelPrice {
  * constant, so a model that departs from it cannot be right in one place and
  * wrong in three.
  */
-export function cacheReadMultiplierOf(price: ModelPrice): number {
+export function cacheReadMultiplierOf(price: FlatPrice): number {
   return price.cacheReadMultiplier ?? CACHE_READ_MULTIPLIER;
 }
 
@@ -114,7 +139,26 @@ const PRICES: Record<string, ModelPrice> = {
   "claude-3-7-sonnet": { input: 3, output: 15 },
   "claude-3-5-sonnet": { input: 3, output: 15 },
 
-  // Haiku tier
+  // Haiku tier. `claude-haiku-5-5` is the one row priced by prompt length. The
+  // pricing page (platform.claude.com/docs/en/about-claude/pricing.md, fetched
+  // 2026-10-08) lists two rows for it: "Claude Haiku 5.5 (for prompts up to
+  // 100,000 tokens)" at $0.10 input / $0.125 5m write / $0.20 1h write / $0.01
+  // cache hit / $0.50 output, and "(for prompts over 100,000 tokens)" at $0.50 /
+  // $0.625 / $1 / $0.05 / $2.50, and its long-context section says "Claude
+  // Haiku 5.5 is priced by prompt length: a prompt of over 100,000 tokens pays
+  // higher prices". It has no cache footnote, so both tiers use the standard
+  // 0.1x read multiplier (and 1.25x / 2x writes) of their own input rate, and
+  // neither needs a `cacheReadMultiplier`. It is not in the fast-mode table.
+  //
+  // What counts as the prompt is the "total input tokens" of the prompt-caching
+  // page, `cache_read_input_tokens + cache_creation_input_tokens +
+  // input_tokens` (`promptTokensOf`); the Haiku 5.5 model page and the pricing
+  // page say "prompts up to / over 100,000 tokens" and define it no further.
+  "claude-haiku-5-5": {
+    input: 0.1,
+    output: 0.5,
+    longPrompt: { above: 100_000, price: { input: 0.5, output: 2.5 } },
+  },
   "claude-haiku-4-5": { input: 1, output: 5 },
   "claude-3-5-haiku": { input: 0.8, output: 4 },
   "claude-3-haiku": { input: 0.25, output: 1.25 },
@@ -201,14 +245,22 @@ const DECORATION_ONLY = /^(?:-\d{8}|-v\d+(?::\d+)?|\[[^\]]*\])*$/;
  * suffix falls after the table's key, where `resolvePrice` reads any bracketed
  * suffix as decoration, so a `[1m]` id matches its base and prices at the base
  * rate. That is the correct rate rather than a near-miss: the current models
- * carry a 1M window natively and Anthropic charges no long-context premium for
- * it — "1M context window at standard API pricing (no long-context premium)",
+ * carry a 1M window natively and Anthropic charges no premium for it by window
+ * size — "1M context window at standard API pricing (no long-context premium)",
  * the bundled `claude-api` skill's own words about the Opus 4.7/4.8 generation
- * these variants belong to. Left
- * written down because the shape invites a fix that would break it: stripping
- * the suffix here would change nothing about the price and would put a
- * normalisation of a CLI-shaped id one refactor away from the path to `--model`,
- * where the brackets must survive. Should a premium ever appear, it belongs in
+ * these variants belong to, and the pricing page's long-context section says
+ * "Claude 4.6 and later models (except Claude Haiku 5.5) … include the full 1M
+ * token context window at standard pricing". Left written down because the shape
+ * invites a fix that would break it: stripping the suffix here would change
+ * nothing about the price and would put a normalisation of a CLI-shaped id one
+ * refactor away from the path to `--model`, where the brackets must survive.
+ *
+ * **Claude Haiku 5.5 is the exception to the sentence above, and `[1m]` still
+ * needs nothing.** It does charge more for a long prompt, but by the length of
+ * each request's prompt (`ModelPrice.longPrompt`), not by which deployment sent
+ * it: a short prompt is the cheap tier with or without a `[1m]`, a long one the
+ * dear tier with or without it, and `claude-haiku-5-5[1m]` resolves to the same
+ * row as its base. Should a premium ever attach to the *suffix*, it belongs in
  * `PRICES` as its own `claude-…[1m]` key — which, being the longer key,
  * `PREFIXES` tries before its base — and never in this function.
  */
@@ -236,6 +288,15 @@ function canonicalModelId(model: string): string {
  * as the shape a future dated rate takes, and `windows.ts`'s per-day memo key
  * assumes it (a rate turning over anywhere but a UTC midnight would make that
  * memo wrong for the turns either side). A new dated rate branches here.
+ *
+ * **Prompt length is not an input here, and that is the design.** Claude Haiku
+ * 5.5's rate depends on each request's prompt, but this function is called
+ * without a request (the counterfactual in `windows.ts` memoises its answer per
+ * speed and UTC day), so it returns the whole schedule — the object carries
+ * `longPrompt` — and `costOf` chooses the tier from the tokens of the one
+ * request it is pricing. A caller that has no single request to hand `costOf`
+ * does not get a tier chosen for it: see `PromptBasis`, and `resolveFlatPrice`
+ * for the callers that read a rate directly.
  */
 export function resolvePrice(
   model: string | undefined,
@@ -257,6 +318,28 @@ export function resolvePrice(
 
 export function isKnownModel(model: string | undefined): boolean {
   return resolvePrice(model) !== null;
+}
+
+/**
+ * `resolvePrice`, but null for a model whose rate depends on prompt length.
+ *
+ * For the two counterfactuals — `netReceipt` in `contextPruning.ts` and
+ * `netFilterSavings` in `intakeFilter.ts` — that read `price.input` to value a
+ * *difference in tokens* spread over later turns whose prompts they never see.
+ * With a tiered model there is no single rate to read: `price.input` is the
+ * low tier, and valuing the savings on a context that may well be past 100,000
+ * tokens at the cheap rate is a confident wrong number that looks like a
+ * measurement. Those sites already have an answer for a model nothing can
+ * price — report it unpriced and let the page say the figure covers fewer
+ * results — and a tiered model takes it, rather than being given a tier it was
+ * not told.
+ */
+export function resolveFlatPrice(
+  model: string | undefined,
+  opts: { at?: number; speed?: string } = {},
+): ModelPrice | null {
+  const price = resolvePrice(model, opts);
+  return price && !price.longPrompt ? price : null;
 }
 
 /** Token counts broken out by how each class is billed. */
@@ -333,6 +416,72 @@ export function billableWeightedTokens(t: TokenCounts): number {
 }
 
 /**
+ * The tokens of one request that its prompt consists of: everything the model
+ * was sent, whether it was read from the cache, written to it or neither.
+ *
+ * Anthropic's definition of a request's total input, on the prompt-caching page:
+ * `total_input_tokens = cache_read_input_tokens + cache_creation_input_tokens +
+ * input_tokens`. The Haiku 5.5 tier boundary is stated as "prompts up to / over
+ * 100,000 tokens" without defining the word again, so this is the rule used, and
+ * it is the one the earlier >200K long-context tier counted by. Output is
+ * excluded — it is not part of the prompt — and `cacheWriteTokens` is used
+ * rather than the two declared classes for `costOf`'s reason.
+ *
+ * Meaningful only for the tokens of **one** request. Handed a sum it answers
+ * about a prompt that was never sent.
+ */
+export function promptTokensOf(t: TokenCounts): number {
+  return t.input + t.cacheRead + cacheWriteTokens(t);
+}
+
+/**
+ * What is known of the prompt behind the tokens being priced, which decides the
+ * tier of a model priced by prompt length (`ModelPrice.longPrompt`) and nothing
+ * for any other.
+ *
+ * - `"request"` — the tokens are one API request's usage block, so its own
+ *   prompt size picks the tier. `transcripts.ts` prices each `UsageEntry` this
+ *   way and `windows.ts` reprices each one this way; a sum is never this.
+ * - `"unknown"` — the tokens are a sum over several requests, or a request
+ *   whose prompt was not recorded. No tier can be read from them: a sum of two
+ *   60k-token requests is 120k tokens and was never a 120k-token prompt. Priced
+ *   the way this module prices every ambiguity (`cacheWriteUnattributed`,
+ *   `UNKNOWN_MODEL_PRICE`): `costOf` shows the lowest tier, the floor a person
+ *   is shown, and `guardCostOf` charges the highest, the ceiling a limit may
+ *   act on. A guard that took the low tier for a turn it cannot measure would
+ *   be bounded from below, and Haiku 5.5's long tier is five times the short.
+ *
+ * **`"unknown"` is the default on purpose.** A caller that does not say what its
+ * tokens are gets the pair that cannot understate the guard, instead of a tier
+ * picked from the size of whatever it happened to add up. Only a site holding
+ * exactly one request's usage may say `"request"`.
+ */
+export type PromptBasis = "request" | "unknown";
+
+/**
+ * The rates to price `tokens` at under `price`.
+ *
+ * The one place a tier is chosen. `reader` is who is asking when the prompt is
+ * `"unknown"`: the shown figure takes the low tier, the guard the high one. It
+ * is ignored when `basis` is `"request"`, where the tokens answer for
+ * themselves — a guard is a ceiling on what was spent, and a request whose
+ * prompt is known to be short did not spend the long rate.
+ */
+function rateFor(
+  price: ModelPrice,
+  tokens: TokenCounts,
+  basis: PromptBasis,
+  reader: "shown" | "guard",
+): FlatPrice {
+  const tier = price.longPrompt;
+  if (!tier) return price;
+  // "Up to 100,000" is the low tier, so the boundary is strict.
+  const isLong =
+    basis === "request" ? promptTokensOf(tokens) > tier.above : reader === "guard";
+  return isLong ? tier.price : price;
+}
+
+/**
  * Cost for budget-guard purposes, charging an unknown model the fallback rate
  * rather than nothing.
  *
@@ -351,22 +500,46 @@ export function billableWeightedTokens(t: TokenCounts): number {
  * it might equally have been. A guard bounded from below is not a guard, and
  * an install whose transcripts predate the TTL split would otherwise have every
  * ceiling computed against up to 37.5% less than the writes may have cost.
+ *
+ * And a third time, to a prompt whose length is unknown (`PromptBasis`): the
+ * highest tier of a model priced by prompt length, where `costOf` shows the
+ * lowest.
  */
 export function guardCostOf(
   tokens: TokenCounts,
   price: ModelPrice | null,
+  basis: PromptBasis = "unknown",
 ): number {
-  const used = price ?? UNKNOWN_MODEL_PRICE;
+  const rate = rateFor(price ?? UNKNOWN_MODEL_PRICE, tokens, basis, "guard");
   return (
-    costOf(tokens, used) +
+    costAt(tokens, rate) +
     tokens.cacheWriteUnattributed *
-      (used.input / 1_000_000) *
+      (rate.input / 1_000_000) *
       (CACHE_WRITE_1H_MULTIPLIER - CACHE_WRITE_5M_MULTIPLIER)
   );
 }
 
-export function costOf(tokens: TokenCounts, price: ModelPrice | null): number {
+/**
+ * What `tokens` cost at `price`, in dollars.
+ *
+ * `tokens` must be **one request's** usage when `basis` is `"request"`: the tier
+ * of a model priced by prompt length is chosen from this request's own prompt
+ * (`promptTokensOf`) *here*, per request, before anything is summed — which is
+ * why every aggregate in this app (`windows.ts`'s `aggregate`) adds the dollars
+ * of its entries and never prices the tokens it adds. Anything that is not
+ * exactly one request's usage takes the default, `"unknown"`, which shows the
+ * low tier; see `PromptBasis`. A model with a single rate ignores the argument.
+ */
+export function costOf(
+  tokens: TokenCounts,
+  price: ModelPrice | null,
+  basis: PromptBasis = "unknown",
+): number {
   if (!price) return 0;
+  return costAt(tokens, rateFor(price, tokens, basis, "shown"));
+}
+
+function costAt(tokens: TokenCounts, price: FlatPrice): number {
   const perToken = price.input / 1_000_000;
   const outPerToken = price.output / 1_000_000;
   return (
@@ -381,7 +554,6 @@ export function costOf(tokens: TokenCounts, price: ModelPrice | null): number {
     tokens.cacheWriteUnattributed * perToken * CACHE_WRITE_5M_MULTIPLIER
   );
 }
-
 
 /**
  * Where a bill actually went, in dollars, by term.
@@ -419,15 +591,18 @@ export interface CostSplit {
 export function costSplitOf(
   tokens: TokenCounts,
   price: ModelPrice | null,
+  basis: PromptBasis = "unknown",
 ): CostSplit {
   if (!price) {
     return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
   }
-  const perToken = price.input / 1_000_000;
+  // The rate `costOf` will use, chosen once for both halves of this function.
+  const rate = rateFor(price, tokens, basis, "shown");
+  const perToken = rate.input / 1_000_000;
   const split = {
     input: tokens.input * perToken,
-    output: tokens.output * (price.output / 1_000_000),
-    cacheRead: tokens.cacheRead * perToken * cacheReadMultiplierOf(price),
+    output: tokens.output * (rate.output / 1_000_000),
+    cacheRead: tokens.cacheRead * perToken * cacheReadMultiplierOf(rate),
     // The write classes are one line on a receipt: an operator cannot choose
     // between them and the distinction is the API's, not theirs. The
     // unattributed volume is on the same line at the floor rate, so this stays
@@ -441,7 +616,7 @@ export function costSplitOf(
   // number that differs from it in the last bits of a float, and a receipt that
   // disagrees with the guard by a rounding error is still a receipt that
   // disagrees. One definition of the total, and this is not it.
-  return { ...split, total: costOf(tokens, price) };
+  return { ...split, total: costOf(tokens, price, basis) };
 }
 
 /** The same split as shares of the total, or null when nothing was spent. */
