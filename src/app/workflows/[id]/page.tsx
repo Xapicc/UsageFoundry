@@ -498,7 +498,13 @@ export default function WorkflowPage() {
                       {i + 1}
                     </Td>
                     <Td className="align-top">
-                      <div className="font-medium text-ink">{n.name}</div>
+                      <div className="font-medium text-ink">
+                        <Link
+                          href={`/workflows/${id}/edit?block=${encodeURIComponent(n.id)}`}
+                        >
+                          {n.name}
+                        </Link>
+                      </div>
                       {n.kind === "orchestrator" && (
                         // Said on the row rather than only in the editor: this
                         // is the page an operator presses Run from, and a block
