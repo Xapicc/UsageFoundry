@@ -364,6 +364,10 @@ export default function ChatPage() {
   // again — the handlers clear theirs on every click, and a poll lands between
   // clicks, so one state would have each wiping the other's sentence.
   const [error, setError] = useState<string | null>(null);
+  // Follows the thread and not the draft, though the draft is shared across
+  // threads: a send or Stop refusal is a claim about the thread it was pressed
+  // in ("still working on the last message"), false under another thread's
+  // composer. The draft survives a switch, so a send that fails again says so.
   const [sendError, setSendError] = useState<string | null>(null);
   const [decideError, setDecideError] = useState<string | null>(null);
   // A fourth, for the same reason there are three: the question card is in the
@@ -917,6 +921,7 @@ export default function ChatPage() {
 
   const newChat = async () => {
     setError(null);
+    const openedBefore = opened.current;
     try {
       const res = await fetch("/api/chat", { method: "POST" });
       const data = (await res.json().catch(() => ({}))) as {
@@ -929,6 +934,14 @@ export default function ChatPage() {
         setError(data.error ?? "A new chat could not be started.");
         return;
       }
+      // A thread row clicked while the POST was out is newer than this press,
+      // and opening the new thread over it would undo that click. The thread
+      // exists either way and the poll lists it. Compared with the value read
+      // at the press rather than through `hasLeftThread`, which is about the
+      // thread an action was pressed in: this was pressed in none, and a fresh
+      // page is null on both sides. Re-clicking the thread already open does
+      // not move the ref, so it is not seen.
+      if (opened.current !== openedBefore) return;
       opened.current = data.chat.id;
       drawAnswer(data.chat);
       setSelected(new Set());
@@ -936,6 +949,8 @@ export default function ChatPage() {
       // proposal of the thread being left. It outlives an empty proposals list
       // now that the sentence is drawn without one, so this has to say so.
       setDecideError(null);
+      setAnswerError(null);
+      setSendError(null);
       // No read of its own for the list: the thread changing re-runs the poll,
       // which reads the new thread and the list at once, and a read sent from
       // here would go out before that one and so always be dropped by `load`.
@@ -1732,6 +1747,7 @@ export default function ChatPage() {
                         // being left, and carried over it annotates a card in a
                         // conversation it was never about.
                         setAnswerError(null);
+                        setSendError(null);
                         opened.current = c.id;
                         void load(c.id);
                       }}
