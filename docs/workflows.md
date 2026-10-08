@@ -61,7 +61,12 @@ What moves, and what does not:
   workspace and folder keeps them, whatever is chosen. Merge, review, deliver
   and gate blocks name no folder and work with the branches in front of them,
   so they follow along through those runs. A loop's *stop when the board has*
-  condition keeps the folder it names.
+  condition keeps the project it names unless you switch on *Count the folder
+  chosen at Run* on that loop; then it counts the board of the folder you
+  chose, so a loop shared across projects stops on its own project's backlog
+  rather than the saved project's. Switching it on needs at least one saved
+  folder, and the figure the editor shows beside it is the first saved
+  folder's.
 - **Run only ever chooses among the folders you saved.** Nothing typed at Run
   can point a block anywhere else: the server accepts exactly an entry on the
   saved list and refuses everything else with a sentence. Every saved folder is

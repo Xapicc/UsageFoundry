@@ -128,6 +128,13 @@ export interface BlockDraft {
    * than an encoding only this surface can read.
    */
   stopWhenTasksFolder: string;
+  /**
+   * Loop blocks only: count the board of the folder a press of Run chose from
+   * the workflow's list instead of the project above. The project is kept on
+   * the draft while it is on, so turning it off gives the condition its own
+   * project back — `followsChosenFolder`'s shape on a run block.
+   */
+  stopWhenTasksFollowsChosenFolder: boolean;
   /** Whether folders under that one count towards the same project. */
   stopWhenTasksIncludeSubfolders: boolean;
   /** Which states are counted: `"open"` or `"open,claimed"`, as picked. */
@@ -1584,6 +1591,11 @@ export function draftToGraph(draft: CanvasDraft): WireGraph {
           ? {
               mountId: b.stopWhenTasksMountId,
               folder: b.stopWhenTasksFolder,
+              // Absent rather than false when off, `followsChosenFolder`'s
+              // treatment above.
+              ...(b.stopWhenTasksFollowsChosenFolder
+                ? { followsChosenFolder: true }
+                : {}),
               includeSubfolders: b.stopWhenTasksIncludeSubfolders,
               statuses: b.stopWhenTasksStatuses
                 .split(",")

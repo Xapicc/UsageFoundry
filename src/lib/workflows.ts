@@ -268,6 +268,7 @@ import {
   loopBody,
   loopBodyOwners,
   normalizeBoardCondition,
+  normalizeWorkflowFolders,
   normalizeWorkflowInput,
   withChosenFolder,
   type TemplateFacts,
@@ -3319,6 +3320,12 @@ export function boardReadings(
   const graph = (body.graph ?? {}) as { nodes?: unknown };
   const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
   const readings: LoopBoardReadingDTO[] = [];
+  // A condition that follows the chosen folder counts the first saved one —
+  // what the normalizer stores for it — so the figure beside the picker is the
+  // board a schedule would read. A list that does not normalize is none here;
+  // the verdict beside these readings carries that list's own refusal.
+  const listed = normalizeWorkflowFolders(body.folders, known);
+  const firstSavedFolder = listed.ok ? (listed.value[0] ?? null) : null;
 
   for (const raw of nodes) {
     const node = (raw ?? {}) as Record<string, unknown>;
@@ -3326,7 +3333,12 @@ export function boardReadings(
     const nodeId = String(node.id ?? "");
     const name = String(node.name ?? "").trim() || "This block";
 
-    const condition = normalizeBoardCondition(node.stopWhenTasks, name, known);
+    const condition = normalizeBoardCondition(
+      node.stopWhenTasks,
+      name,
+      known,
+      firstSavedFolder,
+    );
     if (!condition.ok) {
       readings.push({ nodeId, counts: null, error: condition.error });
       continue;

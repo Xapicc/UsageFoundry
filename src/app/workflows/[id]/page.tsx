@@ -697,10 +697,17 @@ export default function WorkflowPage() {
                               while the line names only the caps reads as one
                               that stopped early. */}
                           {n.stopWhenTasks !== null &&
-                            `, or once ${n.stopWhenTasks.mountId}${
-                              n.stopWhenTasks.folder
-                                ? ` / ${n.stopWhenTasks.folder}`
-                                : ""
+                            `, or once ${
+                              // Its stored project is only the first saved
+                              // folder, a placeholder: printed as a path it
+                              // names a board a press of Run may not count.
+                              n.stopWhenTasks.followsChosenFolder
+                                ? "the folder chosen at Run"
+                                : `${n.stopWhenTasks.mountId}${
+                                    n.stopWhenTasks.folder
+                                      ? ` / ${n.stopWhenTasks.folder}`
+                                      : ""
+                                  }`
                             }${
                               n.stopWhenTasks.includeSubfolders
                                 ? " and everything under it"

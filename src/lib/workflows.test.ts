@@ -1004,6 +1004,72 @@ describe("normalizeWorkflowInput — folders to choose from at Run", () => {
       /folders: expected a list/,
     );
   });
+
+  // A loop's board condition is the second thing a choice can move. Left on
+  // its own project it counts the saved project's board whichever folder Run
+  // chose: no error, and a loop that stops — or never stops — on the wrong
+  // backlog.
+  it("stores the first saved folder on a board condition that follows the choice, whatever it sent", () => {
+    const v = value({
+      ...looped({ stopWhenTasks: board({ followsChosenFolder: true, mountId: "other", folder: "stale" }) }, "a"),
+      folders: FOLDERS,
+    });
+    const condition = v.graph.nodes[0].stopWhenTasks;
+    assert.equal(condition?.followsChosenFolder, true);
+    assert.equal(condition?.mountId, "work");
+    assert.equal(condition?.folder, "alpha");
+  });
+
+  it("reads a following condition's project unread, so a stale one cannot refuse the save", () => {
+    const v = value({
+      ...looped({ stopWhenTasks: board({ followsChosenFolder: true, mountId: "gone", folder: ["x"] }) }, "a"),
+      folders: FOLDERS,
+    });
+    assert.equal(v.graph.nodes[0].stopWhenTasks?.mountId, "work");
+  });
+
+  it("keeps a condition without the flag on its own project, flag absent", () => {
+    // The run block follows, so the list is followed by something and the
+    // loop's condition is the only thing here that keeps a project of its own.
+    const v = value({
+      ...graph(
+        [repeater("l", { stopWhenTasks: board({ mountId: "other", folder: "mine" }) }), node("a", { followsChosenFolder: true }), merger("m")],
+        [repeats("l", "a"), edge("a", "m")],
+      ),
+      folders: FOLDERS,
+    });
+    const condition = v.graph.nodes[0].stopWhenTasks;
+    assert.equal(condition?.mountId, "other");
+    assert.equal(condition?.folder, "mine");
+    assert.equal("followsChosenFolder" in (condition ?? {}), false);
+  });
+
+  it("refuses a condition that follows the choice when no folders are saved", () => {
+    assert.match(
+      error(looped({ stopWhenTasks: board({ followsChosenFolder: true }) }, "a")),
+      /“A” counts the board of the folder chosen at Run, but this workflow saves no folders/,
+    );
+  });
+
+  it("refuses a condition flag that is not a boolean rather than reading it as one", () => {
+    assert.match(
+      error({
+        ...looped({ stopWhenTasks: board({ followsChosenFolder: "yes" }) }, "a"),
+        folders: FOLDERS,
+      }),
+      /stopWhenTasks\.followsChosenFolder is true or false/,
+    );
+  });
+
+  it("counts a following condition as what the list is followed by", () => {
+    // No run block follows; the loop's condition does, and that moves what the
+    // loop stops on, so the choice at Run is not a question with no effect.
+    const v = value({
+      ...looped({ stopWhenTasks: board({ followsChosenFolder: true }) }, "a"),
+      folders: FOLDERS,
+    });
+    assert.deepEqual(v.folders, FOLDERS);
+  });
 });
 
 describe("chooseFolder — which saved folder a press of Run works in", () => {
@@ -1088,6 +1154,58 @@ describe("withChosenFolder — the graph an instance copies", () => {
 
   it("returns the saved graph unchanged when nothing was chosen", () => {
     assert.equal(withChosenFolder(saved.graph, null), saved.graph);
+  });
+
+  describe("a loop's board condition", () => {
+    const FOLDER_LIST = [
+      { mountId: "work", folder: "alpha" },
+      { mountId: "other", folder: "beta" },
+    ];
+    const loopWith = (stopWhenTasks: Record<string, unknown>) =>
+      value({
+        ...graph(
+          [
+            repeater("l", { stopWhenTasks }),
+            node("a", { followsChosenFolder: true }),
+            merger("m"),
+          ],
+          [repeats("l", "a"), edge("a", "m")],
+        ),
+        folders: FOLDER_LIST,
+      });
+
+    it("counts the chosen folder's board when the condition follows the choice", () => {
+      const saved = loopWith(board({ followsChosenFolder: true }));
+      const resolved = withChosenFolder(saved.graph, { mountId: "other", folder: "beta" });
+      const condition = resolved.nodes.find((n) => n.id === "l")!.stopWhenTasks;
+      assert.equal(condition?.mountId, "other");
+      assert.equal(condition?.folder, "beta");
+      // The rest of the condition is the operator's and does not move.
+      assert.deepEqual(condition?.statuses, ["open"]);
+      assert.deepEqual(condition?.thresholds, [{ priority: "any", atMost: 0 }]);
+    });
+
+    it("leaves a loop's own mount and folder blank, because a loop names none", () => {
+      const saved = loopWith(board({ followsChosenFolder: true }));
+      const resolved = withChosenFolder(saved.graph, { mountId: "other", folder: "beta" });
+      const loop = resolved.nodes.find((n) => n.id === "l")!;
+      assert.deepEqual([loop.mountId, loop.folder], ["", ""]);
+    });
+
+    it("keeps a condition without the flag on its own project", () => {
+      const saved = loopWith(board({ mountId: "work", folder: "repo" }));
+      const resolved = withChosenFolder(saved.graph, { mountId: "other", folder: "beta" });
+      const condition = resolved.nodes.find((n) => n.id === "l")!.stopWhenTasks;
+      assert.equal(condition?.mountId, "work");
+      assert.equal(condition?.folder, "repo");
+    });
+
+    it("does not touch the saved graph it was given", () => {
+      const saved = loopWith(board({ followsChosenFolder: true }));
+      withChosenFolder(saved.graph, { mountId: "other", folder: "beta" });
+      const condition = saved.graph.nodes.find((n) => n.id === "l")!.stopWhenTasks;
+      assert.equal(condition?.folder, "alpha");
+    });
   });
 });
 

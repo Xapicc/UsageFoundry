@@ -604,13 +604,14 @@ export function normalizeWorkflowInput(
 
   // A list nothing follows is a question Run would ask whose answer moves no
   // block — a choice no process acts on — so it is refused rather than kept.
-  if (folders.value.length > 0 && !nodes.some((n) => n.followsChosenFolder)) {
+  if (folders.value.length > 0 && !nodes.some(followsTheChoice)) {
     return {
       ok: false,
       error:
         "This workflow saves folders to choose from at Run, but no block " +
         "follows the chosen folder, so the choice would move nothing. Set a " +
-        "run or orchestrator block to follow it, or remove the folders.",
+        "run or orchestrator block, or a loop's board condition, to follow " +
+        "it, or remove the folders.",
     };
   }
 
@@ -833,7 +834,7 @@ type FoldersNormalization =
  * syscall half, as `folderRefusal` is for a node's. A duplicate is refused:
  * two entries naming one folder would be two answers at Run that do the same.
  */
-function normalizeWorkflowFolders(
+export function normalizeWorkflowFolders(
   raw: unknown,
   known: WorkflowKnowledge,
 ): FoldersNormalization {
@@ -969,12 +970,35 @@ export function withChosenFolder(
   if (!chosen) return graph;
   return {
     ...graph,
-    nodes: graph.nodes.map((n) =>
-      n.followsChosenFolder
+    nodes: graph.nodes.map((n) => {
+      // A loop names no folder of its own, so only its condition moves; a
+      // loop's `mountId`/`folder` are `""` and must stay so.
+      if (n.stopWhenTasks?.followsChosenFolder) {
+        return {
+          ...n,
+          stopWhenTasks: {
+            ...n.stopWhenTasks,
+            mountId: chosen.mountId,
+            folder: chosen.folder,
+          },
+        };
+      }
+      return n.followsChosenFolder
         ? { ...n, mountId: chosen.mountId, folder: chosen.folder }
-        : n,
-    ),
+        : n;
+    }),
   };
+}
+
+/**
+ * Whether a choice at Run moves anything about this block: it works in the
+ * chosen folder, or it is a loop counting the chosen folder's board.
+ */
+function followsTheChoice(node: WorkflowNode): boolean {
+  return (
+    node.followsChosenFolder === true ||
+    node.stopWhenTasks?.followsChosenFolder === true
+  );
 }
 
 type NodeNormalization =
@@ -1080,6 +1104,7 @@ export function normalizeBoardCondition(
   raw: unknown,
   nodeName: string,
   known: WorkflowKnowledge,
+  firstSavedFolder: WorkflowFolder | null,
 ): BoardConditionNormalization {
   if (boardConditionIsOff(raw)) return { ok: true, value: null };
   if (typeof raw !== "object") {
@@ -1090,13 +1115,35 @@ export function normalizeBoardCondition(
   }
   const o = raw as Record<string, unknown>;
 
+  // `followsChosenFolder`'s rule on a block, one object along: asked before
+  // the project below is read, because a condition that follows has its
+  // `mountId`/`folder` dropped unread — whatever the editor kept on the draft
+  // for turning the switch off again must not be able to refuse a save.
+  const rawFollows = o.followsChosenFolder;
+  if (rawFollows !== undefined && rawFollows !== null && typeof rawFollows !== "boolean") {
+    return {
+      ok: false,
+      error: `“${nodeName}”: stopWhenTasks.followsChosenFolder is true or false; got ${JSON.stringify(rawFollows)}.`,
+    };
+  }
+  if (rawFollows === true && !firstSavedFolder) {
+    return {
+      ok: false,
+      error:
+        `“${nodeName}” counts the board of the folder chosen at Run, but this ` +
+        "workflow saves no folders to choose from. Add one, or name a project " +
+        "for the condition.",
+    };
+  }
+  const following = rawFollows === true ? firstSavedFolder : null;
+
   // Asked before the `String(…)` that reads each one: `["work"]` was the
   // workspace `work`, and a list-wrapped folder a project nobody named.
-  for (const field of ["mountId", "folder"]) {
+  for (const field of following ? [] : ["mountId", "folder"]) {
     const notString = notStringRefusal(`stopWhenTasks.${field}`, o[field]);
     if (notString) return { ok: false, error: `“${nodeName}”: ${notString}` };
   }
-  const mountId = String(o.mountId ?? "").trim();
+  const mountId = following ? following.mountId : String(o.mountId ?? "").trim();
   if (!mountId) {
     return {
       ok: false,
@@ -1249,7 +1296,10 @@ export function normalizeBoardCondition(
     // missing one. The reader canonicalises it before it counts.
     value: {
       mountId,
-      folder: String(o.folder ?? ""),
+      folder: following ? following.folder : String(o.folder ?? ""),
+      // Absent rather than false when off, so a graph saved before the field
+      // existed goes back exactly as it was read.
+      ...(following ? { followsChosenFolder: true } : {}),
       // `=== true` rather than truthiness, so a condition saved before this
       // field existed reads as the board's own grouping — one folder is one
       // project — instead of picking up a wider count nobody asked for.
@@ -1616,7 +1666,12 @@ function normalizeNode(
           ? null
           : cost;
 
-      const board = normalizeBoardCondition(n.stopWhenTasks, nodeName, known);
+      const board = normalizeBoardCondition(
+        n.stopWhenTasks,
+        nodeName,
+        known,
+        firstSavedFolder,
+      );
       if (!board.ok) return board;
       stopWhenTasks = board.value;
 

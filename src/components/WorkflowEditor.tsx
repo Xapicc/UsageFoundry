@@ -343,6 +343,7 @@ function emptyBlock(id: string, mountId: string, kind: WorkflowNodeKind): BlockD
     maxLoopCostUSD: "",
     stopWhenTasksMountId: "",
     stopWhenTasksFolder: "",
+    stopWhenTasksFollowsChosenFolder: false,
     stopWhenTasksIncludeSubfolders: false,
     stopWhenTasksStatuses: DEFAULT_STOP_STATUSES,
     stopWhenTasksThresholds: defaultThresholds(),
@@ -381,6 +382,8 @@ function toBlocks(workflow: WorkflowDTO): BlockDraft[] {
     // by picking a workspace lands on the safe pair rather than on blanks.
     stopWhenTasksMountId: n.stopWhenTasks?.mountId ?? "",
     stopWhenTasksFolder: n.stopWhenTasks?.folder ?? "",
+    stopWhenTasksFollowsChosenFolder:
+      n.stopWhenTasks?.followsChosenFolder === true,
     // A condition saved before this field existed says nothing here, and the
     // board's own grouping — one folder is one project — is what it meant.
     stopWhenTasksIncludeSubfolders:
@@ -1822,8 +1825,18 @@ function BlockStatement({
         <>
           , or once{" "}
           <strong className="mono break-words font-semibold text-ink">
-            {block.stopWhenTasksMountId}
-            {block.stopWhenTasksFolder ? ` / ${block.stopWhenTasksFolder}` : ""}
+            {/* Its stored project is only the first saved folder, a
+                placeholder, as on a block that follows the choice. */}
+            {block.stopWhenTasksFollowsChosenFolder ? (
+              "the folder chosen at Run"
+            ) : (
+              <>
+                {block.stopWhenTasksMountId}
+                {block.stopWhenTasksFolder
+                  ? ` / ${block.stopWhenTasksFolder}`
+                  : ""}
+              </>
+            )}
             {block.stopWhenTasksIncludeSubfolders
               ? " and everything under it"
               : ""}
@@ -2439,6 +2452,28 @@ function BlockPanel({
 
           {boardOn && (
             <>
+              {/* Allowed with no folders saved yet, the block switch's rule:
+                  the check under the canvas then states the server's refusal.
+                  The project above stays on the draft, so turning this off
+                  gives the condition its own project back. */}
+              <ListRow
+                label="Count the folder chosen at Run"
+                htmlFor={`${block.id}-boardfollows`}
+                description={
+                  block.stopWhenTasksFollowsChosenFolder
+                    ? "The project above is not used; the figure shown is the first saved folder's"
+                    : undefined
+                }
+              >
+                <Switch
+                  id={`${block.id}-boardfollows`}
+                  checked={block.stopWhenTasksFollowsChosenFolder}
+                  onChange={(next) =>
+                    onChange({ stopWhenTasksFollowsChosenFolder: next })
+                  }
+                />
+              </ListRow>
+
               {/* Off by default, and the row says what that costs rather than
                   what the switch does: the board groups a project by its own
                   folder, so `…/app` and `…/app/docs` are two backlogs there and

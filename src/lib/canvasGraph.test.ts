@@ -80,6 +80,7 @@ function block(id: string, over: Partial<BlockDraft> = {}): BlockDraft {
     maxLoopCostUSD: "",
     stopWhenTasksMountId: "",
     stopWhenTasksFolder: "",
+    stopWhenTasksFollowsChosenFolder: false,
     stopWhenTasksIncludeSubfolders: false,
     stopWhenTasksStatuses: "open",
     stopWhenTasksThresholds: [{ priority: "any", atMost: "0" }],
@@ -608,6 +609,11 @@ test("every value a block's kind carries moves the signature", () => {
       what: "stopWhenTasksStatuses",
       base: { kind: "loop", maxPasses: "3", stopWhenTasksMountId: "work" },
       edit: { stopWhenTasksStatuses: "open,claimed" },
+    },
+    {
+      what: "stopWhenTasksFollowsChosenFolder",
+      base: { kind: "loop", maxPasses: "3", stopWhenTasksMountId: "work" },
+      edit: { stopWhenTasksFollowsChosenFolder: true },
     },
     {
       what: "stopWhenTasksIncludeSubfolders",

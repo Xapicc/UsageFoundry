@@ -2484,6 +2484,21 @@ export interface LoopBoardConditionDTO {
    * field existed — the reading every consumer has to take.
    */
   includeSubfolders: boolean;
+  /**
+   * True when this condition counts the board of the folder a press of Run
+   * chose from the workflow's saved `folders`, rather than the project named
+   * by `mountId`/`folder`.
+   *
+   * Absent is false, which is every condition saved before this existed. Like
+   * `WorkflowNodeDTO.followsChosenFolder` it still *stores* a concrete
+   * `mountId`/`folder` — the first saved folder, written by the normalizer and
+   * never typed — so a reader of a saved graph other than instantiation sees a
+   * project a person saved. A loop shared across projects needs this: without
+   * it the stop rule "this project's board is clear" counts the saved
+   * project's board whichever one Run chose, and that is a silent wrong answer
+   * rather than an error.
+   */
+  followsChosenFolder?: boolean;
   statuses: TaskStatusDTO[];
   /**
    * At least one, at most `MAX_LOOP_BOARD_THRESHOLDS`, no priority twice.
