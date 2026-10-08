@@ -81,6 +81,13 @@ const MAX_MINUTES = 90;
  */
 const CURSOR_KEY = "dreaming.firedAt";
 
+/**
+ * The kv key that records `repairDreamingNotePaths` has run, as the epoch ms it
+ * finished. Present means done; the value is only there for whoever greps the
+ * settings table to ask when.
+ */
+const PATH_REPAIR_KEY = "dreaming.notePathsRederivedAt";
+
 const timer = globalThis as unknown as {
   __ufDreamingTimer?: ReturnType<typeof setInterval> | null;
   __ufDreamingRunning?: boolean;
@@ -220,6 +227,39 @@ export function buildDreamingPrompt(rollups: readonly SignatureRollup[], night: 
   ].join("\n");
 }
 
+/** One `NOTE n [created|edited] path` line, in the order the report wrote it. */
+interface NoteLine {
+  index: number;
+  path: string;
+  created: boolean;
+}
+
+/**
+ * Every `NOTE n [created|edited] path` line of a report that names a known item.
+ *
+ * Tolerant on purpose: an agent that writes the line with a stray bullet, a
+ * backtick or extra spacing has still told us what we asked for, and the cost
+ * of being strict is a ledger row pointing at nothing. Anything that does not
+ * resolve to a known item number is dropped rather than guessed at. A verb is
+ * stripped only when a path follows it, so a path that merely begins with the
+ * same letters stays whole.
+ */
+function scanNoteLines(text: string, count: number): NoteLine[] {
+  const lines: NoteLine[] = [];
+  for (const raw of text.split("\n")) {
+    const line = raw.trim().replace(/^[-*]\s*/, "");
+    const m = /^NOTE\s+(\d+)\s+(.+)$/i.exec(line);
+    if (!m) continue;
+    const index = Number(m[1]);
+    if (!Number.isInteger(index) || index < 1 || index > count) continue;
+    const verb = /^(created|edited)(?::\s*|\s+)(.+)$/i.exec(m[2].trim());
+    const path = (verb ? verb[2] : m[2]).trim().replace(/^[`"']|[`"']$/g, "");
+    if (!path) continue;
+    lines.push({ index, path, created: verb?.[1].toLowerCase() === "created" });
+  }
+  return lines;
+}
+
 /**
  * Parse the `NOTE n [created|edited] path` lines a run reports, one path per item.
  *
@@ -230,29 +270,13 @@ export function buildDreamingPrompt(rollups: readonly SignatureRollup[], night: 
  * `created` line, else the first of the rest. The first rather than the last
  * because every real report listed the note before the hubs, and a line with no
  * verb (what the prompt asked for before there was one) cannot say otherwise.
- *
- * Tolerant on purpose: an agent that writes the line with a stray bullet, a
- * backtick or extra spacing has still told us what we asked for, and the cost
- * of being strict is a ledger row pointing at nothing. Anything that does not
- * resolve to a known item number is dropped rather than guessed at. A verb is
- * stripped only when a path follows it, so a path that merely begins with the
- * same letters stays whole.
  */
 export function parseNoteLines(text: string, count: number): Map<number, string> {
-  const kept = new Map<number, { path: string; created: boolean }>();
-  for (const raw of text.split("\n")) {
-    const line = raw.trim().replace(/^[-*]\s*/, "");
-    const m = /^NOTE\s+(\d+)\s+(.+)$/i.exec(line);
-    if (!m) continue;
-    const index = Number(m[1]);
-    if (!Number.isInteger(index) || index < 1 || index > count) continue;
-    const verb = /^(created|edited)(?::\s*|\s+)(.+)$/i.exec(m[2].trim());
-    const p = (verb ? verb[2] : m[2]).trim().replace(/^[`"']|[`"']$/g, "");
-    if (!p) continue;
-    const created = verb?.[1].toLowerCase() === "created";
-    const held = kept.get(index);
-    if (held && (held.created || !created)) continue;
-    kept.set(index, { path: p, created });
+  const kept = new Map<number, NoteLine>();
+  for (const line of scanNoteLines(text, count)) {
+    const held = kept.get(line.index);
+    if (held && (held.created || !line.created)) continue;
+    kept.set(line.index, line);
   }
   return new Map([...kept].map(([index, { path }]) => [index, path]));
 }
@@ -640,12 +664,7 @@ export function reconcileDreamingNotes(): number {
     const run = getRun(runId);
     if (!run || !TERMINAL_STATUSES.includes(run.status)) continue;
 
-    let report = "";
-    for (const e of runEvents(runId).events) {
-      if (e.kind !== "assistant") continue;
-      const text = e.payload.text;
-      if (typeof text === "string" && text.trim()) report = text;
-    }
+    const report = lastAssistantReport(runId);
     if (!report) continue;
 
     const claimed = db()
@@ -670,7 +689,24 @@ export function reconcileDreamingNotes(): number {
   return attached;
 }
 
-interface ClaimedRow {
+/**
+ * The text of a run's last `assistant` event, or "" when it has none.
+ *
+ * Only the last, on `cycleOutputs`' rule: the main thread's final turn is the
+ * cycle's report, and an earlier turn saying `NOTE 1 draft.md` is a plan rather
+ * than a result.
+ */
+function lastAssistantReport(runId: string): string {
+  let report = "";
+  for (const e of runEvents(runId).events) {
+    if (e.kind !== "assistant") continue;
+    const text = e.payload.text;
+    if (typeof text === "string" && text.trim()) report = text;
+  }
+  return report;
+}
+
+export interface ClaimedRow {
   signature: string;
   notePath: string | null;
   promptItem: number | null;
@@ -693,4 +729,94 @@ function claimedByItem(rows: readonly ClaimedRow[]): Map<number, ClaimedRow> {
     byItem.set(row.promptItem, row);
   }
   return byItem;
+}
+
+/**
+ * The paths a run's already-attached rows should hold under the current parser.
+ *
+ * `reconcileDreamingNotes` never overwrites a path, so every row it attached
+ * before `parseNoteLines` learned to keep the note rather than the hub still
+ * holds the hub. This is the decision half of the one-off that repairs them, pure
+ * so the cases that matter can be asserted without a database: it returns an
+ * update only where the re-parse gives a path and the row holds a different one.
+ * A row with no path is not its business (`reconcileDreamingNotes` attaches
+ * those), a report that yields nothing for an item changes nothing, and nothing
+ * here can return an empty path — a repair must never blank a row.
+ *
+ * The extra test is for rows mapped by position (`claimedByItem`'s fallback for
+ * rows claimed before `prompt_item`), which is wrong once `forgetNote` has
+ * deleted an earlier row of the run and would otherwise hand one item's note to
+ * another's row. A row is repaired only when the path it holds is one of the
+ * lines this report wrote **for the item it maps to** — which is true of a row
+ * the old parser filled from this item and false of a row that has slipped onto a
+ * neighbour. It cannot be run blind otherwise: the live rows are not readable
+ * from where this was written.
+ */
+export function rederivedNotePaths(
+  rows: readonly ClaimedRow[],
+  report: string,
+): { signature: string; notePath: string }[] {
+  const byItem = claimedByItem(rows);
+  const count = Math.max(0, ...byItem.keys());
+  const written = scanNoteLines(report, count);
+  const updates: { signature: string; notePath: string }[] = [];
+  for (const [index, notePath] of parseNoteLines(report, count)) {
+    const target = byItem.get(index);
+    if (!target?.notePath || target.notePath === notePath) continue;
+    if (!written.some((line) => line.index === index && line.path === target.notePath)) continue;
+    updates.push({ signature: target.signature, notePath });
+  }
+  return updates;
+}
+
+/**
+ * Re-derive the path of every row that was attached before the parser stopped
+ * keeping hubs, once per install.
+ *
+ * A one-off rather than a change to `reconcileDreamingNotes`'s never-overwrite
+ * rule, which is there so a reopened run that says nothing cannot blank a real
+ * path. Gated on a settings key rather than run on every boot: the decision is
+ * idempotent, but a run that has since been reopened and reported something new
+ * would have its row rewritten by a pass that re-read it each time, and the only
+ * rows that need this are the ones attached before the parser changed.
+ *
+ * Reads a run the way the reconciler does — terminal runs only, last `assistant`
+ * event — and leaves a row alone when the run is gone, still going, or reported
+ * nothing, since retention deletes events and a run that is not finished has no
+ * final message yet. The key is written only after the whole pass returns, so a
+ * boot that dies half way repeats the pass, which is safe for the same reason.
+ */
+export function repairDreamingNotePaths(now = Date.now()): number {
+  if (getJSON<unknown>(PATH_REPAIR_KEY, null) !== null) return 0;
+
+  const attached = db()
+    .prepare(
+      `SELECT DISTINCT run_id AS runId
+         FROM dreaming_notes
+        WHERE run_id IS NOT NULL AND note_path IS NOT NULL`,
+    )
+    .all() as { runId: string }[];
+
+  let repaired = 0;
+  for (const { runId } of attached) {
+    const run = getRun(runId);
+    if (!run || !TERMINAL_STATUSES.includes(run.status)) continue;
+    const report = lastAssistantReport(runId);
+    if (!report) continue;
+
+    // Every row of the run, not only the attached ones: the position fallback
+    // numbers a run's rows as a whole.
+    const rows = db()
+      .prepare(
+        `SELECT signature, note_path AS notePath, prompt_item AS promptItem
+           FROM dreaming_notes WHERE run_id = ? ORDER BY rowid`,
+      )
+      .all(runId) as ClaimedRow[];
+    for (const { signature, notePath } of rederivedNotePaths(rows, report)) {
+      recordNotePath(signature, notePath);
+      repaired++;
+    }
+  }
+  setJSON(PATH_REPAIR_KEY, now);
+  return repaired;
 }

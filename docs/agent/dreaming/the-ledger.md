@@ -84,7 +84,28 @@ limits follow. The row does not record which verb it came from, so an `edited`
 row names a note that existed before Dreaming and the pane cannot say so. And a
 row reconciled before this change keeps the hub path it was given, since
 `reconcileDreamingNotes` never overwrites one; only a row still waiting on its
-report is read by the new parser.
+report is read by the new parser. `repairDreamingNotePaths` is what moves those.
+
+**Rows attached before that change are repaired once, by a pass that is not
+`reconcileDreamingNotes`.** The never-overwrite rule stays, because it is what
+stops a reopened run that says nothing from blanking a real path, so the repair
+is a separate boot-time pass (`instrumentation.ts`, after `reconcileOnBoot`)
+gated on the `dreaming.notePathsRederivedAt` settings key and written only when
+the whole pass returned. Run on every boot it would rewrite the row of a run
+reopened since and now ending on a different report. The decision is
+`rederivedNotePaths`, pure: for each row that already has a path, it takes the
+current parser's path for the row's item and updates the row only when that
+differs from what is stored. It never writes an empty path, and it skips a row
+whose run is gone, not terminal (no final message yet), reported nothing, or no
+longer yields a line for the item. One more refusal is what lets it run blind,
+because `/data` is not readable from a work cycle: a row is repaired only when
+the path it holds is one of the lines this report wrote **for the item the row
+maps to**. That is true of a row the old parser filled from this item and false
+of a row that `claimedByItem`'s position fallback has slid onto a neighbour after
+a `forgetNote`, so a legacy row cannot be handed another item's note. Rows it
+leaves holding a hub are those whose run's events retention has deleted, or whose
+report never listed the note first; `forgetNote` is the repair for those, at the
+price of the next qualifying night writing that signature again.
 
 **`recordNight`'s `selected` is sticky.** A night that had already started a run
 and then found nothing left on a second pass read back as `quiet`, so the one
