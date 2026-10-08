@@ -225,6 +225,9 @@ export function instanceDTO(instance: WorkflowInstance): WorkflowInstanceDTO {
     createdAt: instance.createdAt,
     status: instance.status,
     error: instance.error,
+    // A null origin is an instance from before the column, which only a person
+    // could have pressed (see the backfill note beside `addColumn` in `db.ts`).
+    origin: instance.origin === "schedule" ? "schedule" : "workflow",
     stoppedAt: instance.stoppedAt,
     stopCause: instance.stopCause,
     stopReason: instance.stopReason,

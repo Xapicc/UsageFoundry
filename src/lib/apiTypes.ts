@@ -2848,6 +2848,12 @@ export interface WorkflowInstanceDTO {
     | "stopping"
     | "stopped";
   error: string | null;
+  /**
+   * Who pressed Run: a schedule firing with nobody present, or a person. An
+   * instance stored with no origin predates the column, when only a person
+   * could press it, and reads `workflow`.
+   */
+  origin: "workflow" | "schedule";
   /** When the halt closed the door — not when the last child died. */
   stoppedAt: number | null;
   /**
