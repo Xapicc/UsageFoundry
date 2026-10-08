@@ -8162,6 +8162,7 @@ async function settleReviewByCommand(
     // Caught per branch, `driveReviewItem`'s rule: one branch git could not be
     // asked about is not a reason to fail the block and every branch behind it.
     const outcome = await verifyBranchForReview(run, command).catch((err: unknown) => ({
+      ran: false,
       passed: false,
       ending: "",
       tail: "",

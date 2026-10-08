@@ -142,11 +142,21 @@ describe("statusVerdict", () => {
  * nothing on the page saying what failed.
  */
 describe("commandVerdict", () => {
-  const ran = { passed: false, reason: "Land's sentence, never shown here." };
+  const ran = { ran: true, passed: false, reason: "Land's sentence, never shown here." };
 
   it("approves only a pass", () => {
     assert.deepEqual(commandVerdict({ ...ran, passed: true, ending: "", tail: "ok" }), {
       kind: "approve",
+    });
+  });
+
+  it("sets aside the pass `landVerdict` gives a blank command, which never ran", () => {
+    // Unconfigured is a pass at Land — no gate was asked for. Here it would be
+    // a branch handed on with nothing run against it.
+    assert.deepEqual(commandVerdict({ ran: false, passed: true, ending: "", tail: "", reason: "" }), {
+      kind: "set-aside",
+      reason: "it could not be verified: the block has no verify command to run",
+      needsFrontier: false,
     });
   });
 
@@ -191,6 +201,7 @@ describe("commandVerdict", () => {
   it("sets aside a command that never ran, with why, rather than reading it as a pass", () => {
     assert.deepEqual(
       commandVerdict({
+        ran: false,
         passed: false,
         ending: "",
         tail: "",

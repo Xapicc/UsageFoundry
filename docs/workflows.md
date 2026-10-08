@@ -243,6 +243,9 @@ from** it decides one of three ways:
   or could not run at all — the checkout was taken over by a later run, or
   holds uncommitted edits. The instance page shows how it ended and the last of
   what it printed under the branch's row. It runs no model and bills nothing.
+  A workflow that starts more runs in one repository than run at once lets a
+  later run reuse an earlier one's checkout, and that earlier branch is then
+  set aside without being checked.
 
 The verify command is the one on the block, not the one in Settings, so each
 workflow can check its own repository its own way. It is argv and never a shell

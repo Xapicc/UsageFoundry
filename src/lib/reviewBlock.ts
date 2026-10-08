@@ -119,6 +119,7 @@ export type CommandVerdict =
  * a red test suite is not evidence a local model cannot do the task.
  */
 export function commandVerdict(outcome: {
+  ran: boolean;
   passed: boolean;
   /** How a command that ran ended — see `VerifyOutcome` — or `""`. */
   ending: string;
@@ -126,7 +127,17 @@ export function commandVerdict(outcome: {
   /** Why it could not run, read when `ending` is `""`. */
   reason: string;
 }): CommandVerdict {
-  if (outcome.passed) return { kind: "approve" };
+  if (outcome.passed && outcome.ran) return { kind: "approve" };
+  // `landVerdict`'s answer for a blank command is a pass that never ran — no
+  // gate configured. Save refuses a blank one here, so this is a row nothing
+  // validated, and it is the one "pass" that must not hand a branch on.
+  if (outcome.passed) {
+    return {
+      kind: "set-aside",
+      reason: "it could not be verified: the block has no verify command to run",
+      needsFrontier: false,
+    };
+  }
   const tail = outcome.tail.trim();
   return {
     kind: "set-aside",
