@@ -642,10 +642,18 @@ export default function WorkflowPage() {
                     <Td label="Guards" className="align-top">
                       {/* A loop starts no child of its own, so it is under no
                           guard set: every run of a pass is a member's, under
-                          the member's. A badge here would name a template this
-                          block never reaches. */}
+                          the member's. A merge, deliver or review block starts
+                          no agent either, and `normalizeNode` stores no
+                          template on it. A badge here would name a template
+                          these blocks never reach, and for a null one it reads
+                          "Settings guards", which none of them runs under. The
+                          chat's approval card says "no agent" for the three. */}
                       {n.kind === "loop" ? (
                         <span className="text-ink-faint">each member&rsquo;s own</span>
+                      ) : n.kind === "merge" ||
+                        n.kind === "deliver" ||
+                        n.kind === "review" ? (
+                        <span className="text-ink-faint">no agent</span>
                       ) : (
                         <Badge tone={guards.tone}>{guards.text}</Badge>
                       )}
