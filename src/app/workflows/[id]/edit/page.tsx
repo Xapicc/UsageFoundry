@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import type { WorkflowDTO } from "@/lib/apiTypes";
-import { pollFailureMessage } from "@/lib/format";
+import { readFailureMessage } from "@/lib/format";
 import { jsonRequest } from "@/lib/jsonRequest";
 import { WorkflowEditor } from "@/components/WorkflowEditor";
 import { Card, Empty, SkeletonText } from "@/components/ui/Card";
@@ -40,9 +40,9 @@ export default function EditWorkflowPage() {
         // re-seeds the form after it has been mounted.
         setInitialBlockId(new URLSearchParams(window.location.search).get("block"));
       } else if (res.ok) {
-        setError(pollFailureMessage(200, "the answer carried no workflow"));
+        setError(readFailureMessage(200, "the answer carried no workflow"));
       } else if (res.status !== 404) {
-        setError(pollFailureMessage(res.status, res.error));
+        setError(readFailureMessage(res.status, res.error));
       }
       setLoaded(true);
     })();

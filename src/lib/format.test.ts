@@ -20,6 +20,7 @@ import {
   passRuns,
   passesOf,
   pollFailureMessage,
+  readFailureMessage,
   resolveLiveModel,
   runPageNotes,
   storedFolderState,
@@ -171,6 +172,26 @@ test("the message says the page is no longer current", () => {
   // that has stopped tracking the thread, which is what the operator acts on.
   assert.match(pollFailureMessage(500, "boom"), /out of date/);
   assert.match(pollFailureMessage(401, "Unauthorized"), /out of date/);
+});
+
+test("a one-shot read keeps the heads and drops the claim that a page went stale", () => {
+  // The edit page reads once and never polls, so "stopped refreshing" is false
+  // there. The heads must still agree with `pollFailureMessage`'s, which is
+  // what makes the poll message the read message plus the tail.
+  for (const status of [null, 401, 500]) {
+    for (const detail of [undefined, "", "boom"]) {
+      const read = readFailureMessage(status, detail);
+      assert.doesNotMatch(read, /refreshing|out of date/);
+      assert.ok(read.endsWith("."), `${status}/${detail} must end as a sentence`);
+      assert.ok(
+        pollFailureMessage(status, detail).startsWith(`${read} `),
+        `${status}/${detail} heads diverged`,
+      );
+    }
+  }
+  assert.equal(readFailureMessage(500, "boom"), "The server answered 500 — boom.");
+  assert.match(readFailureMessage(401, "Unauthorized"), /[Ss]ign in again/);
+  assert.match(readFailureMessage(null, "Failed to fetch"), /could not be reached/);
 });
 
 /**

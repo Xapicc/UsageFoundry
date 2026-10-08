@@ -722,14 +722,32 @@ export function pollFailureMessage(
   status: number | null,
   detail?: string | null,
 ): string {
-  const cause = detail?.trim();
   const stale = "This page has stopped refreshing, so what is shown may be out of date.";
+  return `${readFailureMessage(status, detail)} ${stale}`;
+}
+
+/**
+ * `pollFailureMessage` without the staleness tail, for a read a page makes once.
+ *
+ * That tail is a claim about a page that was tracking something and has stopped,
+ * and it is false of a page that never polled: the edit page reads its workflow
+ * one time, and when that read fails nothing is on screen yet to be out of date.
+ * `actionFailureMessage` is no answer either, because it says the request may
+ * have been carried out, which a read cannot have been. The heads are shared so
+ * the three the operator can tell apart — signed out, not reached, answered with
+ * a status — are worded one way across both.
+ */
+export function readFailureMessage(
+  status: number | null,
+  detail?: string | null,
+): string {
+  const cause = detail?.trim();
   if (status === 401) {
-    return `Signed out${cause ? ` (${cause})` : ""} — sign in again. ${stale}`;
+    return `Signed out${cause ? ` (${cause})` : ""} — sign in again.`;
   }
   const head =
     status === null ? "The server could not be reached" : `The server answered ${status}`;
-  return `${head}${cause ? ` — ${cause}` : ""}. ${stale}`;
+  return `${head}${cause ? ` — ${cause}` : ""}.`;
 }
 
 /**
