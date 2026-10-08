@@ -200,6 +200,26 @@ read — reaches something that is not this run's business.
     one pulled in from another file by `include.path`. Anything you did not put
     there is the run's: a `core.fsmonitor` or `core.hooksPath`, a `filter.*`,
     `diff.*` or `merge.*` driver, or a hook without `.sample`.
+  - The app now does that look for you at the end of every run, and **warns
+    on the run's page and on its Land card** when something changed. Before
+    a run's first work cycle it reads the repository's shared git directory.
+    It reads it again when the run ends, however it ends. The warning lists
+    each change to a setting that runs a command: `core.fsmonitor`,
+    `core.hooksPath`, filter, diff and merge drivers, `diff.external`,
+    credential helpers and the other commands fetch and push run, signing
+    programs, pager and editor, aliases and includes. It also lists any hook
+    added, changed or made executable, and any change to
+    `.git/info/attributes`. Branch, remote and worktree settings this app
+    writes itself are not listed. It names the other runs that worked in the
+    same repository in that time, because they share the directory. It cannot
+    tell a run's change from yours or the chat's, and says so. If either
+    reading failed, the warning says the check did not run; it never shows
+    that as "nothing changed". It **detects and does not prevent**: the
+    change is already on disk when you read the warning. It does not see a
+    hook written into a directory that `core.hooksPath` already pointed at,
+    such as husky's ignored `.husky/_`, or a repository other than the run's
+    own. Nothing about it has been measured on a host. The reasoning is in
+    `docs/agent/security/run-git-dir-watch.md`.
   - `safe.directory` does not help. Git's documentation says it refuses only a
     repository owned by another user, and the run writes as you.
 

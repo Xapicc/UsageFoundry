@@ -27,6 +27,7 @@ describe("landCardLine", () => {
     landedUnchanged: false,
     branchExists: true,
     blocked: "Already in main — there is nothing left to land.",
+    resolveBlocked: null,
   };
   const onFeature =
     "Your checkout is on feature-x, and this work belongs on main. Switch to it first.";
@@ -81,6 +82,18 @@ describe("landCardLine", () => {
       refusal: onFeature,
     });
     assert.deepEqual(landCardLine({ ...never, merged: false, blocked: null }), { kind: "none" });
+  });
+
+  it("names why a conflict is not offered for resolving beside the conflict", () => {
+    // The card withholds Resolve on `resolveBlocked`. With only the conflict
+    // on the line, it read as a conflict with its one way out missing.
+    const never = { ...landedRun, landedAt: null, landedInto: null, landedStrategy: null };
+    const conflict = "Merging into main conflicts in 1 file(s). Resolve them on the branch first.";
+    const seeded = "uf/x carries .env, which this app copies into every checkout from yours.";
+    assert.deepEqual(
+      landCardLine({ ...never, merged: false, blocked: conflict, resolveBlocked: seeded }),
+      { kind: "refusal", refusal: `${conflict} ${seeded}` },
+    );
   });
 });
 

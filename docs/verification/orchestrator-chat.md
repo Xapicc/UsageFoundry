@@ -71,6 +71,15 @@
   "— scheduled". No sideways scroll, no console error, `Select all (skips 1)`.
   Not clicked; not the standalone build.
 
+- **An action's answer stays off a thread opened while it was out, in Chromium
+  on the standalone build, 2026-10-07.** Two seeded threads; each POST held by
+  `page.route` while the other thread was opened, then answered. At `2562870f`
+  a refused decide re-read the left thread and drew it for one round trip, an
+  approve unticked the opened thread's proposal, and decide, send, answer and
+  Stop errors showed under the opened thread. With `hasLeftThread` none did,
+  and a refusal with no switch, or after switching back, still showed. Caveat:
+  the POST answers were stubbed, not the routes'.
+
 ## Not yet verified by hand
 
 - **Whether the shipped chat leaves files alone when a fix is one edit away

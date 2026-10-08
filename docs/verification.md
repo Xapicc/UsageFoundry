@@ -32,7 +32,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Context control | [context-control-pruning.md](verification/context-control-pruning.md) — pruning, compaction and the context ceiling | 24 | 13 |
 | Context control | [context-control-intake-filter.md](verification/context-control-intake-filter.md) — the intake filter and its ledger | 8 | 4 |
 | Context control | [context-control-occupancy-and-composition.md](verification/context-control-occupancy-and-composition.md) — the occupancy and composition series | 8 | 5 |
-| Orchestrator chat | [orchestrator-chat.md](verification/orchestrator-chat.md) | 12 | 22 |
+| Orchestrator chat | [orchestrator-chat.md](verification/orchestrator-chat.md) | 13 | 22 |
 | Taskboard | [taskboard-board-and-tools.md](verification/taskboard-board-and-tools.md) — the board, its MCP tools and validation | 12 | 8 |
 | Taskboard | [taskboard-comments.md](verification/taskboard-comments.md) — task comments and threads | 7 | 2 |
 | Taskboard | [taskboard-dependencies.md](verification/taskboard-dependencies.md) — task dependencies and their drawing | 5 | 4 |
@@ -40,7 +40,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Workflows and schedules | [workflows-and-schedules-general.md](verification/workflows-and-schedules-general.md) — the canvas, instances, schedules, and a loop's region, link and board stop, review blocks | 14 | 12 |
 | Concurrency and ownership | [concurrency-and-ownership.md](verification/concurrency-and-ownership.md) | 21 | 9 |
 | Isolation and landing | [isolation-and-landing.md](verification/isolation-and-landing.md) | 15 | 11 |
-| Git and review | [git-and-review.md](verification/git-and-review.md) | 13 | 10 |
+| Git and review | [git-and-review.md](verification/git-and-review.md) | 16 | 11 |
 | Agents, templates and models | [agents-templates-and-models.md](verification/agents-templates-and-models.md) | 21 | 9 |
 | Other providers | [other-providers.md](verification/other-providers.md) — Codex, and the local provider | 30 | 8 |
 | Other providers | [codex-account-and-models.md](verification/codex-account-and-models.md) — Codex's usage windows and model list, read through `codex app-server` | 6 | 5 |
@@ -53,7 +53,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Security and sandboxing | [security-and-sandboxing-sign-in-and-bearer.md](verification/security-and-sandboxing-sign-in-and-bearer.md) — the sign-in limiter and the gate's bearer budget | 2 | 1 |
 | Security and sandboxing | [security-and-sandboxing-cross-origin.md](verification/security-and-sandboxing-cross-origin.md) — which browser requests the session cookie authorises | 1 | 1 |
 | Security and sandboxing | [security-and-sandboxing-name-lookup.md](verification/security-and-sandboxing-name-lookup.md) — root's `PATH`, the agents' `PATH` and what a dropped process runs by name | 5 | 4 |
-| Security and sandboxing | [security-and-sandboxing-chat-config.md](verification/security-and-sandboxing-chat-config.md) — what the chat child loads from files a work cycle writes | 12 | 3 |
+| Security and sandboxing | [security-and-sandboxing-chat-config.md](verification/security-and-sandboxing-chat-config.md) — what the chat child loads from files a work cycle writes | 16 | 4 |
 | Container and environment | [container-and-environment-resources.md](verification/container-and-environment-resources.md) — memory, CPU, cgroup limits, OOM and the filter launcher | 6 | 5 |
 | Container and environment | [container-and-environment-stacks.md](verification/container-and-environment-stacks.md) — the stacks carrier, its installs, receipts and invocation counts | 20 | 7 |
 | Container and environment | [container-and-environment-deployment.md](verification/container-and-environment-deployment.md) — the image, network, volumes, backup and health | 9 | 13 |
@@ -64,4 +64,4 @@ measurement under *Verified* and cut the item down to what is still open.
 | Interface | [interface-narrow-viewports.md](verification/interface-narrow-viewports.md) — pages at 390px, layout sweeps and smoke-pages | 15 | 9 |
 | Interface | [interface-canvases.md](verification/interface-canvases.md) — the graph canvases, touched map and replay | 5 | 2 |
 | Interface | [interface-pages-and-api.md](verification/interface-pages-and-api.md) — pages, panels and API payloads | 20 | 12 |
-| **Total** | | **465** | **279** |
+| **Total** | | **473** | **281** |

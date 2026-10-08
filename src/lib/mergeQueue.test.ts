@@ -52,6 +52,7 @@ const base: LandState = {
   blocked: null,
   certification: { required: false },
   seeded: { ok: true, paths: [] },
+  resolveBlocked: null,
   landedAt: null,
   landedInto: null,
   landedStrategy: null,

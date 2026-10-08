@@ -83,6 +83,36 @@
   naming its file, the included one under `file:.git/evil.inc`. A plain
   `git status` afterwards ran the filter and the fsmonitor.
 
+- **A run's end reports what its cycle planted in the repository's git
+  directory, and the server's reads run none of it, 2026-10-07, git 2.39.5.**
+  Board task `3fafd392`. Standalone build with a scratch `DATA_DIR`, booted by
+  a copy of `scripts/smoke-pages.mjs`. The stub `CLAUDE_BIN` set
+  `core.fsmonitor` to write a marker, wrote an executable
+  `.git/hooks/post-checkout`, and replied `DONE`. An isolated run in a scratch
+  repository ended `completed`, and its `gitDir.report` was `changed`. It
+  listed `core.fsmonitor` added, with its value, and `post-checkout` added and
+  executable, with no other runs named. A second, in-place run in the same
+  repository reported `unchanged`, because the stub set the same values
+  again. A run in a plain folder had `gitDir: null`. Neither the run route nor
+  the runs list shipped the raw columns. No marker was written, the isolated
+  run's `worktree add` included, until a plain `git status` wrote the
+  fsmonitor's. Caveat: this ran as uid 1000 with no uid split, so the server's
+  file reads were not root's.
+
+- **Two runs overlapping in one repository each name the other, 2026-10-07.**
+  Same harness. The stub slept 3 seconds and then set `alias.st` to a value
+  carrying its pid. Two isolated runs started together both reported
+  `alias.st` changed, and each listed the other. A third run, started after
+  both had ended, listed none.
+
+- **The warning renders on the run page and the Land card, 2026-10-07.**
+  Standalone build and one seeded run, with `GET /api/runs/<id>` and its
+  `/land` answered by Playwright. The states were `changed` (with and without
+  other runs), `unreadable`, `unchanged`, and no report on a settled run, at
+  390px and 1280px in the default skin. There was no console error and no
+  sideways scroll, and a 180-character value wrapped. Not measured in the
+  ascii skin.
+
 ## Not yet verified by hand
 
 - **A planted `core.fsmonitor` running in the operator's own git on the
@@ -101,6 +131,17 @@
   gap. The probe left both markers when run in the container on 2026-10-06,
   from the repository's root and from a subdirectory. Board task `da885677`
   is the operator's.
+
+- **The git-directory warning in a booted image, as root with the uid split
+  on.** Unmeasured: the server reading `hooks/` and `info/attributes` as root
+  against a mount the agent uid writes, `git config --list` running as the
+  agent uid through `childCredentials()`, and the containment check against
+  the container's real mounts. To settle it, use a scratch repository under a
+  mount. Start an isolated run whose prompt is to run
+  `git config core.fsmonitor "touch /tmp/uf-probe #"` and to write an
+  executable `.git/hooks/post-checkout`. Then read `run.gitDir` from
+  `GET /api/runs/<id>`: both should be listed, and `/tmp/uf-probe` should not
+  exist.
 
 - **A resolution made through the app, then "What changed".** The range was
   measured on a hand-made merge; `resolveConflicts`' own merge, the review it

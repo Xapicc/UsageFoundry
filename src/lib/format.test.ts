@@ -6,10 +6,15 @@ import {
   fmtCycleInFlight,
   fmtCycles,
   fmtDateTimeInZone,
+  fmtInstanceWait,
   fmtInstantWithZone,
   fmtLiveCycle,
   fmtTokens,
   guardBadge,
+  INSTANCE_OUTCOME_LABEL,
+  INSTANCE_OUTCOME_TONE,
+  instanceCanMove,
+  instanceOutcomeDetail,
   landingSummary,
   passRuns,
   passesOf,
@@ -843,4 +848,105 @@ test("fmtInstantWithZone names the zone it really used when it does not know the
 
 test("fmtDateTimeInZone refuses a zone the runtime does not know rather than inventing one", () => {
   assert.throws(() => fmtDateTimeInZone(SEVENTH_JULY_0700Z, "Mars/Olympus_Mons"), RangeError);
+});
+
+/**
+ * A wait as the instance page words it. The condition is the chip's own phrase,
+ * so the page that shows an instance and the one that shows its workflow cannot
+ * word one link two ways, and a wait with no edge behind it is the bare name:
+ * "(either way)" on the block that decided a run would be a rule nobody saved.
+ */
+test("fmtInstanceWait states the condition the link carries, in the chip's words", () => {
+  const names = new Map([["build", "Build"]]);
+  assert.equal(
+    fmtInstanceWait({ nodeId: "build", edge: "on-success" }, names),
+    `Build (${EDGE_CHIP_LABEL["on-success"]})`,
+  );
+  assert.equal(
+    fmtInstanceWait({ nodeId: "build", edge: "on-finish" }, names),
+    `Build (${EDGE_CHIP_LABEL["on-finish"]})`,
+  );
+});
+
+test("fmtInstanceWait claims no condition for a wait with no edge, and falls back to the id", () => {
+  const names = new Map([["decide", "Decide"]]);
+  assert.equal(fmtInstanceWait({ nodeId: "decide", edge: null }, names), "Decide");
+  assert.equal(
+    fmtInstanceWait({ nodeId: "gone", edge: "on-success" }, names),
+    `gone (${EDGE_CHIP_LABEL["on-success"]})`,
+  );
+});
+
+/**
+ * Whether the instance page keeps asking. The page polled for ever, including
+ * for a halted instance, which nothing moves: a halt is refused every pick-up
+ * ("never through a halt") and a rolled-back instance never had a member. The
+ * other four can still move, and two of them are the surprising ones — `finished`
+ * and `blocked` are *derived* readings, and a pick-up on a member turns either
+ * back into `started`, so a page that stood down for them would show a resumed
+ * run as finished until somebody reloaded. Each reading is asserted by name
+ * rather than by a count, so the week a seventh is added this fails by naming it.
+ */
+test("instanceCanMove stands down for a halted or rolled-back instance and no other", () => {
+  const moves: Record<keyof typeof INSTANCE_OUTCOME_LABEL, boolean> = {
+    started: true,
+    finished: true,
+    blocked: true,
+    stopping: true,
+    stopped: false,
+    failed: false,
+  };
+  for (const [status, expected] of Object.entries(moves)) {
+    assert.equal(
+      instanceCanMove(status as keyof typeof moves),
+      expected,
+      `${status} should ${expected ? "keep" : "stand down"} the poll`,
+    );
+  }
+});
+
+test("every reading of an instance has a word and a tone", () => {
+  const readings = Object.keys(INSTANCE_OUTCOME_LABEL).sort();
+  assert.deepEqual(readings, [
+    "blocked",
+    "failed",
+    "finished",
+    "started",
+    "stopped",
+    "stopping",
+  ]);
+  assert.deepEqual(Object.keys(INSTANCE_OUTCOME_TONE).sort(), readings);
+  // "started" is the stored word for an unhalted row, and the page used to show
+  // it for a graph that finished an hour ago: the label is what an operator reads.
+  assert.equal(INSTANCE_OUTCOME_LABEL.started, "working");
+});
+
+test("instanceOutcomeDetail says what the badge cannot, and nothing for finished", () => {
+  const base = { liveRunCount: 0, blockedCount: 0, error: null, stopCause: null } as const;
+  assert.equal(
+    instanceOutcomeDetail({ ...base, status: "started", liveRunCount: 2 }),
+    "2 block(s) working",
+  );
+  assert.equal(
+    instanceOutcomeDetail({ ...base, status: "blocked", blockedCount: 3 }),
+    "3 block(s) never ran",
+  );
+  assert.equal(
+    instanceOutcomeDetail({ ...base, status: "stopping", liveRunCount: 1 }),
+    "1 block(s) still finishing",
+  );
+  assert.equal(instanceOutcomeDetail({ ...base, status: "stopped" }), "by you");
+  assert.equal(
+    instanceOutcomeDetail({ ...base, status: "stopped", stopCause: "guard" }),
+    "by its budget guard",
+  );
+  assert.equal(
+    instanceOutcomeDetail({ ...base, status: "stopped", stopCause: "fleet" }),
+    "with everything in flight",
+  );
+  assert.equal(
+    instanceOutcomeDetail({ ...base, status: "failed", error: "no folder" }),
+    "no folder",
+  );
+  assert.equal(instanceOutcomeDetail({ ...base, status: "finished" }), null);
 });

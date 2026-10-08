@@ -1784,6 +1784,17 @@ function migrate(db: Database.Database) {
   // nothing deletes runs, so a cascade here would describe a deletion that never
   // happens in one direction and destroy a run's provenance in the other.
   addColumn(db, "runs", "task_id", "TEXT");
+  // What this run's repository git directory held at its start — the
+  // command-bearing configuration keys, `hooks/` and `info/attributes` — and
+  // what its end found changed there (`gitDirWatch.ts`). JSON, and on the row
+  // rather than in a file or in memory: a run parks and resumes across
+  // restarts, and the baseline must still be the one taken before its first
+  // cycle when the run finally ends; on the row it is also gone when retention
+  // deletes the run, with nothing of its own to expire. Written outside
+  // `createRun`, by the loop's start and after its terminal status write, so
+  // neither read is inside the folder claim's no-`await` window.
+  addColumn(db, "runs", "git_dir_baseline", "TEXT");
+  addColumn(db, "runs", "git_dir_report", "TEXT");
   // "Which runs were started for this task", which is the board row's own read
   // and the one that must not be a scan of every run the install has ever held.
   // Partial, because the column is null on nearly every row: the index then
