@@ -1291,6 +1291,12 @@ export default function WorkflowInstancePage() {
   // `blocked`, and a `finished` or `blocked` reading has nothing waiting.
   const heldGates =
     instance.status === "started" ? instance.blocks.filter(isHeldGate) : [];
+  // `liveRunCount` counts a gate as live, held or not, and a gate is never
+  // working: it is a person's to answer. So "working" is the count without
+  // them, which is what the heading and the spend hint both mean by it.
+  const workingCount =
+    instance.liveRunCount -
+    instance.blocks.filter((b) => b.kind === "gate" && b.status === "waiting").length;
 
   const blockKindNotes = [
     <Hint key="spend">
@@ -1351,9 +1357,10 @@ export default function WorkflowInstancePage() {
               <Badge tone={INSTANCE_OUTCOME_TONE[instance.status]}>
                 {INSTANCE_OUTCOME_LABEL[instance.status]}
               </Badge>
-              {(instance.status === "started" || instance.status === "blocked") &&
-                ` ${instanceOutcomeDetail(instance)}`}
-              {heldGates.length > 0 && ` · ${heldGates.length} waiting for you`}
+              {heldGates.length > 0
+                ? ` ${workingCount > 0 ? `${workingCount} block(s) working · ` : ""}${heldGates.length} waiting for you`
+                : (instance.status === "started" || instance.status === "blocked") &&
+                  ` ${instanceOutcomeDetail(instance)}`}
             </span>
           </div>
           {/* Not disabled by `confirmStop`: that lands in the same commit that
@@ -1522,9 +1529,9 @@ export default function WorkflowInstancePage() {
         </ListGroup>
 
         {!noLimits && <Hint>{WORKFLOW_LIMIT_TIMING_NOTE}</Hint>}
-        {instance.liveRunCount > 0 && (
+        {workingCount > 0 && (
           <Hint>
-            {instance.liveRunCount} block(s) working: until their cycles end,
+            {workingCount} block(s) working: until their cycles end,
             the measured figure is a floor and the guard&rsquo;s is what
             telemetry has seen
           </Hint>
