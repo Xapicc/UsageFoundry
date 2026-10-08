@@ -6685,7 +6685,9 @@ export interface BlockSettlement {
  * accepted while the child was alive are a decision it took deliberately, and a
  * CLI that errored on its way out afterwards says nothing about them — but a
  * block recorded `failed` blocks what is behind it, so a turn whose runs are
- * about to start must not be.
+ * about to start must not be. And when such a turn also ended with no `result`
+ * event at all, what it ended on goes in `notes` and `error` stays empty: that
+ * sentence is how the turn finished, not a verdict on what it decided.
  */
 export function blockSettlement(
   result: TurnResult,
@@ -6706,11 +6708,28 @@ export function blockSettlement(
     );
   }
 
+  // A turn that ended with no `result` event is the one failure `turnResultOf`
+  // returns without a `costUSD`: killed, crashed, timed out, or a stream the
+  // reader could not use. When it had already emitted, the block is `emitted`
+  // and its runs are about to start, so what it ended on is this app's account
+  // of how the turn finished and not the verdict on the decision — written as
+  // `error` it sat on a block whose runs went ahead, and was the only sentence
+  // the operator got. Which is why this is a note, and why it says what is
+  // missing: the cost shows as unreported (`blockTurnSpend`) and there is no
+  // reply to read.
+  const endedWithoutResult = result.status === "failed" && result.costUSD === undefined;
+  if (endedWithoutResult && emitted > 0) {
+    notes.push(
+      "The turn ended without a result, so no reply was kept and its cost is " +
+        `shown as unreported. What it ended on: ${result.error ?? "nothing recorded"}`,
+    );
+  }
+
   return {
     status: result.status === "failed" && emitted === 0 ? "failed" : "emitted",
     reply: result.text?.trim() || null,
     notes,
-    error: result.error ?? null,
+    error: endedWithoutResult && emitted > 0 ? null : (result.error ?? null),
   };
 }
 

@@ -3598,10 +3598,46 @@ describe("blockSettlement — what a finished turn is recorded as", () => {
   it("does not record a failed turn that emitted as failed", () => {
     // The specs were accepted while the child was alive and are about to become
     // runs. `failed` blocks every node behind this one, which would strand the
-    // very runs this turn started.
-    const out = settled({ status: "failed", error: "It exited 1 afterwards." }, 2);
+    // very runs this turn started. A `costUSD` marks a turn whose `result`
+    // arrived and said it failed, which is a verdict on the turn.
+    const out = settled(
+      { status: "failed", error: "It exited 1 afterwards.", costUSD: 0.2 },
+      2,
+    );
     assert.equal(out.status, "emitted");
     assert.equal(out.error, "It exited 1 afterwards.", "the failure is still recorded");
+    assert.deepEqual(out.notes, []);
+  });
+
+  it("notes, and does not fail, a turn that emitted and ended with no result", () => {
+    // No `costUSD` is `turnResultOf`'s failure with no `result` event to read.
+    // The runs it emitted go ahead, so the block is not failed; and what the
+    // turn ended on is how it finished, so it is a note beside the unreported
+    // cost and not an `error` on a block whose decision stood.
+    const out = settled(
+      {
+        status: "failed",
+        error: "The chat produced no readable output (exit 0).",
+        tokens: 40,
+        costGuardUSD: 0.05,
+      },
+      2,
+    );
+    assert.equal(out.status, "emitted");
+    assert.equal(out.error, null);
+    assert.equal(out.reply, null);
+    assert.equal(out.notes.length, 1);
+    assert.match(out.notes[0], /ended without a result/);
+    assert.match(out.notes[0], /no readable output \(exit 0\)/);
+  });
+
+  it("still fails a turn that ended with no result and emitted nothing", () => {
+    // The other side of the note above: with nothing emitted there is nothing
+    // for the sentence to sit beside, and it is the failure itself.
+    const out = settled({ status: "failed", error: "The stub went silent." }, 0);
+    assert.equal(out.status, "failed");
+    assert.equal(out.error, "The stub went silent.");
+    assert.deepEqual(out.notes, []);
   });
 
   it("carries forward what was recorded while the turn was running", () => {
