@@ -532,3 +532,180 @@ describe("an orchestrator block none of whose decided runs could be started", ()
     assert.match(follower.error ?? "", /“E3” could not be started: .*project\/sub/);
   });
 });
+
+/**
+ * A template that pins a model the operator's list has switched off.
+ *
+ * Here for the reason the describe above is: what matters is that every place a
+ * workflow creates a run asks, and a pure suite can only say the question is
+ * right. The run form refuses the same template at Start; the template door
+ * cannot, because a template outlives the list. Silent otherwise — the run
+ * starts, on a model the operator turned off, from a press of Run or a schedule.
+ */
+describe("a workflow whose template pins a switched-off model", () => {
+  const MODEL = "claude-haiku-5-5";
+
+  let settings: typeof import("./settings");
+  let templates: typeof import("./templates");
+  // Loaded once so the switch below is synchronous: a run a press of Run
+  // created fails to spawn on the next event-loop turn, and a block behind it
+  // is then written off before the case has had its say.
+  before(async () => {
+    settings = await import("./settings");
+    templates = await import("./templates");
+  });
+
+  function withModel(enabled: boolean): () => void {
+    const original = settings.getSettings().modelCatalogue;
+    assert.ok(
+      original.some((entry) => entry.id === MODEL),
+      `${MODEL} left the seeded list; pick another id for this case`,
+    );
+    settings.saveSettings({
+      modelCatalogue: original.map((entry) => (entry.id === MODEL ? { ...entry, enabled } : entry)),
+    });
+    return () => settings.saveSettings({ modelCatalogue: original });
+  }
+
+  function pinnedTemplate() {
+    return templates.createTemplate({
+      name: `Pins ${MODEL} ${Math.random().toString(36).slice(2)}`,
+      prompt: "Work carefully.",
+      mountId: null,
+      folder: null,
+      isolate: false,
+      permissionMode: "plan",
+      agentId: null,
+      model: MODEL,
+      budget: settings.chatGuards().budget,
+    });
+  }
+
+  const instanceBudget = { maxInstanceCostUSD: null, maxSessionFraction: null, maxWeeklyFraction: null };
+
+  it("is refused at a press of Run for a run block and an orchestrator block alike, and starts once the model is back", async () => {
+    const restore = withModel(false);
+    try {
+      const template = pinnedTemplate();
+      for (const kind of ["run", "orchestrator"] as const) {
+        const workflow = workflows.createWorkflow({
+          name: `Pinned ${kind}`,
+          graph: { nodes: [block("A", kind, { templateId: template.id })], edges: [] },
+          instanceBudget,
+        });
+        const refused = workflows.startWorkflow(workflow.id, await orch.currentSnapshot());
+        assert.equal(refused.ok, false, kind);
+        const reason = refused.ok ? "" : refused.reason;
+        assert.match(reason, /“Do A”/, kind);
+        assert.match(reason, new RegExp(`Model "${MODEL}" is switched off for this install`), kind);
+        assert.equal(
+          (dbMod.db().prepare("SELECT COUNT(*) AS n FROM runs").get() as { n: number }).n,
+          0,
+          `${kind}: a refused press created nothing`,
+        );
+      }
+
+      withModel(true);
+      const workflow = workflows.createWorkflow({
+        name: "Pinned and back on",
+        graph: { nodes: [block("A", "run", { templateId: template.id })], edges: [] },
+        instanceBudget,
+      });
+      const started = workflows.startWorkflow(workflow.id, await orch.currentSnapshot());
+      assert.ok(started.ok, `start refused: ${!started.ok && started.reason}`);
+    } finally {
+      restore();
+    }
+  });
+
+  it("is refused for an emitted run when the model is switched off after the block started", async () => {
+    fs.mkdirSync(path.join(workspace, "project", "sub"), { recursive: true });
+    const restore = withModel(true);
+    try {
+      const template = pinnedTemplate();
+      const workflow = workflows.createWorkflow({
+        name: "Emit onto a retired model",
+        graph: { nodes: [block("O", "orchestrator", { templateId: template.id })], edges: [] },
+        instanceBudget,
+      });
+      const outcome = workflows.startWorkflow(workflow.id, await orch.currentSnapshot());
+      assert.ok(outcome.ok, `start refused: ${!outcome.ok && outcome.reason}`);
+      const instanceId = outcome.instance.id;
+      dbMod
+        .db()
+        .prepare(
+          "UPDATE workflow_instance_blocks SET status='thinking' WHERE instance_id=? AND node_id=?",
+        )
+        .run(instanceId, "O");
+      const emission = workflows.emitBlockRuns(instanceId, "O", [
+        { id: "E1", title: "E1", task: "do the emitted thing", folder: "project/sub" },
+      ]);
+      assert.ok(emission.ok, `emission refused: ${!emission.ok && emission.reason}`);
+
+      // Between the decision and the start, the window the template is re-read across.
+      withModel(false);
+      workflows.settleBlock(instanceId, "O", { status: "idle", text: "Started E1." });
+
+      const row = dbMod
+        .db()
+        .prepare(
+          "SELECT error, notes FROM workflow_instance_blocks WHERE instance_id=? AND node_id=?",
+        )
+        .get(instanceId, "O") as { error: string | null; notes: string | null };
+      assert.equal(row.error, null, "the turn did not fail; the list refused its runs");
+      assert.match(row.notes ?? "", /“E1” was not started: .*switched off for this install/);
+      assert.equal(
+        workflows.blocksOf(instanceId).find((b) => b.nodeId === "O")?.started,
+        0,
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  // Fails at the claim with nothing spent: every run the turn emitted would hit
+  // the case above, so the turn it was paid for would decide on work that could
+  // not start.
+  it("does not pay for an orchestrator block's turn whose template model is off", async () => {
+    const restore = withModel(true);
+    try {
+      const template = pinnedTemplate();
+      const workflow = workflows.createWorkflow({
+        name: "Decide after a retired model",
+        graph: {
+          nodes: [block("R", "run"), block("O", "orchestrator", { templateId: template.id })],
+          edges: [{ from: "R", to: "O", edge: "on-finish", continueBranch: false }],
+        },
+        instanceBudget,
+      });
+      const outcome = workflows.startWorkflow(workflow.id, await orch.currentSnapshot());
+      assert.ok(outcome.ok, `start refused: ${!outcome.ok && outcome.reason}`);
+      const instanceId = outcome.instance.id;
+
+      withModel(false);
+      dbMod
+        .db()
+        .prepare(
+          "UPDATE runs SET status='completed', iterations=1, finished_at=? WHERE id IN (SELECT run_id FROM workflow_instance_runs WHERE instance_id=? AND node_id='R')",
+        )
+        .run(Date.now(), instanceId);
+      workflows.advanceInstances();
+
+      const row = dbMod
+        .db()
+        .prepare(
+          "SELECT status, error FROM workflow_instance_blocks WHERE instance_id=? AND node_id='O'",
+        )
+        .get(instanceId) as { status: string; error: string | null };
+      assert.equal(row.status, "failed", JSON.stringify(row));
+      assert.match(row.error ?? "", /switched off for this install/);
+      assert.equal(
+        workflows.blocksOf(instanceId).find((b) => b.nodeId === "O")?.costUSD,
+        0,
+        "nothing was spent",
+      );
+    } finally {
+      restore();
+    }
+  });
+});

@@ -25,6 +25,7 @@ import {
   loopStopAfterRefusal,
   loopStopStatus,
   mergeBlockOutcome,
+  modelOnList,
   queuedBranchOutcome,
   normalizeWorkflowInput,
   orchestratorRetryRefusal,
@@ -57,6 +58,7 @@ import {
   type WorkflowKnowledge,
   type WorkflowNode,
 } from "./workflows";
+import { modelRefusal, type ModelCatalogueEntry } from "./modelCatalogue";
 import type { LoopBoardCondition } from "./workflowGraph";
 import { topologicalOrder, type RunStatus } from "./orchestrator";
 import { readTaskLinks } from "./tasks";
@@ -3327,6 +3329,108 @@ describe("planEmittedRun — the decider's pick against the block's template", (
   it("leaves the model to createRun when nothing decided one", () => {
     const { decidedModel: _, ...undecided } = SPEC;
     assert.equal(planEmittedRun(ORCHESTRATOR, undecided, null, BLOCK_DEFAULTS, null).model, null);
+  });
+});
+
+/**
+ * The model list against a run a workflow is about to create.
+ *
+ * The run form refuses a model the operator switched off and the template door
+ * deliberately does not, so a template can hold one — and a block's run or an
+ * emitted run is the path that hands it on with no form in front of it, a
+ * schedule's with no person at all. The cases feed `modelOnList` what `planNode`
+ * and `planEmittedRun` actually produce, since a model the plan never carried
+ * would pass for the wrong reason.
+ */
+describe("modelOnList — a switched-off model reaching a workflow's run", () => {
+  const LIST: ModelCatalogueEntry[] = [
+    { id: "claude-sonnet-5", label: "Claude Sonnet 5", enabled: true },
+    { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", enabled: true },
+    { id: "claude-haiku-5-5", label: "Claude Haiku 5.5", enabled: false },
+  ];
+  const RETIRED = { ...BLOCK_TEMPLATE, model: "claude-haiku-5-5" };
+  const ORCHESTRATOR: WorkflowNode = { ...RUN_BLOCK, kind: "orchestrator", fanOut: 3 };
+  const SPEC = {
+    id: "s1",
+    title: "Fix the flake",
+    task: "Make the retry test deterministic.",
+    folder: "",
+    agent: null,
+    taskIds: [],
+    dependsOn: [],
+  };
+
+  it("refuses a run block whose template pins a switched-off model, in the list's own words", () => {
+    const plan = planNode(RUN_BLOCK, RETIRED, BLOCK_DEFAULTS, null);
+    assert.ok(plan.ok);
+    const listed = modelOnList(plan.input, RUN_BLOCK.name, LIST);
+    assert.equal(listed.ok, false);
+    const reason = listed.ok ? "" : listed.reason;
+    assert.ok(reason.includes(modelRefusal(LIST, "claude-haiku-5-5")!), reason);
+    assert.ok(reason.includes(`“${RUN_BLOCK.name}”`), "names the block");
+    assert.match(reason, /switched off for this install/);
+  });
+
+  it("refuses an emitted run whose template pins one, and one the list never had", () => {
+    const retired = modelOnList(
+      planEmittedRun(ORCHESTRATOR, SPEC, RETIRED, BLOCK_DEFAULTS, null),
+      "Fix the flake",
+      LIST,
+    );
+    assert.equal(retired.ok, false);
+    assert.match(retired.ok ? "" : retired.reason, /switched off for this install/);
+
+    const unknown = modelOnList(
+      planEmittedRun(ORCHESTRATOR, SPEC, { ...BLOCK_TEMPLATE, model: "claude-nova-9" }, BLOCK_DEFAULTS, null),
+      "Fix the flake",
+      LIST,
+    );
+    assert.equal(unknown.ok, false);
+    assert.match(unknown.ok ? "" : unknown.reason, /not on this install's list/);
+  });
+
+  it("still starts a run on an enabled model, or on none", () => {
+    const enabled = planNode(RUN_BLOCK, BLOCK_TEMPLATE, BLOCK_DEFAULTS, null);
+    assert.ok(enabled.ok);
+    assert.equal(enabled.input.model, "claude-sonnet-5");
+    assert.equal(modelOnList(enabled.input, RUN_BLOCK.name, LIST).ok, true);
+
+    const none = planNode(RUN_BLOCK, { ...BLOCK_TEMPLATE, model: null }, BLOCK_DEFAULTS, null);
+    assert.ok(none.ok);
+    assert.equal(modelOnList(none.input, RUN_BLOCK.name, LIST).ok, true);
+
+    const emitted = planEmittedRun(
+      ORCHESTRATOR,
+      { ...SPEC, decidedModel: "claude-haiku-4-5" },
+      { ...BLOCK_TEMPLATE, model: null },
+      BLOCK_DEFAULTS,
+      null,
+    );
+    assert.equal(emitted.model, "claude-haiku-4-5");
+    assert.equal(modelOnList(emitted, "Fix the flake", LIST).ok, true);
+  });
+
+  // The Claude list would refuse both ids, and neither is a Claude id.
+  it("does not hold a Codex or local run to the Claude list", () => {
+    for (const provider of ["codex", "local"] as const) {
+      const emitted = planEmittedRun(
+        { ...ORCHESTRATOR, provider },
+        { ...SPEC, decidedModel: "gpt-5.6-luna" },
+        RETIRED,
+        BLOCK_DEFAULTS,
+        null,
+      );
+      assert.equal(modelOnList(emitted, "Fix the flake", LIST).ok, true, provider);
+    }
+    const signedIn = planNode({ ...RUN_BLOCK, provider: "local" }, RETIRED, BLOCK_DEFAULTS, null);
+    assert.ok(signedIn.ok);
+    assert.equal(modelOnList({ ...signedIn.input, model: "qwen3" }, RUN_BLOCK.name, LIST).ok, true);
+  });
+
+  it("refuses nothing when the operator has no list", () => {
+    const plan = planNode(RUN_BLOCK, RETIRED, BLOCK_DEFAULTS, null);
+    assert.ok(plan.ok);
+    assert.equal(modelOnList(plan.input, RUN_BLOCK.name, []).ok, true);
   });
 });
 
