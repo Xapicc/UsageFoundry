@@ -22,6 +22,8 @@ Each is its own file rather than a case in the pure suite beside it because `nod
 
 `fleet.test.ts` is separate for that same reason turned up one further: `stopFleet` acts on every live row *and* every started instance, so it would take down any other file's fixtures mid-test.
 
+`orchestratorPickUp.test.ts` is in the database class too and landed after both counts above; it is separate for `fleet.test.ts`' reason, because `advanceInstances` acts on every started instance, and states its grounds in [workflow-pick-ups.md](workflow-pick-ups.md).
+
 Fifteen more are in that class and landed after the paragraphs above were written, the fourteen whose paragraph opens on the file's own name — `src/app/api/login/route.test.ts`, `src/app/api/runs/[id]/stream/route.test.ts`, `src/app/api/settings/route.test.ts`, `installSpend.test.ts`, `instanceBudget.test.ts`, `retentionSweep.test.ts`, `schedulePut.test.ts`, `schemaMigration.test.ts`, `transcriptCache.test.ts`, `transcriptScan.test.ts`, `src/app/api/workflows/[id]/route.test.ts`, `resolveCheckout.test.ts`, `resolutionBudget.test.ts` and `resolutionSilence.test.ts` — and `mergeQueueDrain.test.ts`; each is one sentence here because each states its own grounds in its own docblock, which is where the argument belongs.
 
 `src/app/api/runs/live/stream/route.test.ts` is in that class too and landed after both counts above; it builds its runs the way the per-run stream route's test does, rows straight into `runs` and events through `emitRunEvent`, and states its own grounds in its docblock.

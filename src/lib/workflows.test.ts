@@ -24,6 +24,7 @@ import {
   mergeBlockOutcome,
   queuedBranchOutcome,
   normalizeWorkflowInput,
+  orchestratorRetryRefusal,
   pickDuplicateName,
   planEmission,
   planEmittedRun,
@@ -3663,6 +3664,55 @@ describe("blockSettlement — what a finished turn is recorded as", () => {
     // Empty rather than a reassuring line: the page draws every note, and a
     // standing "no problems" would train the eye past the ones that matter.
     assert.deepEqual(settled({ status: "idle", text: "Started one." }, 1).notes, []);
+  });
+});
+
+/**
+ * Which failed deciding turns the pick-up may run again.
+ *
+ * Both wrong answers are silent. Offered for a block that had decided, a retry
+ * is a second turn deciding the same runs over a first whose specs are still
+ * stored; refused for one that had not, the only way past a turn that failed
+ * for want of a signed-in provider is a fresh Run, which repeats every block
+ * that already finished.
+ */
+describe("orchestratorRetryRefusal — which failed deciding turns may be run again", () => {
+  const block = (over: Partial<Parameters<typeof orchestratorRetryRefusal>[0]> = {}) => ({
+    nodeName: "Decide",
+    status: "failed" as BlockStatus,
+    emitted: 0,
+    started: 0,
+    ...over,
+  });
+
+  it("allows a turn that failed having decided nothing", () => {
+    assert.equal(orchestratorRetryRefusal(block()), null);
+  });
+
+  it("refuses a block that had decided on runs, and says how many", () => {
+    // Reachable only through a restart: `reconcileBlocksOnBoot` writes a
+    // `thinking` block failed without settling it, specs still stored.
+    const one = orchestratorRetryRefusal(block({ emitted: 1 }));
+    assert.match(one ?? "", /“Decide” had already decided on 1 run when its turn failed/);
+    const three = orchestratorRetryRefusal(block({ emitted: 3 }));
+    assert.match(three ?? "", /on 3 runs when/);
+    assert.match(three ?? "", /Run the workflow again instead/);
+  });
+
+  it("refuses a block that already has runs, whatever its count of specs says", () => {
+    // `started` is read off the membership rows and `emitted` off the stored
+    // specs; either one above zero means work exists or is decided.
+    assert.match(orchestratorRetryRefusal(block({ emitted: 0, started: 2 })) ?? "", /on 2 runs/);
+  });
+
+  it("refuses a block that is not failed, naming what it is", () => {
+    for (const status of ["waiting", "thinking", "emitted", "blocked"] as BlockStatus[]) {
+      assert.match(
+        orchestratorRetryRefusal(block({ status })) ?? "",
+        new RegExp(`is ${status}, so there is no failed turn`),
+        status,
+      );
+    }
   });
 });
 

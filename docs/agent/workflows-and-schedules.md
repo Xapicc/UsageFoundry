@@ -19,6 +19,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - A block can decide what runs next, and those runs start with no approval — because the approval moved to the graph rather than disappearing.
 - The model is the one thing on an emitted run nobody saved and nobody reads, and that is now allowed.
 - And what the turn said is kept, in three fields that are three voices.
+- A deciding turn that failed is run again by itself, and only when it had decided nothing.
 - `taskIds` on an emitted spec is not a sixth field on the list `emit_runs` refuses to grow, and it is not on the node at all.
 - Acyclicity stops being a property of who wrote the graph, so it is checked as a property of the data.
 - A block can land what the blocks in front of it built, and every protection that made `land.ts` safe stays where it is.
