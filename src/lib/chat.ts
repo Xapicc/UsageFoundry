@@ -3084,7 +3084,8 @@ export interface OrchestratorChildOptions {
    * Optional, and only the chat passes one: a workflow's orchestrator block has
    * no surface anybody watches while it runs and nothing to recover from a
    * crash — its runs are what it produces, and they are created after it
-   * settles.
+   * settles. Whether it is passed has no bearing on what the turn's verdict
+   * reads: the stream is folded either way.
    *
    * **Called on every event, including the ones that moved nothing**, which it
    * was not: the flags used to gate the call and now only describe it. That
@@ -3427,7 +3428,12 @@ export function runOrchestratorChild(o: OrchestratorChildOptions): void {
       const line = stdoutBuf.slice(0, nl).trim();
       stdoutBuf = stdoutBuf.slice(nl + 1);
       if (!line) continue;
-      o.onProgress?.(acc, readChatEvent(acc, line));
+      // Read first and handed over second. `?.(` skips its arguments along
+      // with the call, so reading inside it meant a caller that passes no
+      // `onProgress` — every workflow block — never folded a line, and its
+      // `result` was thrown away unread (`blockTurnReading.test.ts`).
+      const moved = readChatEvent(acc, line);
+      o.onProgress?.(acc, moved);
     }
   });
   child.stderr.on("data", (c: string) => {

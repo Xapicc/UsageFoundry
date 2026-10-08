@@ -156,6 +156,12 @@ Twenty-two are renderings rather than functions — every `*.test.tsx` in the tr
 | `src/app/api/workflows/[id]/route.test.ts` |  |
 | `src/app/api/workflows/[id]/schedule/route.test.ts` |  |
 
+## [Workflow pick-ups](testing/workflow-pick-ups.md)
+
+| Test file | Also in |
+|---|---|
+| `orchestratorPickUp.test.ts` |  |
+
 ## [Loop blocks and their passes](testing/workflow-loops.md)
 
 | Test file | Also in |
@@ -163,7 +169,7 @@ Twenty-two are renderings rather than functions — every `*.test.tsx` in the tr
 | `loopBoardCount.test.ts` |  |
 | `loopMergeOwnership.test.ts` |  |
 | `loopSection.test.ts` | [fleet] |
-| `workflows.test.ts` | [argv], [pricing], [workflows], [decider] |
+| `workflows.test.ts` | [argv], [pricing], [workflows], [decider], [pick-ups] |
 
 Units that are about no test file in the tree:
 
@@ -173,6 +179,7 @@ Units that are about no test file in the tree:
 
 | Test file | Also in |
 |---|---|
+| `blockTurnReading.test.ts` |  |
 | `chat.test.ts` | [proposals], [argv], [pricing], [task-deps], [landing] |
 | `chatOrder.test.ts` |  |
 | `chatRequest.test.ts` |  |
@@ -500,6 +507,7 @@ It prints nothing as this is written. Whoever owns a file it names owes that fil
 [ceiling]: testing/context-samples-and-ceiling.md
 [workflows]: testing/workflow-instances.md
 [loops]: testing/workflow-loops.md
+[pick-ups]: testing/workflow-pick-ups.md
 [chat]: testing/chat-turns-and-threads.md
 [proposals]: testing/chat-proposals.md
 [tasks]: testing/taskboard-authority-and-moves.md

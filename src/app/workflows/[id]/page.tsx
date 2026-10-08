@@ -523,7 +523,13 @@ export default function WorkflowPage() {
                             : " — a conflicting branch is left alone"}
                         </div>
                       )}
-                      {n.kind === "review" && (
+                      {n.kind === "review" && n.verdictSource?.kind === "status" && (
+                        <div className="mt-0.5 text-accent">
+                          Only branches whose run completed go on — judged by
+                          run status, with no model and nothing billed
+                        </div>
+                      )}
+                      {n.kind === "review" && n.verdictSource?.kind !== "status" && (
                         // Its fix rounds are billed runs with nobody watching,
                         // so they are stated where Run is pressed.
                         <div className="mt-0.5 text-warn">

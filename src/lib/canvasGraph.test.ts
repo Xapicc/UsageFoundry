@@ -83,6 +83,7 @@ function block(id: string, over: Partial<BlockDraft> = {}): BlockDraft {
     stopWhenTasksThresholds: [{ priority: "any", atMost: "0" }],
     provider: "",
     fixRounds: "1",
+    verdictSource: "model",
     ...over,
   };
 }
@@ -1613,6 +1614,34 @@ test("the editor counts a review member's fix runs, so it states the figure Save
   // Every factor named, the fix rounds among them: "8 run(s) — one for each
   // block that runs" over two run blocks is a sum the operator cannot redo.
   assert.match(refused.error, /“v” up to 3 fix run\(s\) on every branch/);
+});
+
+test("a review switched to a status verdict saves, and states no fix runs, over its hidden rounds", () => {
+  // The panel stops showing fix rounds once the verdict is the run's status,
+  // and the draft still holds what was picked before: sent, it is a block Save
+  // refuses over a control the operator cannot see, and counted, it is a
+  // statement of fix runs that will never be started.
+  const blocks = [
+    block("l", { kind: "loop", maxPasses: "2" }),
+    block("a"),
+    block("v", { kind: "review", fixRounds: "3", verdictSource: "status" }),
+    block("m", { kind: "merge" }),
+  ];
+  const links = [
+    repeats("l", "a"),
+    link("a", "v", { edge: "on-finish" }),
+    link("v", "m", { edge: "on-success" }),
+  ];
+  const result = saved({ blocks, links });
+  assert.ok(result.ok, result.ok ? "" : result.error);
+  const review = result.value.graph.nodes.find((n) => n.id === "v")!;
+  assert.deepEqual(review.verdictSource, { kind: "status" });
+  assert.equal(review.fixRounds, 0);
+
+  const body = sectionOf("l", blocks, links).map(
+    (id) => blocks.find((b) => b.id === id)!,
+  );
+  assert.equal(worstCaseRuns(2, worstCaseMembers(body)), 2);
 });
 
 test("a link into a frame is refused at the release, naming the frame", () => {

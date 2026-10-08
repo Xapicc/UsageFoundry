@@ -1001,6 +1001,39 @@ describe("picking up a pass that stopped the loop", () => {
     assert.ok(passTwoOpened(instanceId, "a"), "the loop never took its next pass");
   });
 
+  it("runs a deciding turn again that failed, and the loop carries on", async () => {
+    // The pass stopped on its own first member, so the obstacle to name is that
+    // block and not the loop — which would stop again on the same sentence. The
+    // retried turn is the pass's own claim and adds to the failed turn's bill.
+    const instanceId = scene({ ...DECIDER, maxPasses: 1 });
+    const member = passMemberId("L", 1, "o");
+    workflows.advanceInstances();
+    workflows.settleBlock(instanceId, member, {
+      status: "failed",
+      error: "The CLI exited 1.",
+      costUSD: 0.3,
+    });
+    assert.equal(blockRow(instanceId, member).status, "failed");
+    assert.equal(loopBlock(instanceId).status, "failed");
+
+    const offered = workflows.pickUpsOf(workflows.getInstance(instanceId)!);
+    assert.deepEqual(
+      offered.map((p) => [p.kind, p.kind === "run" ? p.runId : p.nodeId]),
+      [["orchestrator", member]],
+    );
+
+    assert.deepEqual(workflows.retryOrchestratorBlock(instanceId, member), { ok: true });
+    assert.equal(loopBlock(instanceId).status, "looping");
+    assert.equal(blockRow(instanceId, member).status, "thinking", "the pass never took its turn back");
+
+    decide(instanceId, member, twoRuns, 0.2);
+    await drive(instanceId);
+    assert.equal(loopBlock(instanceId).status, "emitted", loopBlock(instanceId).error ?? "");
+    assert.equal(loopBlock(instanceId).emitted, 1);
+    const turn = workflows.blocksOf(instanceId).find((b) => b.nodeId === member)!;
+    assert.ok(Math.abs(turn.costUSD - 0.5) < 1e-9, `the two turns cost ${turn.costUSD}`);
+  });
+
   it("refuses a run that completed, and a loop that ended on its own terms", async () => {
     const instanceId = scene({ ...FAN_OUT, maxPasses: 1 });
     await drive(instanceId);

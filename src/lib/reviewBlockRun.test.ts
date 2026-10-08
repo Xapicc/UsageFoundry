@@ -337,8 +337,16 @@ function reviewScene(
   instanceId: string,
   opts: {
     fixRounds?: number;
+    verdictSource?: { kind: string };
     budget?: Record<string, number>;
-    runs: Array<{ id: string; prompt: string; branch: string; spent?: number; member?: boolean }>;
+    runs: Array<{
+      id: string;
+      prompt: string;
+      branch: string;
+      spent?: number;
+      member?: boolean;
+      status?: string;
+    }>;
   },
 ): void {
   const db = dbMod.db();
@@ -361,6 +369,7 @@ function reviewScene(
     bodyNodeIds: [],
     provider: null,
     fixRounds: kind === "review" ? (opts.fixRounds ?? 0) : null,
+    verdictSource: kind === "review" ? (opts.verdictSource ?? null) : null,
   });
   const graph = JSON.stringify({
     nodes: [node("r", "review"), node("m", "merge")],
@@ -385,7 +394,7 @@ function reviewScene(
     `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
        created_at, isolation, worktree_branch, worktree_base, worktree_base_branch,
        repo_root, provider, spent_usd)
-     VALUES (?, ?, ?, 'completed', '{"maxIterations":1}', 1, 1, ?, 'worktree', ?, ?, 'main', ?,
+     VALUES (?, ?, ?, ?, '{"maxIterations":1}', 1, 1, ?, 'worktree', ?, ?, 'main', ?,
              'claude', ?)`,
   );
   const insertMember = db.prepare(
@@ -393,7 +402,17 @@ function reviewScene(
      VALUES (?, ?, 'Worker', ?, ?)`,
   );
   opts.runs.forEach((run, i) => {
-    insertRun.run(run.id, repoRoot(), run.prompt, Date.now(), run.branch, base, repoRoot(), run.spent ?? 0);
+    insertRun.run(
+      run.id,
+      repoRoot(),
+      run.prompt,
+      run.status ?? "completed",
+      Date.now(),
+      run.branch,
+      base,
+      repoRoot(),
+      run.spent ?? 0,
+    );
     if (run.member) insertMember.run(instanceId, `w${i}`, i + 1, run.id);
   });
 }
@@ -606,5 +625,70 @@ describe("a review block and its workflow's limit", () => {
       .prepare("SELECT status, stop_cause AS cause FROM workflow_instances WHERE id='inst-over'")
       .get() as { status: string; cause: string };
     assert.deepEqual(stored, { status: "stopping", cause: "guard" });
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* A review block that judges by run status                            */
+/* ------------------------------------------------------------------ */
+
+describe("a review block that judges by run status", () => {
+  it("starts no reviewer, and sets aside what did not complete without marking its task", async () => {
+    // Both silent: a reviewer started here bills a review per branch on a block
+    // saved to spend nothing, and a mark or a reopen moves a task no model
+    // judged — the claim a run left when it ended is the operator's to release.
+    reviewScene("inst-status", {
+      verdictSource: { kind: "status" },
+      runs: [
+        // No APPROVE-ME: a frontier review by the stub would reject it.
+        { id: "status-done", prompt: "Do it.", branch: "uf/repo-good" },
+        { id: "status-asked", prompt: "Do it.", branch: "uf/repo-bad", status: "needs-review" },
+      ],
+    });
+    const db = dbMod.db();
+    db.prepare(
+      `INSERT INTO tasks (id, title, body, status, priority, origin, claimed_by_run_id,
+         created_at, updated_at)
+       VALUES ('task-status-held', 'Held', 'brief', 'claimed', 'normal', 'operator',
+         'status-asked', 0, 0)`,
+    ).run();
+    db.prepare(
+      "INSERT INTO run_tasks (run_id, task_id, position) VALUES ('status-asked', 'task-status-held', 0)",
+    ).run();
+
+    await settledWithin(
+      workflows.startReviewBlock("inst-status", "r", ["status-done", "status-asked"]),
+      30_000,
+      "startReviewBlock",
+    );
+
+    const items = workflows.reviewItemsOf("inst-status", "r");
+    assert.deepEqual(
+      items.map((i) => [i.origin_run_id, i.status, i.note, i.review_id, i.committed_nothing]),
+      [
+        ["status-done", "approved", null, null, 0],
+        ["status-asked", "set-aside", "its run ended needs-review rather than completed", null, 0],
+      ],
+    );
+    assert.deepEqual(reviewsOf("status-done"), [], "a reviewer was started for a status verdict");
+    assert.deepEqual(reviewsOf("status-asked"), []);
+
+    const block = db
+      .prepare(
+        "SELECT status, error, cost_usd FROM workflow_instance_blocks WHERE instance_id='inst-status' AND node_id='r'",
+      )
+      .get() as { status: string; error: string; cost_usd: number };
+    assert.equal(block.status, "emitted");
+    assert.match(block.error, /Approved 1 of 2 branch\(es\); set aside .*needs-review rather than completed/);
+    assert.equal(block.cost_usd, 0);
+
+    const task = db
+      .prepare("SELECT status, claimed_by_run_id, needs_frontier FROM tasks WHERE id='task-status-held'")
+      .get() as { status: string; claimed_by_run_id: string | null; needs_frontier: number };
+    assert.deepEqual(task, { status: "claimed", claimed_by_run_id: "status-asked", needs_frontier: 0 });
+    const comments = db
+      .prepare("SELECT COUNT(*) AS n FROM task_comments WHERE task_id='task-status-held'")
+      .get() as { n: number };
+    assert.equal(comments.n, 0);
   });
 });

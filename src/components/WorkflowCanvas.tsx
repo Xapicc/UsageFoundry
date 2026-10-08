@@ -1458,7 +1458,9 @@ export function WorkflowCanvas({
                       {block.kind === "merge"
                         ? null
                         : block.kind === "review"
-                          ? "A frontier model approves or sends it back"
+                          ? block.verdictSource === "status"
+                            ? "Passes on what completed; sets the rest aside"
+                            : "A frontier model approves or sends it back"
                           : block.task.trim() || "No task yet"}
                     </span>
                   </div>
@@ -1497,7 +1499,9 @@ export function WorkflowCanvas({
                               }`
                             : null,
                           block.kind === "review"
-                            ? `${block.fixRounds || "0"} fix round${block.fixRounds === "1" ? "" : "s"}`
+                            ? block.verdictSource === "status"
+                              ? "by run status"
+                              : `${block.fixRounds || "0"} fix round${block.fixRounds === "1" ? "" : "s"}`
                             : null,
                           // Where the work goes when it is not Claude, which
                           // is a fact about the run worth seeing at a glance.

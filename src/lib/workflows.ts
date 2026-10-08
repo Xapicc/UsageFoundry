@@ -25,6 +25,7 @@ import {
   fixRunPrompt,
   nextReviewStep,
   reviewBlockSummary,
+  statusVerdict,
 } from "./reviewBlock";
 import { addTaskComment } from "./taskComments";
 import { installBudgetRefusal } from "./installBudget";
@@ -5069,6 +5070,14 @@ export type PickUp =
       retryRefusal: string | null;
     }
   | {
+      kind: "orchestrator";
+      nodeId: string;
+      nodeName: string;
+      error: string | null;
+      /** Why `retryOrchestratorBlock` would refuse it, or null when it would not. */
+      retryRefusal: string | null;
+    }
+  | {
       /**
        * A stopped loop whose latest pass would now go through: what blocked
        * its members has since cleared — most often a run resumed and completed
@@ -5084,8 +5093,8 @@ export type PickUp =
 
 /**
  * What is holding this workflow run up — each run whose ending wrote off
- * something behind it, and each merge block that failed — for the page to offer
- * one at a time.
+ * something behind it, each merge block that failed and each orchestrator block
+ * whose deciding turn failed — for the page to offer one at a time.
  *
  * Answered here rather than on the page, because "did this ending write
  * anything off" is the revive's own reachability and the refusals are the
@@ -5165,16 +5174,29 @@ export function pickUpsOf(instance: WorkflowInstance): PickUp[] {
           : null,
     });
   }
+  for (const block of instance.blocks) {
+    if (block.kind !== "orchestrator" || block.status !== "failed") continue;
+    const pass = passMemberIn(instance.graph, block.nodeId);
+    if (pass && stoppedPasses.get(pass.loopNodeId) !== pass.pass) continue;
+    out.push({
+      kind: "orchestrator",
+      nodeId: block.nodeId,
+      nodeName: block.nodeName,
+      error: block.error,
+      retryRefusal: orchestratorRetryRefusalIn(instance, block),
+    });
+  }
   for (const loop of instance.blocks) {
     const pass = stoppedPasses.get(loop.nodeId);
     if (pass === undefined) continue;
-    // Only once nothing above is offered for this pass: a stuck run or a failed
-    // merge is the obstacle to name, and carrying the loop on underneath one
-    // would stop it again on the same sentence.
+    // Only once nothing above is offered for this pass: a stuck run, a failed
+    // merge or a deciding turn that failed is the obstacle to name, and
+    // carrying the loop on underneath one would stop it again on the same
+    // sentence.
     const named = out.some((p) => {
       const id = p.kind === "run"
         ? instance.nodes.find((n) => n.runId === p.runId)?.nodeId
-        : p.kind === "merge" ? p.nodeId : undefined;
+        : p.kind === "merge" || p.kind === "orchestrator" ? p.nodeId : undefined;
       const member = id ? passMemberIn(instance.graph, id) : null;
       return member?.loopNodeId === loop.nodeId && member.pass === pass;
     });
@@ -5426,6 +5448,122 @@ export function retryMergeBlock(instanceId: string, nodeId: string): PickUpOutco
         instanceId,
         pass.loopNodeId,
         `Picked up at pass ${pass.pass}: “${block.nodeName}” was retried.`,
+      );
+    } else {
+      reviveGraphDependents(instance, [nodeId]);
+    }
+  })();
+
+  advanceInstances();
+  return { ok: true };
+}
+
+/**
+ * Why a failed deciding turn cannot be run again on the block's own record, or
+ * null when it can.
+ *
+ * Pure and unit-tested, `mergeBlockOutcome`'s reason: the list and the door
+ * both ask it, and a wrong answer in either direction is silent — a button the
+ * route then refuses, or a retry that starts the same runs twice.
+ *
+ * **A block that decided is not retried.** `blockSettlement` records `failed`
+ * only for a turn that failed *and* emitted nothing, so a failed block normally
+ * has no decision on it. The exception is a restart: `reconcileBlocksOnBoot`
+ * writes any `thinking` block `failed` without settling it, so a turn that had
+ * already called `emit_runs` is `failed` with its specs still stored and
+ * nothing created from them. A new turn would decide from nothing and replace
+ * that decision rather than carry it out, and if any run did exist from the
+ * first it would start the same work again — so both counts are asked, and the
+ * way through is a new press of Run. A turn that called `emit_runs` with an
+ * empty list decided nothing, and is retried like one that never got that far.
+ */
+export function orchestratorRetryRefusal(
+  block: Pick<WorkflowInstanceBlock, "nodeName" | "status" | "emitted" | "started">,
+): string | null {
+  if (block.status !== "failed") {
+    return `“${block.nodeName}” is ${block.status}, so there is no failed turn to run again.`;
+  }
+  const decided = Math.max(block.emitted, block.started);
+  if (decided > 0) {
+    return (
+      `“${block.nodeName}” had already decided on ${decided} run${decided === 1 ? "" : "s"} ` +
+      "when its turn failed, so another turn could start the same work again. " +
+      "Run the workflow again instead."
+    );
+  }
+  return null;
+}
+
+/**
+ * Whether a failed orchestrator block may be decided again, in its instance's
+ * terms: its own record first, then what is around it.
+ *
+ * The one place the list and `retryOrchestratorBlock` get their answer, so the
+ * page cannot offer a press the route refuses. Around it is `retryMergeBlock`'s
+ * test: inside a pass, whether the loop can take the pass back; outside one,
+ * whether a successor has started — which would put new runs behind a block
+ * that has already acted on the old ending.
+ */
+function orchestratorRetryRefusalIn(
+  instance: WorkflowInstance,
+  block: WorkflowInstanceBlock,
+): string | null {
+  const own = orchestratorRetryRefusal(block);
+  if (own) return own;
+  const pass = passMemberIn(instance.graph, block.nodeId);
+  if (pass) return loopPassRefusal(instance, pass.loopNodeId, pass.pass);
+  const started = startedBehind(instance, block.nodeId);
+  return started === null
+    ? null
+    : `“${started}” has already started after “${block.nodeName}” failed, so deciding again now would put new runs behind a block that has moved on.`;
+}
+
+/**
+ * Run a failed orchestrator block's deciding turn again, and only that turn.
+ *
+ * `retryMergeBlock`'s shape: the row goes back to `waiting`, what its failure
+ * wrote off behind it is revived, and the next advance claims it and starts the
+ * turn through `startBlockTurn` — so the fan-out cap, the instance budget, the
+ * hold and the process budget all apply to it exactly as they did the first
+ * time, and nothing here has a second reading of any of them. Blocks already
+ * finished are not repeated, which is the whole of what a fresh Run cannot offer.
+ *
+ * `emitted_specs` goes back to NULL because `emitBlockRuns` refuses a second
+ * `emit_runs` on a block whose column is set, and `[]` is a set column: left
+ * alone, a turn that had named nothing would be retried into a block that
+ * refuses everything it decides. `error` and `finished_at` clear for the reason
+ * the merge's do. The cost columns are not touched, and are the point: the
+ * failed turn was billed, its figure stays on the row, and the retry adds to
+ * it, so the block's Spent and the instance's total are what the block has cost
+ * in all — `claimBlock` clears the reply and notes, which belonged to a turn
+ * that is over.
+ */
+export function retryOrchestratorBlock(instanceId: string, nodeId: string): PickUpOutcome {
+  const opened = openInstanceFor(instanceId);
+  if ("refusal" in opened) return opened.refusal;
+  const { instance } = opened;
+
+  const block = instance.blocks.find((b) => b.nodeId === nodeId && b.kind === "orchestrator");
+  if (!block) {
+    return { ok: false, status: 404, error: "That orchestrator block is not part of this workflow run." };
+  }
+  const refusal = orchestratorRetryRefusalIn(instance, block);
+  if (refusal) return { ok: false, status: 409, error: refusal };
+
+  const pass = passMemberIn(instance.graph, nodeId);
+  db().transaction(() => {
+    db()
+      .prepare(
+        "UPDATE workflow_instance_blocks SET status='waiting', error=NULL, finished_at=NULL," +
+          " emitted_specs=NULL WHERE instance_id=? AND node_id=? AND status='failed'",
+      )
+      .run(instanceId, nodeId);
+    if (pass) {
+      reopenLoopPass(instance, pass.loopNodeId, pass.pass);
+      noteBlock(
+        instanceId,
+        pass.loopNodeId,
+        `Picked up at pass ${pass.pass}: “${block.nodeName}” was decided again.`,
       );
     } else {
       reviveGraphDependents(instance, [nodeId]);
@@ -6842,7 +6980,9 @@ export interface BlockSettlement {
  * accepted while the child was alive are a decision it took deliberately, and a
  * CLI that errored on its way out afterwards says nothing about them — but a
  * block recorded `failed` blocks what is behind it, so a turn whose runs are
- * about to start must not be.
+ * about to start must not be. And when such a turn also ended with no `result`
+ * event at all, what it ended on goes in `notes` and `error` stays empty: that
+ * sentence is how the turn finished, not a verdict on what it decided.
  */
 export function blockSettlement(
   result: TurnResult,
@@ -6863,11 +7003,28 @@ export function blockSettlement(
     );
   }
 
+  // A turn that ended with no `result` event is the one failure `turnResultOf`
+  // returns without a `costUSD`: killed, crashed, timed out, or a stream the
+  // reader could not use. When it had already emitted, the block is `emitted`
+  // and its runs are about to start, so what it ended on is this app's account
+  // of how the turn finished and not the verdict on the decision — written as
+  // `error` it sat on a block whose runs went ahead, and was the only sentence
+  // the operator got. Which is why this is a note, and why it says what is
+  // missing: the cost shows as unreported (`blockTurnSpend`) and there is no
+  // reply to read.
+  const endedWithoutResult = result.status === "failed" && result.costUSD === undefined;
+  if (endedWithoutResult && emitted > 0) {
+    notes.push(
+      "The turn ended without a result, so no reply was kept and its cost is " +
+        `shown as unreported. What it ended on: ${result.error ?? "nothing recorded"}`,
+    );
+  }
+
   return {
     status: result.status === "failed" && emitted === 0 ? "failed" : "emitted",
     reply: result.text?.trim() || null,
     notes,
-    error: result.error ?? null,
+    error: endedWithoutResult && emitted > 0 ? null : (result.error ?? null),
   };
 }
 
@@ -7560,6 +7717,14 @@ export async function startReviewBlock(
     });
     return;
   }
+  // A status verdict reads each run's row and nothing else: it starts no review
+  // and spends nothing, so there is no budget boundary to cross — a merge
+  // block's free case — and no `await` between the claim and the settlement
+  // for a halt to land in.
+  if (node.verdictSource?.kind === "status") {
+    settleReviewByStatus(instanceId, node, nodeId, runIds);
+    return;
+  }
   const fixRounds = node.fixRounds ?? 0;
 
   // The workflow-wide guard, at this kind of block boundary — and always,
@@ -7584,17 +7749,7 @@ export async function startReviewBlock(
     return;
   }
 
-  // Seeded once. `INSERT OR IGNORE` because a retried block finds its rows.
-  const now = Date.now();
-  runIds.forEach((runId, position) => {
-    db()
-      .prepare(
-        `INSERT OR IGNORE INTO workflow_review_items
-           (instance_id, block_id, origin_run_id, run_id, position, round, status, updated_at)
-         VALUES (?, ?, ?, ?, ?, 0, 'reviewing', ?)`,
-      )
-      .run(instanceId, nodeId, runId, runId, position, now);
-  });
+  seedReviewItems(instanceId, nodeId, runIds);
 
   await Promise.all(
     runIds.map((runId) =>
@@ -7610,11 +7765,30 @@ export async function startReviewBlock(
   );
 
   if (!reviewStillOpen(instanceId, nodeId)) return;
-  const items = reviewItemsOf(instanceId, nodeId);
   // No cost here: `bankReviewSpend` put each review's on the row as it ended.
+  finishReviewBlock(instanceId, nodeId, guardNote);
+}
+
+/** One row per branch, seeded once. `INSERT OR IGNORE` because a retried block finds its rows. */
+function seedReviewItems(instanceId: string, blockId: string, runIds: readonly string[]): void {
+  const now = Date.now();
+  runIds.forEach((runId, position) => {
+    db()
+      .prepare(
+        `INSERT OR IGNORE INTO workflow_review_items
+           (instance_id, block_id, origin_run_id, run_id, position, round, status, updated_at)
+         VALUES (?, ?, ?, ?, ?, 0, 'reviewing', ?)`,
+      )
+      .run(instanceId, blockId, runId, runId, position, now);
+  });
+}
+
+/** Settle a review block with the sentence its branches add up to. */
+function finishReviewBlock(instanceId: string, blockId: string, guardNote: string | null): void {
+  const items = reviewItemsOf(instanceId, blockId);
   finishMergeBlock(
     instanceId,
-    nodeId,
+    blockId,
     withNote(
       {
         ok: true,
@@ -7629,6 +7803,37 @@ export async function startReviewBlock(
       guardNote,
     ),
   );
+}
+
+/**
+ * A status verdict on every branch, and the block settled, in one synchronous
+ * pass: each run's row read through `statusVerdict`, approved or set aside.
+ *
+ * Through `setAside` with the verdict's `needsFrontier`, which is always false,
+ * so a status set-aside marks no task and reopens none. No model judged the
+ * work, and `reopenRejectedTask` is the one move off the transition table no
+ * actor asks for, kept for a frontier model's rejection; a claim a run still
+ * holds when it ends is the operator's to release everywhere else on the board.
+ * `committed_nothing` stays 0 because no diff is read, so every branch set aside
+ * here counts as work turned down and a loop's DONE rung does not read the pass
+ * as finished.
+ */
+function settleReviewByStatus(
+  instanceId: string,
+  node: WorkflowNode,
+  blockId: string,
+  runIds: readonly string[],
+): void {
+  seedReviewItems(instanceId, blockId, runIds);
+  for (const runId of runIds) {
+    const verdict = statusVerdict(getRun(runId)?.status ?? null);
+    if (verdict.kind === "approve") {
+      updateReviewItem(instanceId, blockId, runId, { status: "approved", note: null });
+    } else {
+      setAside(instanceId, blockId, runId, runId, verdict.reason, verdict.needsFrontier, node.name);
+    }
+  }
+  finishReviewBlock(instanceId, blockId, null);
 }
 
 /**
