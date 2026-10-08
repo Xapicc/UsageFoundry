@@ -346,6 +346,7 @@ function reviewScene(
       spent?: number;
       member?: boolean;
       status?: string;
+      model?: string;
     }>;
   },
 ): void {
@@ -393,9 +394,9 @@ function reviewScene(
   const insertRun = db.prepare(
     `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
        created_at, isolation, worktree_branch, worktree_base, worktree_base_branch,
-       repo_root, provider, spent_usd)
+       repo_root, provider, spent_usd, model)
      VALUES (?, ?, ?, ?, '{"maxIterations":1}', 1, 1, ?, 'worktree', ?, ?, 'main', ?,
-             'claude', ?)`,
+             'claude', ?, ?)`,
   );
   const insertMember = db.prepare(
     `INSERT INTO workflow_instance_runs (instance_id, node_id, node_name, position, run_id)
@@ -412,6 +413,7 @@ function reviewScene(
       base,
       repoRoot(),
       run.spent ?? 0,
+      run.model ?? null,
     );
     if (run.member) insertMember.run(instanceId, `w${i}`, i + 1, run.id);
   });
@@ -690,5 +692,108 @@ describe("a review block that judges by run status", () => {
       .prepare("SELECT COUNT(*) AS n FROM task_comments WHERE task_id='task-status-held'")
       .get() as { n: number };
     assert.equal(comments.n, 0);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* A review block over a run on a model that is not a frontier one     */
+/* ------------------------------------------------------------------ */
+
+describe("a review block over a Claude run on a below-frontier model", () => {
+  const HAIKU = "claude-haiku-4-5";
+
+  /** The model each of a run's reviews was recorded under. */
+  function reviewModels(runId: string): Array<string | null> {
+    return (
+      dbMod.db().prepare("SELECT model FROM run_reviews WHERE run_id=?").all(runId) as Array<{
+        model: string | null;
+      }>
+    ).map((r) => r.model);
+  }
+
+  /** A task the run holds, so a needs-frontier mark has somewhere to land. */
+  function holdTask(taskId: string, runId: string): void {
+    const db = dbMod.db();
+    db.prepare(
+      `INSERT INTO tasks (id, title, body, status, priority, origin, claimed_by_run_id,
+         created_at, updated_at)
+       VALUES (?, 'Held', 'brief', 'claimed', 'normal', 'operator', ?, 0, 0)`,
+    ).run(taskId, runId);
+    db.prepare("INSERT INTO run_tasks (run_id, task_id, position) VALUES (?, ?, 0)").run(runId, taskId);
+  }
+
+  it("reviews it on the default model, so the review the block calls frontier is one", async () => {
+    const settings = await import("./settings");
+    settings.saveSettings({ defaultModel: "claude-opus-5-5" });
+    try {
+      reviewScene("inst-haiku-default", {
+        runs: [
+          { id: "haiku-default", prompt: "Do it. APPROVE-ME", branch: "uf/repo-good", model: HAIKU },
+          // A run on a frontier model is reviewed on its own, as it always was.
+          { id: "sonnet-own", prompt: "Do it. APPROVE-ME", branch: "uf/repo-good", model: "claude-sonnet-5" },
+        ],
+      });
+      await settledWithin(
+        workflows.startReviewBlock("inst-haiku-default", "r", ["haiku-default", "sonnet-own"]),
+        30_000,
+        "startReviewBlock",
+      );
+      assert.deepEqual(reviewModels("haiku-default"), ["claude-opus-5-5"]);
+      assert.deepEqual(reviewModels("sonnet-own"), ["claude-sonnet-5"]);
+      assert.deepEqual(
+        workflows.reviewItemsOf("inst-haiku-default", "r").map((i) => [i.origin_run_id, i.status]),
+        [
+          ["haiku-default", "approved"],
+          ["sonnet-own", "approved"],
+        ],
+      );
+    } finally {
+      settings.saveSettings({ defaultModel: null });
+    }
+  });
+
+  it("reviews it on Claude Code's own default when Settings names none", async () => {
+    reviewScene("inst-haiku-blank", {
+      runs: [{ id: "haiku-blank", prompt: "Do it. APPROVE-ME", branch: "uf/repo-good", model: HAIKU }],
+    });
+    await settledWithin(
+      workflows.startReviewBlock("inst-haiku-blank", "r", ["haiku-blank"]),
+      30_000,
+      "startReviewBlock",
+    );
+    assert.deepEqual(reviewModels("haiku-blank"), [null]);
+  });
+
+  it("starts no reviewer and marks no task when the default is itself a Haiku", async () => {
+    // The stub would reject this brief, and a rejection on Haiku is exactly
+    // what used to mark the task needs-frontier and be worded as a frontier
+    // model's.
+    const settings = await import("./settings");
+    settings.saveSettings({ defaultModel: HAIKU });
+    try {
+      reviewScene("inst-haiku-haiku", {
+        runs: [{ id: "haiku-haiku", prompt: "Do it badly.", branch: "uf/repo-bad", model: HAIKU }],
+      });
+      holdTask("task-haiku-held", "haiku-haiku");
+      await settledWithin(
+        workflows.startReviewBlock("inst-haiku-haiku", "r", ["haiku-haiku"]),
+        30_000,
+        "startReviewBlock",
+      );
+
+      assert.deepEqual(reviewsOf("haiku-haiku"), [], "a Haiku reviewed a branch the block calls frontier-reviewed");
+      const [item] = workflows.reviewItemsOf("inst-haiku-haiku", "r");
+      assert.equal(item.status, "set-aside");
+      assert.match(item.note ?? "", /could not be reviewed: .*claude-haiku-4-5.*not a frontier model/);
+      assert.doesNotMatch(item.note ?? "", /needs-frontier/);
+
+      const task = dbMod
+        .db()
+        .prepare("SELECT status, claimed_by_run_id, needs_frontier FROM tasks WHERE id='task-haiku-held'")
+        .get();
+      assert.deepEqual(task, { status: "claimed", claimed_by_run_id: "haiku-haiku", needs_frontier: 0 });
+    } finally {
+      settings.saveSettings({ defaultModel: null });
+    }
   });
 });

@@ -15,6 +15,7 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - An assist streams, and every tool call it makes is on the run's log wearing its own name. (was line 28)
 - That field is also a filter, and two readers had to grow it in the same change. (was line 30)
 - `parseReviewOutput` reads the `result` event and refuses anything else, including the last line that happens to parse. (was line 32)
+- A review and a validation judge a run on a frontier model, so a below-frontier run is moved to the Settings default and a review block never calls anything else frontier.
 
 ## [GitHub credentials for a work cycle](git-and-review/github-credentials.md)
 

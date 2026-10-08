@@ -308,19 +308,47 @@ describe("reviewEnv — the PATH the reviewer's tools are resolved on", () => {
 describe("assistModel", () => {
   it("never hands a Codex run's model to claude", () => {
     const codexRun = { model: "gpt-5-codex", provider: "codex" as const };
-    assert.equal(assistModel(codexRun, "claude-opus-5-5"), "claude-opus-5-5");
-    // With no default in Settings the child takes the CLI's own, which is no
-    // `--model` at all rather than the Codex id.
-    assert.equal(assistModel(codexRun, null), null);
+    for (const kind of ["review", "resolve", "validate"] as const) {
+      assert.equal(assistModel(codexRun, "claude-opus-5-5", kind), "claude-opus-5-5");
+      // With no default in Settings the child takes the CLI's own, which is no
+      // `--model` at all rather than the Codex id.
+      assert.equal(assistModel(codexRun, null, kind), null);
+    }
   });
 
-  it("keeps a Claude run's own frozen model", () => {
+  it("keeps a Claude run's own frozen model when that model is a frontier one", () => {
     // Null provider is a row from before the column, and is Claude.
     for (const provider of ["claude", null] as const) {
-      assert.equal(
-        assistModel({ model: "claude-sonnet-5", provider }, "claude-opus-5-5"),
-        "claude-sonnet-5",
-      );
+      for (const kind of ["review", "resolve", "validate"] as const) {
+        assert.equal(
+          assistModel({ model: "claude-sonnet-5", provider }, "claude-opus-5-5", kind),
+          "claude-sonnet-5",
+        );
+      }
     }
+    // A run with no model of its own ran on the CLI's default, a frontier model
+    // by the same assumption `isFrontierReviewModel` makes.
+    assert.equal(assistModel({ model: null, provider: "claude" }, "claude-opus-5-5", "review"), null);
+  });
+
+  it("judges a below-frontier Claude run on the Settings default, not on the model it ran on", () => {
+    // A review block words a rejection "by the frontier review" and marks the
+    // task needs-frontier on it; a Haiku reviewing a Haiku is neither.
+    const haikuRun = { model: "claude-haiku-4-5", provider: "claude" as const };
+    for (const kind of ["review", "validate"] as const) {
+      assert.equal(assistModel(haikuRun, "claude-opus-5-5", kind), "claude-opus-5-5");
+      assert.equal(assistModel(haikuRun, null, kind), null);
+    }
+    // An id `pricing.ts` cannot place is not known to be frontier either.
+    assert.equal(
+      assistModel({ model: "claude-future-9", provider: "claude" }, "claude-opus-5-5", "review"),
+      "claude-opus-5-5",
+    );
+  });
+
+  it("leaves a conflict resolution on the model the run ran on, whatever its tier", () => {
+    // A resolution edits files and judges nothing, so nothing calls it frontier.
+    const haikuRun = { model: "claude-haiku-4-5", provider: "claude" as const };
+    assert.equal(assistModel(haikuRun, "claude-opus-5-5", "resolve"), "claude-haiku-4-5");
   });
 });

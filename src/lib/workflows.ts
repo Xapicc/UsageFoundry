@@ -8175,6 +8175,7 @@ async function driveReviewItem(
     }
     const started = await startReview(current.run_id, {
       requireVerdict: true,
+      requireFrontier: true,
       stillWanted: open,
     });
     if (!started.ok) {
