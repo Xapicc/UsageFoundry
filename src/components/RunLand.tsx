@@ -413,13 +413,16 @@ export function RunLand({ run }: { run: RunDTO }) {
   // The merge happens the other way round, in an isolated checkout — see
   // `resolveConflicts`. Nor while the run's checkout is stopped mid-rebase or
   // mid-bisect: git keeps the branch there, `resolveCheckout` refuses it, and
-  // the pending block above already names the operation and its way out.
+  // the pending block above already names the operation and its way out. Nor
+  // on a branch whose resolution could not land either, which the state line
+  // names beside the conflict.
   const canResolve =
     state.preview.outcome === "conflict" &&
     settled &&
     !state.merged &&
     !state.landedUnchanged &&
-    !state.pending?.operation;
+    !state.pending?.operation &&
+    state.resolveBlocked === null;
   // The other door out of a branch, for everything `deletable` refuses. Not
   // offered beside Delete: when git can see the work is safe, that is the
   // button, and two destructive controls side by side is how the wrong one

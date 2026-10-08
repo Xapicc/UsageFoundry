@@ -943,6 +943,15 @@ function normalizeSpec(
 ): SpecNormalization {
   const e = (entry ?? {}) as Record<string, unknown>;
   const where = `Run ${index + 1}`;
+  // Asked before the `String(…)` that reads each one, which turned `{…}` into a
+  // task of "[object Object]" and `["reviewer"]` into the agent inside the
+  // list — a run started as something the turn did not write, by a block
+  // nobody reads. Absent and null are still absent: each is judged below for
+  // what it always was.
+  for (const field of ["id", "title", "task", "folder", "agent"]) {
+    const notString = notStringRefusal(field, e[field]);
+    if (notString) return { ok: false, reason: `${where}: ${notString}` };
+  }
     const id = String(e.id ?? "").trim();
     if (!NODE_ID.test(id)) {
       return {
@@ -6529,7 +6538,10 @@ async function startBlockTurn(instanceId: string, nodeId: string): Promise<void>
       // `emitBlockRuns`' own check describe one list.
       listAgents(),
     ),
-    cwd: safeFolder(node),
+    // Named and `--add-dir`ed, never stood in: in a repository the CLI's own
+    // startup `git status` runs filters a work cycle can plant (board task
+    // `7764bc65`).
+    folder: safeFolder(node),
     // What this deciding turn *is*, not a specialist it may call on: the node's
     // agent is selected with `--agent`, so the saved prompt is the turn's own.
     // Everything bounding this child — its tool surface, its capability token,

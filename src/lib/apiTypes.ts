@@ -3226,6 +3226,11 @@ export interface LandStateDTO {
   pending: PendingWorkDTO | null;
   /** Why landing is refused right now. Null means it is offered. */
   blocked: string | null;
+  /**
+   * Why a resolution of the conflict is refused before it is bought — the
+   * branch carries a file seeding copied in. Null when Resolve may be offered.
+   */
+  resolveBlocked: string | null;
   landedAt: number | null;
   landedInto: string | null;
   landedStrategy: string | null;
