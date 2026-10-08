@@ -13,6 +13,10 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - A workflow is instantiated in topological order, in one synchronous pass, all or nothing.
 - A block that emits nothing blocks what is behind it, and that is a decision rather than a fallout.
 - A run a restart closed out blocks every edge out of it until it is picked up, and what it holds back is revived rather than failed.
+- A gate is a block that waits for a person, and it is a ledger row that never has a turn.
+- It is `waiting` the whole time, and `held_at` is the only thing that says it was reached.
+- A gate hands on no runs, and that is the cost the diagram pays.
+- Whether a chat may propose one: yes.
 
 ## [Orchestrator blocks and merge blocks](workflows-and-schedules/orchestrator-and-merge-blocks.md)
 
@@ -29,6 +33,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 
 - A workflow instance is halted through one door, and the door is closed before anything is signalled.
 - Four of an instance's six readings are derived, and `started` is not a word for a press of Run that is over.
+- A held gate leaves the instance `started`, and it is the operator's to end — Continue lets it through, Stop halts through the same door as every other halt.
 - A stuck workflow run is picked up one named obstacle at a time, and never through a halt.
 - The page that presses Run states the refusal to press it again before it is pressed, and the instance it links is found in both halves of the graph.
 
@@ -44,6 +49,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - A missed window is not made up, an overlap is skipped rather than queued, and both are on the page.
 - The zone is stored with the schedule, and an unknown one is refused rather than replaced.
 - One timer per process, `globalThis`-pinned, lazily started and stopped.
+- A schedule can now start an instance that stops at a gate with nobody present, and nothing on the schedule card bounds that.
 
 ## [Loop blocks and their sections](workflows-and-schedules/loop-sections.md)
 
@@ -57,6 +63,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - An orchestrator or review member is asked the same question about the branches it hands on, and only a link straight to a merge or review block answers it.
 - A loop's own task and an intra-section link's condition were each answered a different way before the frame, and both of those answers are still findable in the tree.
 - A body member is the one node here that is neither a run nor a ledger row.
+- A gate in a section holds every pass, and it is a member whose row is its whole record.
 
 ## [When a loop stops: exit conditions, caps and the board condition](workflows-and-schedules/loop-termination.md)
 
@@ -81,6 +88,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - A workflow is drawn on a canvas, and where a block sits is not part of it.
 - Containment is never derived from where a block sits, and the frame is where an operator sees it.
 - The client orders a body by the body's own edges, and it has to be the same order the server will run it in.
+- A gate is a card with nothing to configure, and the editor sends none of the fields the server refuses on it.
 
 ## [Editing loops on the canvas: frames, gestures, inspector and Run page](workflows-and-schedules/loop-editing.md)
 

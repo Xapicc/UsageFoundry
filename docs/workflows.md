@@ -16,7 +16,8 @@ the branches the blocks in front of it left behind, optionally paying Claude to
 reconcile a conflict; it too has [a section](#a-block-that-lands-the-work). Its
 sibling, a **deliver block**, [pushes those branches and opens a pull
 request for each](#a-block-that-delivers-the-work) instead of touching your
-checkout.
+checkout. A **gate** [stops the run until you press
+Continue](#a-block-that-waits-for-you), at a point you choose.
 
 ## What a block holds, and what it does not
 
@@ -222,6 +223,64 @@ workflow that holds one cannot be put on a schedule, however well its limits
 bound the spend: a schedule presses Run with nobody there to look at what is
 being published. And the chat cannot draft one; add it in the editor, where its
 effect is stated beside it.
+
+## A block that waits for you
+
+Approval happens once, when you save the graph. After that the only lever is
+*Stop all*, and by then there is nothing to look at: the branch exists only once
+the run that cuts it has finished, and the next block has already begun. A
+**gate** is a place in the graph where the run stops and asks again. Put one in
+front of a merge block to read what is about to land, or at the start of a loop's
+section to look between two passes.
+
+When the run reaches a gate it waits. Nothing is started, nothing is spent, and
+nothing behind the gate begins; the instance page leads with a **Waiting for
+you** card naming the gate, with two buttons:
+
+- **Continue** lets the run through. Every block that was waiting on the gate
+  starts, on the condition its link says.
+- **Stop all** halts the whole press of Run, the same way it does anywhere else.
+  The gate and everything behind it is closed out as `blocked`, with a reason
+  saying nobody let it through.
+
+If a webhook is configured, the gate also sends one: the event is
+`workflow.gate_held`, `run_id` is empty because there is no run, and `url` opens
+the instance. The body is still the six fields and nothing else; the gate's
+name is not in it.
+
+**It holds nothing of its own.** A gate has no task, template, agent, workspace
+or folder, and saving a graph that gives it one is refused by name rather than
+quietly ignored. It needs at least one link out of it, since a gate with nothing
+behind it would stop the run and release nothing.
+
+**It hands on no branches.** Like a merge block it resolves to no runs, so
+`run → gate → merge` saves nowhere: the merge would have nothing to land, and the
+refusal says so. To hold a merge, link the run to the merge as well as to the
+gate:
+
+```text
+build ──► gate ──► merge
+  └───────────────────▲
+```
+
+The merge then waits for both, and lands the run once you continue. The same is
+true in front of a deliver block or a review block.
+
+**Inside a loop's section it holds every pass.** Each pass is the section
+instantiated afresh, so each pass reaches its own gate and waits there; pressing
+Continue on pass 1 does nothing for pass 2. A gate as the first block of a
+section looks between two passes. While one is held the loop takes no further
+pass, and *Stop after this pass* is read when that pass settles.
+
+**Nothing ends one but you.** There is no timeout. The run reads as *started*
+for as long as the gate is held, so pressing Run again is refused with the usual
+sentence, and a restart of the app does not close the wait out: a held gate is
+still held, and Continue still works, afterwards. A gate the run had not yet
+reached is closed out by a restart like any other waiting block.
+
+The chat can draft a graph that contains a gate. A gate starts and spends
+nothing and can only make a run wait, so nothing about it needs the editor.
+Nothing the chat can call presses Continue.
 
 ## A region that repeats
 
@@ -616,7 +675,8 @@ run says so rather than reading as approval.
 A workflow that can be saved but never started fails weeks away from the form
 that caused it, so both moments check the same things: a name, at least one
 block, a task on every block that runs one — every block but a merge block, a
-deliver block and a loop that repeats a section, none of which is sent one — a
+deliver block, a gate and a loop that repeats a section, none of which is sent
+one — a
 template that
 exists, a workspace that is
 mounted and a folder that resolves inside it, a condition on every link, no
@@ -625,8 +685,10 @@ guards do not isolate — nor one touching an orchestrator, merge or deliver blo
 none of which has a checkout and so none of which has a branch — a fan-out cap on
 every orchestrator block, and, on every merge block, a strategy and at least one
 predecessor that runs something whose guards leave a branch; a deliver block
-needs that predecessor too, and is refused inside a loop's section. Every
-refusal names the block it is about.
+needs that predecessor too, and is refused inside a loop's section. A gate is
+refused when it carries a task, template, agent, workspace or folder, when it has
+no link out of it, and when it is the only thing in front of a merge, deliver or
+review block. Every refusal names the block it is about.
 
 The workflow-wide limits are the one exception, and only in one direction: a
 fraction guard with no ceiling behind it saves fine and is refused at Run. A
@@ -714,6 +776,7 @@ What each kind of block becomes:
 | working now | `stopped` | The same kill ladder the *Stop* button on a run uses — `SIGINT` first, so a cycle that can still report its own cost does |
 | queued or parked | `stopped` | Closed out before it can spawn |
 | still `waiting` | `blocked` | Nothing ran and nothing was spent, which is what that status says. Everything behind it gets its own reason naming the block in front of it |
+| held at a gate | `blocked` | The same, with a reason saying nobody let it through. Continue is refused from then on |
 | deciding now | `failed` | Its child gets the same ladder. `failed` rather than `blocked` because that turn was billed, and the row carries what it cost |
 | waiting to decide | `blocked` | Nothing was spawned and nothing spent |
 | already finished | untouched | Rewriting a completed block as stopped would destroy the record of work that landed |
@@ -785,6 +848,15 @@ spend and is not undone by a limit. A schedule presses Run with nobody there to
 look at what is being published, so the schedule form refuses it with a
 sentence, and so does every fire if the block is added afterwards. Run it by
 hand.
+
+**A workflow with a gate can be scheduled, and the run will stop at it with
+nobody there.** A gate spends nothing, so no limit above has anything to say
+about it. What it does to a schedule is hold the instance open: a window that
+arrives while the previous instance is waiting at a gate is skipped, not queued,
+like any other overlap, and is not made up afterwards. Nothing starts again until
+someone presses Continue or *Stop all*. The schedule card says so while you set
+the schedule up, and again for as long as the workflow has a gate. If a webhook
+is configured, reaching the gate sends the notification above.
 
 **How often.** Three choices, and no cron expression:
 
