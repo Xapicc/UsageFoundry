@@ -6670,10 +6670,10 @@ export type SandboxScope =
    *
    * `denyRead` is the one thing the other two scopes cannot say: paths a
    * sandboxed `Bash` call may not read. It is the caller's to name because the
-   * only path today is the chat's capability directory, which `chat.ts` owns
-   * and this file cannot import without a cycle. Omitted means nothing is
-   * denied, which is also what `chatCapabilityDenyRead` answers where there is
-   * no chat group.
+   * only path today is the chat's capability directory, and whether it applies
+   * depends on a chat group, which is `chat.ts`'s to read: this stays a pure
+   * function of its scope. Omitted means nothing is denied, which is also what
+   * `chatCapabilityDenyRead` answers where there is no chat group.
    */
   | { kind: "chat"; dirs: readonly string[]; denyRead?: readonly string[] };
 
