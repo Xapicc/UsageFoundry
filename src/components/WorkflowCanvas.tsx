@@ -1458,7 +1458,9 @@ export function WorkflowCanvas({
                       {block.kind === "merge"
                         ? null
                         : block.kind === "review"
-                          ? "A frontier model approves or sends it back"
+                          ? block.verdictSource === "status"
+                            ? "Passes on what completed; sets the rest aside"
+                            : "A frontier model approves or sends it back"
                           : block.task.trim() || "No task yet"}
                     </span>
                   </div>
