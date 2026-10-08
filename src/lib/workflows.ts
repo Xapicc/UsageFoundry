@@ -75,6 +75,7 @@ import {
   landState,
   verifyBranchForReview,
   type LandStrategy,
+  type ReviewVerifyOutcome,
 } from "./land";
 import {
   INSTANCE_ENFORCEABLE_CODES,
@@ -8614,6 +8615,17 @@ function settleReviewByStatus(
   finishReviewBlock(instanceId, blockId, null);
 }
 
+/** `verifyBranchForReview`, with a failure to ask at all read as a check that did not run. */
+function verifyOne(run: RunRow, command: string): Promise<ReviewVerifyOutcome> {
+  return verifyBranchForReview(run, command).catch((err: unknown) => ({
+    ran: false,
+    passed: false,
+    ending: "",
+    tail: "",
+    reason: `this app could not run it: ${err instanceof Error ? err.message : String(err)}`,
+  }));
+}
+
 /**
  * A command verdict on every branch, one branch at a time, and the block
  * settled: the block's verify command run in each branch's own checkout, a pass
@@ -8628,7 +8640,9 @@ function settleReviewByStatus(
  *
  * Through `verifyBranchForReview`, Land's own two steps, so what the command
  * sees is the run's checkout, clean and on its branch, kept from a later run
- * until it returns. Through `setAside` with the verdict's `needsFrontier`,
+ * until it returns. A checkout a later run has reused is switched back to the
+ * branch for the command and restored after, so a fan-out past
+ * `maxConcurrentRuns` does not leave its early branches unchecked. Through `setAside` with the verdict's `needsFrontier`,
  * always false, so no task is marked or reopened — `statusVerdict`'s reason —
  * and `committed_nothing` stays 0, since no diff is read.
  *
@@ -8658,13 +8672,18 @@ async function settleReviewByCommand(
     }
     // Caught per branch, `driveReviewItem`'s rule: one branch git could not be
     // asked about is not a reason to fail the block and every branch behind it.
-    const outcome = await verifyBranchForReview(run, command).catch((err: unknown) => ({
-      ran: false,
-      passed: false,
-      ending: "",
-      tail: "",
-      reason: `this app could not run it: ${err instanceof Error ? err.message : String(err)}`,
-    }));
+    let outcome = await verifyOne(run, command);
+    // Waited for rather than set aside, as a full assist queue is: another verify
+    // command is running in the checkout this one has to switch, which a land,
+    // a delivery or another block started, and that is the schedule's doing and
+    // not a verdict on the branch. It ends within `VERIFY_TIMEOUT_MS`, and a
+    // halt or a shutdown ends this wait at the same check as every other.
+    while (outcome.busy) {
+      if (!reviewStillOpen(instanceId, blockId)) return;
+      await pause();
+      if (!reviewStillOpen(instanceId, blockId)) return;
+      outcome = await verifyOne(getRun(runId) ?? run, command);
+    }
     if (!reviewStillOpen(instanceId, blockId)) return;
     const verdict = commandVerdict(outcome);
     if (verdict.kind === "approve") {

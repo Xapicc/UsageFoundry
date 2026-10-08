@@ -30,6 +30,7 @@ import {
   TERMINAL_STATUSES,
   activeRuns,
   auxWorktreePath,
+  borrowSlot,
   conflictKey,
   copyGlobsFor,
   describeFolder,
@@ -39,6 +40,7 @@ import {
   githubEnv,
   holdSlot,
   isShuttingDown,
+  isSlotBorrowed,
   matchesCopyGlobs,
   overlaps,
   ranWorkCycle,
@@ -3813,16 +3815,22 @@ async function verifyInSlot(
   command: string,
   asker: VerifyAsker,
 ): Promise<VerifyOutcome> {
-  const refused = (reason: string): VerifyOutcome => ({
-    ran: false,
-    passed: false,
-    reason,
-    ending: "",
-    tail: "",
-  });
   const release = holdSlot(slot);
   if (!release) {
-    return refused(
+    // A borrowed slot is refused its own sentence: it is not a run that has the
+    // checkout, and "a later run" would send the operator looking for one.
+    if (isSlotBorrowed(slot)) {
+      return notRun(
+        `A verify command is configured, but a review block is running its own check in ` +
+          `${slot} and has switched it to another branch, so there is nowhere to run ` +
+          `the check against ${branch} just now.` +
+          verifyRefusalEnd(
+            asker,
+            (exit) => `Nothing was ${EXIT_WORDS[exit].done}. Try again once that check has finished.`,
+          ),
+      );
+    }
+    return notRun(
       `A verify command is configured, but a later run has just been given ` +
         `${slot}, where ${branch} is checked ` +
         `out, so there is nowhere to run the check against this work.` +
@@ -3833,39 +3841,67 @@ async function verifyInSlot(
     );
   }
   try {
-    // HEAD rather than the branch: it is what the command's tree is, and
-    // `verifyTree` proved the slot clean on this branch. If the two had parted
-    // since, the comparison below refuses, which is the right answer.
-    const checked = await git(slot, ["rev-parse", "--verify", "-q", "HEAD"], NO_CLOCK);
-    if (!checked.ok) {
-      return refused(
-        `A verify command is configured, but git could not read which commit ` +
-          `${slot} holds, so there would be no telling afterwards whether the ` +
-          `check saw what ${branch} points at.` +
-          verifyRefusalEnd(asker, (exit) => `Nothing was ${EXIT_WORDS[exit].done}.`),
-      );
-    }
-    const verdict = await runVerify(slot, command);
-    if (!verdict.passed) return verdict;
-    const tip = await git(slot, ["rev-parse", "--verify", "-q", branch], NO_CLOCK);
-    if (!tip.ok || tip.stdout !== checked.stdout) {
-      return refused(
-        `${branch} moved while the verify command ran — it was checked at ` +
-          `${checked.stdout.slice(0, 8)} and now points at ` +
-          `${tip.ok ? tip.stdout.slice(0, 8) : "nothing git can read"} — so what ` +
-          `passed is not what would leave.` +
-          verifyRefusalEnd(
-            asker,
-            (exit) =>
-              `Nothing was ${EXIT_WORDS[exit].done}. Try again once nothing is committing to it.`,
-          ),
-      );
-    }
-    return verdict;
+    return await verifyHeldSlot(slot, branch, command, asker);
   } finally {
     release();
   }
 }
+
+/** A check that did not run, which is a refusal and never a pass. */
+function notRun(reason: string): VerifyOutcome {
+  return { ran: false, passed: false, reason, ending: "", tail: "" };
+}
+
+/**
+ * `verifyInSlot` from the hold onward: the command run in a slot the caller has
+ * already taken with `holdSlot` or `borrowSlot`, and the branch proved not to
+ * have moved under it.
+ */
+async function verifyHeldSlot(
+  slot: string,
+  branch: string,
+  command: string,
+  asker: VerifyAsker,
+): Promise<VerifyOutcome> {
+  // HEAD rather than the branch: it is what the command's tree is, and
+  // `verifyTree` proved the slot clean on this branch. If the two had parted
+  // since, the comparison below refuses, which is the right answer.
+  const checked = await git(slot, ["rev-parse", "--verify", "-q", "HEAD"], NO_CLOCK);
+  if (!checked.ok) {
+    return notRun(
+      `A verify command is configured, but git could not read which commit ` +
+        `${slot} holds, so there would be no telling afterwards whether the ` +
+        `check saw what ${branch} points at.` +
+        verifyRefusalEnd(asker, (exit) => `Nothing was ${EXIT_WORDS[exit].done}.`),
+    );
+  }
+  const verdict = await runVerify(slot, command);
+  if (!verdict.passed) return verdict;
+  const tip = await git(slot, ["rev-parse", "--verify", "-q", branch], NO_CLOCK);
+  if (!tip.ok || tip.stdout !== checked.stdout) {
+    return notRun(
+      `${branch} moved while the verify command ran — it was checked at ` +
+        `${checked.stdout.slice(0, 8)} and now points at ` +
+        `${tip.ok ? tip.stdout.slice(0, 8) : "nothing git can read"} — so what ` +
+        `passed is not what would leave.` +
+        verifyRefusalEnd(
+          asker,
+          (exit) =>
+            `Nothing was ${EXIT_WORDS[exit].done}. Try again once nothing is committing to it.`,
+        ),
+    );
+  }
+  return verdict;
+}
+
+/**
+ * What a review block's check came to, or that it could not start yet.
+ *
+ * `busy` means another verify command is running in the checkout this one has to
+ * switch, which ends within `VERIFY_TIMEOUT_MS` and says nothing about the
+ * branch. The block asks again rather than setting the branch aside over it.
+ */
+export type ReviewVerifyOutcome = VerifyOutcome & { busy?: true };
 
 /**
  * A review block's verify command against one run's branch, in that run's own
@@ -3878,12 +3914,176 @@ async function verifyInSlot(
  * second reading of any of that would check one tree and hand on another. The
  * refusals are worded for a review block, whose note already says the branch
  * was set aside. The command is the block's, never `landVerifyCommand`.
+ *
+ * One thing differs, and only here: a slot a later run has taken over is
+ * switched back to this run's branch for the command and then restored
+ * (`verifyOnSwitchedSlot`). The block judges after every branch has finished,
+ * so with more runs than `maxConcurrentRuns` the later ones have reused the
+ * earlier ones' slots, and refusing those left the early branches set aside
+ * unchecked in a workflow of that shape every time. Land and Deliver still
+ * refuse: their card withholds Land on the same verdict at every poll
+ * (`verifyTreeRefusal`), which would need the same answer, and that was not
+ * decided here.
  */
-export async function verifyBranchForReview(run: RunRow, command: string): Promise<VerifyOutcome> {
-  const tree = verifyTreeIn(run, await slotState(run), "review");
-  if (!tree.ok) return { ran: false, passed: false, reason: tree.reason, ending: "", tail: "" };
-  // `verifyTreeVerdict` refuses a run with no branch, so the name is there.
-  return verifyInSlot(tree.path, run.worktree_branch!, command, "review");
+export async function verifyBranchForReview(
+  run: RunRow,
+  command: string,
+): Promise<ReviewVerifyOutcome> {
+  const slot = await slotState(run);
+  const tree = verifyTreeIn(run, slot, "review");
+  if (tree.ok) {
+    // Asked in the turn that `verifyInSlot` takes its hold: `holdSlot` refuses
+    // a borrowed slot too, but with the sentence Land and Deliver are given.
+    if (isSlotBorrowed(tree.path)) return busyOutcome(tree.path);
+    // `verifyTreeVerdict` refuses a run with no branch, so the name is there.
+    return verifyInSlot(tree.path, run.worktree_branch!, command, "review");
+  }
+  const taken = takenOverBy(run, slot);
+  if (!taken) return notRun(tree.reason);
+  return verifyOnSwitchedSlot(run, taken, command, tree.reason);
+}
+
+/** The checkout a run was recorded in, standing on another run's branch. */
+interface TakenOverSlot {
+  path: string;
+  /** The run's own branch, which the slot no longer holds. */
+  branch: string;
+  /** The branch it holds instead. */
+  holds: string;
+}
+
+/**
+ * The slot, when it is there and standing on a branch that is not this run's —
+ * the case `verifyTreeVerdict` words as "a later run has taken that checkout
+ * over" — or null for every other reason it is no use: gone, unreadable, mid
+ * rebase, detached, or holding the run's own branch.
+ *
+ * Whether it is clean is not known from here: `slotState` reads the status of a
+ * slot only once it holds the run's own branch.
+ */
+function takenOverBy(run: RunRow, slot: SlotState): TakenOverSlot | null {
+  if (!slot.path || !slot.readable || slot.operation || slot.detached) return null;
+  if (!run.worktree_branch || !slot.checkedOutBranch) return null;
+  if (slot.checkedOutBranch === run.worktree_branch) return null;
+  return { path: slot.path, branch: run.worktree_branch, holds: slot.checkedOutBranch };
+}
+
+function busyOutcome(slot: string): ReviewVerifyOutcome {
+  return {
+    ...notRun(`another verify command is running in ${slot}`),
+    busy: true,
+  };
+}
+
+/**
+ * Run a review block's command on a branch whose checkout a later run reused:
+ * switch the checkout to the branch, run it as `verifyInSlot` would, and put the
+ * later run's branch back.
+ *
+ * What `ensureWorktree` does for a new run, for the same reason. A checkout is
+ * reusable when `git status` is clean, and that ignores gitignored files, so
+ * `node_modules` and build output are still there for `npm test` — which a
+ * worktree cut from bare git would not have, and is why Land cuts none.
+ *
+ * Refused, with the original sentence and why nothing was switched, whenever it
+ * would not be safe: a run is working in the checkout, it holds anything
+ * uncommitted or a merge, or the branch is gone or checked out somewhere else.
+ * Only a running verify command is waited for, because it ends on its own.
+ * Nothing here ever approves a branch that was not run.
+ *
+ * The slot is `borrowSlot`'s for the whole of it, exclusive, so nothing starts a
+ * run in it, hands it to a continuation or opens a second check in it, and
+ * `holdSlot` refuses a check that read it before the switch. It is read again
+ * under that hold, since the first read was taken without one.
+ */
+async function verifyOnSwitchedSlot(
+  run: RunRow,
+  taken: TakenOverSlot,
+  command: string,
+  refusal: string,
+): Promise<ReviewVerifyOutcome> {
+  const borrow = borrowSlot(taken.path);
+  if (!borrow.ok) {
+    return borrow.holder === "check"
+      ? busyOutcome(taken.path)
+      : notRun(
+          `${refusal} It was not switched back to ${taken.branch} for the check, because ` +
+            "a run is working in it.",
+        );
+  }
+  try {
+    const held = await slotState(run);
+    const tree = verifyTreeIn(run, held, "review");
+    if (tree.ok) return await verifyHeldSlot(tree.path, taken.branch, command, "review");
+    const still = takenOverBy(run, held);
+    if (!still) return notRun(tree.reason);
+    return await runOnSwitchedBranch(still, command, refusal);
+  } finally {
+    borrow.release();
+  }
+}
+
+/** The switch, the command and the switch back, in a slot already borrowed. */
+async function runOnSwitchedBranch(
+  taken: TakenOverSlot,
+  command: string,
+  refusal: string,
+): Promise<VerifyOutcome> {
+  const { path: slot, branch, holds } = taken;
+  const unswitched = (why: string) =>
+    notRun(`${refusal} It was not switched back to ${branch} for the check, because ${why}.`);
+
+  const [status, merging, exists] = await Promise.all([
+    git(slot, ["status", "--porcelain", "-z"], { ...NO_CLOCK, trim: false }),
+    mergeHeadIn(slot),
+    git(slot, ["rev-parse", "--verify", "-q", `refs/heads/${branch}`], NO_CLOCK),
+  ]);
+  if (!status.ok || merging === null) {
+    return unswitched(`git could not read what ${holds} left in it`);
+  }
+  const files = parseStatusZ(status.stdout);
+  if (files.length > 0) {
+    const named = files.slice(0, 5).map((f) => f.path).join(", ");
+    const more = files.length > 5 ? `, and ${files.length - 5} more` : "";
+    return unswitched(
+      `it holds ${files.length} uncommitted path(s) from ${holds}: ${named}${more}`,
+    );
+  }
+  if (merging) return unswitched(`it has a merge open on ${holds}`);
+  if (!exists.ok) return unswitched(`${branch} no longer exists`);
+
+  const switched = await git(slot, ["checkout", "-q", branch, "--"], NO_CLOCK);
+  if (!switched.ok) {
+    return unswitched(`git would not switch it: ${switched.stderr.split("\n")[0] || "unknown error"}`);
+  }
+  try {
+    return await verifyHeldSlot(slot, branch, command, "review");
+  } finally {
+    await switchBack(slot, branch, holds);
+  }
+}
+
+/**
+ * Put a borrowed slot back on the branch it held, if nothing says otherwise.
+ *
+ * Best effort and never a verdict: the branch has been judged, and a slot left
+ * on it is a clean checkout like any other, reusable by `allocateSlotPath`. What
+ * it costs is the later run's own view, which reads as taken over until it is
+ * switched back. Left alone when HEAD has moved off the branch (not ours to
+ * undo) and when the command left uncommitted paths, which a switch would carry
+ * onto the later run's branch for its Commit button to offer.
+ */
+async function switchBack(slot: string, branch: string, holds: string): Promise<void> {
+  const left = (why: string) =>
+    console.warn(`A review block's verify command left ${slot} on ${branch} rather than ${holds}: ${why}.`);
+  const head = await headBranchOf(slot, NO_CLOCK);
+  if (head.branch !== branch) return left("its HEAD was moved while the command ran");
+  const status = await git(slot, ["status", "--porcelain", "-z"], { ...NO_CLOCK, trim: false });
+  if (!status.ok || status.stdout !== "") {
+    return left("the command left uncommitted paths in it, or git could not read them");
+  }
+  const back = await git(slot, ["checkout", "-q", holds, "--"], NO_CLOCK);
+  if (!back.ok) left(`git would not switch it back: ${back.stderr.split("\n")[0] || "unknown error"}`);
 }
 
 /**

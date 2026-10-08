@@ -3284,6 +3284,9 @@ const slotsUnderCheck = ((globalThis as unknown as {
  */
 export function holdSlot(slotPath: string): (() => void) | null {
   if (activeRuns().some((r) => r.worktree_path === slotPath)) return null;
+  // A borrowed slot's branch is changed by its borrower, so a check that read
+  // the slot before the borrow would run on a tree that moves under it.
+  if (slotsBorrowed.has(slotPath)) return null;
   slotsUnderCheck.set(slotPath, (slotsUnderCheck.get(slotPath) ?? 0) + 1);
   let released = false;
   return () => {
@@ -3292,6 +3295,60 @@ export function holdSlot(slotPath: string): (() => void) | null {
     const left = (slotsUnderCheck.get(slotPath) ?? 1) - 1;
     if (left > 0) slotsUnderCheck.set(slotPath, left);
     else slotsUnderCheck.delete(slotPath);
+  };
+}
+
+/**
+ * Slots a review block is switching to another branch for its verify command.
+ *
+ * `globalThis` for the reason `slotsUnderCheck` gives, and a set beside it
+ * rather than a state of its own, because a borrowed slot is also held there.
+ */
+const slotsBorrowed = ((globalThis as unknown as {
+  __ufSlotsBorrowed?: Set<string>;
+}).__ufSlotsBorrowed ??= new Set<string>());
+
+/** Whether a review block has this slot switched to another run's branch. */
+export function isSlotBorrowed(slotPath: string): boolean {
+  return slotsBorrowed.has(slotPath);
+}
+
+/** `borrowSlot`'s answer: the release, or which kind of holder refused. */
+export type SlotBorrow =
+  | { ok: true; release: () => void }
+  | {
+      ok: false;
+      /**
+       * `check` is another verify command already running in the slot, which
+       * ends within `VERIFY_TIMEOUT_MS` and is worth waiting for. `run` is an
+       * active run working in it, which may be hours.
+       */
+      holder: "check" | "run";
+    };
+
+/**
+ * Take a slot for the length of one verify command that will switch it to a
+ * different branch, or say who has it.
+ *
+ * Exclusive where `holdSlot` is shared. A verify command already running here
+ * saw a particular branch checked out, and `verifyInSlot` compares the branch's
+ * ref afterwards, not the tree the command ran in, so a switch under it would
+ * pass a check run half on one branch and half on another. The converse is
+ * `holdSlot` refusing a borrowed slot, and `planWorkspace` not handing it to a
+ * continuation: each is another writer that would move the checkout from
+ * under the command. Synchronous, for `holdSlot`'s reason.
+ */
+export function borrowSlot(slotPath: string): SlotBorrow {
+  if (slotsUnderCheck.has(slotPath)) return { ok: false, holder: "check" };
+  const release = holdSlot(slotPath);
+  if (!release) return { ok: false, holder: "run" };
+  slotsBorrowed.add(slotPath);
+  return {
+    ok: true,
+    release: () => {
+      slotsBorrowed.delete(slotPath);
+      release();
+    },
   };
 }
 
@@ -4363,8 +4420,14 @@ function planWorkspace(
   //    the slot off this branch with `checkout -b`, so the branch is free to be
   //    checked out elsewhere. If it has not got that far yet, `worktree add`
   //    refuses by name rather than branching from somewhere else.
+  //
+  // Not a slot a review block has switched to another branch for its verify
+  // command (`borrowSlot`): `ensureWorktree` would check this chain's branch out
+  // under the command. Declined like an occupied one, so the continuation is
+  // given a slot of its own and git attaches the branch to it.
   const inheritedSlot =
     continueFrom?.worktree_path &&
+    !isSlotBorrowed(continueFrom.worktree_path) &&
     !activeRuns().some((r) => r.worktree_path === continueFrom.worktree_path)
       ? continueFrom.worktree_path
       : null;
@@ -14524,6 +14587,15 @@ export function reopenRun(
       return {
         ok: false,
         reason: `Its isolated checkout is in use by run ${holder.id.slice(0, 8)}. Its own work is still on branch ${run.worktree_branch}; wait for that run to finish.`,
+      };
+    }
+    // Not a run, so the question above cannot see it: a review block has the
+    // checkout switched to another branch while its verify command runs, and
+    // `ensureWorktree` would switch it back under that command.
+    if (isSlotBorrowed(run.worktree_path)) {
+      return {
+        ok: false,
+        reason: `Its isolated checkout is being used for a review block's verify command on another branch. Its own work is still on branch ${run.worktree_branch}; try again once that command has finished.`,
       };
     }
   }

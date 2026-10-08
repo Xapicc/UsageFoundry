@@ -129,6 +129,20 @@
   button, on the ordinary row. No sideways scroll on the rebasing card at 390px. Caveat: the probe was
   not driven past `MAX_PENDING_PROBES`, and only the light skin was seen.
 
+- **A review block's verify command, run in a slot a later run reused
+  (2026-10-08, git 2.39.5):** `reviewBlockRun.test.ts`' swapped-slots case builds
+  a real repository with three runs recorded in one `git worktree add`ed slot
+  that stands on the last one's branch, and an ignored `deps/marker.txt` in it.
+  Read from inside `runVerify`, the command started once in place and twice with
+  the slot switched to each early branch and borrowed; the early branch whose
+  check needs `deps/marker.txt` was approved, so the ignored file survived the
+  switch, and afterwards the slot stood on the later branch again with an empty
+  `git status`. A slot holding an untracked file and one with an active run in it
+  were left exactly as they were and their branches set aside. Caveat: rows hand
+  -built to the shape a fan-out leaves rather than produced by one, a stand-in
+  marker file where a real install has `node_modules`, and the later run's Land
+  card was not looked at while its slot was switched.
+
 ## Not yet verified by hand
 
 - **The Land verify field was never saved**, so its check covers the form, not
@@ -193,3 +207,11 @@
   run-page-states recipe with a `GET /api/runs/<id>/land` of `ahead: null` and
   of `landedAt` set with `merged: false`, and on `/branches` pick Squash, press
   a row's Commit, then read the queue POST body for `strategy: "squash"`.
+
+- **A command-verdict review block has not run behind a real fan-out past
+  `maxConcurrentRuns`.** The shape the task inferred (runs 4..N taking the slots
+  of runs 1..3) is reproduced by hand-built rows only. Settle: set
+  `maxConcurrentRuns` to 1, run a workflow whose orchestrator emits three runs
+  into one repository that each commit, with a command review behind it, and
+  confirm the instance page shows each branch approved or set aside with its own
+  command's output, never "a later run has taken that checkout over".

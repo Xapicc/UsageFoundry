@@ -924,4 +924,214 @@ describe("a review block that judges by a verify command", () => {
       .get() as { status: string; claimed_by_run_id: string | null; needs_frontier: number };
     assert.deepEqual(task, { status: "claimed", claimed_by_run_id: "cmd-fail", needs_frontier: 0 });
   });
+
+  /** A branch carrying `check.js`, with no checkout of its own. */
+  function branchOnly(branch: string, body: string): void {
+    git(repoRoot(), "switch", "-q", "-c", branch);
+    fs.writeFileSync(path.join(repoRoot(), "check.js"), body);
+    git(repoRoot(), "add", "check.js");
+    git(repoRoot(), "commit", "-q", "-m", `check for ${branch}`);
+    git(repoRoot(), "switch", "-q", "main");
+  }
+
+  /** A checkout under the mount, standing on `branch`. */
+  function slotOn(name: string, branch: string): string {
+    const slot = path.join(root, MOUNT_DIR, ".uf-worktrees", name);
+    git(repoRoot(), "worktree", "add", "-q", slot, branch);
+    return slot;
+  }
+
+  const headOf = (dir: string) => git(dir, "rev-parse", "--abbrev-ref", "HEAD");
+
+  /**
+   * Two runs whose checkouts were swapped: a later run took the slot an earlier
+   * one finished in, and `allocateSlotPath` did it because that slot was clean.
+   * Every run here records the same `worktree_path`, and it stands on the last
+   * one's branch.
+   */
+  it("switches a reused checkout back to the run's branch, checks it there and restores it", async () => {
+    const ignoreFile = path.join(repoRoot(), ".git", "info", "exclude");
+    fs.appendFileSync(ignoreFile, "deps/\n");
+    // The earlier branches' checks read a dependency tree that only the slot
+    // has: it is ignored, so it survives the switch, and it is the reason the
+    // slot is reused rather than a worktree cut fresh.
+    const needsDeps =
+      "const fs = require('fs');\n" +
+      "if (!fs.existsSync('deps/marker.txt')) { console.error('no dependency tree'); process.exitCode = 4; }\n" +
+      "else console.log('early one green');\n";
+    branchOnly("uf/swap-early-ok", needsDeps);
+    branchOnly("uf/swap-early-red", "console.error('early two broke');\nprocess.exitCode = 5;\n");
+    branchOnly("uf/swap-late", "console.error('late one red');\nprocess.exitCode = 7;\n");
+    const shared = slotOn("swap-shared", "uf/swap-late");
+    fs.mkdirSync(path.join(shared, "deps"));
+    fs.writeFileSync(path.join(shared, "deps", "marker.txt"), "installed\n");
+
+    // A slot the later run left uncommitted work in, and one a run is working
+    // in: neither may be switched, and neither branch may be called checked.
+    branchOnly("uf/swap-dirty", "console.log('would pass');\n");
+    branchOnly("uf/swap-dirty-late", "console.log('x');\n");
+    const dirty = slotOn("swap-dirty", "uf/swap-dirty-late");
+    fs.writeFileSync(path.join(dirty, "scratch.txt"), "mine\n");
+    branchOnly("uf/swap-busy", "console.log('would pass');\n");
+    branchOnly("uf/swap-busy-late", "console.log('x');\n");
+    const occupied = slotOn("swap-occupied", "uf/swap-busy-late");
+
+    reviewScene("inst-swapped", {
+      verdictSource: { kind: "command", command: `${process.execPath} check.js` },
+      runs: [
+        // The slot's current holder is judged first, in place, so the cases
+        // after it also prove it was put back.
+        { id: "sw-late", prompt: "Do it.", branch: "uf/swap-late", slot: shared },
+        { id: "sw-ok", prompt: "Do it.", branch: "uf/swap-early-ok", slot: shared },
+        { id: "sw-red", prompt: "Do it.", branch: "uf/swap-early-red", slot: shared },
+        { id: "sw-dirty", prompt: "Do it.", branch: "uf/swap-dirty", slot: dirty },
+        { id: "sw-occupied", prompt: "Do it.", branch: "uf/swap-busy", slot: occupied },
+        { id: "sw-working", prompt: "Do it.", branch: "uf/swap-busy-late", slot: occupied, status: "running" },
+      ],
+    });
+
+    // What the checkout looked like each time the command started, read from
+    // inside `runVerify` so it is the command's tree and not the block's idea.
+    const seen: Array<{ branch: string; borrowed: boolean; shareable: boolean }> = [];
+    // The two other ways a run could be put into the borrowed checkout while the
+    // command is running in it, tried once, on the first branch that borrowed it.
+    const meanwhile: Array<{
+      reopened: ReturnType<typeof orch.reopenRun>;
+      continuation: { id: string; worktree_path: string | null };
+    }> = [];
+    const realRunVerify = landGate.runVerify;
+    (landGate as { runVerify: typeof realRunVerify }).runVerify = (cwd, raw, deps = {}) => {
+      const another = orch.holdSlot(cwd);
+      another?.();
+      const borrowed = orch.isSlotBorrowed(cwd);
+      seen.push({ branch: headOf(cwd), borrowed, shareable: another !== null });
+      if (borrowed && meanwhile.length === 0) {
+        meanwhile.push({
+          reopened: orch.reopenRun("sw-late", { maxIterations: 5, maxDurationMinutes: 60 }),
+          continuation: orch.createRun({
+            folder: "repo",
+            mountId: null,
+            prompt: "carry on",
+            budget: { maxIterations: 1 },
+            origin: "form",
+            dependsOn: [{ runId: "sw-late", edge: "on-success", continueBranch: true }],
+          }),
+        });
+      }
+      return realRunVerify(cwd, raw, deps);
+    };
+    try {
+      await settledWithin(
+        workflows.startReviewBlock("inst-swapped", "r", [
+          "sw-late",
+          "sw-ok",
+          "sw-red",
+          "sw-dirty",
+          "sw-occupied",
+        ]),
+        30_000,
+        "startReviewBlock",
+      );
+    } finally {
+      (landGate as { runVerify: typeof realRunVerify }).runVerify = realRunVerify;
+      dbMod.db().prepare("DELETE FROM runs WHERE id='sw-working'").run();
+      for (const { continuation } of meanwhile) {
+        dbMod.db().prepare("DELETE FROM runs WHERE id=?").run(continuation.id);
+      }
+    }
+
+    const items = workflows.reviewItemsOf("inst-swapped", "r");
+    assert.deepEqual(
+      items.map((i) => [i.origin_run_id, i.status, i.note]),
+      [
+        ["sw-late", "set-aside", "its verify command exited 7\nlate one red"],
+        // Approved by `needsDeps`, which passes only in a checkout that kept its
+        // dependency tree: the branch was checked in the slot, not in a fresh one.
+        ["sw-ok", "approved", null],
+        ["sw-red", "set-aside", "its verify command exited 5\nearly two broke"],
+        [
+          "sw-dirty",
+          "set-aside",
+          `it could not be verified: A verify command is configured, but ${dirty} no longer holds ` +
+            "uf/swap-dirty — a later run has taken that checkout over, so there is nowhere to run " +
+            "the check against this work. It was not switched back to uf/swap-dirty for the check, " +
+            "because it holds 1 uncommitted path(s) from uf/swap-dirty-late: scratch.txt.",
+        ],
+        [
+          "sw-occupied",
+          "set-aside",
+          `it could not be verified: A verify command is configured, but ${occupied} no longer holds ` +
+            "uf/swap-busy — a later run has taken that checkout over, so there is nowhere to run " +
+            "the check against this work. It was not switched back to uf/swap-busy for the check, " +
+            "because a run is working in it.",
+        ],
+      ],
+    );
+
+    // The command ran three times, never in the two checkouts it was refused:
+    // in place on the slot's holder, then on each early branch with the slot
+    // switched to it and borrowed, so no second check could share it.
+    assert.deepEqual(seen, [
+      { branch: "uf/swap-late", borrowed: false, shareable: true },
+      { branch: "uf/swap-early-ok", borrowed: true, shareable: false },
+      { branch: "uf/swap-early-red", borrowed: true, shareable: false },
+    ]);
+
+    // Neither the run that was the slot's holder, picked up again, nor a run
+    // continuing its branch was put into the checkout under the command:
+    // `ensureWorktree` would have switched it back to that branch.
+    assert.equal(meanwhile.length, 1, "the command never ran in a borrowed checkout, so this proves nothing");
+    const [{ reopened, continuation }] = meanwhile;
+    assert.equal(reopened.ok, false, "picked up into a checkout a verify command was using");
+    assert.match(reopened.ok ? "" : reopened.reason, /verify command on another branch/);
+    assert.equal(orch.getRun("sw-late")?.status, "completed");
+    assert.notEqual(continuation.worktree_path, shared, "a continuation inherited the borrowed checkout");
+
+    // Put back, clean, and free for the next run to be given.
+    assert.equal(headOf(shared), "uf/swap-late");
+    assert.equal(git(shared, "status", "--porcelain"), "");
+    assert.equal(orch.isSlotBorrowed(shared), false);
+    const free = orch.holdSlot(shared);
+    assert.ok(free, "the slot is still held after the block");
+    free();
+
+    // Neither refused checkout was touched.
+    assert.equal(headOf(dirty), "uf/swap-dirty-late");
+    assert.equal(fs.readFileSync(path.join(dirty, "scratch.txt"), "utf8"), "mine\n");
+    assert.equal(headOf(occupied), "uf/swap-busy-late");
+  });
+
+  it("waits for a check already running in the slot, and does not set the branch aside over it", async () => {
+    branchOnly("uf/wait-early", "console.log('green');\n");
+    branchOnly("uf/wait-late", "console.log('green');\n");
+    const shared = slotOn("wait-shared", "uf/wait-late");
+    reviewScene("inst-wait", {
+      verdictSource: { kind: "command", command: `${process.execPath} check.js` },
+      runs: [{ id: "wait-early", prompt: "Do it.", branch: "uf/wait-early", slot: shared }],
+    });
+
+    // A land's or a delivery's check, holding the slot as `verifyInSlot` does.
+    const release = orch.holdSlot(shared);
+    assert.ok(release, "the slot was free to hold");
+    const block = settledWithin(
+      workflows.startReviewBlock("inst-wait", "r", ["wait-early"]),
+      30_000,
+      "startReviewBlock",
+    );
+    await sleep(300);
+    assert.deepEqual(
+      workflows.reviewItemsOf("inst-wait", "r").map((i) => [i.status, i.note]),
+      [["reviewing", null]],
+      "the branch was judged while another check held its slot",
+    );
+    assert.equal(headOf(shared), "uf/wait-late", "the slot was switched under the other check");
+
+    release();
+    await block;
+    assert.deepEqual(
+      workflows.reviewItemsOf("inst-wait", "r").map((i) => [i.status, i.note]),
+      [["approved", null]],
+    );
+    assert.equal(headOf(shared), "uf/wait-late");
+  });
 });

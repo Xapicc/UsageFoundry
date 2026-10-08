@@ -29,8 +29,18 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - A branch a live pass of a workflow loop is working on may be landed by that pass's own merge block and by nothing else, and every other refusal names the pass. (was line 52)
 - The check in front of Land, and what an empty one means. (was lines 69–81)
 - Which tree the check runs in is the whole of whether it checks anything. (was lines 83–97)
-- A review block's verify command takes the same two steps, and nothing about the slot is read twice.
+- A review block's verify command is the one gate that switches a slot a later run took over; Land and Deliver refuse it.
 - Land is withheld on the gate's refusals that need no command run, and the card says why.
+
+## [A review block's verify command](isolation-and-landing/review-verify-command.md)
+
+- A review block's verify command takes the same two steps, and nothing about the slot is read twice.
+- A slot a later run reused is switched back to the run's branch for the command, and put back after, because the block judges when every branch has finished and by then the early slots are somebody else's.
+- Anything that stops the switch refuses with the original sentence and says why nothing was switched, and nothing unrun is approved.
+- The borrow is exclusive, and the writers it keeps out are the reason, not a convenience.
+- The switch back is best effort and never a verdict.
+- What the check still cannot tell from the work, and the options not taken.
+- Land and Deliver still refuse a slot a later run took over.
 
 ## [Deliver, and what may leave](isolation-and-landing/deliver.md)
 
