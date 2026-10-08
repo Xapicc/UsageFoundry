@@ -62,7 +62,15 @@ import {
 } from "./workflows";
 import { modelRefusal, type ModelCatalogueEntry } from "./modelCatalogue";
 import type { LoopBoardCondition } from "./workflowGraph";
-import { chooseFolder, withChosenFolder } from "./workflowGraph";
+import {
+  chooseFolder,
+  sharedFolderRefusal,
+  withChosenFolder,
+  workingFolders,
+  type BlockFolder,
+  type LivePress,
+  type WorkflowFolder,
+} from "./workflowGraph";
 import { topologicalOrder, type RunStatus } from "./orchestrator";
 import { readTaskLinks } from "./tasks";
 import type { QueueStatus } from "./mergeQueue";
@@ -1088,6 +1096,130 @@ describe("withChosenFolder — the graph an instance copies", () => {
 
   it("returns the saved graph unchanged when nothing was chosen", () => {
     assert.equal(withChosenFolder(saved.graph, null), saved.graph);
+  });
+});
+
+/**
+ * Where two presses of one workflow may work at the same time.
+ *
+ * This is the rule that lets unattended agents run side by side, so both ways
+ * of being wrong are expensive and neither throws: a press let into a folder an
+ * earlier one is still working in puts the same block in the same repository
+ * twice, and a press refused against a folder nothing is working in leaves a
+ * workflow saved against four projects doing one at a time.
+ */
+describe("sharedFolderRefusal — two presses of one workflow at once", () => {
+  const ALPHA = { mountId: "work", folder: "alpha" };
+  const BETA = { mountId: "work", folder: "beta" };
+  const saved = value({
+    ...graph(
+      [
+        node("build", { followsChosenFolder: true }),
+        decider("plan", { followsChosenFolder: true }),
+        merger("land"),
+      ],
+      [edge("build", "land"), edge("plan", "land")],
+    ),
+    folders: [ALPHA, BETA],
+  });
+  const withTools = value({
+    ...graph(
+      [node("build", { followsChosenFolder: true }), node("lint", { mountId: "work", folder: "tools" })],
+      [],
+    ),
+    folders: [ALPHA, BETA],
+  });
+
+  // The folder claim's key, built from the path alone: one tree per mount, so
+  // a folder holds the ones under it and nothing on another mount.
+  const placed = (g: Parameters<typeof workingFolders>[0]): BlockFolder[] =>
+    workingFolders(g).map((b) => ({
+      ...b,
+      identity: {
+        ok: true,
+        key: { rootKey: b.folder.mountId, segs: b.folder.folder.split("/").filter(Boolean) },
+      },
+    }));
+  const pressOf = (g: Parameters<typeof workingFolders>[0], chosen: WorkflowFolder): LivePress => ({
+    instanceId: `press-${chosen.folder}`,
+    liveRuns: 2,
+    liveBlocks: 1,
+    blocks: placed(withChosenFolder(g, chosen)),
+  });
+
+  it("lets a press against another saved folder start beside one still going", () => {
+    const refusal = sharedFolderRefusal(
+      [pressOf(saved.graph, ALPHA)],
+      placed(withChosenFolder(saved.graph, BETA)),
+    );
+    assert.equal(refusal, null);
+  });
+
+  it("refuses a second press against the same folder, naming the one going", () => {
+    const refusal = sharedFolderRefusal(
+      [pressOf(saved.graph, ALPHA)],
+      placed(withChosenFolder(saved.graph, ALPHA)),
+    );
+    assert.ok(refusal);
+    assert.equal(refusal.instanceId, "press-alpha");
+    assert.equal(refusal.liveCount, 3);
+    assert.match(refusal.reason, /^2 run\(s\) and 1 block\(s\) from an earlier press/);
+    assert.match(refusal.reason, /work\/alpha, where this press's “BUILD” would work too/);
+    assert.match(refusal.reason, /Choose a folder it is not working in/);
+  });
+
+  it("refuses another folder too while a block with its own folder is shared", () => {
+    // Every press of this workflow works in work/tools, whichever folder is
+    // chosen, so a second one is the same block in the same folder twice.
+    const refusal = sharedFolderRefusal(
+      [pressOf(withTools.graph, ALPHA)],
+      placed(withChosenFolder(withTools.graph, BETA)),
+    );
+    assert.ok(refusal);
+    assert.match(refusal.reason, /“LINT” works in work\/tools/);
+    // Choosing yet another folder would not help, so it is not offered.
+    assert.match(refusal.reason, /“LINT” names its own folder, so every press/);
+    assert.doesNotMatch(refusal.reason, /Choose a folder/);
+  });
+
+  it("refuses a folder that holds, or sits inside, one a press is working in", () => {
+    const nested = { mountId: "work", folder: "alpha/web" };
+    const g = value({ ...graph([node("build", { followsChosenFolder: true })]), folders: [ALPHA, nested] });
+    const refusal = sharedFolderRefusal([pressOf(g.graph, ALPHA)], placed(withChosenFolder(g.graph, nested)));
+    assert.ok(refusal);
+    assert.match(refusal.reason, /work\/alpha, which overlaps work\/alpha\/web/);
+  });
+
+  it("reads a folder that cannot be placed as shared, and says why", () => {
+    const next = placed(withChosenFolder(saved.graph, BETA)).map((b, i) =>
+      i === 0 ? { ...b, identity: { ok: false as const, error: "No such folder" } } : b,
+    );
+    const refusal = sharedFolderRefusal([pressOf(saved.graph, ALPHA)], next);
+    assert.ok(refusal);
+    assert.match(refusal.reason, /“BUILD”'s folder work\/beta cannot be placed \(No such folder\)/);
+  });
+
+  it("reads a press whose graph cannot be read as sharing every folder", () => {
+    const refusal = sharedFolderRefusal(
+      [{ instanceId: "unreadable", liveRuns: 1, liveBlocks: 0, blocks: null }],
+      placed(withChosenFolder(saved.graph, BETA)),
+    );
+    assert.equal(refusal?.instanceId, "unreadable");
+  });
+
+  it("names the newest press it shares a folder with", () => {
+    const refusal = sharedFolderRefusal(
+      [pressOf(saved.graph, BETA), pressOf(saved.graph, ALPHA)],
+      placed(withChosenFolder(saved.graph, ALPHA)),
+    );
+    assert.equal(refusal?.instanceId, "press-alpha");
+  });
+
+  it("counts every block that works in a folder, and only those", () => {
+    assert.deepEqual(
+      workingFolders(saved.graph).map((b) => b.nodeName),
+      ["BUILD", "PLAN"],
+    );
   });
 });
 

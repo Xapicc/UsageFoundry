@@ -1,8 +1,10 @@
 import {
   DEPENDENCY_EDGES,
   dependencyCycle,
+  overlaps,
   resolveWorkspaceFolder,
   topologicalOrder,
+  type ConflictKey,
   type DependencyEdge,
   type DependencyLink,
 } from "./orchestrator";
@@ -975,6 +977,159 @@ export function withChosenFolder(
         : n,
     ),
   };
+}
+
+/**
+ * Where a folder is, as the folder claim compares folders — or why that could
+ * not be worked out, which `sharedFolderRefusal` reads as sharing every folder.
+ */
+export type FolderIdentity =
+  | { ok: true; key: ConflictKey }
+  | { ok: false; error: string };
+
+/** One block of a press of Run, and the folder it works in. */
+export interface BlockFolder {
+  nodeName: string;
+  folder: WorkflowFolder;
+  /** True when the block works in the folder that press chose. */
+  followsChoice: boolean;
+  identity: FolderIdentity;
+}
+
+/** A press of Run of the same workflow that still has something going. */
+export interface LivePress {
+  instanceId: string;
+  liveRuns: number;
+  liveBlocks: number;
+  /** Null when the graph the press was started from cannot be read. */
+  blocks: BlockFolder[] | null;
+}
+
+/** The earlier press a new one would share a folder with, and the sentence. */
+export interface SharedFolder {
+  instanceId: string;
+  /** Its runs and blocks that have not finished. */
+  liveCount: number;
+  reason: string;
+}
+
+/**
+ * The blocks of a graph that work in a folder, and the folder each works in.
+ *
+ * Every kind but the five `folderRefusal` passes over — so a node stored before
+ * `kind` existed counts, as it must. An orchestrator block's own folder covers
+ * the runs it emits, which are held inside it.
+ */
+export function workingFolders(
+  graph: WorkflowGraph,
+): Array<Omit<BlockFolder, "identity">> {
+  return graph.nodes
+    .filter(
+      (n) =>
+        n.kind !== "merge" &&
+        n.kind !== "deliver" &&
+        n.kind !== "loop" &&
+        n.kind !== "review" &&
+        n.kind !== "gate",
+    )
+    .map((n) => ({
+      nodeName: n.name,
+      folder: { mountId: n.mountId, folder: n.folder },
+      followsChoice: n.followsChosenFolder === true,
+    }));
+}
+
+function folderWords(entry: WorkflowFolder): string {
+  return entry.folder ? `${entry.mountId}/${entry.folder}` : `${entry.mountId} (mount root)`;
+}
+
+function blocksShareFolder(a: BlockFolder, b: BlockFolder): boolean {
+  if (!a.identity.ok || !b.identity.ok) return true;
+  return overlaps(a.identity.key, b.identity.key);
+}
+
+/**
+ * Why a press of Run may not start beside the presses of the same workflow
+ * still going, or null when it shares no folder with any of them.
+ *
+ * Pure and unit-tested because this decides where unattended agents may work at
+ * the same time, and both ways of being wrong are silent: refusing too little
+ * puts two copies of one block in one repository — queued behind each other on
+ * the folder claim, or, isolated, two agents doing one job side by side — and
+ * refusing too much keeps one workflow saved against several folders from
+ * standing in for one workflow per folder, which is what the list is for.
+ *
+ * "Share" is the folder claim's own reading, `overlaps` over `conflictKey`, and
+ * not path equality, for the three reasons that claim gives: a folder holds the
+ * ones under it, two mounts can be one directory, and a host can fold case. So
+ * a block with its own folder, which every press of the workflow works in, is
+ * shared with every other press by construction and keeps the refusal standing
+ * whichever folder is chosen. A folder that cannot be placed, and a press whose
+ * graph cannot be read, are read as sharing everything: this is a gate, and
+ * the direction to be wrong in is the old one, one press at a time.
+ *
+ * `live` is newest first, so the press named is the one worth opening. A
+ * block with its own folder is asked first, because when one of those is
+ * shared, choosing another folder cannot help and the sentence must not say it
+ * could.
+ */
+export function sharedFolderRefusal(
+  live: readonly LivePress[],
+  next: readonly BlockFolder[],
+): SharedFolder | null {
+  const ownFirst = [
+    ...next.filter((b) => !b.followsChoice),
+    ...next.filter((b) => b.followsChoice),
+  ];
+  for (const press of live) {
+    const liveCount = press.liveRuns + press.liveBlocks;
+    const going =
+      `${press.liveRuns} run(s) and ${press.liveBlocks} block(s) from an ` +
+      "earlier press of Run have not finished yet";
+    const stop = "Wait for it, or stop that run of the workflow.";
+    if (press.blocks === null) {
+      return {
+        instanceId: press.instanceId,
+        liveCount,
+        reason:
+          `${going}, and the graph it was started from cannot be read, so ` +
+          `whether the two would work in the same folder cannot be told. ${stop}`,
+      };
+    }
+    for (const mine of ownFirst) {
+      const theirs = press.blocks.find((b) => blocksShareFolder(mine, b));
+      if (!theirs) continue;
+      const unplaced = !mine.identity.ok ? mine : !theirs.identity.ok ? theirs : null;
+      if (unplaced && !unplaced.identity.ok) {
+        return {
+          instanceId: press.instanceId,
+          liveCount,
+          reason:
+            `${going}, and “${unplaced.nodeName}”'s folder ` +
+            `${folderWords(unplaced.folder)} cannot be placed ` +
+            `(${unplaced.identity.error}), so whether the two would work in ` +
+            `the same folder cannot be told. ${stop}`,
+        };
+      }
+      const where = sameFolder(mine.folder, theirs.folder)
+        ? `${folderWords(theirs.folder)}, where this press's “${mine.nodeName}” would work too`
+        : `${folderWords(theirs.folder)}, which overlaps ${folderWords(mine.folder)}, ` +
+          `where this press's “${mine.nodeName}” would work`;
+      const way = mine.followsChoice
+        ? "Choose a folder it is not working in, wait for it, or stop that run of the workflow."
+        : `“${mine.nodeName}” names its own folder, so every press of this ` +
+          `workflow works there. ${stop}`;
+      return {
+        instanceId: press.instanceId,
+        liveCount,
+        reason:
+          `${going}, and its “${theirs.nodeName}” works in ${where}. Two ` +
+          `presses of one workflow run at the same time only when they share ` +
+          `no folder. ${way}`,
+      };
+    }
+  }
+  return null;
 }
 
 type NodeNormalization =

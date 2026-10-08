@@ -311,7 +311,6 @@ export default function WorkflowPage() {
     );
   }
 
-  const runIsRefused = (workflow.liveRunCount ?? 0) > 0;
   // Derived on every render rather than reset by an effect: an edit elsewhere
   // can drop the chosen entry between two polls, and the picker then shows the
   // first saved folder — so that is what Run sends, never the stale choice the
@@ -319,6 +318,15 @@ export default function WorkflowPage() {
   const runFolder =
     workflow.folders.find((f) => folderKey(f) === chosenFolderKey) ??
     workflow.folders.at(0);
+  // Per folder, because that is how `startWorkflow` refuses: a press against a
+  // folder no earlier press is working in starts beside it. Matched on the
+  // folder Run would send, and on null for a workflow that saves none.
+  const runRefusal =
+    workflow.startRefusals.find(
+      (r) =>
+        (r.folder ? folderKey(r.folder) : null) ===
+        (runFolder ? folderKey(runFolder) : null),
+    ) ?? null;
 
   return (
     <>
@@ -366,10 +374,10 @@ export default function WorkflowPage() {
                 Runs in {runFolder.label}
               </span>
             )}
-            {/* Off while an earlier press is still going, with the notice below
-                as its stated reason. The refusal itself stays `startWorkflow`'s:
-                this reads the same fact a poll earlier, so the 400 is left for
-                the press that races it. */}
+            {/* Off while an earlier press is still going in a folder this one
+                would work in, with the notice below as its stated reason. The
+                refusal itself stays `startWorkflow`'s: this reads the same fact
+                a poll earlier, so the 400 is left for the press that races it. */}
             <Button
               onClick={() =>
                 act(
@@ -385,8 +393,8 @@ export default function WorkflowPage() {
                 )
               }
               busy={busy === "run"}
-              disabled={busy !== null || runIsRefused}
-              aria-describedby={runIsRefused ? LIVE_NOTICE_ID : undefined}
+              disabled={busy !== null || runRefusal !== null}
+              aria-describedby={runRefusal ? LIVE_NOTICE_ID : undefined}
             >
               Run
             </Button>
@@ -463,16 +471,13 @@ export default function WorkflowPage() {
         </Notice>
       )}
 
-      {runIsRefused && (
+      {runRefusal && (
         <div id={LIVE_NOTICE_ID}>
           <Notice tone="info">
-            {workflow.liveRunCount} run(s) from this workflow have not finished, so
-            it cannot be started again until they do.{" "}
-            {workflow.liveInstanceId && (
-              <Link href={`/workflows/${id}/instances/${workflow.liveInstanceId}`}>
-                Open the one still going
-              </Link>
-            )}
+            {runRefusal.reason}{" "}
+            <Link href={`/workflows/${id}/instances/${runRefusal.instanceId}`}>
+              Open the one still going
+            </Link>
           </Notice>
         </div>
       )}

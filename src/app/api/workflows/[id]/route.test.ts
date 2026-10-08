@@ -205,6 +205,31 @@ describe("GET /api/workflows/[id] — the facts a press of Run is about to meet"
           " position, kind, status) VALUES (?, 'n1', 'Decide', 0, 'run', 'thinking')",
       )
       .run("wf-meets-press-1");
+    // One block in a folder that resolves, saved and copied alike, so the press
+    // still going works where the next one would. A folder that would not
+    // resolve is read as shared too, and would pass this for the wrong reason.
+    fs.mkdirSync(path.join(root, "workspace"), { recursive: true });
+    const graph = JSON.stringify({
+      nodes: [
+        {
+          id: "n1",
+          name: "Build",
+          kind: "run",
+          templateId: null,
+          mountId: "workspace",
+          folder: "",
+          task: "build it",
+          promptOverride: null,
+          agentId: null,
+        },
+      ],
+      edges: [],
+    });
+    dbMod.db().prepare("UPDATE workflows SET graph = ? WHERE id = 'wf-meets'").run(graph);
+    dbMod
+      .db()
+      .prepare("UPDATE workflow_instances SET graph = ? WHERE workflow_id = 'wf-meets'")
+      .run(graph);
   });
 
   after(() => {
@@ -214,11 +239,14 @@ describe("GET /api/workflows/[id] — the facts a press of Run is about to meet"
   it("names the press that is still going, and only for that workflow", async () => {
     const meets = (await get("wf-meets")).workflow;
     assert.equal(meets?.liveRunCount, 1);
-    assert.equal(meets?.liveInstanceId, "wf-meets-press-1");
+    assert.equal(meets?.startRefusals.length, 1);
+    assert.equal(meets?.startRefusals[0].folder, null);
+    assert.equal(meets?.startRefusals[0].instanceId, "wf-meets-press-1");
+    assert.match(meets?.startRefusals[0].reason ?? "", /“Build” works in workspace \(mount root\)/);
 
     const idle = (await get("wf-idle")).workflow;
     assert.equal(idle?.liveRunCount, 0);
-    assert.equal(idle?.liveInstanceId, null);
+    assert.deepEqual(idle?.startRefusals, []);
   });
 
   it("states the install-wide hold while it is on, and stops when it is lifted", async () => {
