@@ -223,6 +223,43 @@ bound the spend: a schedule presses Run with nobody there to look at what is
 being published. And the chat cannot draft one; add it in the editor, where its
 effect is stated beside it.
 
+## A block that reviews the work
+
+A **review block** sits between the work and the merge. It takes every branch
+its predecessors left, decides which are good enough to go on, and hands only
+those to what follows; the rest are **set aside** — not merged, named on the
+instance page with the reason, and not a failure of the block. Under **Verdict
+from** it decides one of three ways:
+
+- **A frontier review** has a frontier model read each branch and approve or
+  reject it, and can send a rejected branch back for a fix up to the block's
+  fix rounds. Each review and each fix round is billed.
+- **How each run ended** approves a run that completed and sets aside every
+  other ending, with no model and nothing billed. Its links in have to be
+  *once it finishes*, or the first run that did not complete would block it.
+- **A verify command** runs a command you write, such as `npm test`, in each
+  branch's own checkout, one branch after another. Exit 0 approves; anything
+  else sets the branch aside, and so does a command that runs past 15 minutes
+  or could not run at all — the checkout was taken over by a later run, or
+  holds uncommitted edits. The instance page shows how it ended and the last of
+  what it printed under the branch's row. It runs no model and bills nothing.
+
+The verify command is the one on the block, not the one in Settings, so each
+workflow can check its own repository its own way. It is argv and never a shell
+line, and Save refuses one that is not: for `npm test && npm run build`, put
+the two in a script and name the script. It runs as the agents' user, but what
+it runs — the `test` script of a `package.json`, say — comes from the branch an
+agent just wrote, so it is a program you are letting that branch choose. **Only
+you can set it.** The chat cannot propose a review block with a verify command,
+and approving a workflow the chat proposed will not save one; add it in the
+editor. A branch it approved still meets Settings' **Check that must pass before
+Land merges** at the merge, if that is set.
+
+Neither a status nor a command verdict takes fix rounds: a branch either goes
+on or is set aside. Neither marks the tasks of a branch it set aside, since no
+model judged the work. Inside a loop, a branch set aside with work on it keeps
+the loop going to its next pass.
+
 ## A region that repeats
 
 Some work does not fit in one run. "Work through the failing tests until they

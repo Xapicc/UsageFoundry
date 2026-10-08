@@ -110,7 +110,10 @@ and everything that principle protected is a check rather than a caveat:
   blank by default, which is no check rather than a check that passes. Open pull
   request runs the same one, because saying "not unless this passes" said nothing
   about which exit the work leaves by. It is argv and never a shell line: put
-  `a && b` in a script and name the script.
+  `a && b` in a script and name the script. A workflow can also check each
+  branch before its merge, with a command saved on a review block rather than
+  here — see *A block that reviews the work* in [Workflows](workflows.md). A
+  branch that passed that one still has to pass this one to land.
 
 **Several branches can be queued, and a queue is not a batch.** Tick them on the
 Branches page in the order you want them landed and the branches in one
