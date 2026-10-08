@@ -132,6 +132,7 @@ const SETTLED_STATUSES: ReadonlySet<string> = new Set<RunStatus>([
   "failed",
   "stopped",
   "completed",
+  "not-needed",
 ]);
 
 /**
@@ -394,15 +395,14 @@ function messageOf(err: unknown): string {
  * "this promise is deliberately not awaited". An `async` caller would be a
  * floating promise saying the same thing less clearly.
  */
-function deliver(runId: string, decision: NotifyDecision, at: number): void {
-  const body = JSON.stringify({
-    install: INSTALL_LABEL,
-    event: decision.event,
-    run_id: runId,
-    status: decision.status,
-    at,
-    url: PUBLIC_URL ? `${PUBLIC_URL.replace(/\/+$/, "")}/runs/${runId}` : "",
-  } satisfies NotificationBody);
+function deliver(
+  runId: string,
+  decision: NotifyDecision,
+  at: number,
+  /** The page the link opens, and what the ledger row is filed under. */
+  subject: { path: string; ledgerId: string } = { path: `/runs/${runId}`, ledgerId: runId },
+): void {
+  const body = JSON.stringify(notificationBody(runId, decision, at, subject.path));
 
   fetch(WEBHOOK_URL, {
     method: "POST",
@@ -415,11 +415,39 @@ function deliver(runId: string, decision: NotifyDecision, at: number): void {
     signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
   })
     .then((res) => {
-      recordDelivery(runId, decision.event, res.status, res.ok ? null : `HTTP ${res.status}`);
+      recordDelivery(
+        subject.ledgerId,
+        decision.event,
+        res.status,
+        res.ok ? null : `HTTP ${res.status}`,
+      );
     })
     .catch((err: unknown) => {
-      recordDelivery(runId, decision.event, 0, messageOf(err));
+      recordDelivery(subject.ledgerId, decision.event, 0, messageOf(err));
     });
+}
+
+/**
+ * The six fields, built in one place so the closed list has one definition.
+ *
+ * `runId` is empty for an event that is not about a run, and that is the honest
+ * value rather than an id borrowed from somewhere else: a receiver that keys on
+ * `run_id` finds nothing to look up, and `url` is where a person is sent.
+ */
+export function notificationBody(
+  runId: string,
+  decision: NotifyDecision,
+  at: number,
+  path: string,
+): NotificationBody {
+  return {
+    install: INSTALL_LABEL,
+    event: decision.event,
+    run_id: runId,
+    status: decision.status,
+    at,
+    url: PUBLIC_URL ? `${PUBLIC_URL.replace(/\/+$/, "")}${path}` : "",
+  };
 }
 
 /** Configured means both halves: a target, and the secret that signs for it. */
@@ -463,6 +491,44 @@ export function notifyLifecycle(e: PersistedRunEvent): void {
     // matters and this line is the evidence.
     opsLog("error", "webhook.sink_failed", {
       run_id: e.runId,
+      message: messageOf(err),
+    });
+  }
+}
+
+/**
+ * Tell a person a workflow instance is waiting at a gate, and never throw.
+ *
+ * The same channel and the same six fields as a run ending, because a gate is a
+ * run needing a person in everything but having a run: `event` is
+ * `workflow.gate_held`, `status` is `held`, `run_id` is empty, and `url` opens
+ * the instance, where Continue and Stop are. **The gate's name is not in it**,
+ * for `runs.title`'s reason — a workflow a chat proposed names its blocks in
+ * model-written text, and this goes to a host the operator does not control.
+ *
+ * Fired once per reaching by `holdGate`'s guarded write; this does not dedupe.
+ * The delivery ledger is filed under the instance id, since there is no run.
+ */
+export function notifyGateHeld(gate: { instanceId: string; workflowId: string }): void {
+  if (WEBHOOK_URL === "") return;
+  const decision: NotifyDecision = { event: "workflow.gate_held", status: "held" };
+  try {
+    if (WEBHOOK_SECRET === "") {
+      opsLog("error", "webhook.unsigned", {
+        run_id: gate.instanceId,
+        notify_event: decision.event,
+        message:
+          "UF_WEBHOOK_URL is set and UF_WEBHOOK_SECRET is empty, so nothing is sent",
+      });
+      return;
+    }
+    deliver("", decision, Date.now(), {
+      path: `/workflows/${gate.workflowId}/instances/${gate.instanceId}`,
+      ledgerId: gate.instanceId,
+    });
+  } catch (err) {
+    opsLog("error", "webhook.sink_failed", {
+      run_id: gate.instanceId,
       message: messageOf(err),
     });
   }

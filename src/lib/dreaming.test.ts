@@ -204,6 +204,14 @@ describe("buildDreamingPrompt", () => {
     assert.match(prompt, /NOTE <item number>/);
   });
 
+  it("tells it which file to report, because the parser cannot tell a note from a hub", () => {
+    // The ledger records one path per item. Without the verb a run lists every
+    // file it touched and the hub that links the new note comes last.
+    assert.match(prompt, /NOTE <item number> created </);
+    assert.match(prompt, /NOTE <item number> edited </);
+    assert.match(prompt, /index, a hub, a MOC/);
+  });
+
   it("names the two conventions the first real run got wrong", () => {
     // Its notes passed the vault's ERROR gate and tripped two warnings, both
     // one line each: a `sources:` block with no `## Sources` section, and a
@@ -236,8 +244,45 @@ describe("parseNoteLines", () => {
     assert.equal(parseNoteLines("I did not write a NOTE for item 1.", 2).size, 0);
   });
 
-  it("takes the last line for an item when a run reports it twice", () => {
+  it("keeps the note an item created over the hubs it edited to link it", () => {
+    // The vault's orphan rule makes every new note two writes: the note, then a
+    // hub that links it. The last line is therefore the hub on nearly every item
+    // (45 of 49 in the 19 transcripts that were read), and recording it points
+    // the retraction list at a file shared by every other item.
+    const report = [
+      "NOTE 1 created 1 Projects/Agent Error Memory/Unquoted Globs.md",
+      "NOTE 1 edited 1 Projects/Agent Error Memory/Standing Failures in This Install.md",
+      "NOTE 1 edited 1 Projects/Agent Error Memory/Agent Error Memory.md",
+    ].join("\n");
+    assert.deepEqual([...parseNoteLines(report, 1)], [[1, "1 Projects/Agent Error Memory/Unquoted Globs.md"]]);
+  });
+
+  it("does not depend on the hub being listed after the created note", () => {
+    const got = parseNoteLines("NOTE 1 edited Hub.md\nNOTE 1 created New.md", 1);
+    assert.deepEqual([...got], [[1, "New.md"]]);
+  });
+
+  it("falls back to the note an item grew when it created none", () => {
+    const report = "NOTE 2 edited Existing.md\nNOTE 2 edited Hub.md";
+    assert.deepEqual([...parseNoteLines(report, 2)], [[2, "Existing.md"]]);
+  });
+
+  it("keeps the first of several notes created for one item", () => {
+    // A source note and a question note follow the note the item is about.
+    const report = "NOTE 1 created Main.md\nNOTE 1 created Source.md";
+    assert.deepEqual([...parseNoteLines(report, 1)], [[1, "Main.md"]]);
+  });
+
+  it("reads the verb through a bullet, a colon and backticks", () => {
+    const got = parseNoteLines("- NOTE 2 Created: `3 Resources/X.md`", 2);
+    assert.deepEqual([...got], [[2, "3 Resources/X.md"]]);
+  });
+
+  it("keeps the first line when no line says which note was created", () => {
+    // The format before the verb existed, and still what an unreconciled run
+    // recorded under it holds. Created-then-hub is the order every real report
+    // used, so the first line is the better guess than the last.
     const got = parseNoteLines("NOTE 1 first.md\nNOTE 1 second.md", 1);
-    assert.deepEqual([...got], [[1, "second.md"]]);
+    assert.deepEqual([...got], [[1, "first.md"]]);
   });
 });

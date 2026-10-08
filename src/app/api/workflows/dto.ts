@@ -188,6 +188,7 @@ export function instanceDTO(instance: WorkflowInstance): WorkflowInstanceDTO {
       position: b.position,
       kind: b.kind,
       status: b.status,
+      heldAt: b.heldAt,
       startedAt: b.startedAt,
       finishedAt: b.finishedAt,
       costUSD: blockSpendReading(b),

@@ -72,6 +72,7 @@ function block(id: string, over: Partial<BlockDraft> = {}): BlockDraft {
     promptOverride: "",
     agentId: "",
     fanOut: "3",
+    turnRetries: "0",
     mergeStrategy: "merge",
     mergeAutoResolve: false,
     maxPasses: "",
@@ -84,6 +85,7 @@ function block(id: string, over: Partial<BlockDraft> = {}): BlockDraft {
     provider: "",
     fixRounds: "1",
     verdictSource: "model",
+    verifyCommand: "",
     ...over,
   };
 }
@@ -137,6 +139,35 @@ test("a fan-out cap is carried only by the block that has one", () => {
     wire.nodes[2].fanOut === null || (wire.nodes[2].fanOut ?? 0) < 1,
     "a blank cap must not arrive as a number the server would accept",
   );
+});
+
+test("turn retries are carried only by an orchestrator block, and survive a save", () => {
+  // A retry count left on the draft of a block switched back to a run would
+  // otherwise reach a server that has no turn to retry, and any editor save of
+  // a loaded orchestrator block that dropped it would silently reset it to 0.
+  const wire = draftToGraph({
+    blocks: [
+      block("a", { turnRetries: "2" }),
+      block("b", { kind: "orchestrator", turnRetries: "2" }),
+    ],
+    links: [],
+  });
+  assert.equal(wire.nodes[0].turnRetries, null, "a run block states no retries");
+  assert.equal(wire.nodes[1].turnRetries, 2);
+
+  const result = saved({
+    blocks: [block("b", { kind: "orchestrator", turnRetries: "2" })],
+    links: [],
+  });
+  assert.ok(result.ok, result.ok ? "" : result.error);
+  assert.equal(result.value.graph.nodes[0].turnRetries, 2);
+
+  const past = saved({
+    blocks: [block("b", { kind: "orchestrator", turnRetries: "3" })],
+    links: [],
+  });
+  assert.ok(!past.ok, "a count past the cap is refused at save");
+  assert.match(past.error, /0 to 2 times[^]*it is set to 3/);
 });
 
 test("no template is null on the wire, not an empty string", () => {
@@ -1642,6 +1673,33 @@ test("a review switched to a status verdict saves, and states no fix runs, over 
     (id) => blocks.find((b) => b.id === id)!,
   );
   assert.equal(worstCaseRuns(2, worstCaseMembers(body)), 2);
+});
+
+test("a review switched to a command verdict sends its command, and no fix rounds over its hidden picker", () => {
+  // The panel hides fix rounds under a command verdict as under a status one,
+  // and the command field is the one thing the block runs: dropped on the way
+  // to Save, the block is refused for a command the operator can see typed.
+  const blocks = [
+    block("a"),
+    block("v", { kind: "review", fixRounds: "2", verdictSource: "command", verifyCommand: " npm test " }),
+    block("m", { kind: "merge" }),
+  ];
+  const links = [link("a", "v", { edge: "on-success" }), link("v", "m", { edge: "on-success" })];
+  const result = saved({ blocks, links });
+  assert.ok(result.ok, result.ok ? "" : result.error);
+  const review = result.value.graph.nodes.find((n) => n.id === "v")!;
+  assert.deepEqual(review.verdictSource, { kind: "command", command: "npm test" });
+  assert.equal(review.fixRounds, 0);
+
+  // Typed and then switched away from, it is not sent: nothing runs it.
+  const back = saved({
+    blocks: blocks.map((b) => (b.id === "v" ? { ...b, verdictSource: "model" } : b)),
+    links,
+  });
+  assert.ok(back.ok, back.ok ? "" : back.error);
+  const model = back.value.graph.nodes.find((n) => n.id === "v")!;
+  assert.deepEqual(model.verdictSource, { kind: "model" });
+  assert.equal(model.fixRounds, 2);
 });
 
 test("a link into a frame is refused at the release, naming the frame", () => {

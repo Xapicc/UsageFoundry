@@ -13,18 +13,21 @@ import {
   addBlockSpend,
   blockSettlement,
   blockSpendReading,
+  blockTurnRetries,
   blockTurnSpend,
   bootBlockPlan,
   deliverBlockOutcome,
   memberSpendReading,
   sumMemberSpend,
   emittedFolderRefusal,
+  gateContinueRefusal,
   haltPlan,
   instanceStatus,
   loopBody,
   loopStopAfterRefusal,
   loopStopStatus,
   mergeBlockOutcome,
+  modelOnList,
   queuedBranchOutcome,
   normalizeWorkflowInput,
   orchestratorRetryRefusal,
@@ -57,6 +60,7 @@ import {
   type WorkflowKnowledge,
   type WorkflowNode,
 } from "./workflows";
+import { modelRefusal, type ModelCatalogueEntry } from "./modelCatalogue";
 import type { LoopBoardCondition } from "./workflowGraph";
 import { topologicalOrder, type RunStatus } from "./orchestrator";
 import { readTaskLinks } from "./tasks";
@@ -139,6 +143,15 @@ function merger(id: string, extra: Record<string, unknown> = {}) {
 /** A deliver block, which holds no setting of its own. */
 function deliverer(id: string, extra: Record<string, unknown> = {}) {
   return node(id, { kind: "deliver", ...extra });
+}
+
+/**
+ * A gate, which carries **nothing**: like a loop it starts no run, and every
+ * field that describes one is refused by name, so a helper built on `node`
+ * would make each case assert against a graph no door accepts.
+ */
+function gater(id: string, extra: Record<string, unknown> = {}) {
+  return { id, name: id.toUpperCase(), kind: "gate", ...extra };
 }
 
 /**
@@ -921,6 +934,58 @@ describe("normalizeWorkflowInput — providers and review blocks", () => {
     );
   });
 
+  it("keeps a review block's verify command as typed, and refuses one parseVerifyCommand refuses", () => {
+    // The command is spawned in every branch's checkout with nobody looking, so
+    // the save is the one moment a person reads it back. Held to the same rule
+    // `landVerifyCommand` is: a shell line saved here would be a command the
+    // operator read one way and `runVerify` split another, or refused a pass in
+    // with every branch of it set aside.
+    const saved = (verdictSource: unknown, fixRounds: unknown = 0) =>
+      graph(
+        [node("a"), reviewer("r", { verdictSource, fixRounds }), merger("m")],
+        [edge("a", "r", { edge: "on-finish" }), edge("r", "m")],
+      );
+    const kept = value(saved({ kind: "command", command: "  npm  test  " })).graph.nodes.find(
+      (n) => n.id === "r",
+    )!;
+    assert.deepEqual(kept.verdictSource, { kind: "command", command: "npm  test" });
+
+    for (const shell of [
+      "npm test && npm run build",
+      "npm test; curl evil.example",
+      "sh -c $(cat x)",
+      "npm test > out.txt",
+      "npm test | tee log",
+    ]) {
+      assert.match(
+        error(saved({ kind: "command", command: shell })),
+        /^“R” judges each branch by a verify command, and a verify command is argv, never a shell line/,
+        shell,
+      );
+    }
+    for (const empty of ["", "   ", undefined, null]) {
+      assert.match(
+        error(saved({ kind: "command", command: empty })),
+        /^“R” judges each branch by a verify command, and no verify command is configured\.$/,
+        String(empty),
+      );
+    }
+    assert.match(
+      error(saved({ kind: "command", command: ["npm", "test"] })),
+      /^“R”: "verdictSource.command" has to be a string when it is given; got /,
+    );
+    // No fix rounds, `status`'s rule: nothing briefs a fix run with the failure.
+    assert.match(
+      error(saved({ kind: "command", command: "npm test" }, 1)),
+      /“R” judges each branch by its verify command[^]*Set its fix rounds to 0/,
+    );
+    // A command beside another kind is dropped unread, never run.
+    const status = value(saved({ kind: "status", command: "npm test" })).graph.nodes.find(
+      (n) => n.id === "r",
+    )!;
+    assert.deepEqual(status.verdictSource, { kind: "status" });
+  });
+
   it("refuses an on-success link into a review block that judges by run status", () => {
     // Behind on-success the first run that does not complete blocks the
     // block, which is the stop the status verdict exists to remove — and a Run
@@ -953,6 +1018,56 @@ describe("normalizeWorkflowInput — providers and review blocks", () => {
       ),
       /no branch of its own to hand over/,
     );
+  });
+});
+
+/**
+ * An orchestrator block's `turnRetries` is spend with nobody looking, so a value
+ * that is wrong has to fail at save rather than become a setting. The reading
+ * `Number()` would give is the hazard: `true` is 1, `"2"` is 2 and `[]` is 0.
+ */
+describe("normalizeWorkflowInput — an orchestrator block's turn retries", () => {
+  const retries = (extra: unknown) =>
+    value(graph([decider("d", { turnRetries: extra })])).graph.nodes[0].turnRetries;
+
+  it("keeps 0 to 2, and reads an absent or null field as 0", () => {
+    assert.equal(retries(0), 0);
+    assert.equal(retries(1), 1);
+    assert.equal(retries(2), 2);
+    assert.equal(retries(null), 0);
+    assert.equal(value(graph([decider("d")])).graph.nodes[0].turnRetries, 0);
+  });
+
+  it("refuses a value above the cap, naming the block and the cap", () => {
+    assert.match(
+      error(graph([decider("d", { turnRetries: 3 })])),
+      /“D” may start a failed deciding turn again 0 to 2 times[^]*it is set to 3/,
+    );
+  });
+
+  it("refuses a negative number and one that is not whole", () => {
+    assert.match(error(graph([decider("d", { turnRetries: -1 })])), /it is set to -1/);
+    assert.match(error(graph([decider("d", { turnRetries: 1.5 })])), /it is set to 1.5/);
+  });
+
+  it("refuses what Number() would have read as a count", () => {
+    for (const [given, said] of [
+      [true, "a boolean"],
+      ["1", "a string"],
+      [[], "an array"],
+      [{}, "an object"],
+    ] as Array<[unknown, string]>) {
+      assert.match(
+        error(graph([decider("d", { turnRetries: given })])),
+        new RegExp(`it is set to ${said}`),
+        said,
+      );
+    }
+  });
+
+  it("holds nothing on a block that does not decide", () => {
+    const saved = value(graph([node("a", { turnRetries: 2 })])).graph.nodes[0];
+    assert.equal(saved.turnRetries, null);
   });
 });
 
@@ -1102,6 +1217,47 @@ describe("normalizeWorkflowInput — links", () => {
 /* ------------------------------------------------------------------ */
 /* Carrying a branch over                                              */
 /* ------------------------------------------------------------------ */
+
+describe("normalizeWorkflowInput — an on-failure link", () => {
+  it("accepts one out of a run block, into any kind", () => {
+    const v = value(
+      graph(
+        [node("a"), node("b"), merger("m")],
+        [edge("a", "b", { edge: "on-failure" }), edge("a", "m", { edge: "on-failure" })],
+      ),
+    );
+    assert.deepEqual(v.graph.edges.map((e) => e.edge), ["on-failure", "on-failure"]);
+  });
+
+  it("refuses one out of any block but a run, naming both", () => {
+    // Every other kind settles in words of its own, and which of them a fixer
+    // should start on is a decision nobody has made.
+    for (const make of [decider, merger]) {
+      assert.match(
+        error(graph([make("x"), node("a")], [edge("x", "a", { edge: "on-failure" })])),
+        /“A” is set to start only if “X” fails, and only a run block's failure can start anything/,
+      );
+    }
+  });
+
+  it("refuses one inside what a loop repeats", () => {
+    // A pass has no reading for a member that was not needed, so it would
+    // neither stop nor carry on.
+    assert.match(
+      error(
+        graph(
+          [repeater("l"), node("a"), node("b"), merger("m")],
+          [
+            repeats("l", "a"),
+            edge("a", "b", { edge: "on-failure", continueBranch: true }),
+            edge("b", "m"),
+          ],
+        ),
+      ),
+      /inside what “L” repeats/,
+    );
+  });
+});
 
 describe("normalizeWorkflowInput — continuing a branch", () => {
   it("accepts one hand-over per block", () => {
@@ -1671,6 +1827,212 @@ describe("normalizeWorkflowInput — deliver blocks", () => {
  * silent, because the pull request's address is the product of the block and
  * the note is the only place the instance page can read it from.
  */
+describe("normalizeWorkflowInput — gate blocks", () => {
+  it("saves a gate that holds nothing of its own, with every run field empty", () => {
+    const saved = value(
+      graph([node("a"), gater("g"), node("b")], [edge("a", "g"), edge("g", "b")]),
+    );
+    const g = saved.graph.nodes[1];
+    assert.equal(g.kind, "gate");
+    assert.equal(g.templateId, null);
+    assert.equal(g.agentId, null);
+    assert.equal(g.mountId, "");
+    assert.equal(g.folder, "");
+    assert.equal(g.task, "");
+    assert.equal(g.promptOverride, null);
+  });
+
+  it("saves a gate with nothing in front of it, which holds the whole run from the start", () => {
+    assert.equal(value(graph([gater("g"), node("b")], [edge("g", "b")])).graph.nodes[0].kind, "gate");
+  });
+
+  it("refuses by name every field that describes a run it does not start", () => {
+    // Saved, a template or an agent on a gate is a choice no process would act
+    // on; the door that exists to say so out loud is this one.
+    const told: Array<[string, unknown, RegExp]> = [
+      ["task", "Do it", /no task/],
+      ["templateId", "t-iso", /no guards/],
+      ["agentId", "a-rev", /nothing for that agent to be/],
+      ["mountId", "work", /no workspace/],
+      ["folder", "repo", /no folder/],
+      ["promptOverride", "Be brief", /no standing instructions/],
+    ];
+    for (const [key, given, phrase] of told) {
+      const refusal = error(
+        graph([gater("g", { [key]: given }), node("b")], [edge("g", "b")]),
+      );
+      assert.match(refusal, /“G”/, key);
+      assert.match(refusal, phrase, key);
+    }
+  });
+
+  it("refuses a field of the wrong type rather than reading it as empty", () => {
+    // `String(["t-iso"])` is a template id, and `String([])` is nothing told.
+    assert.match(
+      error(graph([gater("g", { templateId: ["t-iso"] }), node("b")], [edge("g", "b")])),
+      /templateId/,
+    );
+  });
+
+  it("refuses a gate with nothing after it, which would stop the run to release nothing", () => {
+    assert.match(
+      error(graph([node("a"), gater("g")], [edge("a", "g")])),
+      /“G” is a gate with nothing after it/,
+    );
+  });
+
+  it("refuses a link that carries a branch into or out of a gate", () => {
+    const into = error(
+      graph(
+        [node("a"), gater("g"), node("b")],
+        [edge("a", "g", { continueBranch: true }), edge("g", "b")],
+      ),
+    );
+    assert.match(into, /“G” only waits for a person/);
+    const out = error(
+      graph(
+        [node("a"), gater("g"), node("b")],
+        [edge("a", "g"), edge("g", "b", { continueBranch: true })],
+      ),
+    );
+    assert.match(out, /“G” only waits for a person/);
+  });
+
+  it("does not let a gate stand for the run in front of a merge, and says what to draw", () => {
+    // A gate hands on no runs, so a merge behind only a gate has nothing to
+    // land. The refusal alone would leave the operator who drew
+    // run → gate → merge to guess which link to add.
+    const refusal = error(
+      graph(
+        [node("a"), gater("g"), merger("m")],
+        [edge("a", "g"), edge("g", "m")],
+      ),
+    );
+    assert.match(refusal, /“M” has no block in front of it whose work it could land/);
+    assert.match(refusal, /link the block that built them straight to “M” as well as to the gate/);
+  });
+
+  it("says the same in front of a deliver block and a review block", () => {
+    const behind: Array<[string, unknown, RegExp]> = [
+      ["d", deliverer("d"), /could push/],
+      ["v", node("v", { kind: "review", fixRounds: 0 }), /could review/],
+    ];
+    for (const [id, block, phrase] of behind) {
+      const refusal = error(
+        graph([node("a"), gater("g"), block], [edge("a", "g"), edge("g", id)]),
+      );
+      assert.match(refusal, phrase, id);
+      assert.match(refusal, /hands on no branches/, id);
+    }
+  });
+
+  it("holds a merge when the run is linked to the merge and to the gate", () => {
+    // The diamond: the merge waits for the gate and still lands the run.
+    const saved = value(
+      graph(
+        [node("a"), gater("g"), merger("m")],
+        [edge("a", "g"), edge("a", "m"), edge("g", "m")],
+      ),
+    );
+    assert.equal(saved.graph.edges.length, 3);
+  });
+
+  it("saves a gate as the entry of a loop's section, which holds every pass", () => {
+    const saved = value(
+      graph(
+        [repeater("l"), gater("lg"), node("la"), merger("lm")],
+        [repeats("l", "lg"), edge("lg", "la"), edge("la", "lm")],
+      ),
+    );
+    assert.deepEqual(saved.graph.nodes[0].bodyNodeIds, ["lg", "la", "lm"]);
+  });
+
+  it("does not let a gate in a section carry a run's branch on to the exit", () => {
+    // The section rule is the one that already asks a run member to hand its
+    // branch to something that lands it; a gate hands on none.
+    const piped = (extraEdges: unknown[]) =>
+      graph(
+        [repeater("l"), node("la"), gater("lg"), node("lb"), merger("lm")],
+        [
+          repeats("l", "la"),
+          edge("la", "lg"),
+          edge("lg", "lb"),
+          edge("lb", "lm"),
+          ...extraEdges,
+        ],
+      );
+    assert.match(error(piped([])), /Nothing lands “LA”'s branch/);
+    assert.equal(value(piped([edge("la", "lm")])).graph.nodes.length, 5);
+  });
+
+  it("can be proposed from a chat, which is the one door that never saw a canvas", () => {
+    const plan = planWorkflowProposal(
+      {
+        title: "Look before landing",
+        graph: JSON.stringify({
+          nodes: [
+            { id: "a", name: "Build", kind: "run", templateId: "t-iso", mountId: "work", folder: "repo", task: "Build it" },
+            { id: "g", name: "Look", kind: "gate" },
+            { id: "m", name: "Land", kind: "merge", mergeStrategy: "merge" },
+          ],
+          edges: [
+            { from: "a", to: "g", edge: "on-success", continueBranch: false },
+            { from: "a", to: "m", edge: "on-success", continueBranch: false },
+            { from: "g", to: "m", edge: "on-finish", continueBranch: false },
+          ],
+        }),
+      },
+      KNOWN,
+    );
+    assert.equal(plan.ok, true, plan.ok ? "" : plan.reason);
+  });
+});
+
+describe("gateContinueRefusal — when Continue cannot be pressed", () => {
+  const held = { name: "Look", status: "waiting", heldAt: 1 } as const;
+
+  it("lets a held gate of an open run through", () => {
+    for (const instanceStatus of ["started", "finished", "blocked"] as const) {
+      assert.equal(gateContinueRefusal({ instanceStatus, gate: held }), null, instanceStatus);
+    }
+  });
+
+  it("answers 404 for a gate the run does not have", () => {
+    const refusal = gateContinueRefusal({ instanceStatus: "started", gate: null });
+    assert.equal(refusal?.status, 404);
+  });
+
+  it("refuses a halted run, whichever way it was halted", () => {
+    for (const instanceStatus of ["stopping", "stopped", "failed"] as const) {
+      const refusal = gateContinueRefusal({ instanceStatus, gate: held });
+      assert.equal(refusal?.status, 409, instanceStatus);
+      assert.match(refusal?.error ?? "", new RegExp(instanceStatus), instanceStatus);
+    }
+  });
+
+  it("tells a gate already let through from one the run has not reached", () => {
+    const through = gateContinueRefusal({
+      instanceStatus: "started",
+      gate: { name: "Look", status: "emitted", heldAt: 1 },
+    });
+    assert.match(through?.error ?? "", /already been let through/);
+    const early = gateContinueRefusal({
+      instanceStatus: "started",
+      gate: { name: "Look", status: "waiting", heldAt: null },
+    });
+    assert.match(early?.error ?? "", /has not reached “Look”/);
+  });
+
+  it("refuses a gate that was written off, and says what it is", () => {
+    const refusal = gateContinueRefusal({
+      instanceStatus: "started",
+      gate: { name: "Look", status: "blocked", heldAt: 1 },
+    });
+    assert.equal(refusal?.status, 409);
+    assert.match(refusal?.error ?? "", /“Look” is blocked/);
+  });
+});
+
 describe("deliverBlockOutcome — what a deliver block reports", () => {
   const delivered = (branch: string, n: number): DeliveryOutcome => ({
     branch,
@@ -3330,6 +3692,108 @@ describe("planEmittedRun — the decider's pick against the block's template", (
   });
 });
 
+/**
+ * The model list against a run a workflow is about to create.
+ *
+ * The run form refuses a model the operator switched off and the template door
+ * deliberately does not, so a template can hold one — and a block's run or an
+ * emitted run is the path that hands it on with no form in front of it, a
+ * schedule's with no person at all. The cases feed `modelOnList` what `planNode`
+ * and `planEmittedRun` actually produce, since a model the plan never carried
+ * would pass for the wrong reason.
+ */
+describe("modelOnList — a switched-off model reaching a workflow's run", () => {
+  const LIST: ModelCatalogueEntry[] = [
+    { id: "claude-sonnet-5", label: "Claude Sonnet 5", enabled: true },
+    { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", enabled: true },
+    { id: "claude-haiku-5-5", label: "Claude Haiku 5.5", enabled: false },
+  ];
+  const RETIRED = { ...BLOCK_TEMPLATE, model: "claude-haiku-5-5" };
+  const ORCHESTRATOR: WorkflowNode = { ...RUN_BLOCK, kind: "orchestrator", fanOut: 3 };
+  const SPEC = {
+    id: "s1",
+    title: "Fix the flake",
+    task: "Make the retry test deterministic.",
+    folder: "",
+    agent: null,
+    taskIds: [],
+    dependsOn: [],
+  };
+
+  it("refuses a run block whose template pins a switched-off model, in the list's own words", () => {
+    const plan = planNode(RUN_BLOCK, RETIRED, BLOCK_DEFAULTS, null);
+    assert.ok(plan.ok);
+    const listed = modelOnList(plan.input, RUN_BLOCK.name, LIST);
+    assert.equal(listed.ok, false);
+    const reason = listed.ok ? "" : listed.reason;
+    assert.ok(reason.includes(modelRefusal(LIST, "claude-haiku-5-5")!), reason);
+    assert.ok(reason.includes(`“${RUN_BLOCK.name}”`), "names the block");
+    assert.match(reason, /switched off for this install/);
+  });
+
+  it("refuses an emitted run whose template pins one, and one the list never had", () => {
+    const retired = modelOnList(
+      planEmittedRun(ORCHESTRATOR, SPEC, RETIRED, BLOCK_DEFAULTS, null),
+      "Fix the flake",
+      LIST,
+    );
+    assert.equal(retired.ok, false);
+    assert.match(retired.ok ? "" : retired.reason, /switched off for this install/);
+
+    const unknown = modelOnList(
+      planEmittedRun(ORCHESTRATOR, SPEC, { ...BLOCK_TEMPLATE, model: "claude-nova-9" }, BLOCK_DEFAULTS, null),
+      "Fix the flake",
+      LIST,
+    );
+    assert.equal(unknown.ok, false);
+    assert.match(unknown.ok ? "" : unknown.reason, /not on this install's list/);
+  });
+
+  it("still starts a run on an enabled model, or on none", () => {
+    const enabled = planNode(RUN_BLOCK, BLOCK_TEMPLATE, BLOCK_DEFAULTS, null);
+    assert.ok(enabled.ok);
+    assert.equal(enabled.input.model, "claude-sonnet-5");
+    assert.equal(modelOnList(enabled.input, RUN_BLOCK.name, LIST).ok, true);
+
+    const none = planNode(RUN_BLOCK, { ...BLOCK_TEMPLATE, model: null }, BLOCK_DEFAULTS, null);
+    assert.ok(none.ok);
+    assert.equal(modelOnList(none.input, RUN_BLOCK.name, LIST).ok, true);
+
+    const emitted = planEmittedRun(
+      ORCHESTRATOR,
+      { ...SPEC, decidedModel: "claude-haiku-4-5" },
+      { ...BLOCK_TEMPLATE, model: null },
+      BLOCK_DEFAULTS,
+      null,
+    );
+    assert.equal(emitted.model, "claude-haiku-4-5");
+    assert.equal(modelOnList(emitted, "Fix the flake", LIST).ok, true);
+  });
+
+  // The Claude list would refuse both ids, and neither is a Claude id.
+  it("does not hold a Codex or local run to the Claude list", () => {
+    for (const provider of ["codex", "local"] as const) {
+      const emitted = planEmittedRun(
+        { ...ORCHESTRATOR, provider },
+        { ...SPEC, decidedModel: "gpt-5.6-luna" },
+        RETIRED,
+        BLOCK_DEFAULTS,
+        null,
+      );
+      assert.equal(modelOnList(emitted, "Fix the flake", LIST).ok, true, provider);
+    }
+    const signedIn = planNode({ ...RUN_BLOCK, provider: "local" }, RETIRED, BLOCK_DEFAULTS, null);
+    assert.ok(signedIn.ok);
+    assert.equal(modelOnList({ ...signedIn.input, model: "qwen3" }, RUN_BLOCK.name, LIST).ok, true);
+  });
+
+  it("refuses nothing when the operator has no list", () => {
+    const plan = planNode(RUN_BLOCK, RETIRED, BLOCK_DEFAULTS, null);
+    assert.ok(plan.ok);
+    assert.equal(modelOnList(plan.input, RUN_BLOCK.name, []).ok, true);
+  });
+});
+
 describe("planNode — what a block takes from its template", () => {
   it("runs a block on its template's model", () => {
     const plan = planNode(RUN_BLOCK, BLOCK_TEMPLATE, BLOCK_DEFAULTS, null);
@@ -3417,6 +3881,34 @@ describe("planWorkflowProposal — a graph a model wrote becomes a saved workflo
       noCap.reason,
       error(graph([node("a", { kind: "orchestrator" })])),
     );
+  });
+
+  it("refuses a review block whose verdict is a verify command, which only a person saves", () => {
+    // `propose_workflow` refuses it first; this is the click that saves what a
+    // model wrote, and its card shows a review block as "no agent", so a person
+    // approving it would never have been shown the command.
+    const review = {
+      id: "r",
+      name: "Check",
+      kind: "review",
+      fixRounds: 0,
+      verdictSource: { kind: "command", command: "npm test" },
+    };
+    const plan = planWorkflowProposal(
+      proposal([node("a"), review, merger("m")], [edge("a", "r"), edge("r", "m")]),
+      KNOWN,
+    );
+    assert.ok(!plan.ok);
+    assert.match(plan.reason, /“Check” judges branches by a verify command, and only a person may save one/);
+
+    const byStatus = planWorkflowProposal(
+      proposal(
+        [node("a"), { ...review, verdictSource: { kind: "status" } }, merger("m")],
+        [edge("a", "r", { edge: "on-finish" }), edge("r", "m")],
+      ),
+      KNOWN,
+    );
+    assert.ok(byStatus.ok, byStatus.ok ? "" : byStatus.reason);
   });
 
   it("refuses a template deleted since the proposal was written, rather than falling back", () => {
@@ -3527,6 +4019,18 @@ describe("summarizeProposedGraph — what the approval card has to show", () => 
     assert.deepEqual(push.after, ["A"]);
   });
 
+  it("says a gate has no agent and no folder, and what it waits for", () => {
+    const [, hold] = summarizeProposedGraph(
+      value(graph([node("a"), gater("hold"), node("b")], [edge("a", "hold"), edge("hold", "b")])).graph,
+      KNOWN,
+      untemplated,
+    );
+    assert.equal(hold.kind, "gate");
+    assert.equal(hold.guardsLabel, "no agent");
+    assert.equal(hold.folderLabel, null);
+    assert.deepEqual(hold.after, ["A"]);
+  });
+
   it("carries the fan-out cap, which is the number the operator is agreeing to", () => {
     // The one figure on the card that bounds agents nobody approves
     // individually. Absent, the decision moves to a canvas that may never be
@@ -3537,6 +4041,16 @@ describe("summarizeProposedGraph — what the approval card has to show", () => 
       untemplated,
     );
     assert.equal(d.fanOut, 4);
+  });
+
+  it("carries the retries, which are billed turns nobody approves individually", () => {
+    const [d, a] = summarizeProposedGraph(
+      value(graph([decider("d", { turnRetries: 2 }), node("a")])).graph,
+      KNOWN,
+      untemplated,
+    );
+    assert.equal(d.turnRetries, 2);
+    assert.equal(a.turnRetries, 0, "a block that does not decide retries nothing");
   });
 
   it("says a merge block may pay to reconcile, and names no folder for it", () => {
@@ -4188,6 +4702,68 @@ describe("orchestratorRetryRefusal — which failed deciding turns may be run ag
         new RegExp(`is ${status}, so there is no failed turn`),
         status,
       );
+    }
+  });
+});
+
+/**
+ * Whether a deciding turn that just ended is bought a second time.
+ *
+ * Both wrong answers are silent. Started again when it should not be, the
+ * operator pays twice for a decision this app refused or one already carried
+ * out; settled when it should have been started again, the loop that was saved
+ * with retries ends on the first bad turn, which is the failure these exist for.
+ */
+describe("blockTurnRetries — which ended turns are started again", () => {
+  const ending = (over: Partial<Parameters<typeof blockTurnRetries>[0]> = {}) => ({
+    result: { status: "failed", error: "The CLI exited 1." } as TurnResult,
+    emitted: 0,
+    refused: false,
+    allowed: 1,
+    used: 0,
+    ...over,
+  });
+
+  it("starts again a turn that failed having decided nothing", () => {
+    assert.equal(blockTurnRetries(ending()), true);
+  });
+
+  it("does so whether or not the turn reported a cost", () => {
+    // Most failures measured in this install ended with no `result` event, and
+    // a rule keyed on a cost would have skipped exactly those.
+    assert.equal(blockTurnRetries(ending({ result: { status: "failed", costUSD: 0.4 } })), true);
+    assert.equal(blockTurnRetries(ending({ result: { status: "failed" } })), true);
+  });
+
+  it("allows nothing by default and nothing past the limit", () => {
+    assert.equal(blockTurnRetries(ending({ allowed: 0 })), false);
+    assert.equal(blockTurnRetries(ending({ allowed: 2, used: 1 })), true);
+    assert.equal(blockTurnRetries(ending({ allowed: 2, used: 2 })), false);
+  });
+
+  it("leaves a turn that did not fail alone", () => {
+    assert.equal(blockTurnRetries(ending({ result: { status: "idle", text: "Done." } })), false);
+  });
+
+  it("leaves a turn that decided on runs alone, however it ended", () => {
+    // `blockSettlement` records it `emitted` and its runs go ahead; another
+    // turn would decide over a decision about to be carried out.
+    assert.equal(blockTurnRetries(ending({ emitted: 2 })), false);
+  });
+
+  it("leaves a turn whose emission this app refused alone", () => {
+    assert.equal(blockTurnRetries(ending({ refused: true })), false);
+  });
+
+  it("agrees with blockSettlement about which turns are failures", () => {
+    // The two are asked of the same inputs; a turn one calls `emitted` and the
+    // other restarts would be decided over and carried out at once.
+    for (const emitted of [0, 1]) {
+      for (const status of ["idle", "failed"] as const) {
+        const result: TurnResult = { status, error: status === "failed" ? "x" : undefined };
+        const failed = blockSettlement(result, emitted, []).status === "failed";
+        assert.equal(blockTurnRetries(ending({ result, emitted })), failed, `${status}/${emitted}`);
+      }
     }
   });
 });
@@ -4909,6 +5485,117 @@ describe("planInstanceStep — a run a restart closed out", () => {
   });
 });
 
+/**
+ * The third condition one level up, where the dependent is a block nobody has
+ * created yet. The same two silent failures as `releasableRuns`', and a third
+ * this level adds: a node passed over has to read as not needed rather than
+ * blocked, or a workflow whose first run simply worked reports its tail as
+ * written off — and everything behind it has to be passed over too, or it sits
+ * `waiting` and the instance never finishes.
+ */
+describe("planInstanceStep — an on-failure link", () => {
+  // Build fails over to Fix, and each has a merge block of its own: the shape a
+  // fallback takes, since a fan-in of the two would wait on the branch not taken.
+  const FALLBACK: WorkflowGraph = {
+    nodes: [
+      graphNode("build", "Build"),
+      graphNode("fix", "Fix"),
+      graphNode("land", "Land Build", { kind: "merge", mergeStrategy: "merge" }),
+      graphNode("landFix", "Land Fix", { kind: "merge", mergeStrategy: "merge" }),
+    ],
+    edges: [
+      edge("build", "land"),
+      edge("build", "fix", { edge: "on-failure", continueBranch: true }),
+      edge("fix", "landFix"),
+    ],
+  };
+  const deferred = {
+    fix: decided("waiting"),
+    land: decided("waiting"),
+    landFix: decided("waiting"),
+  };
+
+  it("creates the dependent only when the run in front of it failed or asked for review", () => {
+    for (const status of ["failed", "needs-review"] as const) {
+      const step = stepOf({ ...deferred, build: ran("r-b", status) }, FALLBACK);
+      assert.deepEqual(
+        step.create,
+        [{ nodeId: "fix", dependsOn: [{ runId: "r-b", edge: "on-failure", continueBranch: true }] }],
+        status,
+      );
+      assert.deepEqual(step.notNeeded, [], status);
+      // The success branch is the one written off now, and it says so as ever.
+      assert.deepEqual(step.block.map((b) => b.nodeId), ["land"], status);
+    }
+  });
+
+  it("passes over the dependent and what is behind it when the run completed", () => {
+    const step = stepOf({ ...deferred, build: ran("r-b", "completed") }, FALLBACK);
+    assert.deepEqual(step.create, []);
+    assert.deepEqual(step.block, []);
+    assert.deepEqual(step.merge, [{ nodeId: "land", runIds: ["r-b"] }]);
+    assert.deepEqual(step.notNeeded.map((n) => n.nodeId), ["fix", "landFix"]);
+    assert.match(step.notNeeded[0].reason, /only if “Build” failed \(on-failure\), and it completed/);
+    assert.match(step.notNeeded[1].reason, /after “Fix”, which was not needed either/);
+  });
+
+  it("blocks it, rather than passing it over, when the run was stopped", () => {
+    // A stop is a decision to stop spending: neither a failure to start a fixer
+    // on nor a success that makes one unnecessary.
+    const step = stepOf({ ...deferred, build: ran("r-b", "stopped") }, FALLBACK);
+    assert.deepEqual(step.create, []);
+    assert.deepEqual(step.notNeeded, []);
+    const fix = step.block.find((b) => b.nodeId === "fix");
+    assert.match(fix?.reason ?? "", /only if “Build” failed \(on-failure\); it ended stopped, which is not a failure/);
+  });
+
+  it("holds it while the run is still going, and on a run that never worked", () => {
+    assert.deepEqual(
+      stepOf({ ...deferred, build: ran("r-b", "running", 0) }, FALLBACK).create,
+      [],
+    );
+    const never = stepOf({ ...deferred, build: ran("r-b", "failed", 0) }, FALLBACK);
+    assert.deepEqual(never.create, []);
+    assert.ok(never.block.some((b) => b.nodeId === "fix"));
+  });
+
+  it("passes over whatever is behind a node already not needed, in either table", () => {
+    // A run node created up front and then passed over by `releasableRuns`…
+    const asRun = stepOf(
+      { build: ran("r-b", "completed"), fix: ran("r-f", "not-needed", 0), land: decided("emitted"), landFix: decided("waiting") },
+      FALLBACK,
+    );
+    assert.deepEqual(asRun.notNeeded.map((n) => n.nodeId), ["landFix"]);
+    assert.deepEqual(asRun.block, []);
+    // …and a ledger row passed over by an earlier advance, on an on-finish edge.
+    const chained: WorkflowGraph = {
+      nodes: [...FALLBACK.nodes, graphNode("tidy", "Tidy")],
+      edges: [...FALLBACK.edges, edge("landFix", "tidy", { edge: "on-finish" })],
+    };
+    const asBlock = stepOf(
+      { build: ran("r-b", "completed"), fix: decided("not-needed"), land: decided("emitted"), landFix: decided("not-needed"), tidy: decided("waiting") },
+      chained,
+    );
+    assert.deepEqual(asBlock.notNeeded.map((n) => n.nodeId), ["tidy"]);
+    assert.match(asBlock.notNeeded[0].reason, /after “Land Fix”, which was not needed either/);
+  });
+
+  it("leaves the existing conditions as they were", () => {
+    const graph: WorkflowGraph = {
+      ...FALLBACK,
+      edges: [edge("build", "fix", { edge: "on-finish" }), edge("fix", "landFix")],
+    };
+    for (const status of ["completed", "failed"] as const) {
+      const step = stepOf({ ...deferred, build: ran("r-b", status) }, graph);
+      assert.deepEqual(step.create.map((c) => c.nodeId), ["fix"], status);
+      assert.deepEqual(step.notNeeded, [], status);
+    }
+    const success = stepOf({ ...deferred, build: ran("r-b", "failed") }, { ...graph, edges: [edge("build", "fix"), edge("fix", "landFix")] });
+    assert.deepEqual(success.notNeeded, []);
+    assert.deepEqual(success.block.map((b) => b.nodeId), ["fix", "landFix"]);
+  });
+});
+
 /* ------------------------------------------------------------------ */
 /* A “repeats” link is never a dependency                              */
 /* ------------------------------------------------------------------ */
@@ -5413,6 +6100,115 @@ describe("planInstanceStep — deliver blocks", () => {
   });
 });
 
+describe("planInstanceStep — gate blocks", () => {
+  const gateNode = (id: string, name: string): WorkflowNode =>
+    graphNode(id, name, { kind: "gate", mountId: "", folder: "", task: "" });
+  const mergeNode = (id: string, name: string): WorkflowNode =>
+    graphNode(id, name, { kind: "merge", mountId: "", folder: "", task: "", mergeStrategy: "merge" });
+
+  /**
+   * The diamond a merge is held with: the run is linked to the merge directly,
+   * so the merge lands it, and to the gate, which the merge also waits for.
+   */
+  const HELD: WorkflowGraph = {
+    nodes: [
+      { ...FAN.nodes[1], id: "build", name: "Build" },
+      gateNode("look", "Look first"),
+      mergeNode("land", "Land it"),
+      { ...FAN.nodes[1], id: "after", name: "After" },
+    ],
+    edges: [
+      edge("build", "look"),
+      edge("build", "land"),
+      edge("look", "land"),
+      edge("look", "after"),
+    ],
+  };
+
+  it("reaches a gate once everything in front of it is satisfied, and starts nothing", () => {
+    const step = stepOf(
+      { build: ran("r-build", "completed"), look: decided("waiting"), land: decided("waiting") },
+      HELD,
+    );
+    assert.deepEqual(step.hold, ["look"]);
+    assert.deepEqual(step.merge, [], "the merge is held behind the gate");
+    assert.deepEqual(step.create, [], "and so is the run behind it");
+    assert.deepEqual(step.spawn, []);
+    assert.deepEqual(step.block, []);
+  });
+
+  it("does not reach a gate while a run in front of it is still working", () => {
+    const step = stepOf(
+      { build: ran("r-build", "running", 0), look: decided("waiting"), land: decided("waiting") },
+      HELD,
+    );
+    assert.deepEqual(step.hold, []);
+  });
+
+  it("reaches a gate with nothing in front of it at once", () => {
+    const g: WorkflowGraph = {
+      nodes: [gateNode("look", "Look first"), { ...FAN.nodes[1], id: "after", name: "After" }],
+      edges: [edge("look", "after")],
+    };
+    assert.deepEqual(stepOf({ look: decided("waiting") }, g).hold, ["look"]);
+  });
+
+  it("lists a held gate again on every plan until it is let through", () => {
+    // `holdGate`'s guarded write is what makes the second listing a no-op, and
+    // it can only be a no-op if the planner keeps listing it.
+    const state = { build: ran("r-build", "completed"), look: decided("waiting"), land: decided("waiting") };
+    assert.deepEqual(stepOf(state, HELD).hold, ["look"]);
+    assert.deepEqual(stepOf(state, HELD).hold, ["look"]);
+  });
+
+  it("releases what is behind it when it is let through, handing the merge only the run", () => {
+    const step = stepOf(
+      { build: ran("r-build", "completed"), look: decided("emitted"), land: decided("waiting") },
+      HELD,
+    );
+    assert.deepEqual(step.hold, [], "a gate that was let through is not held again");
+    assert.deepEqual(step.merge, [{ nodeId: "land", runIds: ["r-build"] }]);
+    assert.deepEqual(
+      step.create,
+      [{ nodeId: "after", dependsOn: [] }],
+      "a gate resolved to no run, so nothing behind it waits on one",
+    );
+  });
+
+  it("is satisfied by an on-finish link as well as an on-success one", () => {
+    const g: WorkflowGraph = {
+      nodes: [gateNode("look", "Look first"), { ...FAN.nodes[1], id: "after", name: "After" }],
+      edges: [edge("look", "after", { edge: "on-finish" })],
+    };
+    assert.deepEqual(stepOf({ look: decided("emitted") }, g).create, [
+      { nodeId: "after", dependsOn: [] },
+    ]);
+  });
+
+  it("writes a gate off when a run in front of it ended in a way its link does not accept", () => {
+    const step = stepOf(
+      { build: ran("r-build", "failed"), look: decided("waiting"), land: decided("waiting") },
+      HELD,
+    );
+    assert.deepEqual(step.hold, [], "nobody is asked to continue past work that failed");
+    assert.ok(step.block.some((b) => b.nodeId === "look" && /ended failed/.test(b.reason)));
+  });
+
+  it("blocks what is behind a gate that was taken down, naming the gate", () => {
+    const step = stepOf(
+      {
+        build: ran("r-build", "completed"),
+        look: decided("blocked", [], "Stopped by operator before anyone let it through."),
+        after: decided("waiting"),
+      },
+      HELD,
+    );
+    const after = step.block.find((b) => b.nodeId === "after");
+    assert.match(after?.reason ?? "", /“Look first” never ran/);
+    assert.deepEqual(step.create, []);
+  });
+});
+
 /* ------------------------------------------------------------------ */
 /* What a restart leaves waiting                                        */
 /* ------------------------------------------------------------------ */
@@ -5435,6 +6231,7 @@ function instances(
     status,
     memberStatuses,
     restartClosedMember: false,
+    holdsGate: false,
   }));
 }
 
@@ -5499,7 +6296,13 @@ describe("bootBlockPlan — which waiting blocks a restart closes out", () => {
     );
     given[1].restartClosedMember = true;
     const plan = bootBlockPlan(given, true);
-    const decided = [...plan.abandoned, ...plan.settled, ...plan.spared, ...plan.held];
+    const decided = [
+      ...plan.abandoned,
+      ...plan.settled,
+      ...plan.spared,
+      ...plan.gated,
+      ...plan.held,
+    ];
     assert.equal(decided.length, given.length);
     assert.deepEqual([...decided].sort(), given.map((i) => i.id).sort());
   });
@@ -5514,6 +6317,38 @@ describe("bootBlockPlan — which waiting blocks a restart closes out", () => {
     );
     assert.deepEqual(plan.held, ["empty", "finished"]);
     assert.deepEqual(plan.abandoned, []);
+  });
+
+  it("keeps an instance whose gate is held even though no member survived", () => {
+    // A held gate is a wait only a person can end, so the premise the
+    // closing-out rule rests on — that nothing left will ever wake the block —
+    // is false for it.
+    const given = instances(["gated", "started", "completed"]);
+    given[0].holdsGate = true;
+    const plan = bootBlockPlan(given, false);
+    assert.deepEqual(plan.gated, ["gated"]);
+    assert.deepEqual(plan.abandoned, []);
+  });
+
+  it("keeps it whether or not the restart closed out a member, and whether or not new work is held", () => {
+    const [closed] = instances(["closed", "started", "stopped"]);
+    closed.restartClosedMember = true;
+    closed.holdsGate = true;
+    for (const held of [true, false]) {
+      const plan = bootBlockPlan([closed], held);
+      assert.deepEqual(plan.gated, ["closed"], `held: ${held}`);
+      assert.deepEqual(plan.abandoned, [], `held: ${held}`);
+      assert.deepEqual(plan.held, [], `held: ${held}`);
+    }
+  });
+
+  it("names a surviving member before the gate, and does not keep a halted run for its gate", () => {
+    const given = instances(["live", "started", "paused"], ["halted", "stopping", "completed"]);
+    for (const entry of given) entry.holdsGate = true;
+    const plan = bootBlockPlan(given, false);
+    assert.deepEqual(plan.spared, ["live"]);
+    assert.deepEqual(plan.settled, ["halted"]);
+    assert.deepEqual(plan.gated, []);
   });
 
   it("still closes out an instance whose member a restart closed out, held or not", () => {

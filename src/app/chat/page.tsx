@@ -276,6 +276,7 @@ const BLOCK_KIND: Record<ProposedBlockDTO["kind"], string> = {
   deliver: "pushes branches and opens pull requests",
   loop: "repeats a task",
   review: "reviews branches",
+  gate: "waits for you to continue",
 };
 
 /**
@@ -2675,6 +2676,7 @@ function ProposedSchedule({ schedule }: { schedule: ProposedScheduleDTO | null }
 function ProposedGraph({ proposal }: { proposal: ChatProposalDTO }) {
   const fanOut = proposal.blocks.reduce((n, b) => n + (b.fanOut ?? 0), 0);
   const paying = proposal.blocks.some((b) => b.mergeAutoResolve);
+  const retrying = proposal.blocks.some((b) => b.turnRetries > 0);
 
   return (
     <div className="mt-2 flex flex-col gap-2">
@@ -2725,6 +2727,12 @@ function ProposedGraph({ proposal }: { proposal: ChatProposalDTO }) {
               {b.fanOut !== null && (
                 <span className="text-warn"> · up to {b.fanOut} run(s), no approval</span>
               )}
+              {b.turnRetries > 0 && (
+                <span className="text-warn">
+                  {" "}
+                  · a failed turn is retried up to {b.turnRetries} time(s), each billed
+                </span>
+              )}
               {b.mergeAutoResolve && (
                 <span className="text-warn"> · may pay to resolve conflicts</span>
               )}
@@ -2734,11 +2742,14 @@ function ProposedGraph({ proposal }: { proposal: ChatProposalDTO }) {
         </ol>
       )}
 
-      {(fanOut > 0 || paying) && (
+      {(fanOut > 0 || paying || retrying) && (
         <p className="text-2xs leading-normal font-medium text-warn">
           {fanOut > 0 &&
             `Each press of Run may start up to ${fanOut} run(s) that nobody approves individually.`}
-          {fanOut > 0 && paying && " "}
+          {fanOut > 0 && (retrying || paying) && " "}
+          {retrying &&
+            "A deciding turn that fails may be started again, and each retry is billed."}
+          {retrying && paying && " "}
           {paying && "A merge block may pay a model to reconcile a conflict."}
         </p>
       )}

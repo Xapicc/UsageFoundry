@@ -119,7 +119,7 @@ Twenty-two are renderings rather than functions — every `*.test.tsx` in the tr
 
 | Test file | Also in |
 |---|---|
-| `contextPruning.test.ts` | [ceiling], [stacks] |
+| `contextPruning.test.ts` | [ceiling], [stacks], [pricing] |
 | `intakeFilter.test.ts` |  |
 | `pruneStatement.test.ts` |  |
 | `pruneTranscript.test.ts` |  |
@@ -156,11 +156,18 @@ Twenty-two are renderings rather than functions — every `*.test.tsx` in the tr
 | `src/app/api/workflows/[id]/route.test.ts` |  |
 | `src/app/api/workflows/[id]/schedule/route.test.ts` |  |
 
+## [Gate blocks](testing/workflow-gates.md)
+
+| Test file | Also in |
+|---|---|
+| `gateBlock.test.ts` |  |
+
 ## [Workflow pick-ups](testing/workflow-pick-ups.md)
 
 | Test file | Also in |
 |---|---|
 | `orchestratorPickUp.test.ts` |  |
+| `orchestratorTurnRetry.test.ts` |  |
 
 ## [Loop blocks and their passes](testing/workflow-loops.md)
 

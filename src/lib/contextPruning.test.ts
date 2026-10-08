@@ -1631,6 +1631,42 @@ describe("netReceipt", () => {
     assert.equal(netReceipt(base, 30).priced, true);
   });
 
+  it("prices at the receipt's own date, not at today's list", () => {
+    // Claude Sonnet 5.5's cache read is 0.10x of a $2 input before
+    // 2026-10-08T00:00:00Z and 0.05x from it, so the same prune is worth twice
+    // as much on one side: 70,000 tokens over 30 turns is $0.42 of avoided reads
+    // before the cut and $0.21 from it. A read-time lookup would reprice last
+    // week's history every time the page loaded, at whichever rate the clock is
+    // on. Every instant is fixed, and both sides are asserted, so this says the
+    // same thing whatever day it runs.
+    //
+    // It pins the receipt's own instant and no more: the avoided reads happen on
+    // *later* turns that may straddle the cut, and a pre-cut prune is priced
+    // wholly at the pre-cut rate however many of them fall after it. See
+    // `docs/agent/testing/pricing-and-models.md` for why that stays an
+    // approximation.
+    const cut = Date.UTC(2026, 9, 8);
+    const sonnet = { ...base, model: "claude-sonnet-5-5" };
+    const close = (actual: number, expected: number, what: string) =>
+      assert.ok(Math.abs(actual - expected) < 1e-9, `${what}: ${actual} vs ${expected}`);
+
+    for (const [what, ts] of [
+      ["well before the cut", Date.UTC(2026, 9, 1)],
+      ["one millisecond before it", cut - 1],
+    ] as [string, number][]) {
+      const net = netReceipt({ ...sonnet, ts }, 30);
+      assert.ok(net.priced, what);
+      close(net.cacheSavedUSD, 0.42, what);
+    }
+    for (const [what, ts] of [
+      ["the cut itself", cut],
+      ["well after it", Date.UTC(2026, 10, 15)],
+    ] as [string, number][]) {
+      const net = netReceipt({ ...sonnet, ts }, 30);
+      assert.ok(net.priced, what);
+      close(net.cacheSavedUSD, 0.21, what);
+    }
+  });
 });
 
 describe("sumPruneSavings", () => {

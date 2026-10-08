@@ -57,6 +57,8 @@ export const STATUS_TONE: Record<RunDTO["status"], BadgeTone> = {
   stopped: "warn",
   blocked: "warn",
   failed: "danger",
+  // Not `blocked`'s amber: nothing went wrong and nobody needs to look.
+  "not-needed": "neutral",
 };
 
 /**
@@ -80,6 +82,7 @@ export const STATUS_LABEL: Record<RunDTO["status"], string> = {
   stopped: "stopped",
   blocked: "blocked",
   failed: "failed",
+  "not-needed": "not needed",
 };
 
 /** "3/5", or "3 · no cap" when the run has no work-cycle limit (stored as 0). */
@@ -1011,14 +1014,17 @@ export function loopSpendShown(
 }
 
 /**
- * The two answers a drawn link may carry, and the unanswered state beside them.
+ * The three answers a drawn link may carry, and the unanswered state beside
+ * them.
  *
  * **The `""` key is a real option and must never be dropped.** A drawn link
  * carries `edge: ""` all the way onto the wire and is refused there by name:
  * `on-success` terminates a chain the operator meant to run regardless and
  * `on-finish` starts a run on top of a dependency that crashed, so the picker
- * offers the unanswered state rather than pre-selecting one of two answers that
- * is wrong half the time in both directions. A form-hygiene pass that removes
+ * offers the unanswered state rather than pre-selecting one of the answers,
+ * each of which is wrong half the time in both directions. `on-failure` is
+ * offered on every link and refused at save out of anything but a run block
+ * (`normalizeWorkflowInput` says why). A form-hygiene pass that removes
  * the empty option pre-selects a condition nobody chose, and the graph saves.
  *
  * **`repeats` is not a fourth way of waiting.** It is offered only on a link
@@ -1035,23 +1041,25 @@ export function loopSpendShown(
  * believing an edge means two different things on two screens.
  */
 export const EDGE_OPTION_LABEL: Record<
-  "" | "on-success" | "on-finish" | "repeats",
+  "" | "on-success" | "on-finish" | "on-failure" | "repeats",
   string
 > = {
   "": "Choose a condition",
   "on-success": "Only if it completes",
   "on-finish": "Once it finishes, either way",
+  "on-failure": "Only if it fails",
   repeats: "Repeats it, and the section after it",
 };
 
-/** The same four, as the canvas chip and every parenthetical say them. */
+/** The same five, as the canvas chip and every parenthetical say them. */
 export const EDGE_CHIP_LABEL: Record<
-  "" | "on-success" | "on-finish" | "repeats",
+  "" | "on-success" | "on-finish" | "on-failure" | "repeats",
   string
 > = {
   "": "needs a condition",
   "on-success": "if it completes",
   "on-finish": "either way",
+  "on-failure": "if it fails",
   repeats: "repeats from here",
 };
 

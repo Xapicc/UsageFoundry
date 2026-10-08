@@ -1256,7 +1256,7 @@ export interface BudgetPolicyDTO {
 export interface RunDependencyDTO {
   /** The run this one is waiting for. */
   runId: string;
-  edge: "on-success" | "on-finish";
+  edge: "on-success" | "on-finish" | "on-failure";
   /** That run's status right now. */
   status: RunDTO["status"];
   /** Whether it has settled in a way that lets this run start. */
@@ -1427,7 +1427,8 @@ export interface RunDTO {
     | "needs-review"
     | "stopped"
     | "failed"
-    | "blocked";
+    | "blocked"
+    | "not-needed";
   budget: BudgetPolicyDTO;
   /**
    * What this run was told to start after. Present on every run; empty for the
@@ -2158,6 +2159,17 @@ export const MAX_WORKFLOW_NODES = 25;
 export const MAX_FAN_OUT = 10;
 
 /**
+ * How many times an orchestrator block may start its deciding turn again after
+ * the turn itself failed having decided nothing.
+ *
+ * Small for the reason `MAX_REVIEW_FIX_ROUNDS` is: every retry is another billed
+ * turn, and a turn that fails three times running is not one a fourth will fix.
+ * It is the limit on what a person may set, and the number they set is what
+ * actually bounds the block.
+ */
+export const MAX_TURN_RETRIES = 2;
+
+/**
  * How many passes one loop block may take.
  *
  * The limit on the cap an operator sets, exactly as `MAX_FAN_OUT` is: a loop
@@ -2207,6 +2219,8 @@ export const MAX_LOOP_RUNS = 60;
  * Deliver button calls, and spends no model money at all. `loop` repeats one
  * task until the agent reports it done, a pass fails, or one of its two caps is
  * reached — a fresh run per pass, each carrying on the previous pass's branch.
+ * `gate` starts nothing and costs nothing: when the instance reaches it, it
+ * waits for a person to press Continue, and holds what is behind it until then.
  */
 export type WorkflowNodeKind =
   | "run"
@@ -2214,7 +2228,8 @@ export type WorkflowNodeKind =
   | "merge"
   | "deliver"
   | "loop"
-  | "review";
+  | "review"
+  | "gate";
 
 /** One branch a review block is judging, as the instance page draws it. */
 export interface ReviewItemDTO {
@@ -2240,18 +2255,27 @@ export const MAX_REVIEW_FIX_ROUNDS = 3;
  * Where a review block's verdict on each branch comes from. `model` is the
  * frontier review, billed per branch. `status` reads how each run ended: a
  * `completed` one is approved and any other ending is set aside, with no model
- * and no spend.
+ * and no spend. `command` runs a verify command saved on the block in each
+ * branch's own checkout: exit 0 approves, and anything else — a timeout
+ * included — sets the branch aside with the tail of its output.
  *
  * An object keyed on `kind` rather than a bare word, so a source that carries a
- * setting of its own — a saved command to run — is one more member here rather
+ * setting of its own — `command`'s argv line — is one more member here rather
  * than a second field beside this one that every reader has to pair with it.
+ *
+ * `command` is a person's to save and nobody else's: it is a program this app
+ * runs, and `propose_workflow` refuses a graph carrying one by name.
  */
-export type ReviewVerdictSourceDTO = { kind: "model" } | { kind: "status" };
+export type ReviewVerdictSourceDTO =
+  | { kind: "model" }
+  | { kind: "status" }
+  | { kind: "command"; command: string };
 
 /** Every `ReviewVerdictSourceDTO` kind, in the order the editor offers them. */
 export const REVIEW_VERDICT_KINDS: readonly ReviewVerdictSourceDTO["kind"][] = [
   "model",
   "status",
+  "command",
 ];
 
 /** How a branch is put onto its target. `settings.landStrategy`'s vocabulary. */
@@ -2306,6 +2330,14 @@ export interface WorkflowNodeDTO {
    * press of Run, so it is refused at save the way the `no_terminus` pair is.
    */
   fanOut: number | null;
+  /**
+   * How many times an orchestrator block's deciding turn is started again when
+   * the turn itself failed having decided nothing, 0 to `MAX_TURN_RETRIES`.
+   * Null on every other kind. Absent is 0: every graph saved before the field
+   * existed says nothing here, and the other reading would bill turns nobody
+   * agreed to.
+   */
+  turnRetries?: number | null;
   /**
    * How a merge block lands each branch. Null on every other kind, and never
    * null on a merge one: it is recorded on the graph rather than read from
@@ -2528,7 +2560,7 @@ export interface WorkflowEdgeDTO {
    * the loop, so anything waiting on it would wait for ever — and it is what
    * `bodyNodeIds` is derived from.
    */
-  edge: "on-success" | "on-finish" | "repeats";
+  edge: "on-success" | "on-finish" | "on-failure" | "repeats";
   /**
    * Whether `to` carries on `from`'s branch instead of cutting its own. Always
    * false on a `repeats` link, which starts no run and hands over no branch.
@@ -2688,7 +2720,7 @@ export interface WorkflowLastInstanceDTO {
  */
 export interface WorkflowInstanceWaitDTO {
   nodeId: string;
-  edge: "on-success" | "on-finish" | null;
+  edge: "on-success" | "on-finish" | "on-failure" | null;
 }
 
 /**
@@ -2785,7 +2817,21 @@ export interface WorkflowInstanceBlockDTO {
   nodeName: string;
   position: number;
   kind: WorkflowNodeKind;
-  status: "waiting" | "thinking" | "looping" | "emitted" | "failed" | "blocked";
+  status:
+    | "waiting"
+    | "thinking"
+    | "looping"
+    | "emitted"
+    | "failed"
+    | "blocked"
+    | "not-needed";
+  /**
+   * When a gate was reached and began waiting for a person, or null. Only a
+   * gate ever has one, and it is set while the row is still `waiting`: a gate
+   * that has not been reached is `waiting` with this null, which is the
+   * difference between "held, press Continue" and "not there yet".
+   */
+  heldAt: number | null;
   startedAt: number | null;
   finishedAt: number | null;
   /**
@@ -4152,6 +4198,8 @@ export interface ProposedBlockDTO {
   folderLabel: string | null;
   /** How many runs a deciding block may start, with nobody looking. */
   fanOut: number | null;
+  /** How many times its failed turn is started again, each one billed. 0 elsewhere. */
+  turnRetries: number;
   mergeAutoResolve: boolean;
   /** The blocks it starts after, by name. */
   after: string[];
@@ -4307,7 +4355,7 @@ export interface ChatProposalDTO {
    * asked for — and the runs then work in the same checkout in whatever order
    * the queue felt like.
    */
-  dependsOn: Array<{ label: string; edge: "on-success" | "on-finish"; continueBranch: boolean }>;
+  dependsOn: Array<{ label: string; edge: "on-success" | "on-finish" | "on-failure"; continueBranch: boolean }>;
   /** A workflow proposal's blocks. Empty on a run proposal. */
   blocks: ProposedBlockDTO[];
   /** A schedule proposal's recurrence and target. Null on the other two kinds. */

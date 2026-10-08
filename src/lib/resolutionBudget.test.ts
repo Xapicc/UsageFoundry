@@ -32,7 +32,10 @@ import type { ReviewRow } from "./review";
  * child ran Claude. Nothing else would say so: cost is the CLI's own figure and
  * is never priced from `run_reviews.model`, so the column is the only record of
  * which model a billed assist ran on. `startAssist` writes every kind's row, so
- * one kind pins all three.
+ * one kind pins the row for all three. Which model each kind is *given* is not
+ * the same for all three — a review and a validation of a below-frontier run
+ * move off its model to the default, a resolution does not (`review.test.ts`'
+ * `assistModel`) — and the resolution's half is the Haiku case below.
  *
  * Its own file, with `DATA_DIR` named before the first import, for
  * `loopMergeOwnership.test.ts`'s reason.
@@ -230,5 +233,16 @@ describe("the model a resolution's row is recorded under", () => {
     );
     assert.equal(modelFlag(argv), "claude-sonnet-5");
     assert.equal(row.model, "claude-sonnet-5");
+  });
+
+  it("is a Haiku run's own model too, because a resolution judges nothing", async () => {
+    // A review and a validation of the same run are moved to the default; this
+    // one is an edit, and nothing calls it a frontier model's.
+    settings.saveSettings({ defaultModel: "claude-opus-5-5" });
+    const { argv, row } = await resolveAndSettle(
+      conflictingRun("uf/claude-haiku", { provider: "claude", model: "claude-haiku-4-5" }),
+    );
+    assert.equal(modelFlag(argv), "claude-haiku-4-5");
+    assert.equal(row.model, "claude-haiku-4-5");
   });
 });

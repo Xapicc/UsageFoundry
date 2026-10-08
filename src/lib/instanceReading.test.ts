@@ -35,6 +35,7 @@ import type Database from "better-sqlite3";
 let root: string;
 let workflows: typeof import("./workflows");
 let dbMod: typeof import("./db");
+let orchestrator: typeof import("./orchestrator");
 
 before(async () => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "uf-instance-reading-"));
@@ -54,6 +55,7 @@ before(async () => {
 
   workflows = await import("./workflows");
   dbMod = await import("./db");
+  orchestrator = await import("./orchestrator");
 });
 
 after(() => {
@@ -64,8 +66,8 @@ after(() => {
 
 let seq = 0;
 
-/** A member run in whatever status the case is about. */
-function member(instanceId: string, status: string): void {
+/** A member run in whatever status the case is about; its id. */
+function member(instanceId: string, status: string, iterations = 0): string {
   const id = `run-${seq}`;
   const position = seq++;
   dbMod
@@ -74,9 +76,9 @@ function member(instanceId: string, status: string): void {
       `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations,
                          iterations, created_at)
        VALUES (?, ?, 'do it', ?, '{"maxIterations":1,"permissionMode":"acceptEdits"}',
-               1, 0, ?)`,
+               1, ?, ?)`,
     )
-    .run(id, path.join(root, "workspace"), status, Date.now() + position);
+    .run(id, path.join(root, "workspace"), status, iterations, Date.now() + position);
   dbMod
     .db()
     .prepare(
@@ -84,6 +86,7 @@ function member(instanceId: string, status: string): void {
         " VALUES (?, ?, ?, ?, ?)",
     )
     .run(instanceId, `node-${position}`, `Block ${position}`, position, id);
+  return id;
 }
 
 /** A node that is not a run: deferred behind a deciding block, or written off. */
@@ -174,6 +177,40 @@ describe("what an instance reads as, counted over both halves of a graph", () =>
     const inst = read(id);
     assert.equal(inst.status, "blocked");
     assert.equal(inst.blockedCount, 1);
+  });
+
+  /**
+   * The branch an `on-failure` link did not take, in both tables. Counted as
+   * blocked, a workflow whose first run simply worked reads as missing its tail;
+   * counted as live, it never finishes at all. Driven through the real release
+   * pass rather than seeded, so the status it writes is the one counted.
+   */
+  it("is finished when the branch an on-failure link did not take was passed over", () => {
+    const id = instance("passed-over");
+    const build = member(id, "completed", 1);
+    const fix = member(id, "waiting");
+    const after = member(id, "waiting");
+    ledgerBlock(id, "not-needed");
+    const link = dbMod
+      .db()
+      .prepare("INSERT INTO run_deps (run_id, depends_on, edge, created_at) VALUES (?, ?, ?, ?)");
+    link.run(fix, build, "on-failure", Date.now());
+    link.run(after, fix, "on-success", Date.now());
+
+    orchestrator.releaseDependents();
+
+    const status = (runId: string) =>
+      (dbMod.db().prepare("SELECT status, stop_reason FROM runs WHERE id = ?").get(runId) as {
+        status: string;
+        stop_reason: string | null;
+      });
+    assert.equal(status(fix).status, "not-needed");
+    assert.match(status(fix).stop_reason ?? "", /only if run run-\d+ failed \(on-failure\), and it completed/);
+    assert.equal(status(after).status, "not-needed");
+    const inst = read(id);
+    assert.equal(inst.status, "finished");
+    assert.equal(inst.blockedCount, 0);
+    assert.equal(inst.liveRunCount, 0);
   });
 
   it("keeps a halt above both counts", () => {
