@@ -2934,6 +2934,10 @@ function workflowReport() {
           liveRuns: liveRunsOf(w.id).length,
           liveBlocks: liveBlocksOf(w.id),
           instanceBudget: w.instanceBudget,
+          // The saved folders Run chooses among. Reported so a model reading a
+          // block that follows the choice does not take the stored first folder
+          // for the only one it works in.
+          folders: w.folders ?? [],
           // Reported so a schedule is proposed against what is already there
           // rather than beside it: a workflow holds one, and a proposal for a
           // scheduled workflow replaces its recurrence on approval.
@@ -2956,6 +2960,7 @@ function workflowReport() {
               n.kind === "merge" || n.kind === "deliver" || n.kind === "gate"
                 ? null
                 : n.folder,
+            ...(n.followsChosenFolder ? { followsChosenFolder: true } : {}),
             fanOut: n.fanOut,
             after: w.graph.edges
               // A `repeats` link is containment, not a wait: the loop it names
