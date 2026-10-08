@@ -2860,6 +2860,13 @@ function LinkPanel({
                 // drawn as no arrow, so a link converted to it here would be a
                 // link that vanished with no way to get it back.
                 .filter((edge) => edge !== "repeats")
+                // Only a run block's failure starts anything, and Save says so;
+                // offered anyway to a link already carrying it, or the picker
+                // would show a value it has no option for.
+                .filter(
+                  (edge) =>
+                    edge !== "on-failure" || fromKind === "run" || link.edge === edge,
+                )
                 .map((edge) => (
                   <option key={edge} value={edge}>
                     {EDGE_OPTION_LABEL[edge]}

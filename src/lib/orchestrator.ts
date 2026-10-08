@@ -291,7 +291,13 @@ export type RunStatus =
   | "needs-review"
   | "stopped"
   | "failed"
-  | "blocked";
+  | "blocked"
+  /**
+   * Set to start only if a run failed, and that run did not — or behind a run
+   * that was itself not needed. Never started, spent nothing, and is not
+   * `blocked`: nothing went wrong, and an instance with one reads finished.
+   */
+  | "not-needed";
 
 export interface RunRow {
   id: string;
@@ -1181,6 +1187,7 @@ const RUN_STATUS_KEYS: Record<RunStatus, true> = {
   stopped: true,
   failed: true,
   blocked: true,
+  "not-needed": true,
 };
 
 const RUN_STATUSES = Object.keys(RUN_STATUS_KEYS) as readonly RunStatus[];
@@ -4565,11 +4572,15 @@ function admitDependencies(
     );
   }
 
-  const { release, block } = releasableRuns(
+  const { release, block, notNeeded } = releasableRuns(
     [{ id, status: "waiting", iterations: 0, refundedCycles: 0, restartClosed: false }, ...targets],
     links,
   );
   if (block.length > 0) throw new Error(block[0].reason);
+  // Refused rather than created ended, for the reason a failed `on-success`
+  // dependency is: a run that is not needed the second it exists is a run the
+  // operator is told they made and that will never do anything.
+  if (notNeeded.length > 0) throw new Error(notNeeded[0].reason);
   return { links, waiting: !release.includes(id), continuesRun };
 }
 
@@ -5169,7 +5180,7 @@ export function queueBlockerOf(id: string): QueueBlockerDTO | undefined {
 /* Run dependencies                                                    */
 /* ------------------------------------------------------------------ */
 
-export const DEPENDENCY_EDGES = ["on-success", "on-finish"] as const;
+export const DEPENDENCY_EDGES = ["on-success", "on-finish", "on-failure"] as const;
 export type DependencyEdge = (typeof DEPENDENCY_EDGES)[number];
 
 /** One "start after that run" edge, as a caller states it. */
@@ -5319,6 +5330,7 @@ export const TERMINAL_STATUSES: readonly RunStatus[] = [
   "stopped",
   "failed",
   "blocked",
+  "not-needed",
 ];
 
 /**
@@ -5354,6 +5366,14 @@ export const TERMINAL_STATUSES: readonly RunStatus[] = [
  * `on-finish` has always meant about a `failed` predecessor. A run that reported
  * it could not get past something did not do the work the next run was chained
  * behind.
+ *
+ * `on-failure` is the complement of `on-success` among runs that worked, less
+ * one ending: `failed` and `needs-review` satisfy it, `completed` makes its
+ * dependent not needed (`notNeededReason`), and `stopped` satisfies nothing. A
+ * stop — the operator's, a guard's, the fleet's — is a decision to stop
+ * spending, and a fixer started on the strength of it would undo that decision
+ * with a fresh agent; nobody judged the work either way, so the dependent is
+ * `blocked`, which picking the stopped run up revives.
  */
 export function edgeSatisfied(
   dep: DependencyState,
@@ -5361,7 +5381,35 @@ export function edgeSatisfied(
 ): boolean {
   if (!ranWorkCycle(dep)) return false;
   if (edge === "on-success") return dep.status === "completed";
+  if (edge === "on-failure") {
+    return dep.status === "failed" || dep.status === "needs-review";
+  }
   return TERMINAL_STATUSES.includes(dep.status);
+}
+
+/**
+ * Why a dependent will never be needed, or null when this dependency does not
+ * say so.
+ *
+ * Two endings and no others. An `on-failure` dependency that worked and
+ * `completed` took the branch this dependent was not on. And a dependency that
+ * was itself not needed passes that on along **every** edge: what sits behind
+ * a branch not taken is part of that branch, so the follow-up behind a fixer
+ * that never ran is not needed either, rather than `blocked` behind a run that
+ * "ran no work cycle" — which is true, and reads as a fault nobody made.
+ */
+export function notNeededReason(
+  dep: DependencyState,
+  edge: DependencyEdge,
+): string | null {
+  const name = `run ${shortId(dep.id)}`;
+  if (dep.status === "not-needed") {
+    return `Not needed: set to start after ${name}, which was not needed either.`;
+  }
+  if (edge === "on-failure" && dep.status === "completed" && ranWorkCycle(dep)) {
+    return `Not needed: set to start only if ${name} failed (on-failure), and it completed.`;
+  }
+  return null;
 }
 
 /** Why a dependent can never start, in words naming the run that stopped it. */
@@ -5369,6 +5417,9 @@ function unsatisfiableReason(dep: DependencyState, edge: DependencyEdge): string
   const name = `run ${shortId(dep.id)}`;
   if (!ranWorkCycle(dep)) {
     return `Set to start after ${name}, which ended ${dep.status} without running a work cycle.`;
+  }
+  if (edge === "on-failure") {
+    return `Set to start only if ${name} failed (on-failure); it ended ${dep.status}, which is not a failure.`;
   }
   return `Set to start only after ${name} succeeded (${edge}); it ended ${dep.status}.`;
 }
@@ -5537,6 +5588,12 @@ export function topologicalOrder(graph: {
  * downstream of it blocks on the next pass with its own reason naming it.
  * Termination is by exhaustion — every pass that reports a change decides at
  * least one waiting run, and a decided run is never revisited.
+ *
+ * `notNeeded` is the third verdict: a run on the branch an `on-failure` edge
+ * did not take (`notNeededReason`). It cascades the same way `blocked` does,
+ * and it is decided as soon as it is known, as `blocked` is; a dependency that
+ * blocks the run outranks one that makes it not needed, because a fault is the
+ * thing an operator has to be shown.
  */
 export function releasableRuns(
   runs: readonly ReleaseState[],
@@ -5550,7 +5607,11 @@ export function releasableRuns(
    * the pause. What the hold stops is the half that puts an agent to work.
    */
   newWorkPaused = false,
-): { release: string[]; block: Array<{ id: string; reason: string }> } {
+): {
+  release: string[];
+  block: Array<{ id: string; reason: string }>;
+  notNeeded: Array<{ id: string; reason: string }>;
+} {
   const byId = new Map(runs.map((r) => [r.id, r]));
   const edges = new Map<string, DependencyLink[]>();
   for (const link of links) {
@@ -5561,6 +5622,7 @@ export function releasableRuns(
 
   const release: string[] = [];
   const block: Array<{ id: string; reason: string }> = [];
+  const notNeeded: Array<{ id: string; reason: string }> = [];
   const decided = new Set<string>();
 
   for (;;) {
@@ -5569,6 +5631,7 @@ export function releasableRuns(
       if (run.status !== "waiting" || decided.has(run.id)) continue;
 
       let stopper: string | null = null;
+      let passedOver: string | null = null;
       let pending = false;
       for (const link of edges.get(run.id) ?? []) {
         const dep = byId.get(link.dependsOn);
@@ -5591,19 +5654,31 @@ export function releasableRuns(
         // it unstartable, and saying so now is what stops a chain from ending
         // one run at a time as each dependency ahead of it finishes.
         if (TERMINAL_STATUSES.includes(dep.status)) {
+          // Not a break: a later dependency that blocks it still outranks this.
+          const reason = notNeededReason(dep, link.edge);
+          if (reason !== null) {
+            passedOver ??= reason;
+            continue;
+          }
           stopper = unsatisfiableReason(dep, link.edge);
           break;
         }
         pending = true;
       }
 
-      if (stopper !== null) {
-        block.push({ id: run.id, reason: stopper });
-        // Treated as blocked from here on, which is what cascades the verdict
+      const ending =
+        stopper !== null
+          ? { status: "blocked" as const, reason: stopper, into: block }
+          : passedOver !== null
+            ? { status: "not-needed" as const, reason: passedOver, into: notNeeded }
+            : null;
+      if (ending !== null) {
+        ending.into.push({ id: run.id, reason: ending.reason });
+        // Treated as ended from here on, which is what cascades the verdict
         // down the chain on the next pass.
         byId.set(run.id, {
           id: run.id,
-          status: "blocked",
+          status: ending.status,
           iterations: 0,
           refundedCycles: 0,
           restartClosed: false,
@@ -5622,7 +5697,7 @@ export function releasableRuns(
       decided.add(run.id);
       changed = true;
     }
-    if (!changed) return { release, block };
+    if (!changed) return { release, block, notNeeded };
   }
 }
 
@@ -5827,11 +5902,14 @@ function releasePass(holdReleases: boolean = newWorkPaused()): boolean {
       .all() as Array<DependencyState & { restartClosed: number }>
   ).map((state) => ({ ...state, restartClosed: state.restartClosed === 1 }));
 
-  const { release, block } = releasableRuns(states, links, holdReleases);
+  const { release, block, notNeeded } = releasableRuns(states, links, holdReleases);
   let acted = false;
 
   for (const { id, reason } of block) {
     if (blockWaitingRun(id, reason)) acted = true;
+  }
+  for (const { id, reason } of notNeeded) {
+    if (passOverWaitingRun(id, reason)) acted = true;
   }
 
   for (const id of release) {
@@ -5868,6 +5946,30 @@ export function blockWaitingRun(id: string, reason: string): boolean {
     ts: Date.now(),
     kind: "status",
     payload: { status: "blocked", stop_reason: reason },
+  });
+  return true;
+}
+
+/**
+ * End a run that has not started because the branch it was on was not taken.
+ *
+ * `blockWaitingRun`'s shape and guard, in the one status that says nothing went
+ * wrong: `blocked` would count against its workflow as work written off, and
+ * page nobody less for it.
+ */
+function passOverWaitingRun(id: string, reason: string): boolean {
+  const at = Date.now();
+  const done = db()
+    .prepare(
+      "UPDATE runs SET status='not-needed', finished_at=?, stop_reason=? WHERE id=? AND status='waiting'",
+    )
+    .run(at, reason, id);
+  if (done.changes !== 1) return false;
+  emit({
+    runId: id,
+    ts: at,
+    kind: "status",
+    payload: { status: "not-needed", finished_at: at, stop_reason: reason },
   });
   return true;
 }
@@ -6005,10 +6107,13 @@ export function haltedWorkflowOf(runId: string): string | null {
 export function reviveBlockedDependents(roots: readonly string[]): number {
   if (roots.length === 0) return 0;
 
+  // `not-needed` beside `blocked`: it is a verdict written on the same ending,
+  // and a completed run picked up and then failed is exactly when the run set
+  // to start only on its failure is needed after all.
   const candidates = (
     db()
       .prepare(
-        "SELECT id FROM runs WHERE status='blocked' AND work_dir IS NULL AND iterations = 0" +
+        "SELECT id FROM runs WHERE status IN ('blocked','not-needed') AND work_dir IS NULL AND iterations = 0" +
           " AND set_aside_at IS NULL" +
           ` AND id NOT IN (SELECT runId FROM (${HALTED_MEMBERS}))`,
       )
@@ -6025,7 +6130,7 @@ export function reviveBlockedDependents(roots: readonly string[]): number {
       const done = db()
         .prepare(
           "UPDATE runs SET status='waiting', finished_at=NULL, stop_reason=NULL" +
-            " WHERE id=? AND status='blocked'",
+            " WHERE id=? AND status IN ('blocked','not-needed')",
         )
         .run(id);
       if (done.changes !== 1) continue;

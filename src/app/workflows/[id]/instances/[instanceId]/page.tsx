@@ -87,6 +87,7 @@ const BLOCK_LABEL: Record<BlockStatus, string> = {
   emitted: "decided",
   failed: "failed",
   blocked: "blocked",
+  "not-needed": "not needed",
 };
 
 /**
@@ -115,6 +116,7 @@ const BLOCK_TONE: Record<BlockStatus, BadgeTone> = {
   emitted: "ok",
   failed: "danger",
   blocked: "neutral",
+  "not-needed": "neutral",
 };
 
 type BlockDTO = WorkflowInstanceDTO["blocks"][number];

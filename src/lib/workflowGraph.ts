@@ -339,7 +339,8 @@ const GROWING_TASK_STATUSES: readonly TaskStatusDTO[] = ["done", "dropped"];
 export const REPEATS_EDGE = "repeats";
 
 /**
- * Every answer a link may carry: the two dependency conditions and containment.
+ * Every answer a link may carry: the three dependency conditions and
+ * containment.
  *
  * Deliberately *not* added to `DEPENDENCY_EDGES`, which is what a `runs` row
  * stores and what `admitDependencies` reads. Widening that would put "repeats"
@@ -616,6 +617,20 @@ export function normalizeWorkflowInput(
           `“${source.name}” does not repeat anything, so it has no section for ` +
           `“${target.name}” to be the start of. Only a repeating block has a ` +
           "“repeats” link.",
+      };
+    }
+    // Only a run block's ending is read as a failure. Every other kind settles
+    // in words of its own — a merge that did not land everything, a turn that
+    // decided nothing, a review that set work aside, a loop that stopped on a
+    // pass — and which of those a fixer should start on is a decision nobody
+    // has made, so it is refused by name rather than given a meaning here.
+    if (edge === "on-failure" && source.kind !== "run") {
+      return {
+        ok: false,
+        error:
+          `“${target.name}” is set to start only if “${source.name}” fails, ` +
+          "and only a run block's failure can start anything. Set this link " +
+          "to on-success or on-finish.",
       };
     }
     // Refused rather than ignored, this file's standing treatment of a field
@@ -2057,6 +2072,24 @@ function graphRefusal(
       );
     }
     continued.add(e.from);
+  }
+
+  // A pass runs its section as a graph of its own, and a member that was not
+  // needed is a reading `planLoopPass`' exit conditions do not have — neither
+  // unfinished nor DONE — so a pass whose fixer was passed over would neither
+  // stop nor carry on. Refused rather than given one. A link *into* the loop
+  // block is outside every section, and is a run block's like any other.
+  const owners = loopBodyOwners({ nodes: [...nodes], edges: [...edges] });
+  for (const e of edges) {
+    if (e.edge !== "on-failure") continue;
+    const loop = owners.get(e.from) ?? owners.get(e.to);
+    if (!loop) continue;
+    return (
+      `“${byId.get(e.to)!.name}” is set to start only if “${byId.get(e.from)!.name}” ` +
+      `fails, inside what “${loop.name}” repeats. A pass has no reading for a ` +
+      "block that was not needed, so links inside a loop start on-success or " +
+      "on-finish."
+    );
   }
 
   // A merge block lands what is in front of it, so what is in front of it has to

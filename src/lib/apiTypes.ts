@@ -1256,7 +1256,7 @@ export interface BudgetPolicyDTO {
 export interface RunDependencyDTO {
   /** The run this one is waiting for. */
   runId: string;
-  edge: "on-success" | "on-finish";
+  edge: "on-success" | "on-finish" | "on-failure";
   /** That run's status right now. */
   status: RunDTO["status"];
   /** Whether it has settled in a way that lets this run start. */
@@ -1427,7 +1427,8 @@ export interface RunDTO {
     | "needs-review"
     | "stopped"
     | "failed"
-    | "blocked";
+    | "blocked"
+    | "not-needed";
   budget: BudgetPolicyDTO;
   /**
    * What this run was told to start after. Present on every run; empty for the
@@ -2528,7 +2529,7 @@ export interface WorkflowEdgeDTO {
    * the loop, so anything waiting on it would wait for ever — and it is what
    * `bodyNodeIds` is derived from.
    */
-  edge: "on-success" | "on-finish" | "repeats";
+  edge: "on-success" | "on-finish" | "on-failure" | "repeats";
   /**
    * Whether `to` carries on `from`'s branch instead of cutting its own. Always
    * false on a `repeats` link, which starts no run and hands over no branch.
@@ -2688,7 +2689,7 @@ export interface WorkflowLastInstanceDTO {
  */
 export interface WorkflowInstanceWaitDTO {
   nodeId: string;
-  edge: "on-success" | "on-finish" | null;
+  edge: "on-success" | "on-finish" | "on-failure" | null;
 }
 
 /**
@@ -2785,7 +2786,14 @@ export interface WorkflowInstanceBlockDTO {
   nodeName: string;
   position: number;
   kind: WorkflowNodeKind;
-  status: "waiting" | "thinking" | "looping" | "emitted" | "failed" | "blocked";
+  status:
+    | "waiting"
+    | "thinking"
+    | "looping"
+    | "emitted"
+    | "failed"
+    | "blocked"
+    | "not-needed";
   startedAt: number | null;
   finishedAt: number | null;
   /**
@@ -4307,7 +4315,7 @@ export interface ChatProposalDTO {
    * asked for — and the runs then work in the same checkout in whatever order
    * the queue felt like.
    */
-  dependsOn: Array<{ label: string; edge: "on-success" | "on-finish"; continueBranch: boolean }>;
+  dependsOn: Array<{ label: string; edge: "on-success" | "on-finish" | "on-failure"; continueBranch: boolean }>;
   /** A workflow proposal's blocks. Empty on a run proposal. */
   blocks: ProposedBlockDTO[];
   /** A schedule proposal's recurrence and target. Null on the other two kinds. */

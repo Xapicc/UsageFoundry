@@ -30,7 +30,6 @@ import {
 import { addTaskComment } from "./taskComments";
 import { installBudgetRefusal } from "./installBudget";
 import {
-  DEPENDENCY_EDGES,
   blockWaitingRun,
   clampRunOffset,
   createRun,
@@ -38,6 +37,7 @@ import {
   dependencyCycle,
   describeFolder,
   edgeSatisfied,
+  notNeededReason,
   getRun,
   isShuttingDown,
   probeIsolation,
@@ -662,6 +662,15 @@ export function planEmittedRun(
 /* ------------------------------------------------------------------ */
 
 /**
+ * The conditions an emitted run may wait on: `DEPENDENCY_EDGES` less
+ * `on-failure`. A block behind an orchestrator block waits for every run it
+ * emitted, and a run that was not needed is neither one it can wait for nor
+ * one it can say it followed — so the turn is refused it by name rather than
+ * handed a fan-out whose follower blocks on a branch nobody took.
+ */
+const EMITTED_EDGES = ["on-success", "on-finish"] as const;
+
+/**
  * One run an orchestrator block asks for.
  *
  * Five fields, and the list is the boundary rather than a starting point: a
@@ -882,10 +891,10 @@ export function planEmission(raw: unknown, limits: EmissionLimits): EmissionPlan
       seenPairs.add(pair);
 
       const edge = String(l.edge ?? "");
-      if (!(DEPENDENCY_EDGES as readonly string[]).includes(edge)) {
+      if (!(EMITTED_EDGES as readonly string[]).includes(edge)) {
         return {
           ok: false,
-          reason: `“${spec.title}” needs a condition for starting after “${target.title}”: ${DEPENDENCY_EDGES.join(" or ")}.`,
+          reason: `“${spec.title}” needs a condition for starting after “${target.title}”: ${EMITTED_EDGES.join(" or ")}.`,
         };
       }
       spec.dependsOn.push({ id: from, edge: edge as DependencyEdge });
@@ -1587,7 +1596,14 @@ export type BlockStatus =
   | "looping"
   | "emitted"
   | "failed"
-  | "blocked";
+  | "blocked"
+  /**
+   * Behind a run block's `on-failure` link whose run completed, or behind a
+   * block that was itself not needed. `blocked`'s shape — never started, no
+   * child, settled — and none of its meaning: nothing was written off, so the
+   * instance's tally counts it neither live nor blocked and reads finished.
+   */
+  | "not-needed";
 
 /**
  * The three statuses a block has not settled in, as one list.
@@ -1695,13 +1711,19 @@ export interface InstanceStep {
   loop: InstanceCreation[];
   /** Nodes that can never start, each with the sentence naming what stopped it. */
   block: Array<{ nodeId: string; reason: string }>;
+  /**
+   * Nodes on a branch an `on-failure` link did not take, each with the
+   * sentence naming the run that completed — `releasableRuns`' third verdict.
+   */
+  notNeeded: Array<{ nodeId: string; reason: string }>;
 }
 
 /** What an edge into a node says about whether that node may go ahead. */
 type EdgeVerdict =
   | { kind: "satisfied" }
   | { kind: "pending" }
-  | { kind: "blocked"; reason: string };
+  | { kind: "blocked"; reason: string }
+  | { kind: "not-needed"; reason: string };
 
 const PENDING: EdgeVerdict = { kind: "pending" };
 const SATISFIED: EdgeVerdict = { kind: "satisfied" };
@@ -1736,6 +1758,10 @@ const SATISFIED: EdgeVerdict = { kind: "satisfied" };
  * blocked here is a settled predecessor that produced nothing, so everything
  * behind it blocks on the next pass with its own sentence naming the node in
  * front of it rather than one shared verdict about a block it never heard of.
+ *
+ * A node on the branch an `on-failure` link did not take is `notNeeded`, and
+ * cascades the same way on every edge out of it; a blocked verdict on another
+ * edge outranks it, `releasableRuns`' order and reason.
  */
 export function planInstanceStep(
   graph: WorkflowGraph,
@@ -1782,6 +1808,7 @@ export function planInstanceStep(
     create: [],
     loop: [],
     block: [],
+    notNeeded: [],
   };
   const decided = new Set<string>();
 
@@ -1800,6 +1827,7 @@ export function planInstanceStep(
       if (own.run || (own.block && own.block.status !== "waiting")) continue;
 
       let stopper: string | null = null;
+      let passedOver: string | null = null;
       let pending = false;
       const dependsOn: InstanceCreation["dependsOn"] = [];
 
@@ -1810,6 +1838,7 @@ export function planInstanceStep(
           stopper = verdict.reason;
           break;
         }
+        if (verdict.kind === "not-needed") passedOver ??= verdict.reason;
         if (verdict.kind === "pending") pending = true;
       }
 
@@ -1818,6 +1847,12 @@ export function planInstanceStep(
         live.set(node.id, {
           run: null,
           block: { status: "blocked", emitted: [], error: stopper },
+        });
+      } else if (passedOver !== null) {
+        step.notNeeded.push({ nodeId: node.id, reason: passedOver });
+        live.set(node.id, {
+          run: null,
+          block: { status: "not-needed", emitted: [], error: passedOver },
         });
       } else if (pending) {
         continue;
@@ -1861,6 +1896,19 @@ export function planInstanceStep(
 }
 
 /**
+ * What every edge out of a node that was not needed says: this one is not
+ * needed either, whatever the condition. What sits behind a branch not taken is
+ * part of that branch, and `blocked` here would be a sentence about a fault
+ * nobody made — `notNeededReason`'s cascade, one level up.
+ */
+function passedOverBehind(from: WorkflowNode): EdgeVerdict {
+  return {
+    kind: "not-needed",
+    reason: `Not needed: set to start after “${from.name}”, which was not needed either.`,
+  };
+}
+
+/**
  * What one edge says, and — when it says "go ahead" — which runs it resolves to.
  *
  * The four kinds of predecessor answer differently, and the differences are the
@@ -1898,6 +1946,7 @@ function edgeVerdict(
         reason: `“${from.name}” never ran: ${block.error ?? "no reason recorded."}`,
       };
     }
+    if (block.status === "not-needed") return passedOverBehind(from);
     // A deliver block reads exactly as a merge block does, and for the same
     // reason: it created no run, so its edge carries a condition and no branch.
     //
@@ -1933,6 +1982,7 @@ function edgeVerdict(
       // Not created yet. Still `waiting` means it is behind a decision that has
       // not been made; anything else means it never will be, which is the
       // cascade one link along.
+      if (state.block?.status === "not-needed") return passedOverBehind(from);
       if (state.block && state.block.status !== "waiting") {
         return {
           kind: "blocked",
@@ -1967,10 +2017,23 @@ function edgeVerdict(
       });
       return SATISFIED;
     }
+    // `releasableRuns`' reading, by the same function, so a node deferred in
+    // the ledger and a node created as a waiting run are passed over alike.
+    if (notNeededReason(state.run, edge.edge) !== null) {
+      return state.run.status === "not-needed"
+        ? passedOverBehind(from)
+        : {
+            kind: "not-needed",
+            reason: `Not needed: set to start only if “${from.name}” failed (on-failure), and it completed.`,
+          };
+    }
     if (TERMINAL_STATUSES.includes(state.run.status)) {
       return {
         kind: "blocked",
-        reason: `Set to start after “${from.name}”, which ended ${state.run.status}.`,
+        reason:
+          edge.edge === "on-failure"
+            ? `Set to start only if “${from.name}” failed (on-failure); it ended ${state.run.status}, which is not a failure.`
+            : `Set to start after “${from.name}”, which ended ${state.run.status}.`,
       };
     }
     return PENDING;
@@ -1986,6 +2049,7 @@ function edgeVerdict(
       reason: `“${from.name}” could not decide what to start: ${block.error ?? "the turn failed."}`,
     };
   }
+  if (block.status === "not-needed") return passedOverBehind(from);
   if (block.status === "blocked") {
     return {
       kind: "blocked",
@@ -2107,6 +2171,7 @@ function loopVerdict(
       reason: `“${from.name}” never ran: ${block.error ?? "no reason recorded."}`,
     };
   }
+  if (block.status === "not-needed") return passedOverBehind(from);
   // Emitted. Nothing is pushed onto `dependsOn` — see above.
   return SATISFIED;
 }
@@ -2148,6 +2213,7 @@ function reviewVerdict(
       reason: `“${from.name}” never ran: ${block.error ?? "no reason recorded."}`,
     };
   }
+  if (block.status === "not-needed") return passedOverBehind(from);
   if (block.status === "failed") {
     return {
       kind: "blocked",
@@ -4962,8 +5028,9 @@ function reviveGraphDependents(
   instance: WorkflowInstance,
   nodeIds: readonly string[],
 ): number {
+  // `not-needed` beside `blocked`, `reviveBlockedDependents`' reason.
   const candidates = instance.blocks
-    .filter((b) => b.status === "blocked")
+    .filter((b) => b.status === "blocked" || b.status === "not-needed")
     .map((b) => b.nodeId);
   if (candidates.length === 0 || nodeIds.length === 0) return 0;
 
@@ -4976,7 +5043,7 @@ function reviveGraphDependents(
     }));
   const reopen = db().prepare(
     "UPDATE workflow_instance_blocks SET status='waiting', error=NULL, finished_at=NULL" +
-      " WHERE instance_id=? AND node_id=? AND status='blocked'",
+      " WHERE instance_id=? AND node_id=? AND status IN ('blocked','not-needed')",
   );
   let revived = 0;
   for (const nodeId of revivableDependents(nodeIds, candidates, links)) {
@@ -5018,7 +5085,12 @@ function startedBehind(instance: WorkflowInstance, nodeId: string): string | nul
     const run = instance.nodes.find((n) => n.nodeId === edge.to);
     if (run) return run.nodeName;
     const block = instance.blocks.find((b) => b.nodeId === edge.to);
-    if (block && block.status !== "waiting" && block.status !== "blocked") {
+    if (
+      block &&
+      block.status !== "waiting" &&
+      block.status !== "blocked" &&
+      block.status !== "not-needed"
+    ) {
       return block.nodeName;
     }
   }
@@ -5409,7 +5481,13 @@ export function leaveRunBehind(instanceId: string, runId: string): PickUpOutcome
   }
 
   const run = getRun(runId);
-  if (!run || !TERMINAL_STATUSES.includes(run.status) || run.status === "completed") {
+  if (
+    !run ||
+    !TERMINAL_STATUSES.includes(run.status) ||
+    run.status === "completed" ||
+    // Nothing waits on it: what was behind it was passed over with it.
+    run.status === "not-needed"
+  ) {
     return {
       ok: false,
       status: 409,
@@ -5694,6 +5772,10 @@ function advanceInstance(instanceId: string): void {
   for (const { nodeId, reason } of step.block) {
     const node = instance.graph.nodes.find((n) => n.id === nodeId);
     upsertBlock(instanceId, node, "blocked", reason);
+  }
+  for (const { nodeId, reason } of step.notNeeded) {
+    const node = instance.graph.nodes.find((n) => n.id === nodeId);
+    upsertBlock(instanceId, node, "not-needed", reason);
   }
 
   const defaults = chatGuards();
@@ -6573,6 +6655,14 @@ function stepPass(
   for (const { nodeId, reason } of step.block) {
     const node = section.nodes.find((n) => n.id === nodeId);
     upsertBlock(instanceId, passNode(node, pass, memberId(nodeId)), "blocked", reason);
+    wrote = true;
+  }
+  // Unreachable while `normalizeWorkflowInput` refuses `on-failure` inside a
+  // section, and written anyway: a verdict left unapplied is a member that sits
+  // `waiting` for ever, which is worse than a reading the exit test lacks.
+  for (const { nodeId, reason } of step.notNeeded) {
+    const node = section.nodes.find((n) => n.id === nodeId);
+    upsertBlock(instanceId, passNode(node, pass, memberId(nodeId)), "not-needed", reason);
     wrote = true;
   }
 

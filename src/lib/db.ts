@@ -503,7 +503,7 @@ function migrate(db: Database.Database) {
     CREATE TABLE IF NOT EXISTS run_deps (
       run_id     TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
       depends_on TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-      -- 'on-success' | 'on-finish'
+      -- 'on-success' | 'on-finish' | 'on-failure'
       edge       TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       PRIMARY KEY (run_id, depends_on)
@@ -634,7 +634,8 @@ function migrate(db: Database.Database) {
       position      INTEGER NOT NULL,
       -- 'orchestrator' | 'loop' | 'run'. See above.
       kind          TEXT NOT NULL,
-      -- 'waiting' | 'thinking' | 'looping' | 'emitted' | 'failed' | 'blocked'.
+      -- 'waiting' | 'thinking' | 'looping' | 'emitted' | 'failed' | 'blocked'
+      -- | 'not-needed'.
       -- 'looping' is a loop with passes in flight or another one to decide on;
       -- it is live wherever 'thinking' is, and deliberately not a settled
       -- status — a block behind it must not be released while the loop can

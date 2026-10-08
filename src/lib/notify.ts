@@ -132,6 +132,7 @@ const SETTLED_STATUSES: ReadonlySet<string> = new Set<RunStatus>([
   "failed",
   "stopped",
   "completed",
+  "not-needed",
 ]);
 
 /**

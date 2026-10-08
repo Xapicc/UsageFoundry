@@ -1420,7 +1420,7 @@ const CHAT_TOOLS = [
               },
               edge: {
                 type: "string",
-                enum: ["on-success", "on-finish"],
+                enum: ["on-success", "on-finish", "on-failure"],
                 description:
                   "There is no default: pick the one you mean. on-success " +
                   "starts only if that run completed — which ends a chain " +
@@ -1430,7 +1430,10 @@ const CHAT_TOOLS = [
                   "run opens on. Use on-finish for work that is worth doing " +
                   "whether or not the first run got there, and on-success " +
                   "for work that reads, reviews or builds on what the first " +
-                  "run produced.",
+                  "run produced. on-failure starts only if that run failed " +
+                  "or asked for review — a fix or a fallback — and when it " +
+                  "completes this one is not needed and never starts; a run " +
+                  "somebody stopped starts neither.",
               },
               continueBranch: {
                 type: "boolean",
@@ -1600,10 +1603,14 @@ const CHAT_TOOLS = [
                     id: { type: "string", description: "An id from this graph." },
                     edge: {
                       type: "string",
-                      enum: ["on-success", "on-finish"],
+                      enum: ["on-success", "on-finish", "on-failure"],
                       description:
                         "on-success starts only if that block completed; " +
-                        "on-finish starts once it is out of the way.",
+                        "on-finish starts once it is out of the way; " +
+                        "on-failure starts only if that run block failed or " +
+                        "asked for review, and is not needed when it " +
+                        "completes. on-failure is refused out of any block but " +
+                        "a run block, and inside a loop.",
                     },
                     continueBranch: {
                       type: "boolean",

@@ -12,6 +12,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - A workflow is the third thing here that is form input, and it is not the fourth route to `--permission-mode`.
 - A workflow is instantiated in topological order, in one synchronous pass, all or nothing.
 - A block that emits nothing blocks what is behind it, and that is a decision rather than a fallout.
+- An `on-failure` link is drawn only out of a run block and only outside a loop, and a node on the branch it did not take is `not-needed` in the ledger as it is in `runs`.
 - A run a restart closed out blocks every edge out of it until it is picked up, and what it holds back is revived rather than failed.
 
 ## [Orchestrator blocks and merge blocks](workflows-and-schedules/orchestrator-and-merge-blocks.md)

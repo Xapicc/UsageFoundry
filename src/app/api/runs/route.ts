@@ -249,8 +249,9 @@ function readDependencies(
         ok: false,
         error:
           `Dependency on run ${runId.slice(0, 8)} needs a condition: ` +
-          `"on-success" (only if that run completes) or "on-finish" ` +
-          `(once it has finished, whatever the outcome).`,
+          `"on-success" (only if that run completes), "on-finish" ` +
+          `(once it has finished, whatever the outcome) or "on-failure" ` +
+          `(only if that run fails).`,
       };
     }
     // `=== true`, for the reason `continueAfterDone` and `auto_resolve` are read

@@ -173,7 +173,7 @@ export interface LinkDraft {
    * `repeats` is only ever drawn out of a loop block, and it states what that
    * loop contains rather than what waits for what. See `EDGE_OPTION_LABEL`.
    */
-  edge: "" | "on-success" | "on-finish" | "repeats";
+  edge: "" | "on-success" | "on-finish" | "on-failure" | "repeats";
   continueBranch: boolean;
 }
 
@@ -959,6 +959,7 @@ export function linksWithKind(
 export function conditionClause(edge: LinkDraft["edge"]): string | null {
   if (edge === "on-success") return ", only if it completes.";
   if (edge === "on-finish") return ", once it finishes either way.";
+  if (edge === "on-failure") return ", only if it fails.";
   return null;
 }
 
@@ -1014,7 +1015,9 @@ export function sectionLinkStatement(
     refusal:
       clause === null
         ? "This link has no condition, so the graph is refused. Remove it and draw it again."
-        : null,
+        : link.edge === "on-failure"
+          ? "A pass has no reading for a block that was not needed, so a link inside a loop that starts only on a failure is refused. Remove it and draw it again."
+          : null,
   };
 }
 

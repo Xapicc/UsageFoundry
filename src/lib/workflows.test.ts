@@ -1103,6 +1103,47 @@ describe("normalizeWorkflowInput — links", () => {
 /* Carrying a branch over                                              */
 /* ------------------------------------------------------------------ */
 
+describe("normalizeWorkflowInput — an on-failure link", () => {
+  it("accepts one out of a run block, into any kind", () => {
+    const v = value(
+      graph(
+        [node("a"), node("b"), merger("m")],
+        [edge("a", "b", { edge: "on-failure" }), edge("a", "m", { edge: "on-failure" })],
+      ),
+    );
+    assert.deepEqual(v.graph.edges.map((e) => e.edge), ["on-failure", "on-failure"]);
+  });
+
+  it("refuses one out of any block but a run, naming both", () => {
+    // Every other kind settles in words of its own, and which of them a fixer
+    // should start on is a decision nobody has made.
+    for (const make of [decider, merger]) {
+      assert.match(
+        error(graph([make("x"), node("a")], [edge("x", "a", { edge: "on-failure" })])),
+        /“A” is set to start only if “X” fails, and only a run block's failure can start anything/,
+      );
+    }
+  });
+
+  it("refuses one inside what a loop repeats", () => {
+    // A pass has no reading for a member that was not needed, so it would
+    // neither stop nor carry on.
+    assert.match(
+      error(
+        graph(
+          [repeater("l"), node("a"), node("b"), merger("m")],
+          [
+            repeats("l", "a"),
+            edge("a", "b", { edge: "on-failure", continueBranch: true }),
+            edge("b", "m"),
+          ],
+        ),
+      ),
+      /inside what “L” repeats/,
+    );
+  });
+});
+
 describe("normalizeWorkflowInput — continuing a branch", () => {
   it("accepts one hand-over per block", () => {
     const v = value(
@@ -4906,6 +4947,117 @@ describe("planInstanceStep — a run a restart closed out", () => {
     assert.deepEqual(step.create, []);
     assert.equal(step.block[0]?.nodeId, "review");
     assert.match(step.block[0].reason, /run r-2 was closed out by the server restart/);
+  });
+});
+
+/**
+ * The third condition one level up, where the dependent is a block nobody has
+ * created yet. The same two silent failures as `releasableRuns`', and a third
+ * this level adds: a node passed over has to read as not needed rather than
+ * blocked, or a workflow whose first run simply worked reports its tail as
+ * written off — and everything behind it has to be passed over too, or it sits
+ * `waiting` and the instance never finishes.
+ */
+describe("planInstanceStep — an on-failure link", () => {
+  // Build fails over to Fix, and each has a merge block of its own: the shape a
+  // fallback takes, since a fan-in of the two would wait on the branch not taken.
+  const FALLBACK: WorkflowGraph = {
+    nodes: [
+      graphNode("build", "Build"),
+      graphNode("fix", "Fix"),
+      graphNode("land", "Land Build", { kind: "merge", mergeStrategy: "merge" }),
+      graphNode("landFix", "Land Fix", { kind: "merge", mergeStrategy: "merge" }),
+    ],
+    edges: [
+      edge("build", "land"),
+      edge("build", "fix", { edge: "on-failure", continueBranch: true }),
+      edge("fix", "landFix"),
+    ],
+  };
+  const deferred = {
+    fix: decided("waiting"),
+    land: decided("waiting"),
+    landFix: decided("waiting"),
+  };
+
+  it("creates the dependent only when the run in front of it failed or asked for review", () => {
+    for (const status of ["failed", "needs-review"] as const) {
+      const step = stepOf({ ...deferred, build: ran("r-b", status) }, FALLBACK);
+      assert.deepEqual(
+        step.create,
+        [{ nodeId: "fix", dependsOn: [{ runId: "r-b", edge: "on-failure", continueBranch: true }] }],
+        status,
+      );
+      assert.deepEqual(step.notNeeded, [], status);
+      // The success branch is the one written off now, and it says so as ever.
+      assert.deepEqual(step.block.map((b) => b.nodeId), ["land"], status);
+    }
+  });
+
+  it("passes over the dependent and what is behind it when the run completed", () => {
+    const step = stepOf({ ...deferred, build: ran("r-b", "completed") }, FALLBACK);
+    assert.deepEqual(step.create, []);
+    assert.deepEqual(step.block, []);
+    assert.deepEqual(step.merge, [{ nodeId: "land", runIds: ["r-b"] }]);
+    assert.deepEqual(step.notNeeded.map((n) => n.nodeId), ["fix", "landFix"]);
+    assert.match(step.notNeeded[0].reason, /only if “Build” failed \(on-failure\), and it completed/);
+    assert.match(step.notNeeded[1].reason, /after “Fix”, which was not needed either/);
+  });
+
+  it("blocks it, rather than passing it over, when the run was stopped", () => {
+    // A stop is a decision to stop spending: neither a failure to start a fixer
+    // on nor a success that makes one unnecessary.
+    const step = stepOf({ ...deferred, build: ran("r-b", "stopped") }, FALLBACK);
+    assert.deepEqual(step.create, []);
+    assert.deepEqual(step.notNeeded, []);
+    const fix = step.block.find((b) => b.nodeId === "fix");
+    assert.match(fix?.reason ?? "", /only if “Build” failed \(on-failure\); it ended stopped, which is not a failure/);
+  });
+
+  it("holds it while the run is still going, and on a run that never worked", () => {
+    assert.deepEqual(
+      stepOf({ ...deferred, build: ran("r-b", "running", 0) }, FALLBACK).create,
+      [],
+    );
+    const never = stepOf({ ...deferred, build: ran("r-b", "failed", 0) }, FALLBACK);
+    assert.deepEqual(never.create, []);
+    assert.ok(never.block.some((b) => b.nodeId === "fix"));
+  });
+
+  it("passes over whatever is behind a node already not needed, in either table", () => {
+    // A run node created up front and then passed over by `releasableRuns`…
+    const asRun = stepOf(
+      { build: ran("r-b", "completed"), fix: ran("r-f", "not-needed", 0), land: decided("emitted"), landFix: decided("waiting") },
+      FALLBACK,
+    );
+    assert.deepEqual(asRun.notNeeded.map((n) => n.nodeId), ["landFix"]);
+    assert.deepEqual(asRun.block, []);
+    // …and a ledger row passed over by an earlier advance, on an on-finish edge.
+    const chained: WorkflowGraph = {
+      nodes: [...FALLBACK.nodes, graphNode("tidy", "Tidy")],
+      edges: [...FALLBACK.edges, edge("landFix", "tidy", { edge: "on-finish" })],
+    };
+    const asBlock = stepOf(
+      { build: ran("r-b", "completed"), fix: decided("not-needed"), land: decided("emitted"), landFix: decided("not-needed"), tidy: decided("waiting") },
+      chained,
+    );
+    assert.deepEqual(asBlock.notNeeded.map((n) => n.nodeId), ["tidy"]);
+    assert.match(asBlock.notNeeded[0].reason, /after “Land Fix”, which was not needed either/);
+  });
+
+  it("leaves the existing conditions as they were", () => {
+    const graph: WorkflowGraph = {
+      ...FALLBACK,
+      edges: [edge("build", "fix", { edge: "on-finish" }), edge("fix", "landFix")],
+    };
+    for (const status of ["completed", "failed"] as const) {
+      const step = stepOf({ ...deferred, build: ran("r-b", status) }, graph);
+      assert.deepEqual(step.create.map((c) => c.nodeId), ["fix"], status);
+      assert.deepEqual(step.notNeeded, [], status);
+    }
+    const success = stepOf({ ...deferred, build: ran("r-b", "failed") }, { ...graph, edges: [edge("build", "fix"), edge("fix", "landFix")] });
+    assert.deepEqual(success.notNeeded, []);
+    assert.deepEqual(success.block.map((b) => b.nodeId), ["fix", "landFix"]);
   });
 });
 
