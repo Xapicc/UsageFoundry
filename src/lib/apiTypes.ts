@@ -2191,6 +2191,24 @@ export interface ReviewItemDTO {
  */
 export const MAX_REVIEW_FIX_ROUNDS = 3;
 
+/**
+ * Where a review block's verdict on each branch comes from. `model` is the
+ * frontier review, billed per branch. `status` reads how each run ended: a
+ * `completed` one is approved and any other ending is set aside, with no model
+ * and no spend.
+ *
+ * An object keyed on `kind` rather than a bare word, so a source that carries a
+ * setting of its own — a saved command to run — is one more member here rather
+ * than a second field beside this one that every reader has to pair with it.
+ */
+export type ReviewVerdictSourceDTO = { kind: "model" } | { kind: "status" };
+
+/** Every `ReviewVerdictSourceDTO` kind, in the order the editor offers them. */
+export const REVIEW_VERDICT_KINDS: readonly ReviewVerdictSourceDTO["kind"][] = [
+  "model",
+  "status",
+];
+
 /** How a branch is put onto its target. `settings.landStrategy`'s vocabulary. */
 export type MergeStrategyDTO = "merge" | "squash";
 
@@ -2327,6 +2345,12 @@ export interface WorkflowNodeDTO {
    * rejects is sent back for a fix and reviewed again. Null on every other kind.
    */
   fixRounds?: number | null;
+  /**
+   * Where a review block's verdict comes from. Absent and null are `model`, so
+   * every graph saved before the field existed keeps its frontier review. Null
+   * on every other kind.
+   */
+  verdictSource?: ReviewVerdictSourceDTO | null;
 }
 
 /**

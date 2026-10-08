@@ -9,6 +9,7 @@ import type {
   FoldersResponse,
   LoopBoardReadingDTO,
   MergeStrategyDTO,
+  ReviewVerdictSourceDTO,
   RunTemplateDTO,
   SettingsDTO,
   TaskPriorityDTO,
@@ -25,6 +26,7 @@ import {
   MAX_REVIEW_FIX_ROUNDS,
   MAX_WORKFLOW_NAME,
   MAX_WORKFLOW_NODES,
+  REVIEW_VERDICT_KINDS,
   RUN_PROVIDER_LABEL,
   RUN_PROVIDERS,
   boardThresholds,
@@ -284,6 +286,12 @@ const DEFAULT_MERGE_STRATEGY: MergeStrategyDTO = "merge";
  */
 const DEFAULT_FIX_ROUNDS = "1";
 
+/** What the review block's verdict picker calls each source. */
+const VERDICT_LABEL: Record<ReviewVerdictSourceDTO["kind"], string> = {
+  model: "A frontier review",
+  status: "How each run ended",
+};
+
 /** The width a control takes in the inspector's rows. See `ui/Field`'s note:
  *  a width never goes on the control, because two width utilities on one
  *  element resolve by stylesheet order rather than class order. */
@@ -321,6 +329,7 @@ function emptyBlock(id: string, mountId: string, kind: WorkflowNodeKind): BlockD
     stopWhenTasksThresholds: defaultThresholds(),
     provider: "",
     fixRounds: DEFAULT_FIX_ROUNDS,
+    verdictSource: "model",
   };
 }
 
@@ -367,6 +376,10 @@ function toBlocks(workflow: WorkflowDTO): BlockDraft[] {
     // ordinary Claude run — the reading `normalizeNode` gives it.
     provider: n.provider ?? "",
     fixRounds: n.fixRounds?.toString() ?? DEFAULT_FIX_ROUNDS,
+    // Absent on every graph saved before the field existed, which is the
+    // frontier review those blocks were saved to pay for — `normalizeNode`'s
+    // reading.
+    verdictSource: n.verdictSource?.kind ?? "model",
   }));
 }
 
@@ -1417,6 +1430,19 @@ function BlockStatement({
     );
   }
 
+  if (block.kind === "review" && block.verdictSource === "status") {
+    return (
+      <p className="mb-3.5 text-sm leading-normal text-ink-muted">
+        Hands on{" "}
+        <strong className="font-semibold text-ink">
+          only the branches whose run completed
+        </strong>
+        , with no model and nothing billed. Any other ending is set aside by
+        name, and its tasks are left as the run left them.
+      </p>
+    );
+  }
+
   if (block.kind === "review") {
     const rounds = Number(block.fixRounds);
     return (
@@ -1785,9 +1811,9 @@ function BlockPanel({
   // whichever repository each branch came from; and no task, because what it
   // lands is whatever the blocks in front of it left behind.
   const merge = block.kind === "merge";
-  // A review block holds one field, its fix rounds, for the merge block's
-  // reason: it starts no child of its own, so there is nothing to guard, place
-  // or brief.
+  // A review block holds two fields, where its verdict comes from and its fix
+  // rounds, for the merge block's reason: it starts no child of its own, so
+  // there is nothing to guard, place or brief.
   const review = block.kind === "review";
 
   // The section in the order a pass will create it, which is the order the
@@ -2280,26 +2306,60 @@ function BlockPanel({
         <ListGroup
           className="mb-4"
           label="What it does"
-          footnote="Each fix round is a billed run and a billed review for every branch sent back"
+          footnote={
+            block.verdictSource === "status"
+              ? "Reads each run's status, so this block bills nothing"
+              : "Each fix round is a billed run and a billed review for every branch sent back"
+          }
         >
           <ListRow
-            label="Fix rounds per rejected branch"
-            htmlFor={`${block.id}-fixrounds`}
+            label="Verdict from"
+            htmlFor={`${block.id}-verdict`}
+            // The link rule on the row it follows from: Save refuses the
+            // other condition by name, and this is where the choice was made.
+            description={
+              block.verdictSource === "status"
+                ? `Its links in have to be “${EDGE_OPTION_LABEL["on-finish"]}”, or the first run that does not complete blocks it`
+                : "Billed per branch"
+            }
           >
-            <div className={ROW_CONTROL_NARROW}>
+            <div className={ROW_CONTROL}>
               <Select
-                id={`${block.id}-fixrounds`}
-                value={block.fixRounds}
-                onChange={(e) => onChange({ fixRounds: e.target.value })}
+                id={`${block.id}-verdict`}
+                value={block.verdictSource}
+                onChange={(e) => onChange({ verdictSource: e.target.value })}
               >
-                {Array.from({ length: MAX_REVIEW_FIX_ROUNDS + 1 }, (_, n) => (
-                  <option key={n} value={String(n)}>
-                    {n}
+                {REVIEW_VERDICT_KINDS.map((kind) => (
+                  <option key={kind} value={kind}>
+                    {VERDICT_LABEL[kind]}
                   </option>
                 ))}
               </Select>
             </div>
           </ListRow>
+          {/* Hidden rather than shown at 0 under a status verdict: there is no
+              review for a fix to answer, and `draftToGraph` sends 0 whatever
+              the picker last held, so switching back restores the rounds. */}
+          {block.verdictSource !== "status" && (
+            <ListRow
+              label="Fix rounds per rejected branch"
+              htmlFor={`${block.id}-fixrounds`}
+            >
+              <div className={ROW_CONTROL_NARROW}>
+                <Select
+                  id={`${block.id}-fixrounds`}
+                  value={block.fixRounds}
+                  onChange={(e) => onChange({ fixRounds: e.target.value })}
+                >
+                  {Array.from({ length: MAX_REVIEW_FIX_ROUNDS + 1 }, (_, n) => (
+                    <option key={n} value={String(n)}>
+                      {n}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </ListRow>
+          )}
         </ListGroup>
       )}
 

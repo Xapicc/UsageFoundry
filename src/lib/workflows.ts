@@ -25,6 +25,7 @@ import {
   fixRunPrompt,
   nextReviewStep,
   reviewBlockSummary,
+  statusVerdict,
 } from "./reviewBlock";
 import { addTaskComment } from "./taskComments";
 import { installBudgetRefusal } from "./installBudget";
@@ -7559,6 +7560,14 @@ export async function startReviewBlock(
     });
     return;
   }
+  // A status verdict reads each run's row and nothing else: it starts no review
+  // and spends nothing, so there is no budget boundary to cross — a merge
+  // block's free case — and no `await` between the claim and the settlement
+  // for a halt to land in.
+  if (node.verdictSource?.kind === "status") {
+    settleReviewByStatus(instanceId, node, nodeId, runIds);
+    return;
+  }
   const fixRounds = node.fixRounds ?? 0;
 
   // The workflow-wide guard, at this kind of block boundary — and always,
@@ -7583,17 +7592,7 @@ export async function startReviewBlock(
     return;
   }
 
-  // Seeded once. `INSERT OR IGNORE` because a retried block finds its rows.
-  const now = Date.now();
-  runIds.forEach((runId, position) => {
-    db()
-      .prepare(
-        `INSERT OR IGNORE INTO workflow_review_items
-           (instance_id, block_id, origin_run_id, run_id, position, round, status, updated_at)
-         VALUES (?, ?, ?, ?, ?, 0, 'reviewing', ?)`,
-      )
-      .run(instanceId, nodeId, runId, runId, position, now);
-  });
+  seedReviewItems(instanceId, nodeId, runIds);
 
   await Promise.all(
     runIds.map((runId) =>
@@ -7609,11 +7608,30 @@ export async function startReviewBlock(
   );
 
   if (!reviewStillOpen(instanceId, nodeId)) return;
-  const items = reviewItemsOf(instanceId, nodeId);
   // No cost here: `bankReviewSpend` put each review's on the row as it ended.
+  finishReviewBlock(instanceId, nodeId, guardNote);
+}
+
+/** One row per branch, seeded once. `INSERT OR IGNORE` because a retried block finds its rows. */
+function seedReviewItems(instanceId: string, blockId: string, runIds: readonly string[]): void {
+  const now = Date.now();
+  runIds.forEach((runId, position) => {
+    db()
+      .prepare(
+        `INSERT OR IGNORE INTO workflow_review_items
+           (instance_id, block_id, origin_run_id, run_id, position, round, status, updated_at)
+         VALUES (?, ?, ?, ?, ?, 0, 'reviewing', ?)`,
+      )
+      .run(instanceId, blockId, runId, runId, position, now);
+  });
+}
+
+/** Settle a review block with the sentence its branches add up to. */
+function finishReviewBlock(instanceId: string, blockId: string, guardNote: string | null): void {
+  const items = reviewItemsOf(instanceId, blockId);
   finishMergeBlock(
     instanceId,
-    nodeId,
+    blockId,
     withNote(
       {
         ok: true,
@@ -7628,6 +7646,37 @@ export async function startReviewBlock(
       guardNote,
     ),
   );
+}
+
+/**
+ * A status verdict on every branch, and the block settled, in one synchronous
+ * pass: each run's row read through `statusVerdict`, approved or set aside.
+ *
+ * Through `setAside` with the verdict's `needsFrontier`, which is always false,
+ * so a status set-aside marks no task and reopens none. No model judged the
+ * work, and `reopenRejectedTask` is the one move off the transition table no
+ * actor asks for, kept for a frontier model's rejection; a claim a run still
+ * holds when it ends is the operator's to release everywhere else on the board.
+ * `committed_nothing` stays 0 because no diff is read, so every branch set aside
+ * here counts as work turned down and a loop's DONE rung does not read the pass
+ * as finished.
+ */
+function settleReviewByStatus(
+  instanceId: string,
+  node: WorkflowNode,
+  blockId: string,
+  runIds: readonly string[],
+): void {
+  seedReviewItems(instanceId, blockId, runIds);
+  for (const runId of runIds) {
+    const verdict = statusVerdict(getRun(runId)?.status ?? null);
+    if (verdict.kind === "approve") {
+      updateReviewItem(instanceId, blockId, runId, { status: "approved", note: null });
+    } else {
+      setAside(instanceId, blockId, runId, runId, verdict.reason, verdict.needsFrontier, node.name);
+    }
+  }
+  finishReviewBlock(instanceId, blockId, null);
 }
 
 /**
