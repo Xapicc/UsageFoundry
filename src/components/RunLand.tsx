@@ -21,6 +21,7 @@ import { Disclosure } from "@/components/ui/Disclosure";
 import { Input, Select } from "@/components/ui/Field";
 import { Hint } from "@/components/ui/Hint";
 import { Notice } from "@/components/ui/Notice";
+import { RunGitDirNotice } from "@/components/RunGitDirNotice";
 import { Sheet } from "@/components/ui/Sheet";
 import { Spinner } from "@/components/ui/Log";
 import { DiffFileRow, Patch } from "@/components/ui/Patch";
@@ -412,13 +413,16 @@ export function RunLand({ run }: { run: RunDTO }) {
   // The merge happens the other way round, in an isolated checkout — see
   // `resolveConflicts`. Nor while the run's checkout is stopped mid-rebase or
   // mid-bisect: git keeps the branch there, `resolveCheckout` refuses it, and
-  // the pending block above already names the operation and its way out.
+  // the pending block above already names the operation and its way out. Nor
+  // on a branch whose resolution could not land either, which the state line
+  // names beside the conflict.
   const canResolve =
     state.preview.outcome === "conflict" &&
     settled &&
     !state.merged &&
     !state.landedUnchanged &&
-    !state.pending?.operation;
+    !state.pending?.operation &&
+    state.resolveBlocked === null;
   // The other door out of a branch, for everything `deletable` refuses. Not
   // offered beside Delete: when git can see the work is safe, that is the
   // button, and two destructive controls side by side is how the wrong one
@@ -480,6 +484,10 @@ export function RunLand({ run }: { run: RunDTO }) {
           commit sits, not what it was told to land into
         </Hint>
       )}
+
+      {/* Before the land: landing is the moment the operator goes back to the
+          checkout whose git directory this run may have changed. */}
+      <RunGitDirNotice gitDir={run.gitDir} settled={settled} placement="land" />
 
       {/* Everything below is as of the last read that worked, and while a
           resolution runs that is re-read every three seconds. Said here rather

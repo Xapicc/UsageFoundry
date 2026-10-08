@@ -539,9 +539,16 @@ export function normalizeWorkflowInput(
 
   for (const [index, entry] of rawEdges.entries()) {
     const e = (entry ?? {}) as Record<string, unknown>;
+    const where = `Link ${index + 1}`;
+    // Asked before the `String(…)` that reads each: `["a"]` was the block `a`
+    // and `["on-finish"]` the condition `on-finish`, a link joining or
+    // conditioned on something other than what was written.
+    for (const field of ["from", "to", "edge"]) {
+      const notString = notStringRefusal(field, e[field]);
+      if (notString) return { ok: false, error: `${where}: ${notString}` };
+    }
     const from = String(e.from ?? "");
     const to = String(e.to ?? "");
-    const where = `Link ${index + 1}`;
 
     const source = byId.get(from);
     const target = byId.get(to);
@@ -948,6 +955,12 @@ function normalizeNode(
 ): NodeNormalization {
   const n = (entry ?? {}) as Record<string, unknown>;
   const position = `Block ${index + 1}`;
+    // Asked before the `String(…)` that reads it: `["a"]` was the id `a`. The
+    // chat's door asks the same of `id`, `kind` and `name` first, but the
+    // workflow routes (create, update, validate) read a graph through here with
+    // nothing in front of it.
+    const notId = notStringRefusal("id", n.id);
+    if (notId) return { ok: false, error: `${position}: ${notId}` };
     const id = String(n.id ?? "");
     if (!NODE_ID.test(id)) {
       return {
@@ -978,6 +991,8 @@ function normalizeNode(
     // Absent is `run`, and it has to be: every graph saved before orchestrator
     // blocks existed says nothing here, and the other reading would turn a saved
     // workflow into one that starts agents nobody wrote.
+    const notKind = notStringRefusal("kind", n.kind);
+    if (notKind) return { ok: false, error: `“${nodeName}”: ${notKind}` };
     const rawKind = String(n.kind ?? "run");
     if (!(NODE_KINDS as readonly string[]).includes(rawKind)) {
       return {
@@ -991,6 +1006,13 @@ function normalizeNode(
     // name. See `LOOP_IS_TOLD_NOTHING` for why each of them describes a run a
     // loop block does not have.
     if (kind === "loop") {
+      // Type first: `String([])` is `""`, so an empty list passed as nothing
+      // told, and an object was refused in the sentence for a loop that had
+      // been given a task.
+      for (const field of LOOP_IS_TOLD_NOTHING) {
+        const notString = notStringRefusal(field.key, n[field.key]);
+        if (notString) return { ok: false, error: `“${nodeName}”: ${notString}` };
+      }
       const told = LOOP_IS_TOLD_NOTHING.find(
         (field) => String(n[field.key] ?? "").trim() !== "",
       );

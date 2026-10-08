@@ -212,6 +212,7 @@ import {
   stoppedTasksNotice,
 } from "./backgroundWork";
 import { TASK_LIFECYCLE_MESSAGES } from "./runTasks";
+import { recordGitDirBaseline, settleGitDirWatch } from "./gitDirRead";
 import {
   STDERR_TAIL_LIMIT,
   clipReason,
@@ -539,6 +540,10 @@ export interface RunRow {
   origin_ref: string | null;
   /** When an operator last put this terminal run back in the queue. */
   reopened_at: number | null;
+  /** `gitDirWatch.ts`'s `GitDirBaseline` as JSON, taken once before the first cycle. */
+  git_dir_baseline: string | null;
+  /** `gitDirWatch.ts`'s `GitDirReport` as JSON, written after each terminal status. */
+  git_dir_report: string | null;
 }
 
 /**
@@ -1667,7 +1672,38 @@ function setStatus(
     .run(...values);
   if (onlyFrom !== undefined && written.changes !== 1) return false;
   emit({ runId: id, ts: Date.now(), kind: "status", payload: { status, ...patch } });
+  // Every ending a run with a git baseline can reach comes through here — the
+  // loop's own, a Stop or a sweep ending a parked run, the boot closing one
+  // out — so this is the one place its comparison starts. The rows that end by
+  // a raw UPDATE are `waiting` ones, which never started and have no baseline.
+  if (TERMINAL_STATUSES.includes(status)) settleGitDirInBackground(id);
   return true;
+}
+
+/**
+ * Compare a finished run's repository git directory with its start, without
+ * holding the caller.
+ *
+ * Not awaited because `setStatus`'s callers are synchronous by requirement:
+ * the loop's ending runs `releaseDependents` and `promoteQueued` in the same
+ * turn as its status write, and the folder claim is only atomic that way. A
+ * comparison that throws is said on the run's log; when even that cannot be
+ * written the run page still says the end was not compared, from the baseline
+ * standing with no report beside it.
+ */
+function settleGitDirInBackground(id: string): void {
+  void settleGitDirWatch(id).catch((err: unknown) => {
+    try {
+      log(
+        id,
+        `This run's repository git directory could not be compared with its start: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    } catch {
+      // The database is what failed, and the page reads the missing report.
+    }
+  });
 }
 
 /**
@@ -10751,6 +10787,20 @@ export async function startRun(id: string): Promise<void> {
 
     if (run.isolation === "worktree" && run.worktree_path && run.repo_root) {
       workDir = await ensureWorktree(run);
+    }
+
+    // After the checkout exists and before the first cycle, so the baseline is
+    // the repository as this run found it. Only a run's first segment takes
+    // one; a resumed or reopened run is compared against the same start.
+    try {
+      await recordGitDirBaseline(id, workDir);
+    } catch (err) {
+      log(
+        id,
+        `This run's repository git directory could not be read before its first work cycle, so its end cannot say what changed there: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
     }
 
     // The credential this run's cycles get, chosen once from the *repository*

@@ -3033,12 +3033,21 @@ export interface OrchestratorChildOptions {
   /** A conversation to continue, or null for a one-shot turn. */
   resumeSessionId?: string | null;
   /**
-   * Where the child runs. Defaults to the first mount, which is what a chat
-   * wants; a workflow block passes its own folder so `Read` and `git log` land
-   * on the repository it was pointed at. Every mount is `--add-dir`ed either
-   * way, so this widens nothing — it only decides where a bare path resolves.
+   * The folder this turn decides about, when it decides about one: a workflow
+   * block passes its own. Handed over with `--add-dir` and named by
+   * `folderNotice`, and **never made the working directory** — the child always
+   * stands in `chatCwd()`.
+   *
+   * It was the working directory, and that ran a work cycle's code under this
+   * child's capability with no tool call (board task `7764bc65`). In a
+   * repository cwd the pinned CLI runs `git status` at startup, outside any
+   * `Bash` sandbox, and that status ran a clean filter a work cycle had planted
+   * through `.git/info/attributes` — which no git setting turns off
+   * (`docs/agent/security/chat-child-config-files.md`). The same CLI runs no
+   * git at all in an `--add-dir` (both measured on 2.1.280). Every mount is
+   * `--add-dir`ed anyway, so this widens nothing.
    */
-  cwd?: string;
+  folder?: string;
   /**
    * The agent this turn **is**, or null.
    *
@@ -3117,6 +3126,10 @@ function launchOrchestratorChild(
   const configPath = writeMcpConfig(token);
   taken.configPath = configPath;
 
+  // Asked once, for the reason `cwd` is below: the `--add-dir` and the sentence
+  // naming the folder must agree about whether there is one.
+  const folder = o.folder && fs.existsSync(o.folder) ? o.folder : null;
+
   const settings = getSettings();
   const args = [
     "-p",
@@ -3172,16 +3185,22 @@ function launchOrchestratorChild(
     // this child — a tool surface the operator never granted this feature.
     "--strict-mcp-config",
     "--append-system-prompt",
-    o.appendSystemPrompt,
+    folder ? `${o.appendSystemPrompt}\n\n${folderNotice(folder)}` : o.appendSystemPrompt,
   ];
 
   // Access to the mounts, so "look at what this repo is like" works. Under
   // `bypassPermissions` this is no longer read-only, which is the half of
   // the trade above that costs something: a chat told to leave the work
   // alone is now the only thing stopping it from editing a checkout.
-  const addDirs = WORKSPACE_MOUNTS.filter((m) => fs.existsSync(m.path)).map(
+  //
+  // The folder joins them although a mount already covers it, because the CLI
+  // lists each `--add-dir` in the environment it describes to the model, and
+  // that list is the one place besides `folderNotice` the folder is named.
+  const mountDirs = WORKSPACE_MOUNTS.filter((m) => fs.existsSync(m.path)).map(
     (m) => m.path,
   );
+  const addDirs =
+    folder && !mountDirs.includes(folder) ? [...mountDirs, folder] : mountDirs;
   for (const dir of addDirs) args.push("--add-dir", dir);
 
   // The one allowlist this child carries, and it grants nothing: naming
@@ -3203,7 +3222,11 @@ function launchOrchestratorChild(
   // that dies with the turn and `chatTurnBudgetUSD`, not its filesystem.
   // It travels in the one `--settings` `chatSettingsArgs` writes, beside the
   // switch that keeps hooks out of this child.
-  args.push(...chatSettingsArgs(sandboxOverlayFor({ kind: "chat", dirs: addDirs })));
+  //
+  // The mounts and not the folder, which a mount already covers: `writeSet`
+  // withholds the whole set over one entry it reads as a glob, and a folder is
+  // named by whoever saved the block.
+  args.push(...chatSettingsArgs(sandboxOverlayFor({ kind: "chat", dirs: mountDirs })));
 
   // One encoder for every spawn site, so there is one place that knows the
   // shape — silent when a member is only offered, a failed spawn when it is
@@ -3226,10 +3249,11 @@ function launchOrchestratorChild(
 
   // Resolved once rather than inside the spawn call, because the sandbox pass
   // below and the sweep after the child exits both have to name the directory
-  // the child was actually given — an `existsSync` asked a second time can
-  // answer differently, and a sweep aimed at the other answer silently leaves
-  // the placeholders where they fell.
-  const cwd = o.cwd && fs.existsSync(o.cwd) ? o.cwd : chatCwd();
+  // the child was actually given — `chatCwd` asked a second time can fall back
+  // where the first did not, and a sweep aimed at the other answer silently
+  // leaves the placeholders where they fell. Never `folder`: see `folder` on
+  // the options.
+  const cwd = chatCwd();
   taken.cwd = cwd;
 
   /**
@@ -4267,7 +4291,7 @@ function systemPrompt(): string {
 export const CHAT_CWD_BASE = "/run/uf-chat";
 
 /**
- * Where the chat's child runs, when the turn was not pointed at a folder.
+ * Where the chat's and every block's child runs.
  *
  * **This used to be `WORKSPACE_ROOT` and that was a defect, not a preference.**
  * Claude Code's sandbox binds `/dev/null` over the eleven names in
@@ -4295,7 +4319,11 @@ export const CHAT_CWD_BASE = "/run/uf-chat";
  *
  * Not a run's checkout either, for the reason `chatEnv` hands this child the
  * install-wide GitHub token: an orchestrator turn roams every mount by design
- * and is not scoped to one repository.
+ * and is not scoped to one repository. **And not a workflow block's folder,
+ * although a block is about one**: in a repository cwd the CLI runs `git
+ * status` at startup, and that runs whatever filter the repository's
+ * `.git/info/attributes` names under this child's capability (board task
+ * `7764bc65`; `folder` on `OrchestratorChildOptions`).
  *
  * Shared across turns rather than made per turn, which is safe here for exactly
  * the reason `/workspace` was not: the directory is writable by the child, so a
@@ -4340,6 +4368,31 @@ function chatCwd(): string {
     });
     return os.tmpdir();
   }
+}
+
+/**
+ * The sentence that names a turn's folder, now that its working directory does
+ * not.
+ *
+ * Standing in the folder told the model three things for free: the path, in the
+ * CLI's own environment section; that a bare `git log` or a relative path in an
+ * operator's task meant that folder; and its branch, status and last commits, in
+ * the snapshot the CLI takes at startup. `chatCwd()` takes all three away, and
+ * this gives back the first two. The snapshot is the third, and it stays gone,
+ * because taking it is the `git status` that ran a work cycle's filter: a block
+ * that wants history runs `git -C` itself, which is what the sentence asks.
+ *
+ * Generated rather than left to the block's prompt, for `blockSystemPrompt`'s
+ * reason: a sentence an operator can edit is one that can silently stop being
+ * true.
+ */
+function folderNotice(folder: string): string {
+  return [
+    "Your working directory is a scratch directory, not the folder this turn is",
+    `about. That folder is ${folder}: read a relative path in your task as a`,
+    `path inside it, and point every command at it — \`git -C ${folder} log\`,`,
+    "not a bare `git log`.",
+  ].join("\n");
 }
 
 /** Make `dir` root's and the chat group's, at `scratchDirMode`, and return it. */
@@ -4523,7 +4576,7 @@ export function chatSettingsArgs(sandbox: SandboxOverlay | null): string[] {
  * still right: a work cycle takes the credential its own repository is
  * configured with (`selectGithubToken`, off `runs.repo_root`), where an
  * orchestrator turn's whole job is to look across every mount before it knows
- * which repository it is proposing work in. Narrowing it to `o.cwd` would
+ * which repository it is proposing work in. Narrowing it to `o.folder` would
  * silently withhold the credential from every question about a repository the
  * turn had not yet been pointed at, which is the failure this feature was
  * widened to remove. Leaving `UF_GITHUB_TOKEN` blank and configuring only

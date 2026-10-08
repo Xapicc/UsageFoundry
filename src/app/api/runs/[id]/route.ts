@@ -19,6 +19,7 @@ import {
 import { runAgentDTO } from "@/lib/agents";
 import { tasksLinkedToRun } from "@/lib/tasks";
 import { workflowOriginOf } from "@/lib/workflows";
+import { gitDirOf } from "@/lib/gitDirWatch";
 import { normalizePolicy } from "@/lib/budget";
 import { auditMutation } from "../../../../lib/requestLog";
 import { readReceipts } from "../../../../lib/stacks";
@@ -80,9 +81,14 @@ export async function GET(req: Request, ctx: Ctx) {
   // Gzipped: 14,170 bytes to 3,717, measured — the row carries the agent's
   // whole system prompt and the normalised policy, and this is the three-second
   // poll every open run page runs. The 404 above stays plain.
+  // The two git-directory columns go out as one parsed field: the baseline is
+  // only ever compared against, and the page needs when and where it was read.
+  const { git_dir_baseline: _gitDirBaseline, git_dir_report: _gitDirReport, ...row } = run;
+
   return jsonMaybeGzipped(req, {
     run: {
-      ...run,
+      ...row,
+      gitDir: gitDirOf(run),
       budget: {
         ...normalizePolicy(rawBudget),
         permissionMode: rawBudget.permissionMode,

@@ -16,7 +16,12 @@ import type {
 } from "@/lib/apiTypes";
 import { RUN_PROVIDER_LABEL } from "@/lib/apiTypes";
 import { chatRequest } from "@/lib/chatRequest";
-import { mergeMessages, threadItems, turnStartInstant } from "@/lib/chatThread";
+import {
+  hasLeftThread,
+  mergeMessages,
+  threadItems,
+  turnStartInstant,
+} from "@/lib/chatThread";
 import { startPoll } from "@/lib/poll";
 import {
   describeAmbientAgents,
@@ -788,12 +793,13 @@ export default function ChatPage() {
    * overwritten instead, which is right when it was served first and costs one
    * poll period when it was not.
    *
-   * Skipped once the operator has opened another thread: the answer is about
-   * the one they left, and drawing it would undo the click — moving the ticket
-   * as well would drop the opened thread's own read.
+   * Never called once the operator has opened another thread: each action
+   * returns on `hasLeftThread` before any of its tail, because drawing the
+   * thread they left would undo the click and moving the ticket would drop the
+   * opened thread's own read — and the draw is only one of the things a tail
+   * puts on whatever thread is open by then.
    */
   const drawAnswer = (answered: ChatDTO) => {
-    if (opened.current !== null && opened.current !== answered.id) return;
     ++loadRequest.current;
     setChat(answered);
   };
@@ -808,13 +814,14 @@ export default function ChatPage() {
     setSendError(null);
     try {
       const result = await chatRequest(`/api/chat/${chatId}/message`, { message });
-      // The draft is cleared on success only. A failed send that ate the text
-      // is a failure the operator cannot retry.
+      // The draft is cleared on success only, since a failed send that ate the
+      // text is a failure the operator cannot retry — and on success wherever
+      // they are by now, because the composer is not per thread and sent text
+      // left in it is one press from going to the thread they moved to.
+      if (result.ok) setDraft("");
+      if (hasLeftThread(opened.current, chatId)) return;
       if (!result.ok) setSendError(result.error ?? "The message could not be sent.");
-      else {
-        setDraft("");
-        if (result.chat) drawAnswer(result.chat);
-      }
+      else if (result.chat) drawAnswer(result.chat);
     } finally {
       // `busy` disables every button here at once and only this line clears it,
       // so it is released on the way out however the request ended. No `catch`:
@@ -838,6 +845,7 @@ export default function ChatPage() {
     setSendError(null);
     try {
       const result = await chatRequest(`/api/chat/${chatId}/cancel`);
+      if (hasLeftThread(opened.current, chatId)) return;
       if (!result.ok) setSendError(result.error ?? "The turn could not be stopped.");
       else if (result.chat) drawAnswer(result.chat);
     } finally {
@@ -866,6 +874,7 @@ export default function ChatPage() {
     setAnswerError(null);
     try {
       const result = await chatRequest(`/api/chat/${chatId}/questions`, { answers });
+      if (hasLeftThread(opened.current, chatId)) return;
       if (!result.ok) {
         setAnswerError(result.error ?? "That answer could not be sent.");
       } else if (result.chat) {
@@ -882,6 +891,10 @@ export default function ChatPage() {
     setDecideError(null);
     try {
       const result = await chatRequest(`/api/chat/${chatId}/proposals`, { action, ids });
+      // The refusal's re-read most of all: it asks for the thread left, takes
+      // the newest ticket from the opened thread's own read, and draws the left
+      // thread over the one opened until the poll puts it back.
+      if (hasLeftThread(opened.current, chatId)) return;
       if (!result.ok) {
         setDecideError(result.error ?? "That could not be applied.");
         // The refusal is about the page's picture of what is pending being
