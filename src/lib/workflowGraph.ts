@@ -441,7 +441,7 @@ export const NODE_ID = /^[A-Za-z0-9_-]{1,64}$/;
  * scheduler has no branch for — the `as const` makes every reader exhaustive
  * against `WorkflowNodeKind` at the same time.
  */
-const NODE_KINDS = ["run", "orchestrator", "merge", "loop", "review"] as const satisfies readonly WorkflowNodeKind[];
+const NODE_KINDS = ["run", "orchestrator", "merge", "deliver", "loop", "review"] as const satisfies readonly WorkflowNodeKind[];
 
 const MAX_NODE_NAME = 60;
 
@@ -650,9 +650,13 @@ export function normalizeWorkflowInput(
                   ? `“${node.name}” reviews other blocks' branches and hands on ` +
                     "the ones it approves, so it has no branch of its own to hand " +
                     "over or carry on. Start after it without carrying a branch."
-                  : `“${node.name}” lands other blocks' branches rather than ` +
-                    "working in a checkout of its own, so it has no branch to " +
-                    "hand over or carry on.",
+                  : node.kind === "deliver"
+                    ? `“${node.name}” pushes other blocks' branches and opens a ` +
+                      "pull request for each, so it has no branch of its own to " +
+                      "hand over or carry on."
+                    : `“${node.name}” lands other blocks' branches rather than ` +
+                      "working in a checkout of its own, so it has no branch to " +
+                      "hand over or carry on.",
         };
       }
 
@@ -1033,7 +1037,8 @@ function normalizeNode(
     // A review block is the third: its reviews and its fix runs are this app's,
     // started on branches the blocks in front of it cut, and it names no
     // workspace, template, task or agent of its own.
-    const startsNoRun = kind === "merge" || kind === "loop" || kind === "review";
+    const startsNoRun =
+      kind === "merge" || kind === "deliver" || kind === "loop" || kind === "review";
 
     // A merge block is told nothing. What it lands is whatever the blocks in
     // front of it left on a branch, and where each branch belongs was recorded
@@ -1322,6 +1327,15 @@ function normalizeNode(
             : `“${nodeName}” reviews the branches in front of it with a frontier ` +
               "model this app chooses, so there is nothing for that agent to be. " +
               "Remove it, or put it on the block that does the work.",
+      };
+    }
+    if (namedAgent !== null && kind === "deliver") {
+      return {
+        ok: false,
+        error:
+          `“${nodeName}” pushes the branches in front of it and starts no agent ` +
+          "of its own, so there is nothing for that agent to be. Remove it, or " +
+          "put it on the block that does the work.",
       };
     }
     // A saved agent's prompt reaches Claude Code's `--agent` and nothing else,
@@ -1633,6 +1647,20 @@ function loopBodyRefusal(
       // pass and that is stated at Save in the arithmetic below rather than
       // discovered on the bill. A merge block is in, because a section *ends*
       // in one — each pass lands what it produced.
+      // A deliver block is the other kind a section may not hold, and for the
+      // opposite reason: it multiplies nothing, it *publishes*. Each pass would
+      // push its branches and open pull requests with nobody pressing anything,
+      // up to the pass cap, and a pass does not even need the push — it lands
+      // its own work through the section's merge block.
+      if (member.kind === "deliver") {
+        return (
+          `“${member.name}” is repeated by “${loop.name}”, and a deliver block ` +
+          "pushes branches and opens a pull request every time it is reached — " +
+          "once per pass, with nobody pressing anything. A section lands its own " +
+          "work through its merge block, and what a loop hands on afterwards is " +
+          "already on its target, so there is no branch left to deliver."
+        );
+      }
       if (member.kind === "loop") {
         return (
           `“${member.name}” is itself a loop, and a loop inside a section ` +
@@ -1962,13 +1990,55 @@ function graphRefusal(
     }
   }
 
+  // A deliver block pushes what is in front of it, so the merge block's two
+  // halves apply to it unchanged: something has to be there, and it has to have
+  // cut a branch. `continueBranch` is the one rule that does not carry over as
+  // written — it is refused on the edge, where it is drawn — and neither does
+  // the landing exit: a pass is landed by its merge block, and a deliver block
+  // is not allowed in a section at all.
+  //
+  // A merge block, a loop and another deliver block are the three that hand on
+  // no runs (see `edgeVerdict`), so none of them counts as something to push. A
+  // deliver block whose only predecessor is a merge block would have nothing to
+  // be handed; and what a merge landed is on its target, where a pull request
+  // from it has no commits to show.
+  for (const node of nodes) {
+    if (node.kind !== "deliver") continue;
+    const sources = edges
+      .filter((e) => e.to === node.id && isDependencyEdge(e))
+      .map((e) => byId.get(e.from)!);
+    const producers = sources.filter(
+      (s) => s.kind !== "merge" && s.kind !== "loop" && s.kind !== "deliver",
+    );
+    if (producers.length === 0) {
+      return (
+        `“${node.name}” has no block in front of it whose branches it could ` +
+        "push. A deliver block pushes what its predecessors built, so it needs " +
+        "at least one predecessor that runs something — a merge block lands its " +
+        "branches on their target and hands none on."
+      );
+    }
+    // A review is not asked about a template it does not have; its own sources
+    // are held to this rule by the review rule above.
+    const bare = producers.find(
+      (s) => s.kind !== "review" && !isolatedTemplate(s.templateId, known),
+    );
+    if (bare) {
+      return (
+        `“${bare.name}” leaves no branch for “${node.name}” to push — its ` +
+        "guards work directly in the folder rather than in a checkout of " +
+        "their own."
+      );
+    }
+  }
+
   for (const node of nodes) {
     if (node.kind !== "merge") continue;
     const sources = edges
       .filter((e) => e.to === node.id)
       .map((e) => byId.get(e.from)!);
     const producers = sources.filter(
-      (s) => s.kind !== "merge" && s.kind !== "loop",
+      (s) => s.kind !== "merge" && s.kind !== "deliver" && s.kind !== "loop",
     );
     if (producers.length === 0) {
       return (
@@ -2108,7 +2178,14 @@ export function folderRefusal(graph: WorkflowGraph): string | null {
     // run. A loop names none either — it frames the blocks it repeats and each
     // of those resolves its own, so asking here would be resolving `""` against
     // no mount at all and refusing the graph over a folder nobody chose.
-    if (node.kind === "merge" || node.kind === "loop" || node.kind === "review") continue;
+    if (
+      node.kind === "merge" ||
+      node.kind === "deliver" ||
+      node.kind === "loop" ||
+      node.kind === "review"
+    ) {
+      continue;
+    }
     try {
       resolveWorkspaceFolder(node.folder, node.mountId);
     } catch (err) {

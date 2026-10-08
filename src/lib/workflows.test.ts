@@ -15,6 +15,7 @@ import {
   blockSpendReading,
   blockTurnSpend,
   bootBlockPlan,
+  deliverBlockOutcome,
   memberSpendReading,
   sumMemberSpend,
   emittedFolderRefusal,
@@ -35,6 +36,7 @@ import {
   summarizeProposedGraph,
   type BlockStatus,
   type BranchOutcome,
+  type DeliveryOutcome,
   type EmissionLimits,
   type HaltCause,
   type HaltMember,
@@ -129,6 +131,11 @@ function decider(id: string, extra: Record<string, unknown> = {}) {
 /** A merge block, with the strategy a saved graph must carry. */
 function merger(id: string, extra: Record<string, unknown> = {}) {
   return node(id, { kind: "merge", mergeStrategy: "merge", ...extra });
+}
+
+/** A deliver block, which holds no setting of its own. */
+function deliverer(id: string, extra: Record<string, unknown> = {}) {
+  return node(id, { kind: "deliver", ...extra });
 }
 
 /**
@@ -1292,6 +1299,280 @@ describe("queuedBranchOutcome — what a merge block makes of a queue row", () =
     assert.equal(queuedBranchOutcome(row("landed", "Merged."), "uf/a").result, "landed");
     assert.equal(queuedBranchOutcome(row("failed", "It conflicts."), "uf/a").result, "failed");
     assert.equal(queuedBranchOutcome(row("cancelled", null), "uf/a").result, "failed");
+  });
+});
+
+/**
+ * What a deliver block may be saved as.
+ *
+ * It is the merge block's sibling for the other exit, so most of these are the
+ * merge block's refusals asked again, and the ones that are not are the
+ * interesting ones: a section may not hold it, because a pass would publish
+ * once per repeat with nobody pressing anything, and a merge block in front of
+ * it does not count as something to push, because a merge hands on no branch.
+ */
+describe("normalizeWorkflowInput — deliver blocks", () => {
+  it("saves behind a run that works in a checkout of its own", () => {
+    const g = value(graph([node("a"), deliverer("push")], [edge("a", "push")]));
+    assert.equal(g.graph.nodes[1].kind, "deliver");
+  });
+
+  it("saves behind an orchestrator block whose runs isolate, and behind a review block", () => {
+    assert.equal(
+      value(graph([decider("d"), deliverer("push")], [edge("d", "push")])).graph.nodes.length,
+      2,
+    );
+    const reviewed = value(
+      graph(
+        [node("a"), node("r", { kind: "review", fixRounds: 0 }), deliverer("push")],
+        [edge("a", "r"), edge("r", "push")],
+      ),
+    );
+    assert.equal(reviewed.graph.nodes[2].kind, "deliver");
+  });
+
+  it("needs a block in front of it that runs something", () => {
+    assert.match(
+      error(graph([deliverer("push")])),
+      /no block in front of it whose branches it could push/,
+    );
+  });
+
+  it("does not count a merge block, a loop or another deliver block as something to push", () => {
+    // None of the three hands on a run. After a merge the work is on its target,
+    // where a pull request from it has no commits to show.
+    assert.match(
+      error(graph([node("a"), merger("land"), deliverer("push")], [
+        edge("a", "land"),
+        edge("land", "push"),
+      ])),
+      /“PUSH” has no block in front of it whose branches it could push/,
+    );
+    assert.match(
+      error(graph([node("a"), deliverer("one"), deliverer("two")], [
+        edge("a", "one"),
+        edge("one", "two"),
+      ])),
+      /“TWO” has no block in front of it/,
+    );
+    // A loop lands each pass's work itself, so by the time it hands on there is
+    // no branch left to push.
+    const afterLoop = looped({}, "l");
+    afterLoop.graph.nodes.push(deliverer("push"));
+    afterLoop.graph.edges.push(edge("l", "push"));
+    assert.match(error(afterLoop), /“PUSH” has no block in front of it/);
+  });
+
+  it("accepts one that is sequenced behind a merge block while a run also feeds it", () => {
+    const g = value(
+      graph([node("a"), node("b"), merger("land"), deliverer("push")], [
+        edge("a", "land"),
+        edge("land", "push", { edge: "on-finish" }),
+        edge("b", "push"),
+      ]),
+    );
+    assert.equal(g.graph.nodes.length, 4);
+  });
+
+  it("refuses a predecessor whose guards leave no branch", () => {
+    // A run that worked in the folder has no branch, and `deliverRun` answers
+    // that with "no branch to deliver" an hour into the graph.
+    assert.match(
+      error(
+        graph([node("a", { templateId: "t-flat" }), deliverer("push")], [
+          edge("a", "push"),
+        ]),
+      ),
+      /leaves no branch for “PUSH” to push/,
+    );
+  });
+
+  it("takes an untemplated predecessor's isolation from the settings guards", () => {
+    const flat: WorkflowKnowledge = { ...KNOWN, defaultIsolate: false };
+    const res = normalizeWorkflowInput(
+      graph([node("a", { templateId: null }), deliverer("push")], [edge("a", "push")]),
+      flat,
+    );
+    assert.ok(!res.ok, "expected a refusal");
+    assert.match(res.error, /leaves no branch/);
+  });
+
+  it("refuses a deliver block at either end of a branch hand-over", () => {
+    // It pushes other blocks' branches and cuts none, so it has none to hand on
+    // or to extend. Named, like the merge block's, rather than left to the
+    // isolation test, which would say something true of neither end.
+    const asSource = error(
+      graph([node("a"), deliverer("push"), node("b")], [
+        edge("a", "push"),
+        edge("push", "b", { continueBranch: true }),
+      ]),
+    );
+    assert.match(asSource, /pushes other blocks' branches/);
+    assert.match(asSource, /no branch of its own to hand over or carry on/);
+    const asTarget = error(
+      graph([node("a"), deliverer("push")], [
+        edge("a", "push", { continueBranch: true }),
+      ]),
+    );
+    assert.match(asTarget, /pushes other blocks' branches/);
+  });
+
+  it("drops a task, template, workspace, folder and prompt it was carrying", () => {
+    // The editor sends whatever the block held before its kind was switched,
+    // and none of it is read by anything a deliver block does.
+    const g = value(
+      graph(
+        [
+          node("a"),
+          deliverer("push", {
+            task: "open the pull requests please",
+            templateId: "t-iso",
+            mountId: "work",
+            folder: "repo",
+            promptOverride: "be careful",
+          }),
+        ],
+        [edge("a", "push")],
+      ),
+    );
+    const push = g.graph.nodes[1];
+    assert.equal(push.task, "");
+    assert.equal(push.templateId, null);
+    assert.equal(push.mountId, "");
+    assert.equal(push.folder, "");
+    assert.equal(push.promptOverride, null);
+    assert.equal(push.fanOut, null);
+    assert.equal(push.mergeStrategy, null);
+    assert.equal(push.mergeAutoResolve, false);
+    assert.equal(push.fixRounds, null);
+  });
+
+  it("refuses an agent or a provider, which it has no child to give them to", () => {
+    assert.match(
+      error(graph([node("a"), deliverer("push", { agentId: "a-rev" })], [edge("a", "push")])),
+      /pushes the branches in front of it and starts no agent/,
+    );
+    assert.match(
+      error(graph([node("a"), deliverer("push", { provider: "local" })], [edge("a", "push")])),
+      /starts no run of its own/,
+    );
+  });
+
+  it("is not a block a section may repeat", () => {
+    // Each pass would push and open pull requests, once per repeat, up to the
+    // pass cap, with nobody pressing anything — and a pass lands its own work
+    // through the section's merge block, so there is nothing for it to add.
+    // The merge block here has its own run in front of it so the refusal under
+    // test is the one that answers.
+    const section = graph(
+      [repeater("l"), node("a"), deliverer("push"), merger("land")],
+      [
+        repeats("l", "a"),
+        edge("a", "push"),
+        edge("a", "land"),
+        edge("push", "land", { edge: "on-finish" }),
+      ],
+    );
+    assert.match(error(section), /“PUSH” is repeated by “L”, and a deliver block pushes/);
+  });
+});
+
+/**
+ * What a deliver block reports, and therefore whether the blocks behind it start.
+ *
+ * `mergeBlockOutcome`'s case again, with the same two silent ways of being
+ * wrong: read as failed, a chain whose branches are all published stops with
+ * nothing to do; read as succeeded, a follow-up starts as though a pull request
+ * existed that does not. The one difference is that a clean delivery is never
+ * silent, because the pull request's address is the product of the block and
+ * the note is the only place the instance page can read it from.
+ */
+describe("deliverBlockOutcome — what a deliver block reports", () => {
+  const delivered = (branch: string, n: number): DeliveryOutcome => ({
+    branch,
+    result: "delivered",
+    reason: `https://github.com/o/r/pull/${n}`,
+  });
+  const skipped = (branch: string, reason: string): DeliveryOutcome => ({
+    branch,
+    result: "skipped",
+    reason,
+  });
+  const failed = (branch: string, reason: string): DeliveryOutcome => ({
+    branch,
+    result: "failed",
+    reason,
+  });
+
+  it("succeeds and names every pull request when every branch was delivered", () => {
+    const out = deliverBlockOutcome([delivered("uf/a", 1), delivered("uf/b", 2)]);
+    assert.equal(out.ok, true);
+    assert.match(out.note ?? "", /Delivered 2 branch\(es\)/);
+    assert.match(out.note ?? "", /uf\/a — https:\/\/github.com\/o\/r\/pull\/1/);
+    assert.match(out.note ?? "", /uf\/b — https:\/\/github.com\/o\/r\/pull\/2/);
+  });
+
+  it("succeeds when a branch had nothing to deliver, and says which", () => {
+    const out = deliverBlockOutcome([
+      delivered("uf/a", 1),
+      skipped("uf/b", "it left no commits of its own"),
+    ]);
+    assert.equal(out.ok, true, "nothing to deliver is not a failure");
+    assert.match(out.note ?? "", /1 had nothing to deliver: uf\/b — it left no commits/);
+  });
+
+  it("succeeds with a note when nothing at all had anything to deliver", () => {
+    const out = deliverBlockOutcome([skipped("uf/a", "already on main")]);
+    assert.equal(out.ok, true);
+    assert.match(out.note ?? "", /^Nothing to deliver: uf\/a — already on main/);
+  });
+
+  it("fails when a branch that should have gone did not, naming both halves", () => {
+    const out = deliverBlockOutcome([
+      delivered("uf/a", 1),
+      failed("uf/b", "No GitHub token is configured for this repository."),
+    ]);
+    assert.equal(out.ok, false);
+    assert.match(out.note ?? "", /Delivered 1 of 2 branch\(es\)/);
+    assert.match(out.note ?? "", /Delivered: uf\/a — https:/);
+    assert.match(out.note ?? "", /Not delivered: uf\/b — No GitHub token/);
+  });
+
+  it("counts the skipped branches out of the denominator", () => {
+    // "Delivered 1 of 2" is about the branches that had something to publish.
+    const out = deliverBlockOutcome([
+      delivered("uf/a", 1),
+      skipped("uf/b", "already on main"),
+      failed("uf/c", "the verify command failed"),
+    ]);
+    assert.equal(out.ok, false);
+    assert.match(out.note ?? "", /Delivered 1 of 2/);
+  });
+
+  it("fails a delivery that failed everywhere without claiming any success", () => {
+    const out = deliverBlockOutcome([failed("uf/a", "refused"), failed("uf/b", "refused")]);
+    assert.equal(out.ok, false);
+    assert.match(out.note ?? "", /Delivered 0 of 2/);
+    assert.doesNotMatch(out.note ?? "", /Delivered:/);
+  });
+
+  it("names a few branches and counts the rest", () => {
+    const out = deliverBlockOutcome(
+      Array.from({ length: 7 }, (_, i) => failed(`uf/${i}`, "refused")),
+    );
+    assert.equal(out.ok, false);
+    assert.match(out.note ?? "", /and 3 more/);
+    const many = deliverBlockOutcome(
+      Array.from({ length: 6 }, (_, i) => delivered(`uf/${i}`, i)),
+    );
+    assert.equal(many.ok, true);
+    assert.match(many.note ?? "", /and 2 more/);
+  });
+
+  it("treats no branches at all as nothing to do", () => {
+    const out = deliverBlockOutcome([]);
+    assert.equal(out.ok, true);
+    assert.match(out.note ?? "", /no branch to deliver/);
   });
 });
 
@@ -3050,6 +3331,18 @@ describe("summarizeProposedGraph — what the approval card has to show", () => 
     assert.equal(a.guardsLabel, untemplated);
   });
 
+  it("says a deliver block has no agent and no folder, like a merge block", () => {
+    const [, push] = summarizeProposedGraph(
+      value(graph([node("a"), deliverer("push")], [edge("a", "push")])).graph,
+      KNOWN,
+      untemplated,
+    );
+    assert.equal(push.kind, "deliver");
+    assert.equal(push.guardsLabel, "no agent");
+    assert.equal(push.folderLabel, null);
+    assert.deepEqual(push.after, ["A"]);
+  });
+
   it("carries the fan-out cap, which is the number the operator is agreeing to", () => {
     // The one figure on the card that bounds agents nobody approves
     // individually. Absent, the decision moves to a canvas that may never be
@@ -4685,6 +4978,168 @@ describe("planInstanceStep — merge blocks", () => {
     );
     assert.deepEqual(step.create, []);
     assert.deepEqual(step.merge, [], "and it does not claim it twice");
+    assert.deepEqual(step.block, []);
+  });
+});
+
+describe("planInstanceStep — deliver blocks", () => {
+  const deliverNode = (id: string, name: string): WorkflowNode =>
+    graphNode(id, name, { kind: "deliver", mountId: "", folder: "", task: "" });
+
+  /** Two run blocks feeding one deliver block, with a run block behind it. */
+  const SHIP: WorkflowGraph = {
+    nodes: [
+      { ...FAN.nodes[1], id: "left", name: "Left" },
+      { ...FAN.nodes[1], id: "right", name: "Right" },
+      deliverNode("ship", "Ship it"),
+      { ...FAN.nodes[1], id: "after", name: "After" },
+    ],
+    edges: [
+      edge("left", "ship"),
+      edge("right", "ship"),
+      edge("ship", "after"),
+    ],
+  };
+
+  it("hands a deliver block every branch its satisfied edges resolved to", () => {
+    const step = stepOf(
+      {
+        left: ran("r-left", "completed"),
+        right: ran("r-right", "completed"),
+        ship: decided("waiting"),
+      },
+      SHIP,
+    );
+    assert.deepEqual(step.deliver, [{ nodeId: "ship", runIds: ["r-left", "r-right"] }]);
+    assert.deepEqual(step.merge, [], "it is not a merge block");
+    assert.deepEqual(step.spawn, [], "it spawns no agent");
+    assert.deepEqual(step.create, [], "and it is never created as a run");
+  });
+
+  it("waits for every predecessor before pushing anything", () => {
+    const step = stepOf(
+      {
+        left: ran("r-left", "completed"),
+        right: ran("r-right", "running", 0),
+        ship: decided("waiting"),
+      },
+      SHIP,
+    );
+    assert.deepEqual(step.deliver, []);
+  });
+
+  it("takes every run an orchestrator block emitted, once each", () => {
+    const g: WorkflowGraph = {
+      nodes: [FAN.nodes[0], deliverNode("ship", "Ship it")],
+      edges: [edge("pick", "ship", { edge: "on-success" })],
+    };
+    const step = stepOf(
+      {
+        pick: decided("emitted", [
+          ["r-1", "completed"],
+          ["r-2", "completed"],
+        ]),
+        ship: decided("waiting"),
+      },
+      g,
+    );
+    assert.deepEqual(step.deliver, [{ nodeId: "ship", runIds: ["r-1", "r-2"] }]);
+
+    // The diamond: a second push of one branch opens a pull request GitHub
+    // refuses as already existing.
+    const diamond: WorkflowGraph = {
+      nodes: [{ ...FAN.nodes[1], id: "build", name: "Build" }, deliverNode("ship", "Ship it")],
+      edges: [
+        edge("build", "ship", { edge: "on-success" }),
+        { from: "build", to: "ship", edge: "on-finish", continueBranch: false },
+      ],
+    };
+    assert.deepEqual(
+      stepOf({ build: ran("r-build", "completed"), ship: decided("waiting") }, diamond).deliver,
+      [{ nodeId: "ship", runIds: ["r-build"] }],
+    );
+  });
+
+  it("releases what is behind it with no dependency on a run", () => {
+    const step = stepOf(
+      {
+        left: ran("r-left", "completed"),
+        right: ran("r-right", "completed"),
+        ship: decided("emitted"),
+      },
+      SHIP,
+    );
+    assert.deepEqual(step.create, [{ nodeId: "after", dependsOn: [] }]);
+  });
+
+  it("stops an on-success successor when a branch was not delivered, in the delivery's words", () => {
+    const step = stepOf(
+      {
+        left: ran("r-left", "completed"),
+        right: ran("r-right", "completed"),
+        ship: decided("failed", [], "Delivered 1 of 2 branch(es)."),
+      },
+      SHIP,
+    );
+    assert.deepEqual(step.create, []);
+    assert.match(step.block[0].reason, /did not deliver everything it was given/);
+    assert.doesNotMatch(step.block[0].reason, /land/);
+  });
+
+  it("releases an on-finish successor of a failed delivery", () => {
+    const g: WorkflowGraph = {
+      ...SHIP,
+      edges: [
+        edge("left", "ship"),
+        edge("right", "ship"),
+        edge("ship", "after", { edge: "on-finish" }),
+      ],
+    };
+    const step = stepOf(
+      {
+        left: ran("r-left", "completed"),
+        right: ran("r-right", "completed"),
+        ship: decided("failed", [], "Delivered 1 of 2 branch(es)."),
+      },
+      g,
+    );
+    assert.deepEqual(step.create, [{ nodeId: "after", dependsOn: [] }]);
+  });
+
+  it("blocks behind a delivery that never ran, whatever the condition", () => {
+    for (const condition of ["on-success", "on-finish"] as const) {
+      const g: WorkflowGraph = {
+        ...SHIP,
+        edges: [
+          edge("left", "ship"),
+          edge("right", "ship"),
+          edge("ship", "after", { edge: condition }),
+        ],
+      };
+      const step = stepOf(
+        {
+          left: ran("r-left", "completed"),
+          right: ran("r-right", "completed"),
+          ship: decided("blocked", [], "The workflow was stopped."),
+        },
+        g,
+      );
+      assert.deepEqual(step.create, [], condition);
+      assert.match(step.block[0].reason, /never ran/);
+    }
+  });
+
+  it("holds a successor while the delivery is still running, and does not claim it twice", () => {
+    const step = stepOf(
+      {
+        left: ran("r-left", "completed"),
+        right: ran("r-right", "completed"),
+        ship: decided("thinking"),
+      },
+      SHIP,
+    );
+    assert.deepEqual(step.create, []);
+    assert.deepEqual(step.deliver, []);
     assert.deepEqual(step.block, []);
   });
 });

@@ -2928,7 +2928,7 @@ function workflowReport() {
             kind: n.kind,
             templateId: n.templateId,
             mountId: n.mountId || null,
-            folder: n.kind === "merge" ? null : n.folder,
+            folder: n.kind === "merge" || n.kind === "deliver" ? null : n.folder,
             fanOut: n.fanOut,
             after: w.graph.edges
               // A `repeats` link is containment, not a wait: the loop it names
@@ -3028,6 +3028,21 @@ function proposeWorkflow(args: Record<string, unknown>, chatId: string) {
     const notBlockString = nonStringEntry(`Block ${index + 1}`, b, "id", "kind", "name");
     if (notBlockString) return notBlockString;
     const to = String(b.id ?? "");
+
+    // Not a kind a chat may draft, though `normalizeWorkflowInput` accepts it
+    // from the editor. A deliver block publishes — it pushes branches and opens
+    // pull requests — and approving this card saves the graph for a person to
+    // press Run on, but the card would describe it as "no agent" beside blocks
+    // that only write to disk. Left to be built where its consequence is stated.
+    if (String(b.kind ?? "") === "deliver") {
+      return text(
+        `“${String(b.name ?? to)}” is a deliver block, which pushes branches and ` +
+          "opens pull requests. A chat cannot propose one: tell the operator to " +
+          "add it in the workflow editor, after the blocks whose branches it " +
+          "should publish.",
+        true,
+      );
+    }
 
     // `""` is the mount root, and `normalizeWorkflowInput` is right to treat it
     // as a real answer — the editor's picker offers it, and choosing it is a

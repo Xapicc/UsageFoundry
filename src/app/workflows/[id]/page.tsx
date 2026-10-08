@@ -523,6 +523,15 @@ export default function WorkflowPage() {
                             : " — a conflicting branch is left alone"}
                         </div>
                       )}
+                      {n.kind === "deliver" && (
+                        // Said where Run is pressed, for the orchestrator's
+                        // reason: it publishes branches and opens pull requests
+                        // with nothing between the graph and the push.
+                        <div className="mt-0.5 text-warn">
+                          Pushes every branch in front of it and opens a pull
+                          request for each — nothing asks first
+                        </div>
+                      )}
                       {n.kind === "review" && (
                         // Its fix rounds are billed runs with nobody watching,
                         // so they are stated where Run is pressed.
@@ -600,7 +609,10 @@ export default function WorkflowPage() {
                           task at all — the model refuses both fields by name,
                           so printing them draws an empty path under a block
                           that never had one. */}
-                      {n.kind !== "merge" && n.kind !== "loop" && n.kind !== "review" && (
+                      {n.kind !== "merge" &&
+                        n.kind !== "deliver" &&
+                        n.kind !== "loop" &&
+                        n.kind !== "review" && (
                         <>
                           <div className="mono mt-0.5 break-words text-ink-muted">
                             {n.mountId} / {n.folder || "."}

@@ -1417,6 +1417,19 @@ function BlockStatement({
     );
   }
 
+  if (block.kind === "deliver") {
+    return (
+      <p className="mb-3.5 text-sm leading-normal text-ink-muted">
+        Pushes every branch in front of it to its repository&rsquo;s remote and{" "}
+        <strong className="font-semibold text-warn">
+          opens a pull request for each
+        </strong>
+        , with nobody pressing anything. It never forces a push, and it spends
+        nothing on a model.
+      </p>
+    );
+  }
+
   if (block.kind === "review") {
     const rounds = Number(block.fixRounds);
     return (
@@ -1785,6 +1798,10 @@ function BlockPanel({
   // whichever repository each branch came from; and no task, because what it
   // lands is whatever the blocks in front of it left behind.
   const merge = block.kind === "merge";
+  // A deliver block holds none either, for the merge block's reasons: it starts
+  // no agent, works in whichever repository each branch came from, and has no
+  // task of its own. The pull request's title and body are written from the run.
+  const deliver = block.kind === "deliver";
   // A review block holds one field, its fix rounds, for the merge block's
   // reason: it starts no child of its own, so there is nothing to guard, place
   // or brief.
@@ -2270,6 +2287,18 @@ function BlockPanel({
         </ListGroup>
       )}
 
+      {deliver && (
+        <ListGroup
+          className="mb-4"
+          label="What it does"
+          footnote="Needs a GitHub token for each repository and a remote that is GitHub. The Settings verify command, if set, must pass first. Your own checkout may have uncommitted changes."
+        >
+          <ListRow label="How it publishes">
+            <span className="text-sm text-ink">One pull request per branch</span>
+          </ListRow>
+        </ListGroup>
+      )}
+
       {/* Neither a merge block nor a loop, and for the same reason read one
           level apart: neither starts a child of its own. A merge block's fields
           are coerced away on the server; a loop's are refused **by name** — it
@@ -2337,7 +2366,7 @@ function BlockPanel({
         </ListGroup>
       )}
 
-      {!merge && !loop && !review && (
+      {!merge && !deliver && !loop && !review && (
         <>
           {/* The task is the rest of "what it does", so it sits with the caps
               that bound it rather than at the foot of the panel — a run block,

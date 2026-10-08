@@ -99,6 +99,7 @@ const STATUS_BY_KIND: Partial<
   Record<BlockKind, Partial<Record<BlockStatus, string>>>
 > = {
   merge: { thinking: "merging", emitted: "landed" },
+  deliver: { thinking: "delivering", emitted: "delivered" },
   loop: { emitted: "repeated" },
 };
 
@@ -806,6 +807,12 @@ function blockSummary(b: BlockDTO, waits: string[]): string {
     // Only for a merge that finished: one that failed with nothing queued has
     // not established that there was nothing to land, and its error says more.
     if (b.status === "emitted") return "no branches to land";
+  } else if (b.kind === "deliver") {
+    // No counts to read back: a delivery has no queue behind it, and what each
+    // branch came to is in the block's note beneath this line.
+    if (b.status === "thinking") return "delivering branches";
+    if (b.status === "emitted") return "delivered every branch it had one for";
+    if (b.status === "failed") return "did not deliver every branch";
   } else if (b.kind === "review") {
     const items = b.reviewItems;
     const approved = items.filter((i) => i.status === "approved").length;
@@ -1080,6 +1087,15 @@ export default function WorkflowInstancePage() {
           </Hint>,
         ]
       : []),
+    ...(instance.blocks.some((b) => b.kind === "deliver")
+      ? [
+          <Hint key="deliver">
+            A deliver block&rsquo;s pull requests are listed in its note, and on
+            each run&rsquo;s Land card; a branch it pushed stays on the remote
+            whatever happens to the pull request
+          </Hint>,
+        ]
+      : []),
     ...(instance.blocks.some((b) => b.kind === "review")
       ? [
           <Hint key="review">
@@ -1297,7 +1313,7 @@ export default function WorkflowInstancePage() {
               <Table stack>
                 <caption className="sr-only">
                   Blocks that decide what to run, blocks that repeat one, blocks
-                  that land branches, and blocks waiting on any of them
+                  that land or deliver branches, and blocks waiting on any of them
                 </caption>
                 {/* `min-w` for `RunTableHead`'s reason, one table over: a
                     `width` is traded away against the `w-full` column's own

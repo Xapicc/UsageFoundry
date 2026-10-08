@@ -1481,7 +1481,11 @@ export function draftToGraph(draft: CanvasDraft): WireGraph {
     // the panel is about to stop showing. Either way this is the same treatment
     // `mergeStrategy`, `fanOut` and `stopWhenTasks` below get: a value only ever
     // goes over the wire for the kind that holds it.
-    const startsNoRun = b.kind === "merge" || b.kind === "loop" || b.kind === "review";
+    const startsNoRun =
+      b.kind === "merge" ||
+      b.kind === "deliver" ||
+      b.kind === "loop" ||
+      b.kind === "review";
     return {
       id: b.id,
       name: b.name.trim(),

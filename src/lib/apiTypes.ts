@@ -2165,11 +2165,20 @@ export const MAX_LOOP_RUNS = 60;
  * graph naming this block's folder, its guard set and its fan-out cap. `merge`
  * spawns no agent of its own: it lands the branches the blocks in front of it
  * left behind, through the same queue the Branches page uses, and its one
- * optional expense is paying a model to reconcile a conflict. `loop` repeats one
+ * optional expense is paying a model to reconcile a conflict. `deliver` is its
+ * sibling for the other exit: it pushes each branch in front of it to the
+ * remote and opens a pull request, through the same `deliverRun` the Land card's
+ * Deliver button calls, and spends no model money at all. `loop` repeats one
  * task until the agent reports it done, a pass fails, or one of its two caps is
  * reached — a fresh run per pass, each carrying on the previous pass's branch.
  */
-export type WorkflowNodeKind = "run" | "orchestrator" | "merge" | "loop" | "review";
+export type WorkflowNodeKind =
+  | "run"
+  | "orchestrator"
+  | "merge"
+  | "deliver"
+  | "loop"
+  | "review";
 
 /** One branch a review block is judging, as the instance page draws it. */
 export interface ReviewItemDTO {

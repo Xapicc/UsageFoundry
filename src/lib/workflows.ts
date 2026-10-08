@@ -66,7 +66,12 @@ import {
   isQueueActive,
   type QueueRow,
 } from "./mergeQueue";
-import { landState, type LandStrategy } from "./land";
+import {
+  deliveredPullRequest,
+  deliverRun,
+  landState,
+  type LandStrategy,
+} from "./land";
 import {
   INSTANCE_ENFORCEABLE_CODES,
   evaluateInstanceBudget,
@@ -376,7 +381,7 @@ export function summarizeProposedGraph(
     name: node.name,
     kind: node.kind,
     guardsLabel:
-      node.kind === "merge" || node.kind === "review"
+      node.kind === "merge" || node.kind === "deliver" || node.kind === "review"
         ? "no agent"
         : node.templateId === null
           ? untemplatedLabel
@@ -387,7 +392,7 @@ export function summarizeProposedGraph(
       ? (known.agents.get(node.agentId)?.name ?? "agent deleted")
       : null,
     folderLabel:
-      node.kind === "merge" || node.kind === "review"
+      node.kind === "merge" || node.kind === "deliver" || node.kind === "review"
         ? null
         : `${mountById(node.mountId)?.label ?? node.mountId}${
             node.folder ? `/${node.folder}` : " (mount root)"
@@ -1637,6 +1642,11 @@ export interface InstanceStep {
   /** Merge blocks whose branches may now be queued. */
   merge: InstanceMerge[];
   /**
+   * Deliver blocks whose branches may now be pushed, in `InstanceMerge`'s shape
+   * and for its reason.
+   */
+  deliver: InstanceMerge[];
+  /**
    * Review blocks whose branches may now be reviewed, in `InstanceMerge`'s
    * shape and for its reason: which runs an orchestrator block turned out to
    * emit is a fact only `edgeVerdict` has.
@@ -1734,6 +1744,7 @@ export function planInstanceStep(
   const step: InstanceStep = {
     spawn: [],
     merge: [],
+    deliver: [],
     review: [],
     create: [],
     loop: [],
@@ -1787,6 +1798,14 @@ export function planInstanceStep(
           nodeId: node.id,
           runIds: [...new Set(dependsOn.map((d) => d.runId))],
         });
+      } else if (node.kind === "deliver") {
+        // Deduplicated for the merge block's reason: a diamond meeting again
+        // here would push one branch twice, and the second push would open a
+        // pull request GitHub refuses as already existing.
+        step.deliver.push({
+          nodeId: node.id,
+          runIds: [...new Set(dependsOn.map((d) => d.runId))],
+        });
       } else if (node.kind === "review") {
         // Deduplicated for the merge block's reason: a diamond meeting again
         // here would review one branch twice, and the item table would refuse
@@ -1835,7 +1854,7 @@ function edgeVerdict(
   edge: WorkflowDependencyEdge,
   dependsOn: InstanceCreation["dependsOn"],
 ): EdgeVerdict {
-  if (from.kind === "merge") {
+  if (from.kind === "merge" || from.kind === "deliver") {
     const block = state.block;
     if (!block || block.status === "waiting" || block.status === "thinking") {
       return PENDING;
@@ -1846,6 +1865,9 @@ function edgeVerdict(
         reason: `“${from.name}” never ran: ${block.error ?? "no reason recorded."}`,
       };
     }
+    // A deliver block reads exactly as a merge block does, and for the same
+    // reason: it created no run, so its edge carries a condition and no branch.
+    //
     // A merge block that failed still *finished*, having tried, which is what
     // separates it from one that never ran — the same distinction
     // `edgeSatisfied` draws between a run that did a cycle and a run that did
@@ -1856,7 +1878,10 @@ function edgeVerdict(
     if (block.status === "failed" && edge.edge === "on-success") {
       return {
         kind: "blocked",
-        reason: `“${from.name}” did not land everything it was given: ${block.error ?? "the merge failed."}`,
+        reason:
+          from.kind === "merge"
+            ? `“${from.name}” did not land everything it was given: ${block.error ?? "the merge failed."}`
+            : `“${from.name}” did not deliver everything it was given: ${block.error ?? "the delivery failed."}`,
       };
     }
     // Nothing is pushed onto `dependsOn`: a merge block created no run, so a
@@ -3556,7 +3581,14 @@ export function startWorkflow(
   const defaults = chatGuards();
   const plans = new Map<string, Omit<CreateRunInput, "dependsOn" | "origin">>();
   for (const node of graph.nodes) {
-    if (node.kind === "merge" || node.kind === "loop" || node.kind === "review") continue;
+    if (
+      node.kind === "merge" ||
+      node.kind === "deliver" ||
+      node.kind === "loop" ||
+      node.kind === "review"
+    ) {
+      continue;
+    }
     const plan = planNode(
       node,
       node.templateId ? getTemplate(node.templateId) : null,
@@ -4240,12 +4272,13 @@ function haltBlocks(instanceId: string, cause: string): number {
     db()
       .prepare(
         "UPDATE workflow_instance_blocks SET status='blocked', finished_at=?," +
-          " error = CASE kind WHEN 'merge' THEN ? WHEN 'review' THEN ? ELSE ? END" +
+          " error = CASE kind WHEN 'merge' THEN ? WHEN 'deliver' THEN ? WHEN 'review' THEN ? ELSE ? END" +
           " WHERE instance_id=? AND status='waiting'",
       )
       .run(
         now,
         `${cause} before it landed anything.`,
+        `${cause} before it delivered anything.`,
         `${cause} before it reviewed anything.`,
         `${cause} before it started deciding.`,
         instanceId,
@@ -4253,7 +4286,7 @@ function haltBlocks(instanceId: string, cause: string): number {
     db()
       .prepare(
         "UPDATE workflow_instance_blocks SET status='failed', finished_at=?," +
-          " error = CASE kind WHEN 'merge' THEN ? WHEN 'review' THEN ? ELSE ? END" +
+          " error = CASE kind WHEN 'merge' THEN ? WHEN 'deliver' THEN ? WHEN 'review' THEN ? ELSE ? END" +
           " WHERE instance_id=? AND status='thinking'",
       )
       .run(
@@ -4262,6 +4295,11 @@ function haltBlocks(instanceId: string, cause: string): number {
         // later; one in flight is left to finish, exactly as `cancelBatch` has
         // it, so the batch's own rows stay the record of which branches landed.
         `${cause} while it was landing branches.`,
+        // A push already under way is left to finish too, and for the same
+        // reason: `deliverRun` is waited on by the shutdown and writes the pull
+        // request to the run's row, which is the record of what was delivered.
+        // The block stops before it starts the next branch.
+        `${cause} while it was delivering branches.`,
         `${cause} while it was reviewing branches.`,
         `${cause} while it was deciding what to start.`,
         instanceId,
@@ -5457,6 +5495,23 @@ function advanceInstance(instanceId: string): void {
       finishMergeBlock(instanceId, merge.nodeId, {
         ok: false,
         note: `This block could not start merging: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      });
+    });
+  }
+
+  // The merge's shape and its claim, for its reason: `startDeliverBlock` reads
+  // git and then pushes, and two advance passes arriving together would
+  // otherwise both push the same branch. Not held by the install-wide hold,
+  // which stops new *spending* and which a push does none of — the merge block
+  // is not held by it either, when no resolution is authorised.
+  for (const deliver of step.deliver) {
+    if (!claimBlock(instanceId, deliver.nodeId)) continue;
+    void startDeliverBlock(instanceId, deliver.nodeId, deliver.runIds).catch((err) => {
+      finishMergeBlock(instanceId, deliver.nodeId, {
+        ok: false,
+        note: `This block could not start delivering: ${
           err instanceof Error ? err.message : String(err)
         }`,
       });
@@ -7128,6 +7183,9 @@ function withNote(
  */
 async function branchVerdict(
   runId: string,
+  // Only the wording differs between the two exits: whether a branch has
+  // anything to put anywhere is the same question of git for both.
+  exit: "land" | "deliver" = "land",
 ): Promise<{ result: "queue" } | { result: "settled"; outcome: BranchOutcome }> {
   const label = branchLabel(runId);
   const skip = (reason: string) => ({
@@ -7157,7 +7215,7 @@ async function branchVerdict(
   if (!state) {
     return fail(
       "it worked directly in the folder rather than on a branch of its own, so " +
-        "there is no branch to land",
+        `there is no branch to ${exit}`,
     );
   }
   if (!state.branchExists) return fail("its branch no longer exists");
@@ -7204,7 +7262,7 @@ async function awaitBatch(
 }
 
 /**
- * Record what a merge block did.
+ * Record what a merge block did — or a deliver block, which settles the same way.
  *
  * `settleBlock`'s shape and its latch: guarded on `status='thinking'`, so a halt
  * that wrote the block off while the queue was draining keeps its own wording.
@@ -7239,6 +7297,185 @@ function finishMergeBlock(
 
   promoteQueued();
   advanceInstances();
+}
+
+/* ------------------------------------------------------------------ */
+/* Deliver blocks: pushing what the blocks in front of them built       */
+/* ------------------------------------------------------------------ */
+
+/** What became of one branch a deliver block was handed. */
+export interface DeliveryOutcome {
+  /** The branch, or the run's short id when it never had one to name. */
+  branch: string;
+  /**
+   * `delivered` — it is pushed and has a pull request, whose address is the
+   * reason. `skipped` — there was nothing to open one for, which is not a
+   * failure. `failed` — there was, and it did not leave.
+   */
+  result: "delivered" | "skipped" | "failed";
+  reason: string | null;
+}
+
+/**
+ * Whether a deliver block succeeded, and the sentence that says what happened.
+ *
+ * `mergeBlockOutcome`'s sibling, pure and unit-tested for its reason: this
+ * decides whether the blocks *behind* the deliver block start, and both ways of
+ * being wrong are silent. Read as failed, a chain whose branches are all
+ * published stops with nothing to do; read as succeeded, a follow-up run starts
+ * as though a pull request existed that does not.
+ *
+ * **A branch with nothing to deliver is a success**, on the merge block's
+ * ground: a run that committed nothing, a branch already on its target and a
+ * branch that already has a pull request all leave the operator with what they
+ * asked for. What is not a success is a predecessor that should have had a
+ * branch and has none — isolation having degraded at run time — and a push or a
+ * pull request that was refused, however the refusal was worded.
+ *
+ * **Unlike a merge block's, the note is never null when something was
+ * delivered**, because the pull request's address is the whole product of this
+ * block and the instance page shows nothing else it could be read from.
+ */
+export function deliverBlockOutcome(branches: readonly DeliveryOutcome[]): {
+  ok: boolean;
+  note: string | null;
+} {
+  if (branches.length === 0) {
+    return { ok: true, note: "There was no branch to deliver." };
+  }
+
+  const failed = branches.filter((b) => b.result === "failed");
+  const skipped = branches.filter((b) => b.result === "skipped");
+  const delivered = branches.filter((b) => b.result === "delivered");
+
+  const named = (list: readonly DeliveryOutcome[], none: string) => {
+    const shown = list
+      .slice(0, MAX_NAMED_BRANCHES)
+      .map((b) => `${b.branch} — ${b.reason ?? none}`);
+    const rest = list.length - shown.length;
+    return shown.join("; ") + (rest > 0 ? `; and ${rest} more` : "");
+  };
+
+  const parts: string[] = [];
+  if (failed.length > 0) {
+    parts.push(
+      `Delivered ${delivered.length} of ${branches.length - skipped.length} branch(es).`,
+    );
+    if (delivered.length > 0) parts.push(`Delivered: ${named(delivered, "no address recorded")}.`);
+    parts.push(`Not delivered: ${named(failed, "no reason recorded")}.`);
+  } else if (delivered.length > 0) {
+    parts.push(`Delivered ${delivered.length} branch(es): ${named(delivered, "no address recorded")}.`);
+  }
+  if (skipped.length > 0) {
+    parts.push(
+      delivered.length === 0 && failed.length === 0
+        ? `Nothing to deliver: ${named(skipped, "nothing to deliver")}.`
+        : `${skipped.length} had nothing to deliver: ${named(skipped, "nothing to deliver")}.`,
+    );
+  }
+  return { ok: failed.length === 0, note: parts.join(" ") };
+}
+
+/**
+ * Push the branches the blocks in front of this one left behind, and open a
+ * pull request for each.
+ *
+ * Everything that decides whether a branch may leave is `deliverRun`'s and is
+ * deliberately not restated here: the verify gate, the seeded-file refusal, the
+ * certification gate, the per-repository credential, the `landing` claim on the
+ * checkout and the shutdown gate. This function's whole job is choosing *which*
+ * runs go to it, one at a time, and reading back what happened.
+ *
+ * **One at a time**, and that is not caution: `deliverRun` takes the checkout's
+ * `landing` claim and refuses a second delivery to the same folder while it is
+ * held, so two in flight would fail the second for a reason that has nothing to
+ * do with its branch. The order is the graph's, as the merge queue's is.
+ *
+ * **It does not need the operator's checkout clean.** `deliverRun` reads the
+ * checkout for its remote and runs `push --set-upstream` in it, which writes
+ * `.git/config` and nothing in the working tree, so the dirty-checkout refusal
+ * that fails a merge block never applies. It does refuse while a run is working
+ * *in that folder* — an agent without an isolated checkout — and that arrives
+ * here as a failed branch with its sentence.
+ *
+ * The halt latch is read before each branch rather than once: a push is not
+ * something to begin in a workflow that is being taken down, and the branches
+ * already pushed are recorded on their own runs whatever this block says.
+ */
+async function startDeliverBlock(
+  instanceId: string,
+  nodeId: string,
+  runIds: readonly string[],
+): Promise<void> {
+  const instance = getInstance(instanceId);
+  const node = instance ? blockNode(instance, nodeId) : undefined;
+  if (!instance || !node || node.kind !== "deliver") {
+    finishMergeBlock(instanceId, nodeId, {
+      ok: false,
+      note: "This block is no longer in the workflow this run was started from.",
+    });
+    return;
+  }
+
+  const outcomes: DeliveryOutcome[] = [];
+  for (const runId of runIds) {
+    const fresh = getInstance(instanceId);
+    if (
+      !fresh ||
+      !instanceIsOpen(fresh.status) ||
+      getBlock(instanceId, nodeId)?.status !== "thinking"
+    ) {
+      // The halt has already written the block off with its own wording, and
+      // `finishMergeBlock`'s latch would refuse ours.
+      return;
+    }
+    outcomes.push(await deliverBranch(runId));
+  }
+
+  finishMergeBlock(instanceId, nodeId, deliverBlockOutcome(outcomes));
+}
+
+/** One predecessor run, delivered or the reason it was not. */
+async function deliverBranch(runId: string): Promise<DeliveryOutcome> {
+  const branch = branchLabel(runId);
+
+  // Ahead of the git reads: the card's own rule, one pull request per branch.
+  // A second push would update that pull request and then be refused by
+  // GitHub's "already exists", so what it reported and what it did would
+  // disagree.
+  const already = deliveredPullRequest(runId);
+  if (already) {
+    return {
+      branch,
+      result: "skipped",
+      reason: `it already has pull request #${already.number} (${already.url})`,
+    };
+  }
+
+  const verdict = await branchVerdict(runId, "deliver");
+  if (verdict.result === "settled") {
+    return {
+      branch,
+      result: verdict.outcome.result === "failed" ? "failed" : "skipped",
+      reason: verdict.outcome.reason,
+    };
+  }
+
+  // Caught here and not left to the caller, which would write the whole block
+  // off as one that "could not start delivering" and lose the branches already
+  // pushed from its note.
+  try {
+    const delivery = await deliverRun(runId);
+    return delivery.ok
+      ? { branch, result: "delivered", reason: delivery.url }
+      : { branch, result: "failed", reason: delivery.reason };
+  } catch (err) {
+    return {
+      branch,
+      result: "failed",
+      reason: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -8424,7 +8661,7 @@ export function reconcileBlocksOnBoot(): void {
   const thinking = db()
     .prepare(
       "UPDATE workflow_instance_blocks SET status='failed', finished_at=?," +
-        " error = CASE kind WHEN 'merge' THEN ? WHEN 'review' THEN ? ELSE ? END," +
+        " error = CASE kind WHEN 'merge' THEN ? WHEN 'deliver' THEN ? WHEN 'review' THEN ? ELSE ? END," +
         // A turn the restart killed was billed and never reported, so it is
         // counted the way `blockTurnSpend` counts one killed any other way: a
         // deciding block's own child always, and a review block's when a
@@ -8448,6 +8685,11 @@ export function reconcileBlocksOnBoot(): void {
       // never resumed: a server coming back up must not merge into a checkout
       // somebody works in. So the block really is finished, however far it got.
       "The server restarted while this block was landing branches. Its queued merges were cancelled — check the branches before queueing them again.",
+      // No queue behind it to cancel: a delivery is one push and one pull
+      // request per branch, written to the run's row as each completes, so what
+      // the restart left is a prefix of the branches. A run that was delivered
+      // is skipped on the next try, which is what makes saying so safe.
+      "The server restarted while this block was delivering branches. Those it had already delivered have a pull request on their run pages; check the rest there before delivering them again.",
       // A review block's reviews and fix runs are reconciled by their own
       // tables' boot passes; what is lost is the loop driving them, and nothing
       // behind it may land work it had not finished judging — `reviewVerdict`

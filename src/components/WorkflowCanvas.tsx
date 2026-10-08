@@ -109,6 +109,7 @@ export const KIND_LABEL: Record<WorkflowNodeKind, string> = {
   run: "Runs a task",
   orchestrator: "Decides what to run",
   merge: "Lands the branches",
+  deliver: "Delivers the branches",
   // Not "repeats a task": a loop holds no task of its own any more, and the
   // model refuses the field by name. What it repeats is the section inside it.
   loop: "Repeats a section",
@@ -129,7 +130,9 @@ type CardKind = Exclude<WorkflowNodeKind, "loop">;
  * is for — it starts runs with no approval, and that is a standing fact about
  * the block rather than a conditional alarm. A merge block wears the accent one
  * for the milder version of the same fact: it is the only block that writes into
- * the operator's own checkout.
+ * the operator's own checkout. A deliver block wears the warn tint for the
+ * orchestrator's reason: it publishes, with no approval between the graph and
+ * the push, and that is a standing fact about the block.
  *
  * Typed against `CardKind` rather than every kind, so a loop drawn as a card
  * again is a type error rather than a picture that quietly contradicts the
@@ -140,6 +143,7 @@ const CARD_REST: Record<CardKind, string> = {
   run: "border-line shadow-e1",
   orchestrator: "border-warn-line shadow-e1",
   merge: "border-accent-line shadow-e1",
+  deliver: "border-warn-line shadow-e1",
   // The line colour a run block wears: a review block writes nothing and
   // starts nothing without a rejection, so it carries no standing alarm.
   review: "border-line shadow-e1",
@@ -1449,7 +1453,9 @@ export function WorkflowCanvas({
                   </button>
 
                   <div className="mono truncate text-ink-muted">
-                    {block.kind === "merge" || block.kind === "review"
+                    {block.kind === "merge" ||
+                    block.kind === "deliver" ||
+                    block.kind === "review"
                       ? "every branch in front of it"
                       : `${block.mountId || "—"} / ${block.folder || "."}`}
                   </div>
@@ -1457,9 +1463,11 @@ export function WorkflowCanvas({
                     <span className="line-clamp-2">
                       {block.kind === "merge"
                         ? null
-                        : block.kind === "review"
-                          ? "A frontier model approves or sends it back"
-                          : block.task.trim() || "No task yet"}
+                        : block.kind === "deliver"
+                          ? "Pushes it and opens a pull request"
+                          : block.kind === "review"
+                            ? "A frontier model approves or sends it back"
+                            : block.task.trim() || "No task yet"}
                     </span>
                   </div>
 
@@ -1496,6 +1504,7 @@ export function WorkflowCanvas({
                                 block.mergeAutoResolve ? " · AI resolve" : ""
                               }`
                             : null,
+                          block.kind === "deliver" ? "pull requests" : null,
                           block.kind === "review"
                             ? `${block.fixRounds || "0"} fix round${block.fixRounds === "1" ? "" : "s"}`
                             : null,
