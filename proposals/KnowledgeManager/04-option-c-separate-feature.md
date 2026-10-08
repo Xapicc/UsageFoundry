@@ -19,6 +19,10 @@ hashes them again and records the difference as the pass's changeset.
   with an mtime/size cache (`src/lib/knowledge.ts:1163`–`:1208`), and a full
   `.md` pre-image measured here is 0.5 s and 6.66 MB compressed (`tar czf` of
   the 1,717 `.md` files from `/workspace2`).
+- **The only check a session cannot edit.** Option D's `verify` runs inside the
+  session it verifies, so a session that rewrote `housekeeping.py` or `qc.py`
+  could pass its own pass; a hash taken by the app before and after cannot be
+  reached from the session at all.
 - **Its own switch keeps Dreaming's sentences true** for Dreaming — and adds a
   second, separately named authority to write unattended, instead of widening
   the first.
@@ -38,10 +42,12 @@ hashes them again and records the difference as the pass's changeset.
   C10) nor re-implement it (that would be "this app inventing a rule for
   somebody else's vault", `src/lib/knowledge.ts:1662`–`:1665`). So C still
   needs a model run to plan, which is A's weakness again.
-- **A whole feature for a few jobs a week.** The measured Haiku-class inflow is
-  six qc findings, four captures and three board tasks over seven weeks
-  (00 §3–§4). A clock, two tables, a pane and their tests is about 4–6 days
-  (**assumed**, by comparison with Dreaming's size).
+- **A whole feature for a few jobs a week.** The Haiku-class work the vault
+  already counts as wrong is five qc findings, four captures since 2026-08-16
+  and three board tasks filed between 2026-09-30 and 10-08 (00 §3–§4); even with
+  the 85 optional Related trims it is a couple of sessions a week. A clock, two
+  tables, a pane and their tests is about 4–6 days (**assumed**, by comparison
+  with Dreaming's size).
 - **It wraps the wrong writer.** The changeset is most valuable around the
   writer that writes most: Dreaming wrote every note changed in the vault in
   the last day (C12). Building it for a new, smaller writer first is backwards.

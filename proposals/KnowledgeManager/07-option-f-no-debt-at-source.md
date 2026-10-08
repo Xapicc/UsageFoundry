@@ -14,19 +14,21 @@ Three changes, none of which adds a writer:
    `LINK/*` and `SEED/parent` — a convention change, written down in
    `_Meta/Vault Conventions.md` — or triage gets a cadence. Both are the
    operator's call (`4e67ffc1` names both).
-3. **The stock is cleared once**, on demand: the 23 mechanical findings, the six
-   keyword findings, and `11b1e89d`'s ten tag replacements, as one run.
+3. **The stock is cleared once**, on demand: the nine mechanical findings, the
+   five keyword findings, and `11b1e89d`'s ten tag replacements outside the
+   Inbox, as one run.
 
 ## Its strongest case
 
 - **It answers the inflow, not the symptoms.** Two of the three Haiku-class
   corpus tasks are leftovers of Dreaming's own nightly hub edits, and six of the
   seven ERRORs are one missing qc.py policy (00 §3–§4). Fix those two sources
-  and the measured Haiku-class inflow is the six keyword findings and an
-  occasional capture.
+  and the Haiku-class inflow is a keyword slip now and then and an occasional
+  capture — plus the non-hub Related lists, if the operator wants them trimmed.
 - **Nearly free.** Dreaming already has the hub open when it adds a batch, so
-  the extra work is a few hundred output tokens a night — **assumed** a few
-  cents at Opus 5.5's $20/MTok output (`src/lib/pricing.ts:107`).
+  the extra work is a few hundred output tokens a night — 300 at Opus 5.5's
+  $20/MTok (`src/lib/pricing.ts:107`) is $0.006 — plus a re-read of the hub if
+  it has left the cache, **assumed** rare within one pass.
 - **No second unattended writer.** Every sentence C5 lists stays true, and the
   objections ContinuousImprovement raised against an automatic, billed,
   model-authored writer — that "spend nobody asked for is spend nobody
@@ -37,13 +39,15 @@ Three changes, none of which adds a writer:
 ## The case against, in this install
 
 - **It does nothing for debt nobody owns.** Research runs leave keyword slips,
-  unexplained Related links and abstracts that drift as notes grow; they do not
-  come back to them. Over seven weeks that is small, but it is not zero, and it
-  grows with the vault.
+  unexplained Related links, Related lists that outgrow eight, and abstracts
+  that drift as notes grow; they do not come back to them. It is small, but it
+  is not zero, and it grows with the vault.
 - **It puts upkeep on the expensive model.** The writer passes no model, so it
   runs on the operator's default (`src/lib/dreamingRun.ts:370`–`:397`) — Opus 5.5
-  in every Dreaming transcript since 2026-09-26 — and every line of upkeep it
-  does costs forty times Haiku's rate.
+  in every Dreaming transcript since 2026-09-26, by the model column of
+  [`scripts/vault-cost.mjs`](scripts/vault-cost.mjs)'s output — and its upkeep
+  costs forty times Haiku's rate below the cliff, and 6.7 times on a night like
+  2026-10-08's, most of whose requests were over it (08 §4).
 - **It is not what the operator asked for**, and the stock still needs one pass.
 
 ## What it costs

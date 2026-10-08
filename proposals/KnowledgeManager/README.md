@@ -16,18 +16,21 @@ brief was written on.
 
 ## The finding that shapes everything
 
-**The vault's backlog is research debt, not housekeeping.** `qc.py` reports
-`1670 notes checked — 7 errors, 411 warnings.`, and broken down by family
-([`00-problem.md`](00-problem.md) §3):
+**The vault's backlog is mostly research debt, not housekeeping.** `qc.py`
+reports `1670 notes checked — 7 errors, 411 warnings.`, and broken down by
+family and class ([`00-problem.md`](00-problem.md) §3,
+[`scripts/backlog-classes.py`](scripts/backlog-classes.py)):
 
-- **6 findings are Haiku-suitable** (keyword count and overlap) and about **23
-  are mechanical** (one keyword's case, 22 cited URLs whose source note already
-  exists).
-- **240 are WARNs the vault keeps by policy** — hubs with more than eight
-  Related links, source notes without a quote block.
-- **About 140 notes' worth is research debt** — 295 cited URLs with no source
-  note written, one confidence grade — which needs a frontier model reading
-  sources.
+- **5 findings are Haiku-suitable** (keyword fixes) and **9 mechanical** (one
+  keyword's case; eight notes whose cited URLs already have a source note, so a
+  wikilink clears them).
+- **85 are Haiku-sized only if the operator asks** — Related lists over eight
+  links on ordinary notes, which the rulebook's 3–8 range covers and the vault
+  calls a judgement call.
+- **155 are WARNs the vault keeps by policy** — hubs over eight Related links,
+  source notes without a quote block.
+- **153 are research debt** — source notes not yet written, one confidence
+  grade — which needs a frontier model reading sources.
 - **Six of the seven ERRORs are two Inbox captures**, and every Inbox outcome is
   a move or a delete, which a manager may draft but not do.
 
@@ -38,8 +41,9 @@ two of them are upkeep of the hub notes Dreaming itself grows.
 
 **Money is not the argument.** The one past housekeeping session that fixed
 eleven qc ERRORs cost $3.54 on Opus 5; its tokens re-priced on Haiku 5.5 cost
-**$0.07**, and on Opus 5.5 $2.13. A weekly Haiku pass is **under $1 a month**.
-All 45 vault sessions since 2026-09-01 cost $514.61 at list price, of which
+**$0.07**, and on Opus 5.5 $2.13. A weekly Haiku pass is **$0.30–1.52 a
+month**, and a few dollars more if the 85 trims are wanted. All vault sessions
+since 2026-09-01 cost $514.61 at list price, of which
 housekeeping was **$3.75** ([`08-comparison.md`](08-comparison.md) §4). The
 "$15–$38 per vault run" in the brief is true of research runs, not of
 housekeeping or Dreaming.
@@ -51,7 +55,7 @@ Three more findings narrow it further:
   folder; nothing but the prompt bounding where it writes
   ([`01-constraints.md`](01-constraints.md) C1–C2).
 - **Haiku's 100,000-token price cliff is reached by reading, not by working.**
-  Every vault session's first request is already 32k–47k tokens; a median note
+  Every vault session's first request was already 32k–47k tokens; a median note
   plus the notes it links to is 93.7k, the two MOCs are 82.8k and 77.8k alone;
   65.4% of all vault requests to date were over 100k. A note plus its links'
   *abstracts* is 2.5k at the median and 14.6k at p99 (C3).
@@ -86,6 +90,7 @@ edit, in the spike, that changes or misstates a claim.
 | [`09-recommendation.md`](09-recommendation.md) | The case, the shape to build, the refusals, and the fact that would overturn it. |
 | [`10-implementation-sketch.md`](10-implementation-sketch.md) | `housekeeping.py`'s verbs and checks, the template's prompt, what the operator creates, the app's few lines, the board, Option F's change, the tests. |
 | [`11-validation.md`](11-validation.md) | Three checks, then the spike — nine sessions from the corpus on a git copy of the vault, Haiku against Opus 5.5, scored by diff, qc and a blind frontier reviewer — and the result that sinks the plan. **Not run.** |
+| [`scripts/backlog-classes.py`](scripts/backlog-classes.py) | qc.py's 418 findings by family and by class, running qc's own checks in-process; read-only. |
 | [`scripts/session-budget.py`](scripts/session-budget.py) | Note sizes, link fan-out and what one session must hold, using the vault's own `vaultlib`; read-only. |
 | [`scripts/vault-cost.mjs`](scripts/vault-cost.mjs) | Per-session list-price cost of vault sessions, and the same tokens on Haiku 5.5, priced by importing `src/lib/pricing.ts`. |
 | [`scripts/check-citations.mjs`](scripts/check-citations.mjs) | Resolves every repo and vault path and line number in this directory; copied from LocalModelOffload's. |
@@ -94,12 +99,12 @@ edit, in the spike, that changes or misstates a claim.
 
 | | deterministic part | undo | collides with Dreaming | build | per pass | verdict |
 |---|---|---|---|---|---|---|
-| **A** primitives only | the model | none | no | none | $0.01–0.15 | the trial's shell |
-| **B** third half of Dreaming | the model | none | **yes** | ~1–2 d | $0.02–0.07 | no |
-| **C** separate feature | a model run | app changeset, no restore | no | ~4–6 d | as A | not now |
+| **A** primitives only | the model | none | no | none | $0.01–0.35 | the trial's shell |
+| **B** third half of Dreaming | the model | none | **yes** | ~1–2 d | as A, on nights Dreaming writes | no |
+| **C** separate feature | a model run | app changeset the session cannot reach; no restore | no | ~4–6 d | as A | not now |
 | **D** scripts, then Haiku | `housekeeping.py` | pre-images + `revert` | no | one vault frontier run + a few app lines | as A | **recommended** |
 | **E** local model | as D | none | no | as D | $0 | no |
-| **F** no debt at source | — | — | edits its prompt | a paragraph | cents | **do regardless** |
+| **F** no debt at source | — | — | edits its prompt | a paragraph | under a cent, on Opus | **do regardless** |
 
 ## Reused, not redone
 
@@ -162,20 +167,23 @@ these belong to `/workspace2`. Each for the operator or a vault run:
   `aliases: [UAX #15, …]` as `[UAX`, on three Unicode source notes, and the
   index's vocabulary now carries the term `[UAX`.
 - **`CONF/ungraded` says "no source note" for 22 URLs that have one**, merely
-  unlinked from the citing note.
+  unlinked from the citing note (`scripts/backlog-classes.py`).
 - **`_Meta/Vault Quality Control.md` lists `KW/*` as WARN**, while `KW/case`
   is an ERROR in the code.
 - **Stale costs and counts in the files agents read first**: `/workspace2/CLAUDE.md:256`
-  puts `INDEX.md` at ~130k estimated tokens and `_Meta/index/README.md` at
-  ~110k (hard-coded in `build_index.py`), against ~950k in `INDEX.md`'s own
-  header; `AGENTS.md` says 1,083 notes and 21 domains (1,670 and 24 today) and
-  a search at ~400 tokens and 0.25 s (measured ~760 and 2.2 s);
-  `Questions Inbox.md` says two captures await triage (four).
+  puts `INDEX.md` at ~130k estimated tokens and `_Meta/index/README.md` tells
+  its readers ~110k (hard-coded at `/workspace2/_Meta/build_index.py:211`),
+  against ~950k in `INDEX.md`'s own header; `AGENTS.md` says 1,083 notes and 21
+  domains (1,670 and 24 today) and a search at ~400 tokens and 0.25 s (one
+  `python3 -B _Meta/vault_search.py` query, timed in this survey, returned
+  ~3,050 bytes — ~760 estimated tokens — in 2.23 s); `Questions Inbox.md` says
+  two captures await triage (`ls "/workspace2/3 Resources/Questions/Inbox/"`
+  shows four, beside the index note and the template).
 - **Non-vault files at the vault root**: `uf-c3-base/` (a `.next` and `src`
   copy, 2026-09-08) and `throughput.pid` (2026-09-06). Inside this work cycle's
   sandbox the root also shows a `.claude/` of empty entries and a `.mcp.json`
-  that is a character device — sandbox mount points; whether any of them exist
-  on the Mac is **unverified**.
+  that is a character device — **assumed** to be sandbox mount points that
+  exist only inside a sandboxed process's view; nobody has looked from the Mac.
 - **Two corpus tasks carry stale facts**: `a3bfd638` puts
   `Local Offload Economics.md` under the wrong folder, and `c3d149b8` says
   nineteen batches where the note now has 23.

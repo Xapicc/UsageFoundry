@@ -20,7 +20,7 @@ built the next day (`docs/agent/local-provider.md`).
 
 ## The case against, in this install
 
-- **The saving is cents.** A Haiku pass is $0.07–0.15 (08 §4). There is
+- **The saving is cents.** A Haiku pass is $0.07–0.35 (08 §4). There is
   nothing left on the table for a local model to take.
 - **The jobs are edits, and that is the class the local tier is behind on**:
   single-file edits are eight or more points behind Claude on the vault's own

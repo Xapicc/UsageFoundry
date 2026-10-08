@@ -55,7 +55,8 @@ index, stop.
   tool-call log that does not see Bash edits.
 - **The model is its own planner, and qc's report is large.** `qc.py`'s full
   output is 73,283 bytes — ~18k estimated tokens, a third of the room under
-  the cliff (C3) — and 412 of its 418 findings are not Haiku's to fix (00 §3).
+  the cliff (C3) — and all but 5 of its 418 findings, or 90 if the operator
+  wants non-hub Related lists trimmed, are not Haiku's to fix (00 §3).
   Each pass either reads it and pays for the noise or trusts `--only` filters a
   prompt names.
 - **Every fire starts a model**, even when there is nothing to do. On Haiku
@@ -70,8 +71,8 @@ index, stop.
 
 ## What it costs
 
-No build. Per pass, about $0.01 idle and $0.07–0.15 working, under $1 a month
-weekly or nightly ([`08-comparison.md`](08-comparison.md) §4).
+No build. Per pass, about $0.01 idle and $0.07–0.35 working; $0.30–1.70 a
+month weekly or nightly ([`08-comparison.md`](08-comparison.md) §4).
 
 ## Verdict
 

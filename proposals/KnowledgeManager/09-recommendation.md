@@ -15,14 +15,15 @@ one measured condition.
 
 ## The case
 
-1. **The premise holds for price and fails for volume.** Haiku 5.5 would have
-   done the one past housekeeping session for $0.07 instead of $3.54
-   ([`08-comparison.md`](08-comparison.md) §4). But of qc.py's 418 findings, six
-   are Haiku's and about 23 a script's; the rest is research debt and WARNs the
-   vault keeps on purpose. Of fourteen open vault tasks on the board, one is
-   mechanical and three are Haiku-class
-   ([`00-problem.md`](00-problem.md) §3–§4). A few jobs a week do not need a
-   feature; they need a pass that is safe and cheap.
+1. **The premise holds for price; the volume is small or optional.** Haiku 5.5
+   would have done the one past housekeeping session for $0.07 instead of $3.54
+   ([`08-comparison.md`](08-comparison.md) §4). But of qc.py's 418 findings,
+   five are Haiku's and nine a script's, and 85 more — Related lists over eight
+   on ordinary notes — are Haiku-sized only if the operator wants them trimmed;
+   the rest is research debt and WARNs the vault keeps on purpose. Of fourteen
+   open vault tasks on the board, one is mechanical and three are Haiku-class
+   ([`00-problem.md`](00-problem.md) §3–§4). A few to a dozen jobs a week do not
+   need a feature; they need a pass that is safe and cheap.
 2. **Most of what is Haiku-shaped is debt Dreaming leaves on its own hubs.** Two
    of the three Haiku-class tasks are a batch not yet logged and an abstract
    its batches outgrew, and all three were filed by Dreaming nights. Telling the
@@ -41,20 +42,23 @@ one measured condition.
    limit can be scheduled weekly (C7). The folder claim queues the pass behind
    Dreaming for free (C6).
 5. **The cliff is handled by construction, not by hope.** Reading lists of
-   neighbours' abstracts keep a job's context at p99 14.6k; six notes a session
-   is the measured room under 100k after a 47k floor; one work cycle per pass,
-   because a second resumes the first's context (08 §3).
+   neighbours' abstracts keep a job's context at p99 14.6k; five notes a
+   session is the measured room under 100k after a 47k floor and a reserve for
+   the pass's own overhead; one work cycle per pass, because a second resumes
+   the first's context (08 §3).
 
 ## The shape to build, if the spike passes
 
 - **Vault side, one frontier vault task:** `_Meta/housekeeping.py` with `plan`,
-  `snapshot`, `fix --mechanical`, `verify`, `revert`; `unittest` tests beside
-  `test_retrieval.py`; `housekeeping` added to `vaultlib.SKIP_DIRS`.
+  `abstract`, `snapshot`, `fix --mechanical`, `verify`, `revert`, keeping its
+  pre-images as tarballs in `_Meta/.housekeeping/`; `unittest` tests beside
+  `test_retrieval.py`.
 - **Operator side, no code:** switch `claude-haiku-5-5` on in the catalogue
   after U1; save the "Knowledge Manager" template (vault root, *This folder*,
   `bypassPermissions`, `claude-haiku-5-5`, $0.50, one work cycle, 20 minutes);
   a one-block workflow with a $1 limit; a weekly schedule two hours after
-  Dreaming's night.
+  Dreaming's night — daily, if the operator turns non-hub Related trims on,
+  until their stock is gone (08 §2).
 - **App side, a few lines:** the vault skill's "exactly one job … writes here"
   (`src/lib/vaultSkill.ts:316`) and Dreaming's "only setting … that authorises
   an unattended write" (`docs/agent/dreaming/halves-and-write-policy.md:13`) are
@@ -85,16 +89,17 @@ one measured condition.
   already says Haiku is not frontier (`src/lib/localCertification.ts:112`–`:116`).
 - **Haiku on research debt** — source notes, quotes, confidence, seeds, claims
   ([`00-problem.md`](00-problem.md) §5).
-- **A nightly cadence**, until four weekly plans show the inflow needs one
-  (U5).
+- **A nightly cadence** without trims, until four weekly plans show the inflow
+  needs one (U5).
 
 ## What else would change it
 
 - **The pinned CLI cannot run `claude-haiku-5-5` (U1).** Nothing here ships
   until the pin moves; Option F and the deterministic half of D still do.
-- **The spike shows a skipped `snapshot` or `verify`.** Then the envelope has
-  to move out of the model's hands: build Option C's app-side changeset, around
-  Dreaming as well, before any Haiku pass runs unattended.
+- **The spike shows a skipped `snapshot` or `verify`, or any touch of a
+  `_Meta/` script.** Then the envelope has to move out of the model's hands —
+  `verify` runs inside the session it judges — so build Option C's app-side
+  changeset, around Dreaming as well, before any Haiku pass runs unattended.
 - **Four weekly plans show more than one session's cap of Haiku jobs a week.**
   Then go nightly, and the cap — not the cadence — is what stays measured.
 

@@ -66,15 +66,15 @@ word. Reading neighbours' *abstracts* instead (what `vault_search.py` and
 **`1670 notes checked — 7 errors, 411 warnings.`** — the same as the figure in
 the brief. qc.py has no `--fix` mode; its only output is a report
 (`/workspace2/_Meta/qc.py:427` for its flags). Broken down by check family
-(`python3 _Meta/qc.py`, grouped by the `### <family> (<n>)` headings it
-prints):
+and class by [`scripts/backlog-classes.py`](scripts/backlog-classes.py), which
+runs qc.py's own checks in-process and reproduces its 418 findings exactly:
 
 | Family | ERR | WARN | What fixing it takes | Class |
 |---|---:|---:|---|---|
-| `CONF/ungraded` | 0 | 160 | 317 cited URLs with no source note. **22 of them** (in 21 notes) already have a source note the citing note does not link; the other **295** need a source note written — fetch, read, grade | 22: (a) · 295: (c) |
+| `CONF/ungraded` | 0 | 160 | 317 cited URLs with no source note. **22 of them** (in 21 notes) already have a source note the citing note does not link, and adding the wikilinks clears **8** notes outright; the rest need source notes written — fetch, read, grade | 8: (a) · 152: (c) |
 | `BODY/source` | 0 | 146 | a source note with no `> [!quote]` — needs the source re-read. The vault reports these and deliberately does not correct them (`/workspace2/_Meta/Vault Quality Control.md:82`) | (c), left by policy |
-| `BODY/related` | 2 | 94 | 94 WARNs are hubs with more than 8 Related links, which the vault keeps on purpose: "Trimming real connections to satisfy a range would damage the graph" (`/workspace2/_Meta/Vault Quality Control.md:83`). The 2 ERRORs are Inbox captures | WARN: left by policy · ERR: Inbox |
-| `KW/count` | 0 | 4 | add or drop a keyword | (b) |
+| `BODY/related` | 2 | 94 | Related lists over 8 links. **9** are on `moc` or `area` notes — hubs, which the vault keeps over 8 on purpose: "Trimming real connections to satisfy a range would damage the graph" (`/workspace2/_Meta/Vault Quality Control.md:83`). The other **85** are on ordinary notes (57 concept, 13 question, 7 reference, 7 source, 1 project), where the rulebook's range is 3–8 (`/workspace2/CLAUDE.md:96`) and the vault calls a WARN "a judgement call: a human should look" (`/workspace2/_Meta/Vault Quality Control.md:34`) — `f1d24ec0` asks for one such trim. The 2 ERRORs are Inbox captures | 9: left by policy · 85: (b), on the operator's say-so · ERR: Inbox |
+| `KW/count` | 0 | 4 | add or drop a keyword; one of the six keyword findings is on an Inbox capture | (b) |
 | `SEED/parent` | 0 | 4 | all four are Inbox captures, which carry `captured_from`, not `seeded_by` | Inbox |
 | `KW/overlap` | 0 | 2 | replace a keyword that restates the title | (b) |
 | `LINK/orphan` | 2 | 0 | both are Inbox captures | Inbox |
@@ -97,19 +97,21 @@ moving or renaming "needs confirmation because it breaks links"
 (`/workspace2/CLAUDE.md:271`). So every Inbox outcome is a move or a delete,
 and a manager may prepare it but not do it.
 
-**Totals by class, of 418 findings:** about 23 mechanical (the one `KW/case`
-and the 22 linkable URLs), **6 Haiku-suitable** (`KW/count`, `KW/overlap`),
-10 Inbox findings on four captures (Haiku can draft the triage; the move or
-delete is the operator's), 240 deliberately left by the vault's own policy, and
-about 140 notes' worth of research debt (`CONF/ungraded` source notes not yet
-written, one confidence grade).
+**Totals by class, of 418 findings** ([`scripts/backlog-classes.py`](scripts/backlog-classes.py)'s last block):
+**9 mechanical** (one `KW/case`, eight `CONF/ungraded` notes a wikilink
+clears), **5 Haiku-suitable** (keyword fixes), **85 Haiku-sized trims that only
+the operator can ask for**, 11 Inbox findings on four captures (Haiku can draft
+the triage; the move or delete is the operator's), 155 kept by the vault's own
+policy, and 153 findings of research debt (source notes not yet written, one
+confidence grade).
 
 **What qc.py cannot see.** Stale abstracts and `updated:` dates, a hub whose
 log is a batch behind, and drift in the rulebooks themselves. The vault
 investigation found the last kind in the files every agent reads first:
 `/workspace2/CLAUDE.md:256` puts `INDEX.md` at ~130k estimated tokens and
-`_Meta/index/README.md` at ~110k, while `INDEX.md` itself says ~950k; `AGENTS.md`
-says 1,083 notes and 21 domains against 1,670 and 24. Those are listed under
+`_Meta/index/README.md` tells its readers ~110k — a figure hard-coded at
+`/workspace2/_Meta/build_index.py:211` — while `INDEX.md`'s own header says
+~950k; `AGENTS.md` says 1,083 notes and 21 domains against 1,670 and 24. Those are listed under
 "Found on the way" in the [README](README.md); fixing a rulebook is not
 housekeeping a manager should do (§5).
 
@@ -126,7 +128,7 @@ filed with `priority` only — none carries `needsFrontier` or `operatorOnly`.
 | Task | Filed by | Class | Reason |
 |---|---|---|---|
 | `4e67ffc1` Clear the seven qc.py ERRORs in Questions/Inbox and one archived proposal | Dreaming, 10-08 | **(b)** | `KW/case` is (a); promoting the two captures — explained Related links, an inbound link, `seeded_by` — is Haiku-sized, but the move is the operator's, and the alternative route (exempt the Inbox in qc.py) is a convention change, (c) |
-| `11b1e89d` Resolve `topic/ai/local`: rejected in Tag Index, used on ten notes | research run, 09-26 | **(a)** | the Tag Index already records the decision — rejected in favour of `topic/ai/serving` — so applying it is a replace on ten frontmatters plus `updated:`; *reversing* it would be (c) |
+| `11b1e89d` Resolve `topic/ai/local`: rejected in Tag Index, used on ten notes | research run, 09-26 | **(a)** | the Tag Index already records the decision — rejected in favour of `topic/ai/serving` — so applying it is a replace in frontmatter plus `updated:`; *reversing* it would be (c). The brief says ten notes; twelve carry the tag today, two of them Inbox captures, which stay the operator's (`grep -rlE 'topic/ai/local([^/a-z-]\|$)' --include='*.md'` over the vault, outside `_Meta/`) |
 | `c3d149b8` Refresh the stale abstract of Standing Failures in This Install | Dreaming, 09-30 | **(b)** | summarise the note's own body into one callout; the batch count (the brief says nineteen, the note now has 23 `## The … batch` headings) is a grep. The note is 42.4k tokens, so it must be the only job in its session |
 | `f1d24ec0` Log the 2026-10-05 batch in Agent Error Memory and trim its Related | Dreaming, 10-06 | **(b)** | transcribe a batch already in the vault into one log entry, and pick 8 of 12 Related links; no claim changes |
 | `c4e57ba2` Record the no-extension-capable-browser limit in Standing Failures | research run, 09-19 | **(c)** | adds a new section of operational claims to the install's failure inventory, and the brief asks for a re-check in the sandbox |
@@ -165,8 +167,9 @@ nobody but the operator.
 - `KW/case`: lowercase a keyword.
 - Apply a decision the Tag Index already records (`11b1e89d`): replace a
   rejected tag with its named replacement, dedupe, bump `updated:`.
-- Link a cited URL to the source note that already holds it (22 URLs today):
-  the match is URL equality; the link goes in `## Sources`.
+- Link a cited URL to the source note that already holds it (22 URLs today,
+  clearing eight notes' WARN): the match is URL equality; the link goes in
+  `## Sources`.
 - Bump `updated:` on every file any job touched (`/workspace2/CLAUDE.md:66`).
 - Produce the job list itself: qc.py's findings, `build_index.py --check`, the
   app's own orphan and broken-link counts (`src/lib/knowledge.ts:1667`), and
@@ -174,18 +177,19 @@ nobody but the operator.
   the body no longer matches, a note grown by more than a set fraction since
   its `updated:`).
 - Report, never act on: what sits in `_to_delete/` (two `.tgz` files and one
-  8-byte note, untouched since August) and the non-vault clutter at the root
-  (`uf-c3-base/`, `throughput.pid`). Deleting from the mount is a person's job —
-  Dreaming's design says "this app never deletes from the mount" (`git show
-  a74a1bb:"proposals/implemented - Dreaming/10-the-write-path.md"`, lines
-  143–147).
+  8-byte note, untouched since August, `ls -la /workspace2/_to_delete`) and the
+  non-vault clutter at the root (`uf-c3-base/`, `throughput.pid`). Deleting from
+  the mount is a person's job: "an app that deleted from a mount it does not own
+  would be doing something heavier than anything else in this codebase"
+  (`docs/agent/dreaming/the-ledger.md:14`–`:15`).
 
 **Haiku-suitable judgement — in-place edits to existing notes only.**
 - Refresh a stale `> [!abstract]` and bump `updated:` (`c3d149b8`).
-- `## Related` upkeep on non-hub notes: explain an unexplained link, trim a
-  list the operator asked to trim (`f1d24ec0`), add explained links to a sparse
-  note from `vault_search.py` candidates. Hubs over 8 are left, by the vault's
-  policy.
+- `## Related` upkeep on non-hub notes: explain an unexplained link, add
+  explained links to a sparse note from `vault_search.py` candidates, and trim a
+  list over eight — but only once the operator has said trims are wanted
+  (`f1d24ec0` asks for one; 85 qualify today). Hubs over 8 are left, by the
+  vault's policy.
 - Keyword fixes: `KW/count`, `KW/overlap`.
 - Orphan linking: add one explained inbound link from the obvious parent.
 - Log a batch the vault already records into the hub's log (`f1d24ec0`).
@@ -209,16 +213,25 @@ notes are installed into `~/.claude/rules/` and load in every session,
 
 ## 6. What this does to the premise
 
-**The premise holds for the price and fails for the volume.** Haiku 5.5 is
-cheap enough that cost is not the question: the one past housekeeping session
-that fixed eleven qc ERRORs cost $3.54 on Opus 5 and would have cost $0.07 on
-Haiku 5.5 with the same tokens ([`08-comparison.md`](08-comparison.md) §4). But the measured Haiku-class work is small: 6 qc findings, four Inbox
-captures to draft, three board tasks in seven weeks, and an unmeasured trickle
-of stale abstracts — most of it upkeep Dreaming leaves on its own hubs. The
-backlog's bulk is research debt that needs a frontier model reading sources,
-and deliberate WARNs the vault has chosen to keep.
+**The premise holds for the price, and for the volume only on one operator
+decision.** Haiku 5.5 is cheap enough that cost is not the question: the one
+past housekeeping session that fixed eleven qc ERRORs cost $3.54 on Opus 5 and
+would have cost $0.07 on Haiku 5.5 with the same tokens
+([`08-comparison.md`](08-comparison.md) §4). But the Haiku-class work the vault
+already treats as wrong is small: 5 qc findings, four Inbox captures to draft
+since 2026-08-16, three board tasks filed between 2026-09-30 and 10-08 — two of
+them upkeep Dreaming leaves on its own hubs — and an unmeasured trickle of stale
+abstracts. The one large Haiku-sized stock is the **85 non-hub Related lists
+over eight links**, which the vault reports as a judgement call rather than an
+error; that count rose from 9 at the 2026-08-11 pass over 265 notes
+(`/workspace2/_Meta/Vault Quality Control.md:83`) to 94 over 1,670 today, which
+is about ten a week — though as much from the vault's growth as from neglect.
+Whether those are trimmed is the operator's call, and it decides whether the
+manager has a few jobs a week or a couple of sessions' worth. The rest of the
+backlog is research debt that needs a frontier model reading sources, and WARNs
+the vault keeps on purpose.
 
 So the question this survey answers is not "how do we run a nightly Haiku
 manager over a large backlog" but **"what is the least machinery that gets a
-few jobs a week done safely by a cheap model, in a store with no undo"** — and
-whether the answer is a manager at all.
+few to a dozen jobs a week done safely by a cheap model, in a store with no
+undo"** — and whether the answer is a manager at all.

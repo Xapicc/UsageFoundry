@@ -10,7 +10,8 @@ Part 2 is what is unknown and the command that settles each.
 `/workspace2` is not a repository (`git -C /workspace2 rev-parse --git-dir` →
 `fatal: not a git repository`). A run there gets isolation mode `none` with the
 reason "Not a git repository — runs here are serialised"
-(`src/lib/orchestrator.ts:2891`–`:2893`), and `git init` would not help, because
+(`src/lib/orchestrator.ts:2993`–`:2994`, returned through `probeIsolation` at
+`src/lib/orchestrator.ts:2891`–`:2893`), and `git init` would not help, because
 a repository that is the mount root has "no place to put a checkout inside it"
 (`src/lib/orchestrator.ts:2947`–`:2952`). Everything downstream of a branch is
 then absent:
@@ -21,7 +22,7 @@ then absent:
 | Review | `nothingToReview` (`src/lib/review.ts:328`–`:336`) |
 | Land | `landState` returns null (`src/lib/land.ts:563`–`:566`) |
 | Completion validation | skipped for a run in a shared folder (`src/lib/validation.ts:516`–`:522`) |
-| Undo | "no history, no author field … a store with no undo" (`docs/agent/dreaming/the-ledger.md:7`) |
+| Undo | "no history, no author field … a store with no undo" (`docs/agent/dreaming/the-ledger.md:8`–`:15`) |
 
 The vault adds none of its own: no `.trash/`, no backup or git plugin (only
 `dataview` and `templater-obsidian` in `.obsidian/community-plugins.json`), and
@@ -54,19 +55,24 @@ tier is chosen per request and the boundary is strict
 request pays the higher rate, output included. No other Claude model in the
 table has a step (`src/lib/pricing.ts:259`–`:263`).
 
-Where a session starts matters as much as what it reads. Across the 45 vault
-sessions since 2026-09-01, the **first** request of every session was already
-32,332–47,363 tokens — system prompt, tool schemas, the auto-loaded `CLAUDE.md`
-— and every non-housekeeping session crossed 100,000 somewhere between its
-8th and 79th request; 3,405 of 5,205 requests (65.4%) were over it
-([`scripts/vault-cost.mjs`](scripts/vault-cost.mjs)). The two housekeeping
-sessions never crossed; the larger peaked at 84,670.
+Where a session starts matters as much as what it reads. Across the 44 vault
+sessions with requests since 2026-09-01, the **first** request was already
+32,332–47,363 tokens — system prompt, tool schemas and, **assumed**, the
+`CLAUDE.md` the CLI loads from the working directory — and 42 of them crossed
+100,000 somewhere between their 8th and 79th main-loop request; 3,405 of 5,205
+requests (65.4%) were over it (`prompt first=` and `first at main #` in
+[`scripts/vault-cost.mjs`](scripts/vault-cost.mjs)'s output). The two that
+never crossed are the housekeeping sessions; the larger peaked at 84,670.
 
-So after a 47k floor there is **~53k of room**. At the vault's p90 note
-(3,855 tokens) read once and written once, that is six notes per session; at
-the median, thirteen ([`scripts/session-budget.py`](scripts/session-budget.py)).
-The two MOCs (82.8k and 77.8k) cannot be read whole by any Haiku session under
-the cliff, and `Standing Failures in This Install.md` (42.4k) fits exactly once.
+So after a 47k floor there is **~53k of room**, and the pass's own plan,
+command output and replies take some of it before any note is read — the one
+housekeeping session's prompt grew by ~50k over 57 requests. At the vault's p90
+note (3,855 tokens) read once and written once, the full room holds six notes,
+and at the median thirteen (`python3 -B scripts/session-budget.py /workspace2 47363`);
+[`08-comparison.md`](08-comparison.md) §3 reserves part of it and caps a session
+at five. The two MOCs (82.8k and 77.8k) cannot be read whole by any Haiku
+session under the cliff, and `Standing Failures in This Install.md` (42.4k)
+fits once, with almost nothing beside it.
 
 ### C4. The pinned CLI does not know `claude-haiku-5-5`, and the app's spend comes from the CLI.
 
@@ -88,10 +94,12 @@ an id it does not know at zero or at a default, both the record and the cap are
 wrong (U1, U2). The cycle cap, `maxIterations`, is the only guard that does not
 depend on it.
 
-The catalogue switch does not reach a workflow: no `modelRefusal` call exists in
-`workflows.ts`, so a template saved with a disabled model runs from a workflow
-or schedule while the run form refuses it
-(`docs/agent/agents-and-templates/templates-and-model-catalogue.md:7`).
+The catalogue switch does not reach a workflow. `modelRefusal` is called at
+`src/app/api/runs/route.ts:351`, at `save_template` and `propose_run`
+(`src/app/api/mcp/route.ts:5148`, `src/app/api/mcp/route.ts:5688`) and in
+`src/lib/modelDecider.ts:123`, and not once in `workflows.ts`
+(`grep -c modelRefusal src/lib/workflows.ts` → 0), so a template saved with a
+disabled model runs from a workflow or schedule while the run form refuses it.
 
 ### C5. Dreaming is already the vault's writer, and owns its ledger and its clock.
 
@@ -200,10 +208,13 @@ qc.py already reads every note in 0.7 s here (`time` around
 ### C12. Somebody else is usually writing too.
 
 The operator edits in Obsidian on the Mac and the edit arrives by iCloud;
-Dreaming writes between 03:04 and about 03:20 UTC every night (all eight notes
+Dreaming writes between 03:04 and about 03:20 UTC on nights with qualifying
+signatures — 18 Dreaming sessions between 2026-09-09 and 10-08
+([`scripts/vault-cost.mjs`](scripts/vault-cost.mjs)) — and all eight notes
 modified in the last day, and 12 of the last week's 15, are in
-`1 Projects/Agent Error Memory/` between those times, by mtime); research runs
-write for an hour at a time. Any write a manager makes is to a file that may
+`1 Projects/Agent Error Memory/` between those times (`find /workspace2 -name
+'*.md' -mtime -1`, then `-mtime -7`); research runs write over sessions of 92
+to 431 requests (the same script). Any write a manager makes is to a file that may
 have changed since it read it. iCloud's conflict behaviour on a simultaneous
 edit is **assumed** to keep one side and file the other as a conflict copy.
 

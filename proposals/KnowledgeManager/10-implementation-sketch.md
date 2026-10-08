@@ -20,7 +20,10 @@ Standard library only, like the rest of `_Meta/`, importing `vaultlib` for the
 note set, frontmatter, abstracts and the 4 B/token estimate
 (`/workspace2/_Meta/vaultlib.py:47`, `/workspace2/_Meta/vaultlib.py:88`,
 `/workspace2/_Meta/vaultlib.py:229`) and qc.py's checks as functions rather than
-its printed report. Six verbs:
+its printed report — the way [`scripts/backlog-classes.py`](scripts/backlog-classes.py)
+already calls them and reproduces qc's 418 findings. Everything it keeps lives
+under `_Meta/.housekeeping/` as tarballs and JSON, never as `.md`, so no walker
+reads it as a note (08 §3). Six verbs:
 
 **`plan [--json]`.** Refuses to start while `_Meta/housekeeping/pending/`
 holds a snapshot — it runs `verify` on that one first. Then: qc's findings per
@@ -38,7 +41,8 @@ classes:
 | stale-abstract candidate | haiku | confirm staleness, then rewrite the callout — or decline |
 | a tag used by a note, unregistered and not rejected | haiku | append a one-line definition under the subtree |
 | Inbox captures | operator | draft a triage proposal into the report |
-| `BODY/related` WARN on a hub, `BODY/source` | none | not emitted: the vault keeps these by policy |
+| `BODY/related` WARN on a non-hub note | haiku, only with the operator's `--trim-related` | keep the eight links that best explain the note, with their explanations |
+| `BODY/related` WARN on a `moc` or `area` note, `BODY/source` | none | not emitted: the vault keeps these by policy |
 | `CONF/ungraded` otherwise, `CONF/ceiling`, anything in `_Meta/` | frontier | listed for filing, never done |
 
 Stale-abstract candidates are heuristic and say so: an abstract stating a count
@@ -48,25 +52,30 @@ size grew by more than half since the last changeset that recorded it.
 
 Each job carries a **write set** (the files it may change), a **reading list**
 — the target whole, and every linked note as `abstract-only` — and an
-estimated token cost. Jobs are packed into the pass until six notes or an
-estimated 50,000 tokens, whichever comes first
-([`08-comparison.md`](08-comparison.md) §3). A note whose mtime is under an
-hour old is skipped (C12). A note over 26,000 estimated tokens is packed alone.
+estimated token cost. Jobs are packed into the pass until five notes or an
+estimated 40,000 tokens, whichever comes first — the room under the cliff after
+the 47,363 floor and a 12,637 reserve for the pass's own overhead
+([`08-comparison.md`](08-comparison.md) §3). A note over 20,000 estimated
+tokens, half that budget, is packed alone; one over 40,000 gets its headings
+and abstract as its reading list instead of its body. A note whose mtime is
+under an hour old is skipped (C12).
 
 **`abstract <path>`** prints one note's abstract callout and nothing else — the
 cheap read the reading list points at.
 
-**`snapshot`** writes `pending/<pass>.tgz` (every `.md`, 0.5 s, 6.66 MB) and
-`pending/<pass>.qc.json` (qc's findings per file, before).
+**`snapshot`** writes `pending/<pass>.tgz` — every `.md` (0.5 s, 6.66 MB),
+every file under `_Meta/` and `.obsidian/` — and `pending/<pass>.qc.json` (qc's
+findings per file, before).
 
 **`fix --mechanical`** applies the mechanical jobs and records them in the
 pending manifest.
 
-**`verify`** compares every note with the snapshot and fails — reverting the
-whole pass, hash-guarded — on any of:
+**`verify`** compares everything the snapshot holds with the live vault and
+fails — reverting the whole pass itself, hash-guarded — on any of:
 
-- a created or deleted file outside `_Meta/housekeeping/` and the generated
+- a created or deleted file outside `_Meta/.housekeeping/` and the generated
   index (`INDEX.md`, `_Meta/index/`);
+- any change under `_Meta/` or `.obsidian/` other than that generated index;
 - a changed file outside the union of the pass's write sets, or more changed
   notes than the cap;
 - a change to a never-list frontmatter field: `confidence`, `status`,
@@ -76,16 +85,21 @@ whole pass, hash-guarded — on any of:
   rest, so prose a claim lives in cannot change unseen;
 - a qc finding on a changed file that was not there before.
 
-On success it writes `changesets/<pass>/` — the pre-images of changed files and
-`manifest.json` (path, before and after SHA-256, job, one-line reason) — and
-deletes the pending tarball.
+On success it writes `changesets/<pass>.tgz` — the pre-images of changed files
+— and `changesets/<pass>.json`, the manifest (path, before and after SHA-256,
+job, one-line reason), and deletes the pending tarball. It cannot protect
+itself: it runs inside the session it judges, so a session that rewrote
+`housekeeping.py` or `qc.py` first could pass; the never-list forbids that, and
+only Option C's out-of-session hash would catch it.
 
 **`revert <pass> [path]`** puts a pre-image back only where the live file
 still hashes to the manifest's after-hash; anything else is reported as edited
 since. `plan` prunes its own changesets after twelve weeks.
 
-`vaultlib.SKIP_DIRS` gains `housekeeping` (`/workspace2/_Meta/vaultlib.py:26`),
-and `_Meta/Vault Quality Control.md` gains a section saying what the folder is.
+No walker needs a change: qc.py skips only the directories it names
+(`/workspace2/_Meta/qc.py:30`) and would read a `.md` anywhere else, which is why
+nothing under `_Meta/.housekeeping/` is one. `_Meta/Vault Quality Control.md`
+gains a section saying what the folder is.
 
 ## 3. The template's prompt
 
@@ -95,7 +109,8 @@ was copied 21 times more often than its control
 (`proposals/ContinuousImprovement/README.md:43`–`:63`):
 
 ```text
-You are the vault's housekeeping pass. Read CLAUDE.md before anything else.
+You are the vault's housekeeping pass. CLAUDE.md is already in your context;
+follow it, and do not open it again.
 1. python3 _Meta/housekeeping.py plan --json
    If it lists no jobs, reply with its summary line and stop.
 2. python3 _Meta/housekeeping.py snapshot
@@ -117,9 +132,9 @@ whole. Never edit anything under _Meta/ except through these commands.
 | Object | Values |
 |---|---|
 | Catalogue | `claude-haiku-5-5` switched on, after U1 |
-| Template "Knowledge Manager" | mount `knowledgebase`, folder `""`, *This folder*, `bypassPermissions`, model `claude-haiku-5-5`, `maxRunCostUSD` 0.50, `maxIterations` 1, `maxDurationMinutes` 20, the prompt of §3 |
+| Template "Knowledge Manager" | mount `knowledgebase`, folder `""`, *This folder*, `bypassPermissions`, model `claude-haiku-5-5`, `maxRunCostUSD` 0.50, `maxIterations` 1, `maxDurationMinutes` 20, the prompt of §3 — with `--trim-related` on its `plan` line only if the operator wants non-hub Related lists trimmed |
 | Workflow "Vault housekeeping" | one run block on the template; `maxInstanceCostUSD` 1 |
-| Schedule | weekly, two hours after `dreamingMinutes` in `dreamingTimeZone` |
+| Schedule | weekly, two hours after `dreamingMinutes` in `dreamingTimeZone`; every 24 hours while a trim stock remains |
 | `taskboardForRuns` | on, only if the pass should file its one task (C9) |
 
 No new app setting. The guards are the template's, enforced between cycles and
@@ -179,18 +194,20 @@ pins this one.
 ## 8. Tests
 
 **Vault side** — `_Meta/tests/test_housekeeping.py`, `unittest` like its
-neighbours (`/workspace2/_Meta/tests/test_retrieval.py:4`), over a fixture vault
+neighbours (`/workspace2/_Meta/tests/test_retrieval.py:6`), over a fixture vault
 built in a temporary directory:
 
-- `plan` classifies one note per family as the table in §2 says, and emits
-  nothing for a hub's `BODY/related` WARN;
-- packing stops at six notes and at 50,000 estimated tokens, and puts an
-  oversized note alone;
+- `plan` classifies one note per family as the table in §2 says, emits nothing
+  for a hub's `BODY/related` WARN, and emits a non-hub one only with
+  `--trim-related`;
+- packing stops at five notes and at 40,000 estimated tokens, puts a note over
+  20,000 alone, and gives one over 40,000 a headings-only reading list;
 - `plan` refuses, and verifies first, while a pending snapshot exists;
 - snapshot → edit → `verify` → `revert` restores byte-identical files;
 - `verify` fails and reverts on each breach in §2, one test per breach;
 - `revert` leaves a file alone when it was edited after the pass;
-- `vaultlib.collect()` skips `_Meta/housekeeping/`.
+- `verify` fails on a changed `_Meta/*.py` and on a changed `.obsidian/` file;
+- nothing `snapshot`, `verify` or `plan` writes is a `.md` file.
 
 **App side** — the one `dreaming.test.ts` assertion (§7). If §6 is built, a
 `tasks.test.ts` case per side of the below-frontier refusal: a silent failure

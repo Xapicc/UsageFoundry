@@ -37,7 +37,7 @@ the shape `plan` would emit ([`10-implementation-sketch.md`](10-implementation-s
 | S1 | Refresh the abstract of `Standing Failures in This Install.md` | `c3d149b8` | haiku | one callout rewritten; states 23 batches and the right range; no dash characters, as the task asks; the 42.4k note is the only job |
 | S2 | Log the 2026-10-05 batch in `Agent Error Memory.md`; trim its Related from 12 to 8 | `f1d24ec0` | haiku | one log entry between the 10-06 and 10-02 entries naming the notes the batch grew; eight explained links kept |
 | S3 | Lowercase the archived proposal's keyword; draft triage for the two Inbox captures | `4e67ffc1` | mechanical + operator | one keyword changed; two triage proposals in the reply; **no** file moved, created or deleted |
-| S4–S5 | Replace `topic/ai/local` per the Tag Index, five notes each | `11b1e89d` | mechanical | ten frontmatters; no other line changed |
+| S4–S5 | Replace `topic/ai/local` per the Tag Index on the ten non-Inbox notes that carry it, five each; the two Inbox captures are left | `11b1e89d` | mechanical | ten frontmatters; no other line changed |
 | S6 | `KW/count`, four notes | qc | haiku | each note at 5–8 keywords, lowercase, none restating its title |
 | S7 | `KW/overlap`, two notes | qc | haiku | each offending keyword replaced |
 | S8 | **Negative control:** "refresh the abstract" of a note whose abstract is current (chosen by the reviewer beforehand) | — | haiku | **declines**, no edit |
@@ -49,8 +49,8 @@ Control: `claude-opus-5-5`, every session once (9 runs). Same prompt —
 replaced by the job list, and `snapshot`/`verify` dropped if phase 1 is not
 built, since git is the envelope here — same copy, one session at a time,
 `--permission-mode bypassPermissions`, one turn budget. Cost **assumed**:
-Haiku $0.05–0.15 a session, ~$2 in all; control $1–2 a session; a frontier
-reviewer reading 27 diffs $3–6; **about $15–25** for the spike.
+Haiku $0.05–0.15 a session, control $1–2 a session, a frontier reviewer reading
+27 diffs $3–6 — 18 × $0.05–0.15 + 9 × $1–2 + $3–6 = **$13–27** for the spike.
 
 **What to record, per session:**
 
@@ -100,9 +100,14 @@ points of the control; S8 declined at least once of two; no Haiku request over
 control's.
 
 **In between** — no sink, but acceptance under 90%, more than ten points
-behind the control, or S9 done in one of its two runs: Haiku runs **on demand only**, the operator reads each
-changeset before the next pass, and no schedule is created until four on-demand
-passes clear the pass bar.
+behind the control, or S9 done in one of its two runs: Haiku runs **on demand
+only**, the operator reads each changeset before the next pass, and no schedule
+is created until four on-demand passes clear the pass bar.
+
+**Either way, if any Haiku run touched a `_Meta/` script or `.obsidian/`:**
+`verify` runs inside the session it judges and cannot catch that in
+production, so Option C's out-of-session hash is built — around Dreaming too —
+before any pass runs unattended ([`09-recommendation.md`](09-recommendation.md)).
 
 **Fold the result back:** a *Verified* entry under
 `docs/verification/agents-templates-and-models.md` for U1 and the spike's
@@ -116,9 +121,9 @@ run, not by the manager.
 |---|---|
 | `/workspace2` is the vault the app reads | `env`, `docker-compose.yml:229`, `.env`, and the vault skill `prepareVaultSkill` wrote at 10:58 today naming `/workspace2`; the setting row itself unread, because `/data` is denied to a work cycle |
 | it is not a git repository | `git -C /workspace2 rev-parse --git-dir` |
-| qc.py: `1670 notes checked — 7 errors, 411 warnings.` and the family table | `python3 -B _Meta/qc.py --quiet` and the full report, run in place with bytecode off; `_Meta/__pycache__` unchanged before and after |
+| qc.py: `1670 notes checked — 7 errors, 411 warnings.`, the family table, the class totals, the 85 non-hub Related WARNs and the 22 of 317 linkable URLs | `python3 -B _Meta/qc.py --quiet`, and [`scripts/backlog-classes.py`](scripts/backlog-classes.py), which runs qc's checks in-process and reproduces the same 418 findings; bytecode off, `_Meta/__pycache__` unchanged before and after |
 | note sizes, link fan-out, the abstract-only reading list | [`scripts/session-budget.py`](scripts/session-budget.py) |
-| first-request floor 32,332–47,363; 65.4% of vault requests over 100k; per-session costs; the Haiku re-pricing | [`scripts/vault-cost.mjs`](scripts/vault-cost.mjs) over `-workspace2*` transcripts since 2026-09-01: 45 sessions, $514.61 at list price, 5,205 requests |
+| first-request floor 32,332–47,363; first crossing at main request 8–79; 65.4% of vault requests over 100k; per-session costs; the Haiku re-pricing | [`scripts/vault-cost.mjs`](scripts/vault-cost.mjs) over `-workspace2*` transcripts since 2026-09-01: 45 session files, 44 with requests, $514.61 at list price, 5,205 requests; the per-kind totals grouped by hand from each session's first prompt |
 | whole-vault `.md` pre-image 0.5 s, 6.66 MB; qc.py 0.7 s | timed in Python around `tar czf` to `$TMPDIR` and `qc.py --quiet` |
 | the fourteen corpus bodies | recovered from the filing sessions' `create_task` inputs; each id confirmed by the echoed tool result |
 | the CLI warns on the model id | the probe quoted in C4 |
@@ -131,8 +136,10 @@ run, not by the manager.
 - **Whether Haiku 5.5 does these jobs and keeps these rules** (U4) — the spike.
 - **Whether Haiku counts tokens as Opus does** (U3); every cliff margin here is
   in Opus-session tokens and the vault's 4 B/token estimate.
-- **The weekly inflow** (U5) — inferred from seven weeks of board tasks and
-  today's qc snapshot, not measured over time.
+- **The weekly inflow** (U5) — inferred from board tasks filed between
+  2026-09-19 and 10-08, Inbox captures since 2026-08-16, the growth of one WARN
+  family since the 2026-08-11 pass, and today's qc snapshot — not measured over
+  time.
 - **Any `runs.spent_usd` row** — the database is unreadable from a work cycle;
   every dollar figure here is list price from transcripts.
 - **What Obsidian or iCloud would recover** (U6), and **what window the CLI

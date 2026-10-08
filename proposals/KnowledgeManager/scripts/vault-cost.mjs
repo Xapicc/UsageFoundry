@@ -123,6 +123,13 @@ for (const dir of readdirSync(ROOT).filter((d) => DIR_RE.test(d))) {
       over100k: prompts.filter((p) => p > 100_000).length,
       haikuCostFromOver100k: reqs.filter((r) => r.prompt > 100_000).reduce((a, r) => a + r.haiku, 0),
       mainPromptMax: Math.max(0, ...reqs.filter((r) => !r.sub).map((r) => r.prompt)),
+      // The CLI's own prefix before any tool result, and how far into the main
+      // loop the session first paid the long-prompt tier.
+      firstPrompt: reqs.find((r) => !r.sub)?.prompt ?? null,
+      firstOver100kAt: (() => {
+        const i = reqs.filter((r) => !r.sub).findIndex((r) => r.prompt > 100_000);
+        return i < 0 ? null : i + 1;
+      })(),
       subPromptMax: Math.max(0, ...reqs.filter((r) => r.sub).map((r) => r.prompt)),
       tier: Object.fromEntries(["short", "long"].map((t) => {
         const rs = reqs.filter((r) => (t === "long") === (r.prompt > 100_000));
@@ -138,6 +145,6 @@ if (process.argv[5]) writeFileSync(process.argv[5], JSON.stringify(sessions, nul
 for (const s of sessions) {
   console.log([s.first.slice(0, 16), s.session.slice(0, 8), s.dir === "-workspace2" ? "" : s.dir, Object.entries(s.models).map(([k, v]) => `${k}:${v}`).join(","), `req=${s.requests}(main ${s.mainRequests}, subfiles ${s.subagentFiles})`,
     `in=${s.input} cw=${s.cacheCreation}(5m ${s.cacheWrite5m}/1h ${s.cacheWrite1h}/un ${s.cacheWriteUnattributed}) cr=${s.cacheRead} out=${s.output}`,
-    `$${s.costUSD.toFixed(2)} (sub $${s.subCostUSD.toFixed(2)})`, `prompt max=${s.promptMax} p50=${s.promptP50} p90=${s.promptP90}`,
-    `>100k=${s.over100k}/${s.requests}`, `haiku=$${s.haikuUSD.toFixed(2)} (allShort $${s.haikuIfAllShortUSD.toFixed(2)})`, `unpriced=${s.unpriced}`].join(" | "));
+    `$${s.costUSD.toFixed(2)} (sub $${s.subCostUSD.toFixed(2)})`, `prompt first=${s.firstPrompt} max=${s.promptMax} p50=${s.promptP50} p90=${s.promptP90}`,
+    `>100k=${s.over100k}/${s.requests} first at main #${s.firstOver100kAt ?? "never"}`, `haiku=$${s.haikuUSD.toFixed(2)} (allShort $${s.haikuIfAllShortUSD.toFixed(2)})`, `unpriced=${s.unpriced}`].join(" | "));
 }

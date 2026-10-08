@@ -53,7 +53,8 @@ list taken from the night's `NOTE` lines, and its own rows in the ledger.
 ## What it costs
 
 About 1–2 days (**assumed**): a branch in `tickDreaming`, a table in `db.ts`, a
-row type in the pane. Per night a Haiku session of $0.02–0.07 (08 §4).
+row type in the pane. Per night Dreaming writes, one Haiku working pass —
+$0.07–0.35, **assumed** to be the same shape as the pass costed in 08 §4.
 
 ## Verdict
 
