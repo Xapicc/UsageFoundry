@@ -4171,6 +4171,8 @@ export interface ProposedBlockDTO {
   folderLabel: string | null;
   /** How many runs a deciding block may start, with nobody looking. */
   fanOut: number | null;
+  /** How many times its failed turn is started again, each one billed. 0 elsewhere. */
+  turnRetries: number;
   mergeAutoResolve: boolean;
   /** The blocks it starts after, by name. */
   after: string[];

@@ -514,6 +514,9 @@ export default function WorkflowPage() {
                         <div className="mt-0.5 text-warn">
                           Decides what to run — starts up to {n.fanOut} run(s)
                           with no approval
+                          {(n.turnRetries ?? 0) > 0
+                            ? `; a failed deciding turn is started again up to ${n.turnRetries} time(s), each billed`
+                            : ""}
                         </div>
                       )}
                       {n.kind === "merge" && (

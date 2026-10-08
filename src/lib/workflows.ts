@@ -306,6 +306,11 @@ export interface ProposedBlockSummary {
   folderLabel: string | null;
   /** How many runs a deciding block may start. Null on every other kind. */
   fanOut: number | null;
+  /**
+   * How many times a deciding block's failed turn is started again, each one a
+   * billed turn nobody approves individually. 0 on every other kind.
+   */
+  turnRetries: number;
   /** Whether a merge block may pay a model to reconcile a conflict. */
   mergeAutoResolve: boolean;
   /** The blocks it starts after, by name. */
@@ -399,6 +404,7 @@ export function summarizeProposedGraph(
             node.folder ? `/${node.folder}` : " (mount root)"
           }`,
     fanOut: node.fanOut,
+    turnRetries: node.turnRetries ?? 0,
     mergeAutoResolve: node.mergeAutoResolve,
     // Dependencies only. A `repeats` link names the loop that *contains* this
     // block, which is not something it waits for — one pass creates it.
@@ -4833,23 +4839,25 @@ const blockTurns = ((globalThis as unknown as {
 const turnKey = (instanceId: string, nodeId: string) => `${instanceId}:${nodeId}`;
 
 /**
- * The block turns whose `emit_runs` this app has turned away.
+ * The words every note about a refused `emit_runs` starts with.
  *
- * A turn with a refusal on it decided something and was told no, which is not
- * the turn failing, so `blockTurnRetries` never starts it again: another billed
- * turn would be asked to decide the same thing under the same rules. Kept apart
- * from the notes the refusals also write, because those are prose for an
- * operator and this is read by a decision. `settleBlockTurn` forgets the key, which
- * every turn that has a child reaches.
+ * `blockTurnRetries` must not start again a turn this app turned away, and the
+ * notes are the one record of that which every bundle sees: `emitBlockRuns`
+ * runs in the MCP route's and the turn's settle in the server's, so module state
+ * would not be shared between them in dev. The prefix is added by
+ * `noteRefusedEmission` and never typed at a call site, so rewording a refusal
+ * cannot make it stop counting as one.
  */
-const refusedEmissions = ((globalThis as unknown as {
-  __ufBlockRefusedEmissions?: Set<string>;
-}).__ufBlockRefusedEmissions ??= new Set<string>());
+const REFUSED_EMISSION_PREFIX = "It tried to emit runs";
 
-/** Note a turn that `emit_runs` was refused for, and remember that it was. */
-function noteRefusedEmission(instanceId: string, nodeId: string, line: string): void {
-  refusedEmissions.add(turnKey(instanceId, nodeId));
-  noteBlock(instanceId, nodeId, line);
+/** Note that `emit_runs` was refused, in the words `emissionWasRefused` reads. */
+function noteRefusedEmission(instanceId: string, nodeId: string, rest: string): void {
+  noteBlock(instanceId, nodeId, `${REFUSED_EMISSION_PREFIX} ${rest}`);
+}
+
+/** Whether a block's notes record an `emit_runs` this app turned away. */
+function emissionWasRefused(notes: string | null): boolean {
+  return splitNotes(notes).some((line) => line.startsWith(REFUSED_EMISSION_PREFIX));
 }
 
 /** One block's row, as the scheduler and the emit tool read it. */
@@ -7281,7 +7289,6 @@ export function settleBlockTurn(
   result: TurnResult,
   retriesUsed: number,
 ): void {
-  const key = turnKey(instanceId, nodeId);
   const row = getBlock(instanceId, nodeId);
   const instance = getInstance(instanceId);
   const node = instance ? blockNode(instance, nodeId) : undefined;
@@ -7295,12 +7302,11 @@ export function settleBlockTurn(
     blockTurnRetries({
       result,
       emitted: parseSpecs(row.emitted_specs).length,
-      refused: refusedEmissions.has(key),
+      refused: emissionWasRefused(row.notes),
       allowed,
       used: retriesUsed,
     });
   if (!restart) {
-    refusedEmissions.delete(key);
     settleBlock(instanceId, nodeId, result);
     return;
   }
@@ -8753,7 +8759,7 @@ export function emitBlockRuns(
     noteRefusedEmission(
       instanceId,
       nodeId,
-      "It tried to emit runs while new work was held across the install, and was refused.",
+      "while new work was held across the install, and was refused.",
     );
     return {
       ok: false,
@@ -8766,7 +8772,7 @@ export function emitBlockRuns(
     noteRefusedEmission(
       instanceId,
       nodeId,
-      "It called emit_runs a second time and was refused — a block emits once.",
+      "a second time and was refused — a block emits once.",
     );
     return {
       ok: false,
@@ -8793,7 +8799,7 @@ export function emitBlockRuns(
     const reason =
       "Every run this block emits goes to Codex, which a saved agent's prompt " +
       "does not reach. Emit the runs again without `agent`.";
-    noteRefusedEmission(instanceId, nodeId, `It tried to emit runs and was refused: ${reason}`);
+    noteRefusedEmission(instanceId, nodeId, `and was refused: ${reason}`);
     return { ok: false, reason };
   }
 
@@ -8834,7 +8840,7 @@ export function emitBlockRuns(
     // own, a loop among the specs. The model is told why and may well give up
     // without saying so, and then this is the only trace that it ever meant to
     // start anything at all.
-    noteRefusedEmission(instanceId, nodeId, `It tried to emit runs and was refused: ${plan.reason}`);
+    noteRefusedEmission(instanceId, nodeId, `and was refused: ${plan.reason}`);
     return { ok: false, reason: plan.reason };
   }
 

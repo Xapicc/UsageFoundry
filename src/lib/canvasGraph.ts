@@ -82,6 +82,12 @@ export interface BlockDraft {
   agentId: string;
   /** Orchestrator blocks only, held as typed so a blank field stays blank. */
   fanOut: string;
+  /**
+   * Orchestrator blocks only: how many times a failed deciding turn is started
+   * again, held as typed. Blank goes over as 0, which is "never" and so spends
+   * nothing — the one direction a blank can fail in without costing anyone.
+   */
+  turnRetries: string;
   /** Merge blocks only: how each branch is put onto its target. */
   mergeStrategy: MergeStrategyDTO;
   /** Merge blocks only: whether a conflict may be reconciled by a model. */
@@ -1516,6 +1522,7 @@ export function draftToGraph(draft: CanvasDraft): WireGraph {
       promptOverride: startsNoRun ? null : b.promptOverride.trim() || null,
       agentId: startsNoRun ? null : b.agentId || null,
       fanOut: b.kind === "orchestrator" ? Number(b.fanOut) : null,
+      turnRetries: b.kind === "orchestrator" ? Number(b.turnRetries) : null,
       // Sent only for the kind that holds them, so switching a block back to a run
       // cannot leave a merge setting on the wire for the server to ignore — the
       // treatment `fanOut` beside them already gets.

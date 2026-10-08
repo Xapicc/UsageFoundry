@@ -1563,6 +1563,15 @@ const CHAT_TOOLS = [
                   "the number the operator is agreeing to. Ignored on any " +
                   "other kind.",
               },
+              turnRetries: {
+                type: "number",
+                description:
+                  "An orchestrator block's retries, 0 to 2: how many times " +
+                  "its deciding turn is started again when the turn itself " +
+                  "failed having decided nothing. Each retry is another billed " +
+                  "turn, so leave it out (0) unless asked. Ignored on any " +
+                  "other kind.",
+              },
               mergeStrategy: {
                 type: "string",
                 enum: ["merge", "squash"],

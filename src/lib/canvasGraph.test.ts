@@ -72,6 +72,7 @@ function block(id: string, over: Partial<BlockDraft> = {}): BlockDraft {
     promptOverride: "",
     agentId: "",
     fanOut: "3",
+    turnRetries: "0",
     mergeStrategy: "merge",
     mergeAutoResolve: false,
     maxPasses: "",
@@ -137,6 +138,35 @@ test("a fan-out cap is carried only by the block that has one", () => {
     wire.nodes[2].fanOut === null || (wire.nodes[2].fanOut ?? 0) < 1,
     "a blank cap must not arrive as a number the server would accept",
   );
+});
+
+test("turn retries are carried only by an orchestrator block, and survive a save", () => {
+  // A retry count left on the draft of a block switched back to a run would
+  // otherwise reach a server that has no turn to retry, and any editor save of
+  // a loaded orchestrator block that dropped it would silently reset it to 0.
+  const wire = draftToGraph({
+    blocks: [
+      block("a", { turnRetries: "2" }),
+      block("b", { kind: "orchestrator", turnRetries: "2" }),
+    ],
+    links: [],
+  });
+  assert.equal(wire.nodes[0].turnRetries, null, "a run block states no retries");
+  assert.equal(wire.nodes[1].turnRetries, 2);
+
+  const result = saved({
+    blocks: [block("b", { kind: "orchestrator", turnRetries: "2" })],
+    links: [],
+  });
+  assert.ok(result.ok, result.ok ? "" : result.error);
+  assert.equal(result.value.graph.nodes[0].turnRetries, 2);
+
+  const past = saved({
+    blocks: [block("b", { kind: "orchestrator", turnRetries: "3" })],
+    links: [],
+  });
+  assert.ok(!past.ok, "a count past the cap is refused at save");
+  assert.match(past.error, /0 to 2 times[^]*it is set to 3/);
 });
 
 test("no template is null on the wire, not an empty string", () => {

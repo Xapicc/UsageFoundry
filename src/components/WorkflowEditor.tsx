@@ -24,6 +24,7 @@ import {
   MAX_LOOP_BOARD_THRESHOLDS,
   MAX_LOOP_PASSES,
   MAX_REVIEW_FIX_ROUNDS,
+  MAX_TURN_RETRIES,
   MAX_WORKFLOW_NAME,
   MAX_WORKFLOW_NODES,
   REVIEW_VERDICT_KINDS,
@@ -193,6 +194,7 @@ function writeLayout(id: string, at: Record<string, Point>): void {
 /* ------------------------------------------------------------------ */
 
 const DEFAULT_FAN_OUT = "3";
+const DEFAULT_TURN_RETRIES = "0";
 const DEFAULT_MAX_PASSES = "3";
 
 /**
@@ -319,6 +321,7 @@ function emptyBlock(id: string, mountId: string, kind: WorkflowNodeKind): BlockD
     promptOverride: "",
     agentId: "",
     fanOut: DEFAULT_FAN_OUT,
+    turnRetries: DEFAULT_TURN_RETRIES,
     mergeStrategy: DEFAULT_MERGE_STRATEGY,
     mergeAutoResolve: false,
     maxPasses: DEFAULT_MAX_PASSES,
@@ -346,6 +349,8 @@ function toBlocks(workflow: WorkflowDTO): BlockDraft[] {
     promptOverride: n.promptOverride ?? "",
     agentId: n.agentId ?? "",
     fanOut: n.fanOut?.toString() ?? DEFAULT_FAN_OUT,
+    // Absent on every graph saved before the field existed, which is never.
+    turnRetries: n.turnRetries?.toString() ?? DEFAULT_TURN_RETRIES,
     mergeStrategy: n.mergeStrategy ?? DEFAULT_MERGE_STRATEGY,
     mergeAutoResolve: n.mergeAutoResolve ?? false,
     maxPasses: n.maxPasses?.toString() ?? DEFAULT_MAX_PASSES,
@@ -1529,6 +1534,7 @@ function BlockStatement({
 
   if (block.kind === "orchestrator") {
     const cap = Number(block.fanOut);
+    const retries = Number(block.turnRetries);
     return (
       <p className="mb-3.5 text-sm leading-normal text-ink-muted">
         Decides in {where}, and starts{" "}
@@ -1543,6 +1549,13 @@ function BlockStatement({
         )}{" "}
         with no approval — each under {guards}.
         {asAgent && <> It decides as {asAgent}.</>}
+        {Number.isInteger(retries) && retries > 0 && (
+          <span className="text-warn">
+            {" "}
+            A deciding turn that fails is started again up to {retries} time
+            {retries === 1 ? "" : "s"}, each one billed.
+          </span>
+        )}
       </p>
     );
   }
@@ -2027,6 +2040,25 @@ function BlockPanel({
                 value={block.fanOut}
                 onChange={(e) => onChange({ fanOut: e.target.value })}
               />
+            </div>
+          </ListRow>
+          <ListRow
+            label="Retries after a failed turn"
+            description="Each retry is another billed turn"
+            htmlFor={`${block.id}-turnretries`}
+          >
+            <div className={ROW_CONTROL_NARROW}>
+              <Select
+                id={`${block.id}-turnretries`}
+                value={block.turnRetries}
+                onChange={(e) => onChange({ turnRetries: e.target.value })}
+              >
+                {Array.from({ length: MAX_TURN_RETRIES + 1 }, (_, n) => (
+                  <option key={n} value={String(n)}>
+                    {n}
+                  </option>
+                ))}
+              </Select>
             </div>
           </ListRow>
         </ListGroup>

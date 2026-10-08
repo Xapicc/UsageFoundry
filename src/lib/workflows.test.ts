@@ -3590,6 +3590,16 @@ describe("summarizeProposedGraph — what the approval card has to show", () => 
     assert.equal(d.fanOut, 4);
   });
 
+  it("carries the retries, which are billed turns nobody approves individually", () => {
+    const [d, a] = summarizeProposedGraph(
+      value(graph([decider("d", { turnRetries: 2 }), node("a")])).graph,
+      KNOWN,
+      untemplated,
+    );
+    assert.equal(d.turnRetries, 2);
+    assert.equal(a.turnRetries, 0, "a block that does not decide retries nothing");
+  });
+
   it("says a merge block may pay to reconcile, and names no folder for it", () => {
     const summary = summarizeProposedGraph(
       value(
