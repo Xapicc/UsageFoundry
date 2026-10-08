@@ -174,6 +174,26 @@
   reconcile, so the live press was inserted after boot; the open `<datalist>`
   popup was not photographed, only its options read; nothing was pressed.
 
+- **A gate block, held, continued and stopped from the instance page, 2026-10-08**
+  (production standalone build of this branch after `6f8ec783`, scratch
+  `DATA_DIR`, Chromium): a workflow of two chained gates and an instance of it
+  with the first held and `origin` `schedule`, both written into the database by
+  hand rather than produced by Run. The instance page led with a "Waiting for
+  you" card naming the held gate, with **Continue** and **Stop all** beside it
+  and the sentence that a schedule started the run; the heading read "WORKING 1
+  waiting for you" with no "block(s) working" beside it, and the gate's row wore
+  "waiting for you" in the warn tone. Continue answered 200, the first gate read
+  "continued" and the second, now reached, took the card in its place. Stop all
+  opened the existing sheet; confirming it left the page "Stopped", both gates
+  `blocked` with "…before anyone let it through", and no card. The workflow page
+  showed "no agent" in the Guards cell and the gate's own line under its name,
+  the schedule card carried the notice that a scheduled run stops at a gate, and
+  the editor's palette offered "Waits for you" and drew both gates as cards. No
+  console error and no sideways scroll at 1280px or 390px. Caveat: no run, agent
+  or merge was involved and no webhook was configured; the 390px read happened
+  after the 1280px pass had already pressed Stop, so the narrow card was not
+  photographed with a gate held.
+
 ## Not yet verified by hand
 
 - **No review block has run against a real model (2026-09-28).** The block's
@@ -245,3 +265,17 @@
   run and a merge with a run block behind it, press Run, press the control while
   pass 1 works, release the cycle, and read the loop's stop reason and the block
   behind it.
+
+- **A gate through a real Run, a real restart and a real schedule (2026-10-08).**
+  `gateBlock.test.ts` drives hold, Continue, Stop, the boot sweep and a loop's
+  passes against a real database, but through `advanceInstances` over inserted
+  rows: no press of Run, no container restart, no schedule firing and no webhook
+  receiver has seen a gate. Open: that a gate behind a real run is reached when
+  that run completes, which is the `releaseDependents` path the tests skip; that
+  a held gate survives `docker compose restart` with the page still offering
+  Continue; that a window skipped behind a held gate is recorded as an overlap on
+  the schedule card; and that `workflow.gate_held` arrives signed at a receiver.
+  Settles with a workflow `run → gate`, `run → merge`, `gate → merge` over a
+  scratch repository and a stub `CLAUDE_BIN`, Run pressed, the gate card read,
+  `docker compose restart`, Continue pressed after it and the merge's note read,
+  with `UF_WEBHOOK_URL` pointed at a local listener.

@@ -33,6 +33,7 @@ The paragraphs themselves live in `docs/agent/chat/`, one topic file per heading
 - The chat can write a workflow, and approving one saves it rather than starting it.
 - The chat can propose a schedule, and it is the one proposal whose approval leads to spending with nobody present.
 - The chat cannot draft a deliver block, though the editor can save one.
+- The chat can draft a gate, which is the other block the card labels "no agent", and there the label is the whole truth.
 
 ## [The chat's MCP tools and its capability](chat/mcp-tools-and-capability.md)
 

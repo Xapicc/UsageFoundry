@@ -24,6 +24,7 @@ import {
   MAX_LOOP_BOARD_THRESHOLDS,
   MAX_LOOP_PASSES,
   MAX_REVIEW_FIX_ROUNDS,
+  MAX_TURN_RETRIES,
   MAX_WORKFLOW_NAME,
   MAX_WORKFLOW_NODES,
   REVIEW_VERDICT_KINDS,
@@ -58,6 +59,7 @@ import {
 } from "@/lib/canvasGraph";
 import { jsonRequest } from "@/lib/jsonRequest";
 import { exitHref, leaving, registerLeaveGuard } from "@/lib/unsavedWork";
+import { parseVerifyCommand } from "@/lib/verifyCommand";
 import { isCommitChord } from "@/components/shell/shortcuts";
 import {
   EDGE_OPTION_LABEL,
@@ -193,6 +195,7 @@ function writeLayout(id: string, at: Record<string, Point>): void {
 /* ------------------------------------------------------------------ */
 
 const DEFAULT_FAN_OUT = "3";
+const DEFAULT_TURN_RETRIES = "0";
 const DEFAULT_MAX_PASSES = "3";
 
 /**
@@ -287,10 +290,22 @@ const DEFAULT_MERGE_STRATEGY: MergeStrategyDTO = "merge";
  */
 const DEFAULT_FIX_ROUNDS = "1";
 
+/**
+ * Why a review block's verify command will be refused at Save, or null —
+ * including while it is blank, which Save names itself and which is every
+ * command's first moment.
+ */
+function verifyCommandRefusal(raw: string): string | null {
+  if (!raw.trim()) return null;
+  const parsed = parseVerifyCommand(raw);
+  return parsed.ok ? null : parsed.reason;
+}
+
 /** What the review block's verdict picker calls each source. */
 const VERDICT_LABEL: Record<ReviewVerdictSourceDTO["kind"], string> = {
   model: "A frontier review",
   status: "How each run ended",
+  command: "A verify command",
 };
 
 /** The width a control takes in the inspector's rows. See `ui/Field`'s note:
@@ -319,6 +334,7 @@ function emptyBlock(id: string, mountId: string, kind: WorkflowNodeKind): BlockD
     promptOverride: "",
     agentId: "",
     fanOut: DEFAULT_FAN_OUT,
+    turnRetries: DEFAULT_TURN_RETRIES,
     mergeStrategy: DEFAULT_MERGE_STRATEGY,
     mergeAutoResolve: false,
     maxPasses: DEFAULT_MAX_PASSES,
@@ -331,6 +347,7 @@ function emptyBlock(id: string, mountId: string, kind: WorkflowNodeKind): BlockD
     provider: "",
     fixRounds: DEFAULT_FIX_ROUNDS,
     verdictSource: "model",
+    verifyCommand: "",
   };
 }
 
@@ -346,6 +363,8 @@ function toBlocks(workflow: WorkflowDTO): BlockDraft[] {
     promptOverride: n.promptOverride ?? "",
     agentId: n.agentId ?? "",
     fanOut: n.fanOut?.toString() ?? DEFAULT_FAN_OUT,
+    // Absent on every graph saved before the field existed, which is never.
+    turnRetries: n.turnRetries?.toString() ?? DEFAULT_TURN_RETRIES,
     mergeStrategy: n.mergeStrategy ?? DEFAULT_MERGE_STRATEGY,
     mergeAutoResolve: n.mergeAutoResolve ?? false,
     maxPasses: n.maxPasses?.toString() ?? DEFAULT_MAX_PASSES,
@@ -381,6 +400,7 @@ function toBlocks(workflow: WorkflowDTO): BlockDraft[] {
     // frontier review those blocks were saved to pay for — `normalizeNode`'s
     // reading.
     verdictSource: n.verdictSource?.kind ?? "model",
+    verifyCommand: n.verdictSource?.kind === "command" ? n.verdictSource.command : "",
   }));
 }
 
@@ -1482,6 +1502,20 @@ function BlockStatement({
     );
   }
 
+  if (block.kind === "gate") {
+    return (
+      <p className="mb-3.5 text-sm leading-normal text-ink-muted">
+        When a run reaches it, it{" "}
+        <strong className="font-semibold text-ink">
+          waits for you to press Continue
+        </strong>
+        , and nothing behind it starts until you do. It costs nothing while it
+        waits, hands on no branches, and on a schedule it can hold the run with
+        nobody there.
+      </p>
+    );
+  }
+
   if (block.kind === "deliver") {
     return (
       <p className="mb-3.5 text-sm leading-normal text-ink-muted">
@@ -1491,6 +1525,21 @@ function BlockStatement({
         </strong>
         , with nobody pressing anything. It never forces a push, and it spends
         nothing on a model.
+      </p>
+    );
+  }
+
+  if (block.kind === "review" && block.verdictSource === "command") {
+    return (
+      <p className="mb-3.5 text-sm leading-normal text-ink-muted">
+        Runs your verify command in each branch&rsquo;s own checkout, one branch at
+        a time, and hands on{" "}
+        <strong className="font-semibold text-ink">
+          only the branches where it exits 0
+        </strong>
+        . Any other ending, a timeout included, is set aside with the end of its
+        output. No model, nothing billed, and its tasks are left as the run left
+        them.
       </p>
     );
   }
@@ -1529,6 +1578,7 @@ function BlockStatement({
 
   if (block.kind === "orchestrator") {
     const cap = Number(block.fanOut);
+    const retries = Number(block.turnRetries);
     return (
       <p className="mb-3.5 text-sm leading-normal text-ink-muted">
         Decides in {where}, and starts{" "}
@@ -1543,6 +1593,13 @@ function BlockStatement({
         )}{" "}
         with no approval — each under {guards}.
         {asAgent && <> It decides as {asAgent}.</>}
+        {Number.isInteger(retries) && retries > 0 && (
+          <span className="text-warn">
+            {" "}
+            A deciding turn that fails is started again up to {retries} time
+            {retries === 1 ? "" : "s"}, each one billed.
+          </span>
+        )}
       </p>
     );
   }
@@ -1880,6 +1937,9 @@ function BlockPanel({
   // no agent, works in whichever repository each branch came from, and has no
   // task of its own. The pull request's title and body are written from the run.
   const deliver = block.kind === "deliver";
+  // A gate holds nothing either: it starts no agent and works nowhere, and the
+  // server refuses a template, agent, workspace, folder or task on it by name.
+  const gate = block.kind === "gate";
   // A review block holds two fields, where its verdict comes from and its fix
   // rounds, for the merge block's reason: it starts no child of its own, so
   // there is nothing to guard, place or brief.
@@ -2027,6 +2087,25 @@ function BlockPanel({
                 value={block.fanOut}
                 onChange={(e) => onChange({ fanOut: e.target.value })}
               />
+            </div>
+          </ListRow>
+          <ListRow
+            label="Retries after a failed turn"
+            description="Each retry is another billed turn"
+            htmlFor={`${block.id}-turnretries`}
+          >
+            <div className={ROW_CONTROL_NARROW}>
+              <Select
+                id={`${block.id}-turnretries`}
+                value={block.turnRetries}
+                onChange={(e) => onChange({ turnRetries: e.target.value })}
+              >
+                {Array.from({ length: MAX_TURN_RETRIES + 1 }, (_, n) => (
+                  <option key={n} value={String(n)}>
+                    {n}
+                  </option>
+                ))}
+              </Select>
             </div>
           </ListRow>
         </ListGroup>
@@ -2390,7 +2469,9 @@ function BlockPanel({
           footnote={
             block.verdictSource === "status"
               ? "Reads each run's status, so this block bills nothing"
-              : "Each fix round is a billed run and a billed review for every branch sent back"
+              : block.verdictSource === "command"
+                ? "Runs in each branch's own checkout as the child uid, so this block bills nothing"
+                : "Each fix round is a billed run and a billed review for every branch sent back"
           }
         >
           <ListRow
@@ -2401,7 +2482,9 @@ function BlockPanel({
             description={
               block.verdictSource === "status"
                 ? `Its links in have to be “${EDGE_OPTION_LABEL["on-finish"]}”, or the first run that does not complete blocks it`
-                : "Billed per branch"
+                : block.verdictSource === "command"
+                  ? "Exit 0 approves; anything else sets the branch aside"
+                  : "Billed per branch"
             }
           >
             <div className={ROW_CONTROL}>
@@ -2418,10 +2501,42 @@ function BlockPanel({
               </Select>
             </div>
           </ListRow>
-          {/* Hidden rather than shown at 0 under a status verdict: there is no
-              review for a fix to answer, and `draftToGraph` sends 0 whatever
-              the picker last held, so switching back restores the rounds. */}
-          {block.verdictSource !== "status" && (
+          {block.verdictSource === "command" && (
+            <ListRow
+              label="Verify command"
+              htmlFor={`${block.id}-verify`}
+              description={
+                <>
+                  argv, never a shell line — for{" "}
+                  <span className="mono">a &amp;&amp; b</span> put the two in a
+                  script and name the script
+                </>
+              }
+            >
+              <div className={ROW_CONTROL}>
+                <Input
+                  id={`${block.id}-verify`}
+                  className="mono"
+                  placeholder="npm test"
+                  value={block.verifyCommand}
+                  onChange={(e) => onChange({ verifyCommand: e.target.value })}
+                />
+                {/* Said as it is typed, in the parser's own words, Settings'
+                    reason: Save refuses it anyway, and the obvious
+                    `npm test && npm run build` is worth catching before then. */}
+                {verifyCommandRefusal(block.verifyCommand) !== null && (
+                  <p className="mt-1.5 text-2xs text-danger">
+                    {verifyCommandRefusal(block.verifyCommand)}
+                  </p>
+                )}
+              </div>
+            </ListRow>
+          )}
+          {/* Hidden rather than shown at 0 under a status or command verdict:
+              there is no review for a fix to answer, and `draftToGraph` sends 0
+              whatever the picker last held, so switching back restores the
+              rounds. */}
+          {block.verdictSource === "model" && (
             <ListRow
               label="Fix rounds per rejected branch"
               htmlFor={`${block.id}-fixrounds`}
@@ -2478,7 +2593,7 @@ function BlockPanel({
         </ListGroup>
       )}
 
-      {!merge && !deliver && !loop && !review && (
+      {!merge && !deliver && !loop && !review && !gate && (
         <>
           {/* The task is the rest of "what it does", so it sits with the caps
               that bound it rather than at the foot of the panel — a run block,

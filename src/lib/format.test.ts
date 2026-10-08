@@ -403,6 +403,7 @@ const passBlock = (
   position: 0,
   kind,
   status: "emitted",
+  heldAt: null,
   startedAt: null,
   finishedAt: null,
   costUSD: null,

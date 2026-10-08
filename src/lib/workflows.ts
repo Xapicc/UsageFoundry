@@ -22,6 +22,7 @@ import {
 } from "./review";
 import {
   afterFixRun,
+  commandVerdict,
   fixRunPrompt,
   nextReviewStep,
   reviewBlockSummary,
@@ -29,6 +30,7 @@ import {
 } from "./reviewBlock";
 import { addTaskComment } from "./taskComments";
 import { installBudgetRefusal } from "./installBudget";
+import { notifyGateHeld } from "./notify";
 import {
   blockWaitingRun,
   clampRunOffset,
@@ -71,6 +73,7 @@ import {
   deliveredPullRequest,
   deliverRun,
   landState,
+  verifyBranchForReview,
   type LandStrategy,
 } from "./land";
 import {
@@ -232,6 +235,7 @@ export type LoopBoardCounts = LoopBoardCountsDTO;
 export {
   REPEATS_EDGE,
   WORKFLOW_EDGE_CONDITIONS,
+  commandVerdictRefusal,
   currentKnowledge,
   folderRefusal,
   isDependencyEdge,
@@ -252,6 +256,7 @@ export {
 import {
   NODE_ID,
   REPEATS_EDGE,
+  commandVerdictRefusal,
   currentKnowledge,
   folderRefusal,
   isDependencyEdge,
@@ -306,6 +311,11 @@ export interface ProposedBlockSummary {
   folderLabel: string | null;
   /** How many runs a deciding block may start. Null on every other kind. */
   fanOut: number | null;
+  /**
+   * How many times a deciding block's failed turn is started again, each one a
+   * billed turn nobody approves individually. 0 on every other kind.
+   */
+  turnRetries: number;
   /** Whether a merge block may pay a model to reconcile a conflict. */
   mergeAutoResolve: boolean;
   /** The blocks it starts after, by name. */
@@ -368,6 +378,10 @@ export function planWorkflowProposal(
     known,
   );
   if (!parsed.ok) return { ok: false, reason: parsed.error };
+  // Asked again at the click, for the re-normalization's reason: what is
+  // approved is what is saved, and a card names no command for a person to read.
+  const commandVerdict = commandVerdictRefusal(parsed.value.graph);
+  if (commandVerdict) return { ok: false, reason: commandVerdict };
   return { ok: true, input: parsed.value };
 }
 
@@ -382,7 +396,10 @@ export function summarizeProposedGraph(
     name: node.name,
     kind: node.kind,
     guardsLabel:
-      node.kind === "merge" || node.kind === "deliver" || node.kind === "review"
+      node.kind === "merge" ||
+      node.kind === "deliver" ||
+      node.kind === "review" ||
+      node.kind === "gate"
         ? "no agent"
         : node.templateId === null
           ? untemplatedLabel
@@ -393,12 +410,16 @@ export function summarizeProposedGraph(
       ? (known.agents.get(node.agentId)?.name ?? "agent deleted")
       : null,
     folderLabel:
-      node.kind === "merge" || node.kind === "deliver" || node.kind === "review"
+      node.kind === "merge" ||
+      node.kind === "deliver" ||
+      node.kind === "review" ||
+      node.kind === "gate"
         ? null
         : `${mountById(node.mountId)?.label ?? node.mountId}${
             node.folder ? `/${node.folder}` : " (mount root)"
           }`,
     fanOut: node.fanOut,
+    turnRetries: node.turnRetries ?? 0,
     mergeAutoResolve: node.mergeAutoResolve,
     // Dependencies only. A `repeats` link names the loop that *contains* this
     // block, which is not something it waits for — one pass creates it.
@@ -1701,6 +1722,13 @@ export interface InstanceStep {
    * emit is a fact only `edgeVerdict` has.
    */
   review: InstanceMerge[];
+  /**
+   * Gates every edge into which is satisfied, so the instance has reached them
+   * and a person is now being waited on. Listed again on every plan until
+   * Continue, because a held gate is still a `waiting` row; `holdGate` is what
+   * makes the second listing a no-op.
+   */
+  hold: string[];
   /** Run blocks that may now be created. */
   create: InstanceCreation[];
   /**
@@ -1805,6 +1833,7 @@ export function planInstanceStep(
     merge: [],
     deliver: [],
     review: [],
+    hold: [],
     create: [],
     loop: [],
     block: [],
@@ -1882,6 +1911,11 @@ export function planInstanceStep(
           nodeId: node.id,
           runIds: [...new Set(dependsOn.map((d) => d.runId))],
         });
+      } else if (node.kind === "gate") {
+        // Nothing to start and nothing resolved: a gate hands on no runs, so
+        // `dependsOn` is dropped. Its row stays `waiting` after this, which is
+        // why the successors below keep seeing it pending until Continue.
+        step.hold.push(node.id);
       } else if (node.kind === "loop") {
         step.loop.push({ nodeId: node.id, dependsOn });
       } else {
@@ -1935,7 +1969,7 @@ function edgeVerdict(
   edge: WorkflowDependencyEdge,
   dependsOn: InstanceCreation["dependsOn"],
 ): EdgeVerdict {
-  if (from.kind === "merge" || from.kind === "deliver") {
+  if (from.kind === "merge" || from.kind === "deliver" || from.kind === "gate") {
     const block = state.block;
     if (!block || block.status === "waiting" || block.status === "thinking") {
       return PENDING;
@@ -1949,6 +1983,8 @@ function edgeVerdict(
     if (block.status === "not-needed") return passedOverBehind(from);
     // A deliver block reads exactly as a merge block does, and for the same
     // reason: it created no run, so its edge carries a condition and no branch.
+    // So does a gate, one step further: it also never fails, so the failed
+    // branch below is unreachable for it, and `emitted` is Continue.
     //
     // A merge block that failed still *finished*, having tried, which is what
     // separates it from one that never ran — the same distinction
@@ -1963,7 +1999,9 @@ function edgeVerdict(
         reason:
           from.kind === "merge"
             ? `“${from.name}” did not land everything it was given: ${block.error ?? "the merge failed."}`
-            : `“${from.name}” did not deliver everything it was given: ${block.error ?? "the delivery failed."}`,
+            : from.kind === "gate"
+              ? `“${from.name}” was not let through: ${block.error ?? "no reason recorded."}`
+              : `“${from.name}” did not deliver everything it was given: ${block.error ?? "the delivery failed."}`,
       };
     }
     // Nothing is pushed onto `dependsOn`: a merge block created no run, so a
@@ -2503,6 +2541,8 @@ export interface WorkflowInstanceBlock {
   position: number;
   kind: WorkflowNodeKind;
   status: BlockStatus;
+  /** When a gate was reached and began waiting for a person. Null on every other row. */
+  heldAt: number | null;
   startedAt: number | null;
   finishedAt: number | null;
   /** The turn's own spend. Never a run's, never a meter's. */
@@ -2996,6 +3036,102 @@ export function setLoopStopAfter(
   return { ok: true, stopAfterPass: value };
 }
 
+/** What pressing Continue on a gate did. */
+export type GateContinueOutcome =
+  | { ok: true; name: string }
+  | { ok: false; status: 404 | 409; error: string };
+
+/**
+ * Why a Continue cannot be honoured, or null when it can.
+ *
+ * Pure for `loopStopAfterRefusal`'s reason, and the sentences are the point: a
+ * press can arrive on a gate that was already let through (a double click), one
+ * the instance has not reached (a stale page), or one a halt took down, and each
+ * needs to say which, because a bare 409 looks like a button that does not work.
+ */
+export function gateContinueRefusal(input: {
+  instanceStatus: WorkflowInstanceStatus;
+  /** Null when the instance has no gate block by that id. */
+  gate: { name: string; status: BlockStatus; heldAt: number | null } | null;
+}): Extract<GateContinueOutcome, { ok: false }> | null {
+  const { gate } = input;
+  if (!gate) {
+    return { ok: false, status: 404, error: "That gate is not part of this workflow run." };
+  }
+  if (!instanceIsOpen(input.instanceStatus)) {
+    return {
+      ok: false,
+      status: 409,
+      error: `This workflow run is ${input.instanceStatus}, so nothing in it is waiting for you.`,
+    };
+  }
+  if (gate.status === "emitted") {
+    return { ok: false, status: 409, error: `“${gate.name}” has already been let through.` };
+  }
+  if (gate.status !== "waiting") {
+    return {
+      ok: false,
+      status: 409,
+      error: `“${gate.name}” is ${gate.status}, so it is not waiting for you.`,
+    };
+  }
+  if (gate.heldAt === null) {
+    return {
+      ok: false,
+      status: 409,
+      error: `The workflow has not reached “${gate.name}” yet, so there is nothing to continue.`,
+    };
+  }
+  return null;
+}
+
+/**
+ * Let a held gate through: satisfy its outgoing edges and release what is behind.
+ *
+ * The only way out of a gate other than a halt, and the operator's — nothing
+ * here is reachable from a model, a schedule or a timer, which is the whole of
+ * what the block is for. `emitted` is the status every other no-agent block
+ * settles in, so `edgeVerdict` needs no new word and `on-success` and
+ * `on-finish` links out of it are both satisfied.
+ *
+ * Guarded on `waiting` and on `held_at`, so a Continue that raced a halt keeps
+ * the halt's answer, and one pressed on a gate not yet reached changes nothing.
+ * Advances afterwards, `setLoopStopAfter`'s reason: what is behind the gate has
+ * been waiting on exactly this write and no terminal run transition is coming to
+ * notice it.
+ */
+export function continueGate(instanceId: string, nodeId: string): GateContinueOutcome {
+  const instance = getInstance(instanceId);
+  if (!instance) return { ok: false, status: 404, error: "No such workflow run." };
+
+  const gate = instance.blocks.find((b) => b.nodeId === nodeId && b.kind === "gate");
+  const refusal = gateContinueRefusal({
+    instanceStatus: instance.status,
+    gate: gate ? { name: gate.nodeName, status: gate.status, heldAt: gate.heldAt } : null,
+  });
+  if (refusal) return refusal;
+
+  // No `await` between the read above and this write, so a halt cannot have
+  // landed in between — the same single-turn property `setLoopStopAfter` has.
+  const changed = db()
+    .prepare(
+      "UPDATE workflow_instance_blocks SET status='emitted', finished_at=?, error=NULL" +
+        " WHERE instance_id=? AND node_id=? AND kind='gate'" +
+        " AND status='waiting' AND held_at IS NOT NULL",
+    )
+    .run(Date.now(), instanceId, nodeId).changes;
+  if (changed !== 1) {
+    return {
+      ok: false,
+      status: 409,
+      error: `“${gate!.nodeName}” changed while this was being sent, so nothing was continued.`,
+    };
+  }
+
+  advanceInstances();
+  return { ok: true, name: gate!.nodeName };
+}
+
 /** A board condition read, or why this app could not read one. */
 export type LoopBoardReading =
   | { ok: true; counts: LoopBoardCounts | null }
@@ -3204,6 +3340,7 @@ export function blocksOf(instanceId: string): WorkflowInstanceBlock[] {
   const rows = db()
     .prepare(
       `SELECT node_id AS nodeId, node_name AS nodeName, position, kind, status,
+              held_at AS heldAt,
               started_at AS startedAt, finished_at AS finishedAt,
               cost_usd AS costUSD, cost_unreported AS unreported,
               tokens, emitted_specs AS specs, error,
@@ -3836,7 +3973,8 @@ export function startWorkflow(
       node.kind === "merge" ||
       node.kind === "deliver" ||
       node.kind === "loop" ||
-      node.kind === "review"
+      node.kind === "review" ||
+      node.kind === "gate"
     ) {
       continue;
     }
@@ -4523,7 +4661,8 @@ function haltBlocks(instanceId: string, cause: string): number {
     db()
       .prepare(
         "UPDATE workflow_instance_blocks SET status='blocked', finished_at=?," +
-          " error = CASE kind WHEN 'merge' THEN ? WHEN 'deliver' THEN ? WHEN 'review' THEN ? ELSE ? END" +
+          " error = CASE kind WHEN 'merge' THEN ? WHEN 'deliver' THEN ? WHEN 'review' THEN ?" +
+          " WHEN 'gate' THEN ? ELSE ? END" +
           " WHERE instance_id=? AND status='waiting'",
       )
       .run(
@@ -4531,6 +4670,9 @@ function haltBlocks(instanceId: string, cause: string): number {
         `${cause} before it landed anything.`,
         `${cause} before it delivered anything.`,
         `${cause} before it reviewed anything.`,
+        // A held gate and one not yet reached are both written here, so the
+        // sentence says only what is true of both: nobody let it through.
+        `${cause} before anyone let it through.`,
         `${cause} before it started deciding.`,
         instanceId,
       ).changes +
@@ -4898,6 +5040,28 @@ const blockTurns = ((globalThis as unknown as {
 
 const turnKey = (instanceId: string, nodeId: string) => `${instanceId}:${nodeId}`;
 
+/**
+ * The words every note about a refused `emit_runs` starts with.
+ *
+ * `blockTurnRetries` must not start again a turn this app turned away, and the
+ * notes are the one record of that which every bundle sees: `emitBlockRuns`
+ * runs in the MCP route's and the turn's settle in the server's, so module state
+ * would not be shared between them in dev. The prefix is added by
+ * `noteRefusedEmission` and never typed at a call site, so rewording a refusal
+ * cannot make it stop counting as one.
+ */
+const REFUSED_EMISSION_PREFIX = "It tried to emit runs";
+
+/** Note that `emit_runs` was refused, in the words `emissionWasRefused` reads. */
+function noteRefusedEmission(instanceId: string, nodeId: string, rest: string): void {
+  noteBlock(instanceId, nodeId, `${REFUSED_EMISSION_PREFIX} ${rest}`);
+}
+
+/** Whether a block's notes record an `emit_runs` this app turned away. */
+function emissionWasRefused(notes: string | null): boolean {
+  return splitNotes(notes).some((line) => line.startsWith(REFUSED_EMISSION_PREFIX));
+}
+
 /** One block's row, as the scheduler and the emit tool read it. */
 interface BlockRow {
   instance_id: string;
@@ -5042,7 +5206,10 @@ function reviveGraphDependents(
       edge: e.edge as DependencyEdge,
     }));
   const reopen = db().prepare(
-    "UPDATE workflow_instance_blocks SET status='waiting', error=NULL, finished_at=NULL" +
+    "UPDATE workflow_instance_blocks SET status='waiting', error=NULL, finished_at=NULL," +
+      // A gate put back is a gate nobody has seen yet, so it is held — and the
+      // person told — again rather than carrying a stale "held since".
+      " held_at=NULL" +
       " WHERE instance_id=? AND node_id=? AND status IN ('blocked','not-needed')",
   );
   let revived = 0;
@@ -5171,7 +5338,8 @@ function reopenLoopPass(
   const prefix = `${passPrefix(loopNodeId)}${pass}#`;
   let revived = db()
     .prepare(
-      "UPDATE workflow_instance_blocks SET status='waiting', error=NULL, finished_at=NULL" +
+      "UPDATE workflow_instance_blocks SET status='waiting', error=NULL, finished_at=NULL," +
+        " held_at=NULL" +
         " WHERE instance_id=? AND status='blocked' AND substr(node_id, 1, ?) = ?",
     )
     .run(instance.id, prefix.length, prefix).changes;
@@ -5856,6 +6024,13 @@ function advanceInstance(instanceId: string): void {
     advanceLoop(instanceId, creation.nodeId, creation.dependsOn);
   }
 
+  // A gate the instance has just reached. Nothing is spawned and nothing is
+  // billed: the row stays `waiting` and a person is told. Not held back by the
+  // budget, the shutdown or the install-wide hold, because it spends nothing —
+  // and a gate that waited for any of them to clear would be a person not told
+  // that the workflow had stopped for them.
+  for (const nodeId of step.hold) holdGate(instance, nodeId);
+
   // Claimed synchronously, spawned after. The claim is what makes this
   // re-entrant safe; the spawn is what makes it worth doing.
   //
@@ -6110,6 +6285,31 @@ function claimBlock(instanceId: string, nodeId: string): boolean {
       )
       .run(Date.now(), instanceId, nodeId).changes === 1
   );
+}
+
+/**
+ * Record that the instance has reached a gate, and tell a person, once.
+ *
+ * A gate has no turn to claim: it is a `waiting` row for the whole of its wait,
+ * and `held_at` is the only thing that says it has been reached. The guarded
+ * UPDATE is the once — `planInstanceStep` lists a held gate on every plan until
+ * Continue, and two overlapping advances both writing would be two
+ * notifications for one wait. Returns whether this call was the one that held it.
+ *
+ * Synchronous end to end, `advanceInstance`'s requirement: the webhook is fired
+ * and not awaited, so a receiver that hangs cannot hold the scheduler.
+ */
+function holdGate(instance: WorkflowInstance, nodeId: string): boolean {
+  const changed = db()
+    .prepare(
+      "UPDATE workflow_instance_blocks SET held_at=?" +
+        " WHERE instance_id=? AND node_id=? AND kind='gate'" +
+        " AND status='waiting' AND held_at IS NULL",
+    )
+    .run(Date.now(), instance.id, nodeId).changes;
+  if (changed !== 1) return false;
+  notifyGateHeld({ instanceId: instance.id, workflowId: instance.workflowId });
+  return true;
 }
 
 /**
@@ -6827,6 +7027,15 @@ function stepPass(
     });
   }
 
+  // A gate member holds this pass, and so every pass: it is reached once per
+  // pass and each reaching is its own row, so Continue on pass 1 releases
+  // nothing of pass 2. Counted as a write only when it newly held, so a pass
+  // already waiting on a person does not make `advanceLoop` step again to learn
+  // it still is.
+  for (const nodeId of step.hold) {
+    if (holdGate(instance, memberId(nodeId))) wrote = true;
+  }
+
   // Held as `advanceInstance`'s review claims are, and for their reason.
   for (const review of step.review) {
     if (newWorkPaused()) break;
@@ -6932,8 +7141,18 @@ function passState(
  * boundary. What bounds the spend is `settings.chatTurnBudgetUSD`, inside the
  * CLI, for the reason a chat turn's is: it is the same child answering the same
  * kind of question.
+ *
+ * `retriesUsed` is how many times this press of the block has already started
+ * the turn again, and it is an argument rather than a column because the only
+ * thing that reads it is the turn's own settle: `settleBlockTurn` starts the
+ * next attempt through this function, so every question above is asked of a
+ * retry by the code that asked it of the first attempt.
  */
-async function startBlockTurn(instanceId: string, nodeId: string): Promise<void> {
+async function startBlockTurn(
+  instanceId: string,
+  nodeId: string,
+  retriesUsed = 0,
+): Promise<void> {
   const instance = getInstance(instanceId);
   const node = instance ? blockNode(instance, nodeId) : undefined;
   // Every refusal below settles with `costUSD: 0`, because nothing has been
@@ -7065,6 +7284,19 @@ async function startBlockTurn(instanceId: string, nodeId: string): Promise<void>
   // is refused. Handed back to `waiting` rather than written off, the claim's
   // own answer to a held install, so the lift decides it.
   if (newWorkPaused()) {
+    if (retriesUsed > 0) {
+      // Not handed back: the next claim would start at attempt 0 and the block
+      // would get its retries over again. The attempt that failed is already in
+      // the block's notes, and a person can start the turn again from the page.
+      settleBlock(instanceId, nodeId, {
+        status: "failed",
+        error:
+          "New work was held across this install before the failed turn could be " +
+          "started again.",
+        costUSD: 0,
+      });
+      return;
+    }
     releaseBlockClaim(instanceId, nodeId);
     return;
   }
@@ -7105,7 +7337,7 @@ async function startBlockTurn(instanceId: string, nodeId: string): Promise<void>
     onSpawn: (child) => blockTurns.set(key, child),
     onSettle: (result) => {
       blockTurns.delete(key);
-      settleBlock(instanceId, nodeId, result);
+      settleBlockTurn(instanceId, nodeId, result, retriesUsed);
     },
   });
 }
@@ -7238,6 +7470,144 @@ export function blockTurnSpend(result: TurnResult): BlockTurnSpend {
   return { costUSD: 0, costGuardUSD: result.costGuardUSD ?? 0, unreported: 1 };
 }
 
+/** What `blockTurnRetries` is asked about one turn that just ended. */
+export interface BlockTurnEnding {
+  result: TurnResult;
+  /** Runs the turn had already decided on. */
+  emitted: number;
+  /** Whether `emit_runs` was turned away during the turn. */
+  refused: boolean;
+  /** The block's `turnRetries`: attempts allowed beyond the first. */
+  allowed: number;
+  /** Retries this press of the block has already started. */
+  used: number;
+}
+
+/**
+ * Whether a deciding turn that just ended is started again.
+ *
+ * Pure and unit-tested, `blockSettlement`'s reason: it decides whether a billed
+ * turn is bought a second time, and a wrong answer in either direction is silent
+ * — a failure the operator opted into retrying that settles at once, or a
+ * decision this app refused that is paid for again.
+ *
+ * **Only a turn that failed having decided nothing.** That is `blockSettlement`'s
+ * own test for recording `failed`, asked of the same inputs so the two cannot
+ * disagree: a turn that emitted is `emitted` and its runs go ahead, and
+ * starting it again would decide over a decision that is about to be carried
+ * out. A turn this app refused is not the turn failing, so it is left to settle
+ * as it did. The rest — an operator's halt, an instance-budget stop, a shutdown —
+ * are facts about the instance rather than about the turn and are asked by
+ * `settleBlockTurn`, which has the database.
+ */
+export function blockTurnRetries(ending: BlockTurnEnding): boolean {
+  if (ending.result.status !== "failed") return false;
+  if (ending.emitted > 0 || ending.refused) return false;
+  return ending.used < ending.allowed;
+}
+
+/**
+ * Add one turn's spend to the block's three cost columns and its tokens.
+ *
+ * Outside `settleBlock`'s status latch and shared with a retry, for the same
+ * reason: a failed attempt was billed whether or not anything else about it is
+ * still the block's to write, and the instance total is summed from these
+ * columns, so a retry's decision is taken against a total that already includes
+ * the attempt before it.
+ */
+function bankBlockSpend(instanceId: string, nodeId: string, result: TurnResult): void {
+  const spend = blockTurnSpend(result);
+  db()
+    .prepare(
+      `UPDATE workflow_instance_blocks
+          SET cost_usd = cost_usd + ?, cost_usd_est = cost_usd_est + ?,
+              cost_unreported = cost_unreported + ?, tokens = tokens + ?
+        WHERE instance_id=? AND node_id=?`,
+    )
+    .run(
+      spend.costUSD,
+      spend.costGuardUSD,
+      spend.unreported,
+      result.tokens ?? 0,
+      instanceId,
+      nodeId,
+    );
+}
+
+/**
+ * What a deciding turn's ending does: start it again, or settle the block.
+ *
+ * The retry is `retryOrchestratorBlock`'s idea done inside the press of Run
+ * rather than by a person after it — and not its mechanism, because the block
+ * is still `thinking` between attempts. It never goes back to `waiting`, so no
+ * successor is revived, no pass is reopened and the claim does not repeat; what
+ * it does is bank the failed attempt, clear a stored empty decision (`[]` is a
+ * set column, and `emitBlockRuns` refuses a block whose column is set), say what
+ * happened in the block's notes, and enter `startBlockTurn` again. That function
+ * asks the instance budget, the hold, the process budget and the spend limits of
+ * the new attempt exactly as it did of the first, so a retry the instance can no
+ * longer afford is a halt, not a turn.
+ *
+ * Declined when the block is no longer `thinking` — a halt writes it `failed`
+ * before it signals the child, so an operator's stop and the instance guard's
+ * both arrive here as a dead turn on a row that is already written off — and
+ * when the instance is closed or the process is exiting. Those fall through to
+ * `settleBlock`, which still banks the dying turn's cost.
+ */
+export function settleBlockTurn(
+  instanceId: string,
+  nodeId: string,
+  result: TurnResult,
+  retriesUsed: number,
+): void {
+  const row = getBlock(instanceId, nodeId);
+  const instance = getInstance(instanceId);
+  const node = instance ? blockNode(instance, nodeId) : undefined;
+  const allowed = node?.turnRetries ?? 0;
+  const restart =
+    row !== null &&
+    row.status === "thinking" &&
+    instance !== null &&
+    instanceIsOpen(instance.status) &&
+    !isShuttingDown() &&
+    blockTurnRetries({
+      result,
+      emitted: parseSpecs(row.emitted_specs).length,
+      refused: emissionWasRefused(row.notes),
+      allowed,
+      used: retriesUsed,
+    });
+  if (!restart) {
+    settleBlock(instanceId, nodeId, result);
+    return;
+  }
+
+  db().transaction(() => {
+    bankBlockSpend(instanceId, nodeId, result);
+    db()
+      .prepare(
+        "UPDATE workflow_instance_blocks SET emitted_specs=NULL" +
+          " WHERE instance_id=? AND node_id=? AND status='thinking'",
+      )
+      .run(instanceId, nodeId);
+    noteBlock(
+      instanceId,
+      nodeId,
+      `Attempt ${retriesUsed + 1} of ${allowed + 1} failed: ` +
+        `${result.error ?? "no reason recorded"} Starting the turn again.`,
+    );
+  })();
+
+  void startBlockTurn(instanceId, nodeId, retriesUsed + 1).catch((err) => {
+    settleBlock(instanceId, nodeId, {
+      status: "failed",
+      error: `The block could not be started again: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    });
+  });
+}
+
 /**
  * Record what a turn said and cost, then start what it asked for.
  *
@@ -7273,23 +7643,8 @@ export function settleBlock(
   // guard `startBlockTurn` could not read. This used to write `error` flat,
   // which wiped that guard note on every turn that did not itself fail.
   const settlement = blockSettlement(result, specs.length, splitNotes(row?.notes ?? null));
-  const spend = blockTurnSpend(result);
   const settled = db().transaction((): boolean => {
-    db()
-      .prepare(
-        `UPDATE workflow_instance_blocks
-            SET cost_usd = cost_usd + ?, cost_usd_est = cost_usd_est + ?,
-                cost_unreported = cost_unreported + ?, tokens = tokens + ?
-          WHERE instance_id=? AND node_id=?`,
-      )
-      .run(
-        spend.costUSD,
-        spend.costGuardUSD,
-        spend.unreported,
-        result.tokens ?? 0,
-        instanceId,
-        nodeId,
-      );
+    bankBlockSpend(instanceId, nodeId, result);
     return (
       db()
         .prepare(
@@ -8081,6 +8436,13 @@ export async function startReviewBlock(
     settleReviewByStatus(instanceId, node, nodeId, runIds);
     return;
   }
+  // A command verdict spends nothing either — it runs the block's own verify
+  // command and no model — so it crosses no budget boundary. It does await, so
+  // it asks after each await whether a halt has closed the block.
+  if (node.verdictSource?.kind === "command") {
+    await settleReviewByCommand(instanceId, node, nodeId, runIds, node.verdictSource.command);
+    return;
+  }
   const fixRounds = node.fixRounds ?? 0;
 
   // The workflow-wide guard, at this kind of block boundary — and always,
@@ -8183,6 +8545,68 @@ function settleReviewByStatus(
   seedReviewItems(instanceId, blockId, runIds);
   for (const runId of runIds) {
     const verdict = statusVerdict(getRun(runId)?.status ?? null);
+    if (verdict.kind === "approve") {
+      updateReviewItem(instanceId, blockId, runId, { status: "approved", note: null });
+    } else {
+      setAside(instanceId, blockId, runId, runId, verdict.reason, verdict.needsFrontier, node.name);
+    }
+  }
+  finishReviewBlock(instanceId, blockId, null);
+}
+
+/**
+ * A command verdict on every branch, one branch at a time, and the block
+ * settled: the block's verify command run in each branch's own checkout, a pass
+ * approved and everything else set aside with how it ended and the tail of its
+ * output.
+ *
+ * One at a time, where reviews go side by side: two test suites at once in one
+ * repository's checkouts share whatever the suite does not isolate — a port, a
+ * cache, a database file — and a branch set aside because a neighbour's suite
+ * held the port would be judged by the schedule rather than by its work. Each
+ * is bounded by `VERIFY_TIMEOUT_MS`, so a block is at most that per branch.
+ *
+ * Through `verifyBranchForReview`, Land's own two steps, so what the command
+ * sees is the run's checkout, clean and on its branch, kept from a later run
+ * until it returns. Through `setAside` with the verdict's `needsFrontier`,
+ * always false, so no task is marked or reopened — `statusVerdict`'s reason —
+ * and `committed_nothing` stays 0, since no diff is read.
+ *
+ * A halt or a shutdown is asked after every await, and ends the loop without a
+ * verdict. A command already running is not signalled by a halt: it is bounded
+ * by the timeout, what it says is discarded, and its slot is released as it
+ * returns. The shutdown's sweep of `runningVerifyChildren` is what ends one at
+ * exit. A retried block finds its rows, so a branch already judged is not run
+ * again.
+ */
+async function settleReviewByCommand(
+  instanceId: string,
+  node: WorkflowNode,
+  blockId: string,
+  runIds: readonly string[],
+  command: string,
+): Promise<void> {
+  seedReviewItems(instanceId, blockId, runIds);
+  for (const runId of runIds) {
+    if (!reviewStillOpen(instanceId, blockId)) return;
+    const item = reviewItemsOf(instanceId, blockId).find((i) => i.origin_run_id === runId);
+    if (item?.status !== "reviewing") continue;
+    const run = getRun(runId);
+    if (!run) {
+      setAside(instanceId, blockId, runId, runId, "its run has been deleted", false, node.name);
+      continue;
+    }
+    // Caught per branch, `driveReviewItem`'s rule: one branch git could not be
+    // asked about is not a reason to fail the block and every branch behind it.
+    const outcome = await verifyBranchForReview(run, command).catch((err: unknown) => ({
+      ran: false,
+      passed: false,
+      ending: "",
+      tail: "",
+      reason: `this app could not run it: ${err instanceof Error ? err.message : String(err)}`,
+    }));
+    if (!reviewStillOpen(instanceId, blockId)) return;
+    const verdict = commandVerdict(outcome);
     if (verdict.kind === "approve") {
       updateReviewItem(instanceId, blockId, runId, { status: "approved", note: null });
     } else {
@@ -8672,10 +9096,10 @@ export function emitBlockRuns(
   // the reason a rejected emission is, and the turn is told plainly — a model
   // that reads "refused" with no cause tries again in a different shape.
   if (newWorkPaused()) {
-    noteBlock(
+    noteRefusedEmission(
       instanceId,
       nodeId,
-      "It tried to emit runs while new work was held across the install, and was refused.",
+      "while new work was held across the install, and was refused.",
     );
     return {
       ok: false,
@@ -8685,10 +9109,10 @@ export function emitBlockRuns(
     };
   }
   if (block.emitted_specs !== null) {
-    noteBlock(
+    noteRefusedEmission(
       instanceId,
       nodeId,
-      "It called emit_runs a second time and was refused — a block emits once.",
+      "a second time and was refused — a block emits once.",
     );
     return {
       ok: false,
@@ -8715,7 +9139,7 @@ export function emitBlockRuns(
     const reason =
       "Every run this block emits goes to Codex, which a saved agent's prompt " +
       "does not reach. Emit the runs again without `agent`.";
-    noteBlock(instanceId, nodeId, `It tried to emit runs and was refused: ${reason}`);
+    noteRefusedEmission(instanceId, nodeId, `and was refused: ${reason}`);
     return { ok: false, reason };
   }
 
@@ -8756,7 +9180,7 @@ export function emitBlockRuns(
     // own, a loop among the specs. The model is told why and may well give up
     // without saying so, and then this is the only trace that it ever meant to
     // start anything at all.
-    noteBlock(instanceId, nodeId, `It tried to emit runs and was refused: ${plan.reason}`);
+    noteRefusedEmission(instanceId, nodeId, `and was refused: ${plan.reason}`);
     return { ok: false, reason: plan.reason };
   }
 
@@ -9024,6 +9448,12 @@ export interface BootBlockInstance {
   memberStatuses: readonly RunStatus[];
   /** Whether a restart or a shutdown closed out any of those runs. */
   restartClosedMember: boolean;
+  /**
+   * Whether a gate of this instance was reached and is waiting for a person.
+   * Required for `refundedCycles`' reason: absent would read as no gate, which
+   * closes out a wait nobody else can end.
+   */
+  holdsGate: boolean;
 }
 
 /** What a restart does with each instance's `waiting` blocks. */
@@ -9034,6 +9464,11 @@ export interface BootBlockPlan {
   settled: string[];
   /** A member survived the boot, so the blocks behind it are left waiting. */
   spared: string[];
+  /**
+   * No member survived, but a gate is waiting for a person. Left waiting for
+   * the reason a held fleet is: a person is what wakes it.
+   */
+  gated: string[];
   /**
    * New work is held and the restart closed out none of its members, so its
    * blocks are left waiting for the lift.
@@ -9067,6 +9502,17 @@ export interface BootBlockPlan {
  * every other block off already. Reviving half a graph nobody finished building
  * is the failure the positive test for `started` exists to have none of.
  *
+ * **A held gate is a wait only a person can end**, which is the opposite of the
+ * premise the closing-out rule rests on: that nothing left will ever wake the
+ * block. Closing it out wrote off a decision the operator had been told was
+ * theirs, and recorded a sentence about a restart that was not why the
+ * workflow stopped. So an instance with a reached gate is kept even when no
+ * member survived — after the live-member test, so a survivor is still named
+ * as the reason — and the sweep leaves every one of its `waiting` rows alone.
+ * What that spares behind the gate is what the gate holds; what it spares
+ * beside it is `planInstanceStep`'s to decide off the runs the boot closed out,
+ * whose edges it reads as blocked rather than released.
+ *
  * **The hold is the other thing that wakes a block.** Lifting it calls
  * `releaseDependents`, so under the hold a block nothing of its own instance
  * will wake is still woken — by a person, which answers the closing-out rule's
@@ -9085,11 +9531,12 @@ export function bootBlockPlan(
   /** Whether new work is held across the install as this boot runs. */
   newWorkHeld: boolean,
 ): BootBlockPlan {
-  const plan: BootBlockPlan = { abandoned: [], settled: [], spared: [], held: [] };
+  const plan: BootBlockPlan = { abandoned: [], settled: [], spared: [], gated: [], held: [] };
   for (const instance of instances) {
     if (instance.status !== "started") plan.settled.push(instance.id);
     else if (instance.memberStatuses.some((s) => LIVE_STATUSES.includes(s)))
       plan.spared.push(instance.id);
+    else if (instance.holdsGate) plan.gated.push(instance.id);
     else if (newWorkHeld && !instance.restartClosedMember) plan.held.push(instance.id);
     else plan.abandoned.push(instance.id);
   }
@@ -9187,7 +9634,11 @@ export function reconcileBlocksOnBoot(): void {
   const rows = db()
     .prepare(
       `SELECT i.id AS id, i.status AS status, r.status AS memberStatus,
-              r.restart_closed AS restartClosed
+              r.restart_closed AS restartClosed,
+              EXISTS (SELECT 1 FROM workflow_instance_blocks g
+                       WHERE g.instance_id = i.id AND g.kind = 'gate'
+                         AND g.status = 'waiting' AND g.held_at IS NOT NULL)
+                AS holdsGate
          FROM workflow_instances i
          LEFT JOIN workflow_instance_runs w ON w.instance_id = i.id
          LEFT JOIN runs r ON r.id = w.run_id
@@ -9200,6 +9651,7 @@ export function reconcileBlocksOnBoot(): void {
     status: WorkflowInstanceStatus;
     memberStatus: RunStatus | null;
     restartClosed: number | null;
+    holdsGate: number;
   }>;
   const gathered = new Map<
     string,
@@ -9207,12 +9659,18 @@ export function reconcileBlocksOnBoot(): void {
       status: WorkflowInstanceStatus;
       memberStatuses: RunStatus[];
       restartClosedMember: boolean;
+      holdsGate: boolean;
     }
   >();
   for (const row of rows) {
     let entry = gathered.get(row.id);
     if (!entry) {
-      entry = { status: row.status, memberStatuses: [], restartClosedMember: false };
+      entry = {
+        status: row.status,
+        memberStatuses: [],
+        restartClosedMember: false,
+        holdsGate: row.holdsGate === 1,
+      };
       gathered.set(row.id, entry);
     }
     if (row.memberStatus) entry.memberStatuses.push(row.memberStatus);
@@ -9222,8 +9680,8 @@ export function reconcileBlocksOnBoot(): void {
     [...gathered].map(([id, entry]) => ({ id, ...entry })),
     newWorkPaused(),
   );
-  // Both kinds of survivor are left alone by both sweeps below.
-  const kept = [...plan.spared, ...plan.held];
+  // Every kind of survivor is left alone by both sweeps below.
+  const kept = [...plan.spared, ...plan.gated, ...plan.held];
 
   // A loop is closed out for the queued-run reason rather than the `thinking`
   // one: its passes were failed by the same boot, so another pass would be an
@@ -9288,6 +9746,9 @@ export function reconcileBlocksOnBoot(): void {
     const why = [
       plan.spared.length > 0
         ? `${plan.spared.length} with a run that survived the restart, decided when it settles`
+        : null,
+      plan.gated.length > 0
+        ? `${plan.gated.length} held at a gate, waiting for a person to continue`
         : null,
       plan.held.length > 0
         ? `${plan.held.length} held with the rest of new work, decided when the hold is lifted`

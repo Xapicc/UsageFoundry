@@ -104,10 +104,32 @@ const STATUS_BY_KIND: Partial<
   merge: { thinking: "merging", emitted: "landed" },
   deliver: { thinking: "delivering", emitted: "delivered" },
   loop: { emitted: "repeated" },
+  gate: { emitted: "continued" },
 };
 
-const blockLabel = (b: { kind: BlockKind; status: BlockStatus }) =>
-  STATUS_BY_KIND[b.kind]?.[b.status] ?? BLOCK_LABEL[b.status];
+/**
+ * A gate that has been reached is `waiting` like one that has not, so the
+ * status alone cannot tell "press Continue" from "not there yet" — `heldAt` is
+ * what does, and it is the one place this page reads it.
+ */
+const isHeldGate = (b: { kind: BlockKind; status: BlockStatus; heldAt: number | null }) =>
+  b.kind === "gate" && b.status === "waiting" && b.heldAt !== null;
+
+const blockLabel = (b: {
+  kind: BlockKind;
+  status: BlockStatus;
+  heldAt: number | null;
+}) =>
+  isHeldGate(b)
+    ? "waiting for you"
+    : (STATUS_BY_KIND[b.kind]?.[b.status] ?? BLOCK_LABEL[b.status]);
+
+/** A held gate is the one block asking something of the reader, so it is not neutral. */
+const blockTone = (b: {
+  kind: BlockKind;
+  status: BlockStatus;
+  heldAt: number | null;
+}): BadgeTone => (isHeldGate(b) ? "warn" : BLOCK_TONE[b.status]);
 
 const BLOCK_TONE: Record<BlockStatus, BadgeTone> = {
   waiting: "neutral",
@@ -312,7 +334,7 @@ function MemberBlockRows({
     <TBody>
       <Tr>
         <Td className="align-top">
-          <Badge tone={BLOCK_TONE[block.status]}>{blockLabel(block)}</Badge>
+          <Badge tone={blockTone(block)}>{blockLabel(block)}</Badge>
         </Td>
         <Td className="align-top">
           <div className="font-medium text-ink">{block.nodeName}</div>
@@ -611,6 +633,112 @@ function PickUpCard({
 }
 
 /**
+ * The gates this run has reached and is holding for a person.
+ *
+ * Its own card rather than a row of "What is holding this up", which lists
+ * obstacles to *pick up* — things that went wrong. A gate has gone right: the
+ * run is doing what it was drawn to do, and the card is where the decision it
+ * was drawn for is made. Continue is not behind a sheet because it releases
+ * only what the saved graph already says follows; Stop is, and is the page's
+ * existing one, so a halt has one confirmation and one door.
+ */
+function GateCard({
+  gates,
+  workflowId,
+  instanceId,
+  scheduled,
+  onChanged,
+  onRefused,
+  onStop,
+}: {
+  gates: BlockDTO[];
+  workflowId: string;
+  instanceId: string;
+  /** A schedule started this run, so nobody may have been looking when it stopped. */
+  scheduled: boolean;
+  /** The instance as the server now records it, after a press that took. */
+  onChanged: (instance: WorkflowInstanceDTO) => void;
+  /** A press the server declined: read the page again rather than wait a poll. */
+  onRefused: () => void;
+  onStop: () => void;
+}) {
+  const [pressing, setPressing] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function proceed(nodeId: string) {
+    setPressing(nodeId);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/workflows/${workflowId}/instances/${instanceId}/continue`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ nodeId }),
+        },
+      );
+      const data = (await res.json().catch(() => ({}))) as {
+        instance?: WorkflowInstanceDTO;
+        error?: string;
+      };
+      if (!res.ok) {
+        // The usual cause is another tab having answered first, and the card
+        // is then showing a control for a gate that has gone.
+        onRefused();
+        throw new Error(data.error ?? `Request failed (${res.status})`);
+      }
+      if (data.instance) onChanged(data.instance);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPressing(null);
+    }
+  }
+
+  return (
+    <>
+      <CardTitle>Waiting for you</CardTitle>
+      <Card>
+        {error && (
+          <Notice tone="danger" live>
+            {error}
+          </Notice>
+        )}
+        <ListGroup>
+          {gates.map((g) => (
+            <ListRow
+              key={g.nodeId}
+              label={<span className="font-medium text-ink">{g.nodeName}</span>}
+              description={`Reached ${fmtDateTime(g.heldAt!)}`}
+            >
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button
+                  size="compact"
+                  busy={pressing === g.nodeId}
+                  disabled={pressing !== null}
+                  onClick={() => void proceed(g.nodeId)}
+                >
+                  Continue
+                </Button>
+                <Button size="compact" variant="secondary" onClick={onStop}>
+                  Stop all
+                </Button>
+              </div>
+            </ListRow>
+          ))}
+        </ListGroup>
+        {scheduled && (
+          <Hint>
+            A schedule started this run, so it waits here as long as it takes and
+            the schedule skips its later windows meanwhile
+          </Hint>
+        )}
+      </Card>
+    </>
+  );
+}
+
+/**
  * One repeating block: how far through its caps it got, why it stopped, and
  * each pass folded down to the line that says how it went.
  *
@@ -695,7 +823,7 @@ function LoopCard({
   return (
     <Card emphasis={emphasis}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <Badge tone={BLOCK_TONE[loop.status]}>{blockLabel(loop)}</Badge>
+        <Badge tone={blockTone(loop)}>{blockLabel(loop)}</Badge>
         {loop.startedAt !== null && (
           <span className="text-ink-muted">
             started {fmtDateTime(loop.startedAt)}
@@ -891,6 +1019,9 @@ function blockSummary(b: BlockDTO, waits: string[]): string {
     // Only for a merge that finished: one that failed with nothing queued has
     // not established that there was nothing to land, and its error says more.
     if (b.status === "emitted") return "no branches to land";
+  } else if (b.kind === "gate") {
+    if (isHeldGate(b)) return `reached ${fmtDateTime(b.heldAt!)}, waiting for you`;
+    if (b.status === "emitted") return "let through";
   } else if (b.kind === "deliver") {
     // No counts to read back: a delivery has no queue behind it, and what each
     // branch came to is in the block's note beneath this line.
@@ -1158,6 +1289,17 @@ export default function WorkflowInstancePage() {
    * count computed separately from the conditions is one that goes wrong the
    * next time a kind is added.
    */
+  // Only an open run can be asked to continue: a halted one wrote its gates
+  // `blocked`, and a `finished` or `blocked` reading has nothing waiting.
+  const heldGates =
+    instance.status === "started" ? instance.blocks.filter(isHeldGate) : [];
+  // `liveRunCount` counts a gate as live, held or not, and a gate is never
+  // working: it is a person's to answer. So "working" is the count without
+  // them, which is what the heading and the spend hint both mean by it.
+  const workingCount =
+    instance.liveRunCount -
+    instance.blocks.filter((b) => b.kind === "gate" && b.status === "waiting").length;
+
   const blockKindNotes = [
     <Hint key="spend">
       A deciding block&rsquo;s own spend is counted against this workflow&rsquo;s
@@ -1217,8 +1359,10 @@ export default function WorkflowInstancePage() {
               <Badge tone={INSTANCE_OUTCOME_TONE[instance.status]}>
                 {INSTANCE_OUTCOME_LABEL[instance.status]}
               </Badge>
-              {(instance.status === "started" || instance.status === "blocked") &&
-                ` ${instanceOutcomeDetail(instance)}`}
+              {heldGates.length > 0
+                ? ` ${workingCount > 0 ? `${workingCount} block(s) working · ` : ""}${heldGates.length} waiting for you`
+                : (instance.status === "started" || instance.status === "blocked") &&
+                  ` ${instanceOutcomeDetail(instance)}`}
             </span>
           </div>
           {/* Not disabled by `confirmStop`: that lands in the same commit that
@@ -1288,6 +1432,20 @@ export default function WorkflowInstancePage() {
           )}
           {instance.stopReason}
         </Notice>
+      )}
+
+      {heldGates.length > 0 && (
+        <div className="mb-8">
+          <GateCard
+            gates={heldGates}
+            workflowId={id}
+            instanceId={instanceId}
+            scheduled={instance.origin === "schedule"}
+            onChanged={setInstance}
+            onRefused={() => void load()}
+            onStop={() => setConfirmStop(true)}
+          />
+        </div>
       )}
 
       {instance.pickUps.length > 0 && (
@@ -1373,9 +1531,9 @@ export default function WorkflowInstancePage() {
         </ListGroup>
 
         {!noLimits && <Hint>{WORKFLOW_LIMIT_TIMING_NOTE}</Hint>}
-        {instance.liveRunCount > 0 && (
+        {workingCount > 0 && (
           <Hint>
-            {instance.liveRunCount} block(s) working: until their cycles end,
+            {workingCount} block(s) working: until their cycles end,
             the measured figure is a floor and the guard&rsquo;s is what
             telemetry has seen
           </Hint>
@@ -1425,7 +1583,7 @@ export default function WorkflowInstancePage() {
                     return (
                       <Tr key={b.nodeId}>
                         <Td className="align-top">
-                          <Badge tone={BLOCK_TONE[b.status]}>
+                          <Badge tone={blockTone(b)}>
                             {blockLabel(b)}
                           </Badge>
                         </Td>
@@ -1480,7 +1638,19 @@ export default function WorkflowInstancePage() {
                                     </span>
                                   )}
                                   {item.note && (
-                                    <span className="text-ink-muted"> — {item.note}</span>
+                                    <span className="text-ink-muted">
+                                      {" "}
+                                      — {item.note.split("\n", 1)[0]}
+                                    </span>
+                                  )}
+                                  {/* A verify command's output, on the lines
+                                      after its ending: kept as it printed,
+                                      and scrolled rather than let to push the
+                                      table wide. */}
+                                  {item.note?.includes("\n") && (
+                                    <pre className="mono mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-md border border-line bg-inset p-2 text-2xs leading-relaxed text-ink-muted">
+                                      {item.note.slice(item.note.indexOf("\n") + 1)}
+                                    </pre>
                                   )}
                                 </li>
                               ))}

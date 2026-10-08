@@ -108,6 +108,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - A run ending can leave the machine, and where that sink attaches is the whole of its data-minimisation argument.
 - What is worth a notification is its own named constant and its own four-part filter, and every part of it is a decision about noise.
 - One park notifies, and it is the one only a person can end.
+- A workflow stopped at a gate notifies too, through a function that is not the run-event sink, and it carries the same six fields.
 
 ## [What replaced `--autocompact`, and compaction notices](run-lifecycle/autocompact-and-compaction.md)
 

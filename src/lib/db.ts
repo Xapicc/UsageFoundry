@@ -1690,6 +1690,13 @@ function migrate(db: Database.Database) {
   // and every row written before the column existed reads that way.
   addColumn(db, "workflow_instance_blocks", "stop_after_pass", "INTEGER");
 
+  // When a gate block was reached and began waiting for a person. A gate is a
+  // `waiting` row for the whole of that wait, so the status cannot say whether
+  // it has been reached yet; this can, and it is what lets the notification go
+  // out once, the boot sweep spare the row, and the page offer Continue. Null
+  // on every other kind and on a gate not yet reached.
+  addColumn(db, "workflow_instance_blocks", "held_at", "INTEGER");
+
   // Whether this run was closed out because the server went down under it,
   // rather than for any reason of its own.
   //

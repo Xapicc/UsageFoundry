@@ -70,7 +70,7 @@ describe("landVerdict never turns 'could not check' into 'passed'", () => {
       timedOut: false,
       tail: "",
     });
-    assert.deepEqual(v, { ran: false, passed: true, reason: "" });
+    assert.deepEqual(v, { ran: false, passed: true, reason: "", ending: "", tail: "" });
   });
 
   it("passes on exit 0", () => {

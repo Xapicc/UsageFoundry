@@ -793,6 +793,14 @@ no cost and **no run title** — a title can be written by a model, and this goe
 to a system with a different audience and a different lifetime. If you want to
 know *what* the run was doing, the link is how you find out.
 
+One event is not about a run: `workflow.gate_held`, sent once when a workflow
+reaches a [gate](workflows.md#a-block-that-waits-for-you) and waits for you to
+press Continue. Its `status` is `held`, `run_id` is empty, and `url` opens the
+workflow run's page, where Continue and Stop are. The gate's name is not in it,
+for the title's reason. It is sent under `UF_NOTIFY_ON_SUCCESS=0` too: a run
+that is waiting for you is an ending that needs a person, and nobody else can
+end it.
+
 Every request carries the signature over the exact bytes of that body:
 
 ```

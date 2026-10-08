@@ -3260,12 +3260,14 @@ export function forgetSlotVerdict(slotPath: string | null | undefined): void {
 }
 
 /**
- * Slots a land's or a delivery's verify command is running in, with how many
- * holds each has.
+ * Slots a land's, a delivery's or a review block's verify command is running
+ * in, with how many holds each has.
  *
  * Counted rather than a set so that one holder's release can never end
- * another's hold — the `landing` claim should make a second holder impossible,
- * and if it ever does not, a silently lost hold is the defect this exists for.
+ * another's hold. The `landing` claim keeps two lands out of one folder, but a
+ * review block takes no landing claim, so Land pressed on a branch a review
+ * block is checking is a second holder of the same slot — and a silently lost
+ * hold would hand the slot to a new run under the check still running.
  * `globalThis` for the reason `slotVerdicts` gives.
  */
 const slotsUnderCheck = ((globalThis as unknown as {

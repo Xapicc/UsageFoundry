@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { notifiableEvent, signBody, type NotifyState } from "./notify";
+import { notifiableEvent, notificationBody, signBody, type NotifyState } from "./notify";
 import type { PersistedRunEvent, RunStatus } from "./orchestrator";
 
 /**
@@ -326,5 +326,35 @@ describe("the signature a receiver verifies", () => {
     const body = '{"run_id":"r-1"}';
     assert.notEqual(signBody(body, secret), signBody(body, "hunter3"));
     assert.notEqual(signBody(body, secret), signBody('{"run_id":"r-2"}', secret));
+  });
+});
+
+describe("the body of a notification that is not about a run", () => {
+  // The six fields are a closed list a receiver is built against, and a gate is
+  // the first event with no run to name. The shape is what has to stay: a
+  // seventh field would be an unannounced change to a contract documented as
+  // "six fields and never more", and a `run_id` borrowed from somewhere else
+  // would send a receiver looking up a run that does not exist.
+  it("keeps the six fields and names no run", () => {
+    const body = notificationBody(
+      "",
+      { event: "workflow.gate_held", status: "held" },
+      1_700_000_000_000,
+      "/workflows/wf-1/instances/inst-1",
+    );
+    assert.deepEqual(Object.keys(body).sort(), ["at", "event", "install", "run_id", "status", "url"]);
+    assert.equal(body.event, "workflow.gate_held");
+    assert.equal(body.status, "held");
+    assert.equal(body.run_id, "");
+    assert.equal(body.at, 1_700_000_000_000);
+    // `UF_PUBLIC_URL` is unset under test, which is a blank link rather than a
+    // link to nowhere; when it is set the path is the instance page.
+    assert.ok(body.url === "" || body.url.endsWith("/workflows/wf-1/instances/inst-1"));
+  });
+
+  it("builds a run's body the way it always was", () => {
+    const body = notificationBody("r-9", { event: "run.failed", status: "failed" }, 5, "/runs/r-9");
+    assert.equal(body.run_id, "r-9");
+    assert.ok(body.url === "" || body.url.endsWith("/runs/r-9"));
   });
 });
