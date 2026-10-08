@@ -1474,7 +1474,9 @@ export function WorkflowCanvas({
                           : block.kind === "review"
                             ? block.verdictSource === "status"
                               ? "Passes on what completed; sets the rest aside"
-                              : "A frontier model approves or sends it back"
+                              : block.verdictSource === "command"
+                                ? "Passes on what its verify command passes"
+                                : "A frontier model approves or sends it back"
                             : block.task.trim() || "No task yet"}
                     </span>
                   </div>
@@ -1517,7 +1519,9 @@ export function WorkflowCanvas({
                           block.kind === "review"
                             ? block.verdictSource === "status"
                               ? "by run status"
-                              : `${block.fixRounds || "0"} fix round${block.fixRounds === "1" ? "" : "s"}`
+                              : block.verdictSource === "command"
+                                ? "by verify command"
+                                : `${block.fixRounds || "0"} fix round${block.fixRounds === "1" ? "" : "s"}`
                             : null,
                           // Where the work goes when it is not Claude, which
                           // is a fact about the run worth seeing at a glance.

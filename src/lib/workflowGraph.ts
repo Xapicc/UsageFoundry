@@ -17,6 +17,7 @@ import {
   type AgentKnowledge,
 } from "./agents";
 import { jsonKind, notStringRefusal } from "./http";
+import { parseVerifyCommand } from "./verifyCommand";
 import { chatGuards } from "./settings";
 import { listTemplates } from "./templates";
 import { WORKSPACE_MOUNTS } from "./config";
@@ -26,6 +27,7 @@ import {
   MAX_LOOP_PASSES,
   MAX_LOOP_RUNS,
   MAX_REVIEW_FIX_ROUNDS,
+  MAX_TURN_RETRIES,
   MAX_WORKFLOW_NAME,
   MAX_WORKFLOW_NODES,
   REVIEW_VERDICT_KINDS,
@@ -165,6 +167,19 @@ export interface WorkflowNode {
    * is an unbounded number of billed agents from one press of Run.
    */
   fanOut: number | null;
+  /**
+   * How many times an orchestrator block's deciding turn is started again when
+   * the turn itself failed having decided nothing, 0 to `MAX_TURN_RETRIES`.
+   * Null on every other kind.
+   *
+   * Optional, and absent is 0: every graph saved before the field existed — and
+   * every instance started from one — says nothing here, and reading that as
+   * anything but "never" would bill turns nobody agreed to. It is on the node
+   * for `fanOut`'s reason: it is spend with nobody looking, so the number is
+   * the one a person fixed when they saved the graph, and nothing a model emits
+   * can raise it.
+   */
+  turnRetries?: number | null;
   /**
    * How a merge block puts each branch onto its target. Null on every other
    * kind, never null on a merge one.
@@ -1176,6 +1191,31 @@ function normalizeNode(
       fanOut = raw;
     }
 
+    // How many times a failed deciding turn is started again, on an orchestrator
+    // block and nowhere else. Absent and null are 0, which is what every graph
+    // saved before the field says. Only a whole JS number is accepted: this
+    // authorises billed turns, so `true` (which `Number` reads as 1) and a
+    // numeric string must fail loudly rather than quietly become a setting.
+    let turnRetries: number | null = null;
+    if (kind === "orchestrator") {
+      const given: unknown = n.turnRetries ?? 0;
+      if (
+        typeof given !== "number" ||
+        !Number.isInteger(given) ||
+        given < 0 ||
+        given > MAX_TURN_RETRIES
+      ) {
+        return {
+          ok: false,
+          error:
+            `“${nodeName}” may start a failed deciding turn again 0 to ` +
+            `${MAX_TURN_RETRIES} times, as a whole number; it is set to ` +
+            `${typeof given === "number" ? given : jsonKind(given)}.`,
+        };
+      }
+      turnRetries = given;
+    }
+
     // How a merge block lands, and whether it may pay for a resolution.
     //
     // The strategy is required rather than defaulted to `settings.landStrategy`
@@ -1227,13 +1267,18 @@ function normalizeNode(
       verdictSource = read.value;
       // Refused rather than coerced to 0: rounds the operator set are billed
       // runs they expect, and a status verdict has no review for one to answer.
-      if (verdictSource.kind === "status" && fixRounds !== 0) {
+      // Nor does a command's, yet: a fix run briefed with its failing output is
+      // a later decision, and rounds saved now would be rounds nothing starts.
+      if (verdictSource.kind !== "model" && fixRounds !== 0) {
         return {
           ok: false,
           error:
-            `“${nodeName}” judges each branch by how its run ended, so there is ` +
-            "no review for a fix round to answer. Set its fix rounds to 0, or " +
-            "have a frontier model review the branches.",
+            (verdictSource.kind === "status"
+              ? `“${nodeName}” judges each branch by how its run ended, so there is ` +
+                "no review for a fix round to answer."
+              : `“${nodeName}” judges each branch by its verify command, and a ` +
+                "branch that fails it is set aside rather than sent back for a fix.") +
+            " Set its fix rounds to 0, or have a frontier model review the branches.",
         };
       }
     }
@@ -1451,7 +1496,9 @@ function normalizeNode(
             : `“${nodeName}” ${
                 verdictSource?.kind === "status"
                   ? "judges the branches in front of it by how their runs ended"
-                  : "reviews the branches in front of it with a frontier model this app chooses"
+                  : verdictSource?.kind === "command"
+                    ? "judges the branches in front of it by its verify command"
+                    : "reviews the branches in front of it with a frontier model this app chooses"
               }, so there is nothing for that agent to be. ` +
               "Remove it, or put it on the block that does the work.",
       };
@@ -1501,6 +1548,7 @@ function normalizeNode(
           task,
           promptOverride: promptOverride || null,
           fanOut,
+          turnRetries,
           mergeStrategy,
           mergeAutoResolve,
           maxPasses,
@@ -1521,7 +1569,14 @@ function normalizeNode(
  * the field existed was saved to pay for a frontier review, and any other
  * reading would hand on branches nobody looked at. A bare word is refused
  * rather than read as the kind it names, so the one shape on the wire is the
- * one a source with settings of its own will need.
+ * one a source with settings of its own needs.
+ *
+ * A `command` is held to `parseVerifyCommand`, the rule `landVerifyCommand` is
+ * held to and the one `runVerify` applies again before it spawns: argv split
+ * on whitespace, and every shell metacharacter refused rather than escaped. It
+ * is refused here, at the save, because a command that could not run would
+ * otherwise be found a pass in, as every branch of it set aside. Kept as typed
+ * rather than as the argv, so what the person reads back is what they wrote.
  */
 function normalizeVerdictSource(
   raw: unknown,
@@ -1548,7 +1603,46 @@ function normalizeVerdictSource(
         `have: ${kind || "(blank)"}. It is ${REVIEW_VERDICT_KINDS.join(" or ")}.`,
     };
   }
+  if (kind === "command") {
+    const notCommandString = notStringRefusal("verdictSource.command", o.command);
+    if (notCommandString) return { ok: false, error: `“${nodeName}”: ${notCommandString}` };
+    const command = String(o.command ?? "").trim();
+    const parsed = parseVerifyCommand(command);
+    if (!parsed.ok) {
+      return {
+        ok: false,
+        error: `“${nodeName}” judges each branch by a verify command, and ${parsed.reason}.`,
+      };
+    }
+    return { ok: true, value: { kind: "command", command } };
+  }
   return { ok: true, value: kind === "status" ? { kind: "status" } : { kind: "model" } };
+}
+
+/**
+ * Why a graph a model wrote may not be saved because a review block in it runs
+ * a verify command, or null when none does.
+ *
+ * The command is a program this app spawns in every branch's checkout, with no
+ * approval at the moment it runs: the approval is the save. So it is a person's
+ * to write, in the workflow editor, and never a model's — asked of
+ * `propose_workflow`'s graph and again of the proposal as it is approved,
+ * because a card reads "no agent" for a review block and a person approving it
+ * would not be shown a command at all. Asked of the normalized graph rather
+ * than of the model's text, so no spelling `normalizeVerdictSource` accepts can
+ * slip past it.
+ */
+export function commandVerdictRefusal(graph: WorkflowGraph): string | null {
+  const node = graph.nodes.find(
+    (n) => n.kind === "review" && n.verdictSource?.kind === "command",
+  );
+  if (!node) return null;
+  return (
+    `“${node.name}” judges branches by a verify command, and only a person may ` +
+    "save one: it is a program this app runs in every branch's checkout. Give " +
+    "the review a frontier-model or run-status verdict, and tell the operator " +
+    "to set the command in the workflow editor if they want one."
+  );
 }
 
 /**

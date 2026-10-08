@@ -61,6 +61,7 @@ agreeing to when you save one:
 | The workspace and folder it may start runs in | Which folders under that one, and what each run is asked to do |
 | The template every run it starts runs under — budget, work-cycle limit, permission mode, isolation | Nothing about any of these |
 | The most runs it may ever start | How many, up to that |
+| How many times a failed deciding turn is started again (0 to 2, default 0) | Nothing — a retry is the same turn run over, not a new decision |
 | The standing prompt every run it starts begins with | The task appended under it |
 
 The fan-out cap is **required**. A graph with an orchestrator block and no cap
@@ -97,6 +98,27 @@ read at that moment, a run it decided on that could not then be started. And the
 otherwise read alike — *decided there was nothing to start* means it called the
 emit tool and named nothing, *ended without emitting anything* means it never
 called it at all, and those are different problems.
+
+**A turn that failed can be started again, up to a limit you set.** An agent turn
+can die for reasons that have nothing to do with the brief — a dropped
+connection, an overloaded upstream, a process killed. By default that ends the
+block as failed and everything behind it is written off. Set *Retries after a
+failed turn* on the block, 0 to 2, and a turn that failed **having decided
+nothing** is started again before the block gives up. Each retry is another
+billed turn, so the count is a spending limit you agree to when you save the
+graph, and it is stated beside the fan-out cap on the block and on the page you
+press Run from. A retry is not a new press of Run: blocks already finished are
+not repeated, and the instance's workflow-wide limit is asked before each
+attempt exactly as it is before the first, so a graph that has spent its limit
+stops instead of retrying. What is **not** started again: a turn you stopped, a
+workflow halted by *Stop* or by its own limit, a turn that decided on runs
+(those are carried out), and a turn whose `emit_runs` this tool refused — that
+last one is the model's decision being turned away, not the turn failing. The
+instance page notes each failed attempt (*Attempt 1 of 2 failed: …*) and the
+block's spend is the sum of every attempt. A retry creates no run, so it is not
+counted in a loop's run limit, though its cost is counted in the loop's spending
+cap and the workflow's limit. A block that failed anyway can still be decided
+again by hand from the instance page, and that gives it a fresh allowance.
 
 **Its own spend is its own.** A deciding turn's cost is bounded by Settings →
 *Orchestrator chat limit*, exactly as a chat turn's is; it lands on the block, never on
@@ -281,6 +303,46 @@ reached is closed out by a restart like any other waiting block.
 The chat can draft a graph that contains a gate. A gate starts and spends
 nothing and can only make a run wait, so nothing about it needs the editor.
 Nothing the chat can call presses Continue.
+
+## A block that reviews the work
+
+A **review block** sits between the work and the merge. It takes every branch
+its predecessors left, decides which are good enough to go on, and hands only
+those to what follows; the rest are **set aside** — not merged, named on the
+instance page with the reason, and not a failure of the block. Under **Verdict
+from** it decides one of three ways:
+
+- **A frontier review** has a frontier model read each branch and approve or
+  reject it, and can send a rejected branch back for a fix up to the block's
+  fix rounds. Each review and each fix round is billed.
+- **How each run ended** approves a run that completed and sets aside every
+  other ending, with no model and nothing billed. Its links in have to be
+  *once it finishes*, or the first run that did not complete would block it.
+- **A verify command** runs a command you write, such as `npm test`, in each
+  branch's own checkout, one branch after another. Exit 0 approves; anything
+  else sets the branch aside, and so does a command that runs past 15 minutes
+  or could not run at all — the checkout was taken over by a later run, or
+  holds uncommitted edits. The instance page shows how it ended and the last of
+  what it printed under the branch's row. It runs no model and bills nothing.
+  A workflow that starts more runs in one repository than run at once lets a
+  later run reuse an earlier one's checkout, and that earlier branch is then
+  set aside without being checked.
+
+The verify command is the one on the block, not the one in Settings, so each
+workflow can check its own repository its own way. It is argv and never a shell
+line, and Save refuses one that is not: for `npm test && npm run build`, put
+the two in a script and name the script. It runs as the agents' user, but what
+it runs — the `test` script of a `package.json`, say — comes from the branch an
+agent just wrote, so it is a program you are letting that branch choose. **Only
+you can set it.** The chat cannot propose a review block with a verify command,
+and approving a workflow the chat proposed will not save one; add it in the
+editor. A branch it approved still meets Settings' **Check that must pass before
+Land merges** at the merge, if that is set.
+
+Neither a status nor a command verdict takes fix rounds: a branch either goes
+on or is set aside. Neither marks the tasks of a branch it set aside, since no
+model judged the work. Inside a loop, a branch set aside with work on it keeps
+the loop going to its next pass.
 
 ## A region that repeats
 

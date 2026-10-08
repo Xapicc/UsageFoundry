@@ -24,6 +24,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - The model is the one thing on an emitted run nobody saved and nobody reads, and that is now allowed.
 - And what the turn said is kept, in three fields that are three voices.
 - A deciding turn that failed is run again by itself, and only when it had decided nothing.
+- A deciding turn that failed is also started again inside the press of Run, up to a limit a person saved on the block — and by a different mechanism, which is why the two are not one.
 - `taskIds` on an emitted spec is not a sixth field on the list `emit_runs` refuses to grow, and it is not on the node at all.
 - Acyclicity stops being a property of who wrote the graph, so it is checked as a property of the data.
 - A block can land what the blocks in front of it built, and every protection that made `land.ts` safe stays where it is.
@@ -107,6 +108,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - A review block hands on the branches a frontier model approved, and nothing it set aside.
 - A set-aside branch marks its tasks needs-frontier, and only when a frontier model turned it down.
 - A review block may take its verdict from each run's status instead of a model, and then it bills nothing and marks nothing.
+- A review block may take its verdict from a verify command saved on it, and then exit 0 is the whole of an approval.
 - Its fix runs are the instance's runs and its reviews' cost is the block's.
 - A full assist queue is waited out at both doors a review passes, because the first is a check and not a claim.
 - It is one async function per block, the merge block's shape.

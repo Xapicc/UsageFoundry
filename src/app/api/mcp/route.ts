@@ -49,6 +49,7 @@ import {
 } from "../../../lib/dreamingLedger";
 import { resolveKnowledgeRoot } from "../../../lib/knowledge";
 import {
+  commandVerdictRefusal,
   currentKnowledge,
   emitBlockRuns,
   emittedModelWork,
@@ -1568,6 +1569,15 @@ const CHAT_TOOLS = [
                   "Required on an orchestrator block: the most runs it may " +
                   "ever start. Its runs start with nobody looking, so this is " +
                   "the number the operator is agreeing to. Ignored on any " +
+                  "other kind.",
+              },
+              turnRetries: {
+                type: "number",
+                description:
+                  "An orchestrator block's retries, 0 to 2: how many times " +
+                  "its deciding turn is started again when the turn itself " +
+                  "failed having decided nothing. Each retry is another billed " +
+                  "turn, so leave it out (0) unless asked. Ignored on any " +
                   "other kind.",
               },
               mergeStrategy: {
@@ -3107,6 +3117,12 @@ function proposeWorkflow(args: Record<string, unknown>, chatId: string) {
     known,
   );
   if (!parsed.ok) return text(parsed.error, true);
+
+  // Refused by name, `deliver`'s way above but asked of the normalized graph:
+  // a review block's verify command is a program this app runs in every
+  // branch's checkout, and only a person saves one. See `commandVerdictRefusal`.
+  const commandVerdict = commandVerdictRefusal(parsed.value.graph);
+  if (commandVerdict) return text(commandVerdict, true);
 
   const missing = folderRefusal(parsed.value.graph);
   if (missing) return text(missing, true);
