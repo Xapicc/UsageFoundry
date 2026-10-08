@@ -423,6 +423,8 @@ function pickUpRequest(p: WorkflowPickUpDTO): Record<string, string> {
       return { action: "leave-behind", runId: p.runId };
     case "merge":
       return { action: "retry-merge", nodeId: p.nodeId };
+    case "orchestrator":
+      return { action: "retry-orchestrator", nodeId: p.nodeId };
     case "loop":
       return { action: "resume-loop", nodeId: p.nodeId };
   }
@@ -445,6 +447,12 @@ const PICK_UP_SHEET: Record<
     body:
       "Every branch it was given that is not on its target yet goes back through the merge queue, into your checkout; a branch already landed is skipped. If the section repeats, its next pass starts once this one has landed.",
   },
+  orchestrator: {
+    title: (name) => `Retry “${name}”?`,
+    confirm: "Decide again",
+    body:
+      "Only its turn runs again; blocks already finished are not repeated. It is held to the same fan-out limit and workflow budget as the first time, and what the failed turn spent stays on the block. Every run it decides on starts with nobody watching.",
+  },
   loop: {
     title: (name) => `Carry on “${name}”?`,
     confirm: "Carry on the loop",
@@ -461,11 +469,12 @@ const PICK_UP_SHEET: Record<
  * asked is the operator's to answer by name. Resume is a link rather than a
  * button because resuming is `reopenRun`, which asks for the budget and the note
  * on the run's own page — and already carries the workflow on once the run
- * completes. The two actions here are the ones no other page can take.
+ * completes. The actions here are the ones no other page can take.
  *
- * Both go through a `Sheet`: each releases work straight away — a merge into
- * the operator's checkout, a loop's next pass — which is the kind of action the
- * grouping vocabulary reserves one for.
+ * Each goes through a `Sheet`: each releases work straight away — a merge into
+ * the operator's checkout, a deciding turn whose runs start unattended, a
+ * loop's next pass — which is the kind of action the grouping vocabulary
+ * reserves one for.
  */
 function PickUpCard({
   pickUps,
@@ -575,7 +584,11 @@ function PickUpCard({
               <ListRow
                 key={p.nodeId}
                 label={<span className="font-medium text-ink">{p.nodeName}</span>}
-                description={p.retryRefusal ?? p.error ?? "The merge failed"}
+                description={
+                  p.retryRefusal ??
+                  p.error ??
+                  (p.kind === "merge" ? "The merge failed" : "The turn failed")
+                }
               >
                 {p.retryRefusal === null && (
                   <Button
@@ -584,7 +597,7 @@ function PickUpCard({
                     onClick={() => setPending(p)}
                     disabled={busy}
                   >
-                    Retry merge
+                    {p.kind === "merge" ? "Retry merge" : "Decide again"}
                   </Button>
                 )}
               </ListRow>

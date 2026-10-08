@@ -2799,6 +2799,15 @@ export type WorkflowPickUpDTO =
       retryRefusal: string | null;
     }
   | {
+      /** An orchestrator block whose deciding turn failed. */
+      kind: "orchestrator";
+      nodeId: string;
+      nodeName: string;
+      error: string | null;
+      /** Why its turn cannot be run again, or null when it can. */
+      retryRefusal: string | null;
+    }
+  | {
       /** A stopped loop whose latest pass would now go through. */
       kind: "loop";
       nodeId: string;
