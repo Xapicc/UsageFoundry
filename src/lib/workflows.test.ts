@@ -5435,6 +5435,7 @@ function instances(
     status,
     memberStatuses,
     restartClosedMember: false,
+    holdsGate: false,
   }));
 }
 
@@ -5499,7 +5500,13 @@ describe("bootBlockPlan — which waiting blocks a restart closes out", () => {
     );
     given[1].restartClosedMember = true;
     const plan = bootBlockPlan(given, true);
-    const decided = [...plan.abandoned, ...plan.settled, ...plan.spared, ...plan.held];
+    const decided = [
+      ...plan.abandoned,
+      ...plan.settled,
+      ...plan.spared,
+      ...plan.gated,
+      ...plan.held,
+    ];
     assert.equal(decided.length, given.length);
     assert.deepEqual([...decided].sort(), given.map((i) => i.id).sort());
   });

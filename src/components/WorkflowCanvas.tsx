@@ -114,6 +114,7 @@ export const KIND_LABEL: Record<WorkflowNodeKind, string> = {
   // model refuses the field by name. What it repeats is the section inside it.
   loop: "Repeats a section",
   review: "Reviews the branches",
+  gate: "Waits for you",
 };
 
 /** A kind that is drawn as a card. A loop is drawn as its frame — see above. */
@@ -147,6 +148,9 @@ const CARD_REST: Record<CardKind, string> = {
   // The line colour a run block wears: a review block writes nothing and
   // starts nothing without a rejection, so it carries no standing alarm.
   review: "border-line shadow-e1",
+  // The accent edge a merge block wears, for the same milder reason: it is the
+  // block where a person is expected, and it starts and spends nothing.
+  gate: "border-accent-line shadow-e1",
 };
 
 /**
@@ -1457,11 +1461,13 @@ export function WorkflowCanvas({
                     block.kind === "deliver" ||
                     block.kind === "review"
                       ? "every branch in front of it"
-                      : `${block.mountId || "—"} / ${block.folder || "."}`}
+                      : block.kind === "gate"
+                        ? "holds what is behind it"
+                        : `${block.mountId || "—"} / ${block.folder || "."}`}
                   </div>
                   <div className="mt-0.5 flex-1 overflow-hidden text-xs leading-snug text-ink-faint">
                     <span className="line-clamp-2">
-                      {block.kind === "merge"
+                      {block.kind === "merge" || block.kind === "gate"
                         ? null
                         : block.kind === "deliver"
                           ? "Pushes it and opens a pull request"
@@ -1507,6 +1513,7 @@ export function WorkflowCanvas({
                               }`
                             : null,
                           block.kind === "deliver" ? "pull requests" : null,
+                          block.kind === "gate" ? "until you continue" : null,
                           block.kind === "review"
                             ? block.verdictSource === "status"
                               ? "by run status"

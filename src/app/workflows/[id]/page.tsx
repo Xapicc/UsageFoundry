@@ -450,6 +450,7 @@ export default function WorkflowPage() {
         workflowId={id}
         schedule={workflow.schedule ?? null}
         refusal={workflow.scheduleRefusal}
+        hasGate={workflow.nodes.some((n) => n.kind === "gate")}
         newWorkPaused={newWorkPaused}
         onChanged={load}
       />
@@ -528,6 +529,12 @@ export default function WorkflowPage() {
                           {n.mergeAutoResolve
                             ? " — a conflict is resolved by Claude, and billed"
                             : " — a conflicting branch is left alone"}
+                        </div>
+                      )}
+                      {n.kind === "gate" && (
+                        <div className="mt-0.5 text-accent">
+                          Waits for you to continue — nothing behind it starts
+                          until you do
                         </div>
                       )}
                       {n.kind === "deliver" && (
@@ -625,7 +632,8 @@ export default function WorkflowPage() {
                       {n.kind !== "merge" &&
                         n.kind !== "deliver" &&
                         n.kind !== "loop" &&
-                        n.kind !== "review" && (
+                        n.kind !== "review" &&
+                        n.kind !== "gate" && (
                         <>
                           <div className="mono mt-0.5 break-words text-ink-muted">
                             {n.mountId} / {n.folder || "."}
@@ -646,6 +654,8 @@ export default function WorkflowPage() {
                           block never reaches. */}
                       {n.kind === "loop" ? (
                         <span className="text-ink-faint">each member&rsquo;s own</span>
+                      ) : n.kind === "gate" ? (
+                        <span className="text-ink-faint">no agent</span>
                       ) : (
                         <Badge tone={guards.tone}>{guards.text}</Badge>
                       )}

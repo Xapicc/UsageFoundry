@@ -1482,6 +1482,20 @@ function BlockStatement({
     );
   }
 
+  if (block.kind === "gate") {
+    return (
+      <p className="mb-3.5 text-sm leading-normal text-ink-muted">
+        When a run reaches it, it{" "}
+        <strong className="font-semibold text-ink">
+          waits for you to press Continue
+        </strong>
+        , and nothing behind it starts until you do. It costs nothing while it
+        waits, hands on no branches, and on a schedule it can hold the run with
+        nobody there.
+      </p>
+    );
+  }
+
   if (block.kind === "deliver") {
     return (
       <p className="mb-3.5 text-sm leading-normal text-ink-muted">
@@ -1880,6 +1894,9 @@ function BlockPanel({
   // no agent, works in whichever repository each branch came from, and has no
   // task of its own. The pull request's title and body are written from the run.
   const deliver = block.kind === "deliver";
+  // A gate holds nothing either: it starts no agent and works nowhere, and the
+  // server refuses a template, agent, workspace, folder or task on it by name.
+  const gate = block.kind === "gate";
   // A review block holds two fields, where its verdict comes from and its fix
   // rounds, for the merge block's reason: it starts no child of its own, so
   // there is nothing to guard, place or brief.
@@ -2478,7 +2495,7 @@ function BlockPanel({
         </ListGroup>
       )}
 
-      {!merge && !deliver && !loop && !review && (
+      {!merge && !deliver && !loop && !review && !gate && (
         <>
           {/* The task is the rest of "what it does", so it sits with the caps
               that bound it rather than at the foot of the panel — a run block,

@@ -276,6 +276,7 @@ const BLOCK_KIND: Record<ProposedBlockDTO["kind"], string> = {
   deliver: "pushes branches and opens pull requests",
   loop: "repeats a task",
   review: "reviews branches",
+  gate: "waits for you to continue",
 };
 
 /**

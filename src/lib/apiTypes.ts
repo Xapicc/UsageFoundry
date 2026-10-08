@@ -2207,6 +2207,8 @@ export const MAX_LOOP_RUNS = 60;
  * Deliver button calls, and spends no model money at all. `loop` repeats one
  * task until the agent reports it done, a pass fails, or one of its two caps is
  * reached — a fresh run per pass, each carrying on the previous pass's branch.
+ * `gate` starts nothing and costs nothing: when the instance reaches it, it
+ * waits for a person to press Continue, and holds what is behind it until then.
  */
 export type WorkflowNodeKind =
   | "run"
@@ -2214,7 +2216,8 @@ export type WorkflowNodeKind =
   | "merge"
   | "deliver"
   | "loop"
-  | "review";
+  | "review"
+  | "gate";
 
 /** One branch a review block is judging, as the instance page draws it. */
 export interface ReviewItemDTO {
@@ -2786,6 +2789,13 @@ export interface WorkflowInstanceBlockDTO {
   position: number;
   kind: WorkflowNodeKind;
   status: "waiting" | "thinking" | "looping" | "emitted" | "failed" | "blocked";
+  /**
+   * When a gate was reached and began waiting for a person, or null. Only a
+   * gate ever has one, and it is set while the row is still `waiting`: a gate
+   * that has not been reached is `waiting` with this null, which is the
+   * difference between "held, press Continue" and "not there yet".
+   */
+  heldAt: number | null;
   startedAt: number | null;
   finishedAt: number | null;
   /**

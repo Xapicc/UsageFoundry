@@ -1508,7 +1508,7 @@ const CHAT_TOOLS = [
               name: { type: "string", description: "What this step is called." },
               kind: {
                 type: "string",
-                enum: ["run", "orchestrator", "merge", "review"],
+                enum: ["run", "orchestrator", "merge", "review", "gate"],
                 description:
                   "run (default) is a fixed task. orchestrator is a short turn " +
                   "that decides, when the workflow gets there, which runs to " +
@@ -1517,7 +1517,14 @@ const CHAT_TOOLS = [
                   "left, and takes no task, folder or template. review has a " +
                   "frontier model approve or reject every branch in front of " +
                   "it and hands on only the approved ones — put it before a " +
-                  "merge; it takes fixRounds and no task, folder or template.",
+                  "merge; it takes fixRounds and no task, folder or template. " +
+                  "gate stops the workflow until the operator presses Continue " +
+                  "on its run page, and holds everything after it until then — " +
+                  "put one before a merge, or between two stages the operator " +
+                  "should look at. It starts nothing and costs nothing, takes " +
+                  "no task, folder, template or agent, and hands on no " +
+                  "branches: link the block that built them to the merge " +
+                  "directly as well as to the gate.",
               },
               templateId: {
                 type: "string",
@@ -2928,7 +2935,10 @@ function workflowReport() {
             kind: n.kind,
             templateId: n.templateId,
             mountId: n.mountId || null,
-            folder: n.kind === "merge" || n.kind === "deliver" ? null : n.folder,
+            folder:
+              n.kind === "merge" || n.kind === "deliver" || n.kind === "gate"
+                ? null
+                : n.folder,
             fanOut: n.fanOut,
             after: w.graph.edges
               // A `repeats` link is containment, not a wait: the loop it names
@@ -3052,7 +3062,7 @@ function proposeWorkflow(args: Record<string, unknown>, chatId: string) {
     // here, exactly as `propose_run` requires a folder beside a mountId. `null`
     // is refused with it: it is how a model spells "no value", and the
     // normalizer's `?? ""` would read it as the mount root all the same.
-    const startsNoRun = ["merge", "review"].includes(String(b.kind ?? "run"));
+    const startsNoRun = ["merge", "review", "gate"].includes(String(b.kind ?? "run"));
     if (!startsNoRun && (b.folder === undefined || b.folder === null)) {
       return text(
         `“${String(b.name ?? to)}” names no folder. Pass it exactly as ` +

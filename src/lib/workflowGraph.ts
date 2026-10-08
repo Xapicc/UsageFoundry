@@ -456,7 +456,7 @@ export const NODE_ID = /^[A-Za-z0-9_-]{1,64}$/;
  * scheduler has no branch for — the `as const` makes every reader exhaustive
  * against `WorkflowNodeKind` at the same time.
  */
-const NODE_KINDS = ["run", "orchestrator", "merge", "deliver", "loop", "review"] as const satisfies readonly WorkflowNodeKind[];
+const NODE_KINDS = ["run", "orchestrator", "merge", "deliver", "loop", "review", "gate"] as const satisfies readonly WorkflowNodeKind[];
 
 const MAX_NODE_NAME = 60;
 
@@ -669,9 +669,13 @@ export function normalizeWorkflowInput(
                     ? `“${node.name}” pushes other blocks' branches and opens a ` +
                       "pull request for each, so it has no branch of its own to " +
                       "hand over or carry on."
-                    : `“${node.name}” lands other blocks' branches rather than ` +
-                      "working in a checkout of its own, so it has no branch to " +
-                      "hand over or carry on.",
+                    : node.kind === "gate"
+                      ? `“${node.name}” only waits for a person to continue and ` +
+                        "works in no checkout, so it has no branch to hand over or " +
+                        "carry on. Start after it without carrying a branch."
+                      : `“${node.name}” lands other blocks' branches rather than ` +
+                        "working in a checkout of its own, so it has no branch to " +
+                        "hand over or carry on.",
         };
       }
 
@@ -763,6 +767,23 @@ const LOOP_IS_TOLD_NOTHING = [
   { key: "mountId", missing: "no workspace for it to work in", instead: "Each block inside the section names its own." },
   { key: "folder", missing: "no folder for it to work in", instead: "Each block inside the section names its own." },
   { key: "promptOverride", missing: "no standing instructions for it to stand above", instead: "Put them on the blocks inside the section." },
+] as const;
+
+/**
+ * What a gate may not be told, and what each field would have decided.
+ *
+ * `LOOP_IS_TOLD_NOTHING`'s treatment and for its reason, shorter because every
+ * field has one answer: a gate holds the workflow for a person and starts
+ * nothing, so a task, a template, an agent, a workspace, a folder and a prompt
+ * each describe a run that will not exist. The keys are the wire's.
+ */
+const GATE_IS_TOLD_NOTHING = [
+  { key: "task", missing: "no task for it to do" },
+  { key: "templateId", missing: "no guards for it to run under" },
+  { key: "agentId", missing: "nothing for that agent to be" },
+  { key: "mountId", missing: "no workspace for it to work in" },
+  { key: "folder", missing: "no folder for it to work in" },
+  { key: "promptOverride", missing: "no standing instructions for it to stand above" },
 ] as const;
 
 /** Whether a node says nothing at all about a board condition. */
@@ -1060,6 +1081,29 @@ function normalizeNode(
       }
     }
 
+    // A gate is told nothing either, and for the loop's reason: it waits for a
+    // person and starts no run, so each of these describes a run it does not
+    // have. Refused by name rather than coerced away, because a template or an
+    // agent chosen for a block that never starts anything is a choice no
+    // process will act on, and this is the door built to answer one out loud.
+    if (kind === "gate") {
+      for (const field of GATE_IS_TOLD_NOTHING) {
+        const notString = notStringRefusal(field.key, n[field.key]);
+        if (notString) return { ok: false, error: `“${nodeName}”: ${notString}` };
+      }
+      const told = GATE_IS_TOLD_NOTHING.find(
+        (field) => String(n[field.key] ?? "").trim() !== "",
+      );
+      if (told) {
+        return {
+          ok: false,
+          error:
+            `“${nodeName}” waits for a person to continue and starts no run of ` +
+            `its own, so there is ${told.missing}. Put it on the block that does the work.`,
+        };
+      }
+    }
+
     // The two kinds that start no child of their own hold none of the fields
     // that describe one. They get there differently — a merge block has these
     // coerced away, a loop has them refused by name above — and past this point
@@ -1068,7 +1112,11 @@ function normalizeNode(
     // started on branches the blocks in front of it cut, and it names no
     // workspace, template, task or agent of its own.
     const startsNoRun =
-      kind === "merge" || kind === "deliver" || kind === "loop" || kind === "review";
+      kind === "merge" ||
+      kind === "deliver" ||
+      kind === "loop" ||
+      kind === "review" ||
+      kind === "gate";
 
     // A merge block is told nothing. What it lands is whatever the blocks in
     // front of it left on a branch, and where each branch belongs was recorded
@@ -2021,6 +2069,20 @@ function loopBodyRefusal(
 }
 
 /**
+ * What to add to a "nothing in front of it to land, push or review" refusal
+ * when a gate is what is in front of it. A gate hands on no branches, so the
+ * operator who drew `run → gate → merge` has drawn a block that holds the merge
+ * and gives it nothing to land — and the refusal alone does not say what to
+ * draw instead.
+ */
+function gateHint(sources: readonly WorkflowNode[], node: WorkflowNode): string {
+  return sources.some((s) => s.kind === "gate")
+    ? " A gate holds what is behind it but hands on no branches, so link the " +
+        `block that built them straight to “${node.name}” as well as to the gate.`
+    : "";
+}
+
+/**
  * Why a graph as a whole could never run, or null when nothing is wrong with it.
  *
  * The checks a single block or a single link cannot see: two links carrying on
@@ -2092,7 +2154,7 @@ function graphRefusal(
       return (
         `“${node.name}” has no block in front of it whose branches it could ` +
         "review. A review block reviews what its predecessors built, so it " +
-        "needs at least one predecessor that runs something."
+        `needs at least one predecessor that runs something.${gateHint(sources, node)}`
       );
     }
     const bare = producers.find(
@@ -2142,14 +2204,18 @@ function graphRefusal(
       .filter((e) => e.to === node.id && isDependencyEdge(e))
       .map((e) => byId.get(e.from)!);
     const producers = sources.filter(
-      (s) => s.kind !== "merge" && s.kind !== "loop" && s.kind !== "deliver",
+      (s) =>
+        s.kind !== "merge" &&
+        s.kind !== "loop" &&
+        s.kind !== "deliver" &&
+        s.kind !== "gate",
     );
     if (producers.length === 0) {
       return (
         `“${node.name}” has no block in front of it whose branches it could ` +
         "push. A deliver block pushes what its predecessors built, so it needs " +
         "at least one predecessor that runs something — a merge block lands its " +
-        "branches on their target and hands none on."
+        `branches on their target and hands none on.${gateHint(sources, node)}`
       );
     }
     // A review is not asked about a template it does not have; its own sources
@@ -2172,13 +2238,17 @@ function graphRefusal(
       .filter((e) => e.to === node.id)
       .map((e) => byId.get(e.from)!);
     const producers = sources.filter(
-      (s) => s.kind !== "merge" && s.kind !== "deliver" && s.kind !== "loop",
+      (s) =>
+        s.kind !== "merge" &&
+        s.kind !== "deliver" &&
+        s.kind !== "loop" &&
+        s.kind !== "gate",
     );
     if (producers.length === 0) {
       return (
         `“${node.name}” has no block in front of it whose work it could ` +
         "land. A merge block lands the branches its predecessors left, so it " +
-        "needs at least one predecessor that runs something."
+        `needs at least one predecessor that runs something.${gateHint(sources, node)}`
       );
     }
     // A review block produces branches too — the approved ones in front of it —
@@ -2192,6 +2262,20 @@ function graphRefusal(
         `“${bare.name}” leaves no branch for “${node.name}” to land — its ` +
         "guards work directly in the folder rather than in a checkout of " +
         "their own."
+      );
+    }
+  }
+
+  // A gate holds what is behind it, so it needs something behind it. One with
+  // no link out would stop the instance for a person to press Continue and then
+  // release nothing — a pause with no purpose, which on a scheduled workflow is
+  // also the only thing that ever holds the next window up.
+  for (const node of nodes) {
+    if (node.kind !== "gate") continue;
+    if (!edges.some((e) => e.from === node.id && isDependencyEdge(e))) {
+      return (
+        `“${node.name}” is a gate with nothing after it, so there is nothing ` +
+        "for it to hold. Link the blocks that should wait for it, or remove it."
       );
     }
   }
@@ -2316,7 +2400,8 @@ export function folderRefusal(graph: WorkflowGraph): string | null {
       node.kind === "merge" ||
       node.kind === "deliver" ||
       node.kind === "loop" ||
-      node.kind === "review"
+      node.kind === "review" ||
+      node.kind === "gate"
     ) {
       continue;
     }

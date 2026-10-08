@@ -1504,7 +1504,8 @@ export function draftToGraph(draft: CanvasDraft): WireGraph {
       b.kind === "merge" ||
       b.kind === "deliver" ||
       b.kind === "loop" ||
-      b.kind === "review";
+      b.kind === "review" ||
+      b.kind === "gate";
     return {
       id: b.id,
       name: b.name.trim(),
