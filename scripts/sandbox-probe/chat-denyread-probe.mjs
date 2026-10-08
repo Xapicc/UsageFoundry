@@ -18,8 +18,14 @@
 // nothing: a control without the deny, in which the copy must succeed, and the
 // turn under test, in which it must not.
 //
-// Exit 0: the control leaked, the deny held, and the stub MCP server connected.
-// Exit 1: the deny did not hold, or the MCP server did not connect under it.
+// A second file is denied through the *user* scope (`$CLAUDE_CONFIG_DIR/settings.json`)
+// in the turn under test, and must stay denied beside the overlay's: the managed
+// policy's own `denyRead` (`/data`, `/backups`) reaches the chat the same way,
+// and an overlay that replaced it where it should add to it would drop those.
+//
+// Exit 0: the control leaked both files, the deny held for both, and the stub MCP
+// server connected.
+// Exit 1: a deny did not hold, or the MCP server did not connect under it.
 // Exit 2: nothing was measured — no managed sandbox policy, the CLI's sandbox
 // could not start (as it cannot nested inside an agent's own sandbox), or the
 // control did not leak, so the planted filter never ran.
@@ -63,14 +69,17 @@ function requireManagedSandbox() {
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "uf-denyread-probe-"));
 const secretDir = path.join(scratch, "secret");
+const secondDir = path.join(scratch, "secret-user-scope");
 const sinkDir = path.join(scratch, "sink");
 const repoDir = path.join(scratch, "repo");
 const claudeHome = path.join(scratch, "claude-home");
 const cwd = path.join(scratch, "cwd");
-for (const dir of [secretDir, sinkDir, repoDir, claudeHome, cwd]) fs.mkdirSync(dir);
+for (const dir of [secretDir, secondDir, sinkDir, repoDir, claudeHome, cwd]) fs.mkdirSync(dir);
 const token = `probe-${crypto.randomBytes(8).toString("hex")}`;
 const secretFile = path.join(secretDir, "config.json");
 const leakFile = path.join(sinkDir, "leak");
+const secondFile = path.join(secondDir, "other.json");
+const secondLeakFile = path.join(sinkDir, "leak-user-scope");
 
 function git(...args) {
   const result = spawnSync("git", ["-C", repoDir, ...args], { encoding: "utf8" });
@@ -88,7 +97,11 @@ function plantFilter() {
   git("add", "f.txt");
   git("commit", "-q", "-m", "init");
   fs.writeFileSync(path.join(repoDir, ".git", "info", "attributes"), "f.txt filter=x\n");
-  git("config", "filter.x.clean", `cp '${secretFile}' '${leakFile}' 2>/dev/null; cat`);
+  git(
+    "config",
+    "filter.x.clean",
+    `cp '${secretFile}' '${leakFile}' 2>/dev/null; cp '${secondFile}' '${secondLeakFile}' 2>/dev/null; cat`,
+  );
   const later = new Date(Date.now() + 60_000);
   fs.utimesSync(path.join(repoDir, "f.txt"), later, later);
 }
@@ -176,6 +189,12 @@ function startStub() {
 
 async function turn(label, denyRead) {
   fs.rmSync(leakFile, { force: true });
+  fs.rmSync(secondLeakFile, { force: true });
+  fs.writeFileSync(secondFile, `{"token":"${token}-user-scope"}`, { mode: 0o600 });
+  fs.writeFileSync(
+    path.join(claudeHome, "settings.json"),
+    JSON.stringify(denyRead ? { sandbox: { filesystem: { denyRead: [secondDir] } } } : {}),
+  );
   const { server, seen, port } = await startStub();
   fs.writeFileSync(
     secretFile,
@@ -224,11 +243,12 @@ async function turn(label, denyRead) {
   const mcpConnected = init?.mcp_servers?.some((s) => s.name === "stub" && s.status === "connected") === true;
   const toolResult = seen.toolResult ?? "";
   const leaked = (fs.existsSync(leakFile) && fs.readFileSync(leakFile, "utf8").includes(token)) || toolResult.includes(token);
+  const leakedUserScope = fs.existsSync(secondLeakFile) && fs.readFileSync(secondLeakFile, "utf8").includes(`${token}-user-scope`);
   const sandboxFailed = /sandbox is required|failed to initiali[sz]e/i.test(toolResult);
-  console.log(`${label}: exit=${code} sandboxFailed=${sandboxFailed} leaked=${leaked} mcpConnected=${mcpConnected} mcpMethods=${seen.mcpMethods.join(",")}`);
+  console.log(`${label}: exit=${code} sandboxFailed=${sandboxFailed} leaked=${leaked} leakedUserScope=${leakedUserScope} mcpConnected=${mcpConnected} mcpMethods=${seen.mcpMethods.join(",")}`);
   console.log(`${label}: tool_result=${toolResult.slice(0, 300)}`);
   if (seen.toolResult === null) console.log(`${label}: no tool_result reached the stub; stderr=${stderr.slice(0, 400)}`);
-  return { leaked, sandboxFailed, mcpConnected, reachedTool: seen.toolResult !== null };
+  return { leaked, leakedUserScope, sandboxFailed, mcpConnected, reachedTool: seen.toolResult !== null };
 }
 
 requireManagedSandbox();
@@ -236,12 +256,17 @@ plantFilter();
 try {
   const control = await turn("control (no denyRead)", false);
   if (control.sandboxFailed || !control.reachedTool) fail(2, "the CLI's sandbox did not start or the turn never ran the tool: nothing measured");
-  if (!control.leaked) fail(2, "the control did not leak, so the planted filter never copied the file: the probe proves nothing");
+  if (!control.leaked || !control.leakedUserScope) {
+    fail(2, "the control did not leak both files, so the planted filter never copied them: the probe proves nothing");
+  }
   const denied = await turn("denyRead", true);
   if (denied.sandboxFailed) fail(2, "the sandbox failed to start only under the deny: read the tool_result above");
   if (denied.leaked) fail(1, "FAILED: the file was readable from a sandboxed Bash call despite denyRead");
+  if (denied.leakedUserScope) {
+    fail(1, "FAILED: the overlay's denyRead replaced the user scope's instead of adding to it, so a managed denyRead would be dropped too");
+  }
   if (!denied.mcpConnected) fail(1, "FAILED: the stub MCP server did not connect with its config inside the denied directory");
-  console.log("PASSED: the control leaked, the deny held, and the MCP server connected from inside the denied directory");
+  console.log("PASSED: the control leaked, both denies held, and the MCP server connected from inside the denied directory");
 } finally {
   fs.rmSync(scratch, { recursive: true, force: true });
 }

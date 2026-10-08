@@ -233,5 +233,8 @@ The rules these entries back are `docs/agent/security/chat-child-config-files.md
   and `docker compose exec -u 1000:1000 usagefoundry node /tmp/chat-denyread-probe.mjs`.
   Expect `PASSED` and exit 0: the control turn leaked a marker out of a scratch
   directory through a planted `filter.x.clean`, the turn with `denyRead` over
-  that directory did not, and the MCP server connected from a config file
-  inside it. Exit 2 means nothing was measured, and the output says which part.
+  that directory did not, the MCP server connected from a config file inside
+  it, and a second directory denied from the user scope's `settings.json`
+  stayed denied beside the overlay's (the stand-in for the managed policy's own
+  `denyRead`, which an overlay that replaced it would drop). Exit 2 means
+  nothing was measured, and the output says which part.
