@@ -6665,8 +6665,17 @@ export type SandboxScope =
   | { kind: "run"; workDir: string; repoRoot: string | null }
   /** `review.ts`'s one spawn, which serves the reviewer and the resolver. */
   | { kind: "assist"; cwd: string; permissionMode: "plan" | "acceptEdits" }
-  /** `chat.ts`'s one spawn, which serves a chat turn and an orchestrator block. */
-  | { kind: "chat"; dirs: readonly string[] };
+  /**
+   * `chat.ts`'s one spawn, which serves a chat turn and an orchestrator block.
+   *
+   * `denyRead` is the one thing the other two scopes cannot say: paths a
+   * sandboxed `Bash` call may not read. It is the caller's to name because the
+   * only path today is the chat's capability directory, which `chat.ts` owns
+   * and this file cannot import without a cycle. Omitted means nothing is
+   * denied, which is also what `chatCapabilityDenyRead` answers where there is
+   * no chat group.
+   */
+  | { kind: "chat"; dirs: readonly string[]; denyRead?: readonly string[] };
 
 /**
  * Characters that make the CLI throw a `sandbox.filesystem` entry away.
@@ -6929,7 +6938,13 @@ export function sandboxArgs(policy: SandboxPolicy, arrangement: SandboxStateDTO)
 
 /** The settings overlay `sandboxArgs` writes onto the argv, or null for no flag. */
 export interface SandboxOverlay {
-  sandbox: { filesystem: { allowWrite: readonly string[] } };
+  sandbox: {
+    filesystem: {
+      allowWrite: readonly string[];
+      /** Present only when something is denied, so an overlay that denies nothing is byte-identical to one from before this key existed. */
+      denyRead?: readonly string[];
+    };
+  };
 }
 
 /**
@@ -6937,13 +6952,25 @@ export interface SandboxOverlay {
  * beside it. The pinned CLI keeps only the **last** `--settings` it is given
  * (measured 2026-10-06 on 2.1.280: a `disableAllHooks` followed by a sandbox
  * overlay ran every hook), so a second flag would silently drop the first.
+ *
+ * `denyRead` rides on the write set rather than standing alone: it is withheld
+ * with it, wherever the write set is withheld. That is deliberate. An overlay
+ * naming a read restriction and no write set is a different policy from the one
+ * `sandboxArgs` documents, and it was not measured, so a chat whose mounts
+ * could not be spelled gets no deny rather than a policy nobody has seen run.
  */
 export function sandboxOverlay(
   policy: SandboxPolicy,
   arrangement: SandboxStateDTO,
+  denyRead: readonly string[] = [],
 ): SandboxOverlay | null {
   const allowWrite = sandboxWritableRoots(policy, arrangement);
-  return allowWrite ? { sandbox: { filesystem: { allowWrite } } } : null;
+  if (!allowWrite) return null;
+  return {
+    sandbox: {
+      filesystem: denyRead.length > 0 ? { allowWrite, denyRead } : { allowWrite },
+    },
+  };
 }
 
 /**
@@ -7113,7 +7140,11 @@ export function sandboxArgsFor(scope: SandboxScope): string[] {
 
 /** The overlay as an object, for a child spawned right now. */
 export function sandboxOverlayFor(scope: SandboxScope): SandboxOverlay | null {
-  return sandboxOverlay(sandboxSettings(scope), currentSandbox().state);
+  return sandboxOverlay(
+    sandboxSettings(scope),
+    currentSandbox().state,
+    scope.kind === "chat" ? scope.denyRead : undefined,
+  );
 }
 
 /**
