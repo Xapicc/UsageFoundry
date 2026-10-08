@@ -262,9 +262,29 @@ export async function register() {
       // about a 03:04 that passed while it was down. Its timer is started here
       // for the schedules' reason: two processes deciding one night would point
       // two agents at one vault, and the vault has no version control behind it.
-      const { reconcileDreamingOnBoot, startDreaming } = await import("./lib/dreamingRun");
+      const { reconcileDreamingOnBoot, repairDreamingNotePaths, startDreaming } = await import(
+        "./lib/dreamingRun"
+      );
       reconcileDreamingOnBoot();
       startDreaming();
+
+      // Once per install: rows attached while the parser kept the last line of
+      // an item's report hold the hub that links the note, and the reconciler
+      // never overwrites a path. After `reconcileOnBoot`, so a run that was live
+      // when the process died is already terminal and is read. A failure is
+      // logged and does not stop the boot; the key is unset, so the next boot
+      // tries again.
+      try {
+        const repaired = repairDreamingNotePaths();
+        if (repaired) {
+          console.log(
+            `[usagefoundry] pointed ${repaired} Dreaming note(s) at the note an item ` +
+              `created rather than the hub that links it.`,
+          );
+        }
+      } catch (err) {
+        console.error("[usagefoundry] could not repair Dreaming note paths", err);
+      }
 
       // And the one sweep that deletes rather than reconciles. Gated on the
       // same claim as everything above, for a reason of its own: it decides

@@ -31,12 +31,16 @@ import os from "node:os";
 import { execFileSync } from "node:child_process";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
-// Moved out of `docs/` when the pitch and its baseline were reclassified as a
-// proposal rather than an operator page: nothing in either shipped.
+// A verbatim copy of the file at a74a1bb (see the header). 36a0416 moved the
+// proposals out of the tree to the Knowledge Vault, which left the original path
+// with nothing on it; RESULT.md and the score reports are numbers about these
+// labels, so the labels live beside them rather than in a place a later cleanup
+// can take them from. Do not edit it: it is the input the recorded figures were
+// measured against.
 const BASELINE = path.join(
   REPO_ROOT,
-  "proposals",
-  "ExternalValidator",
+  "scripts",
+  "validator-spike",
   "validator-baseline.md",
 );
 const TRANSCRIPT_ROOT = path.join(os.homedir(), ".claude", "projects");

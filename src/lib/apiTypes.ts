@@ -2155,6 +2155,11 @@ export const MAX_WORKFLOW_NODES = 25;
  * by a model and start with no approval between the decision and the spawn. The
  * per-block cap an operator sets is what actually bounds a graph; this is the
  * limit on what they may set.
+ *
+ * Kept at 10 after the taskboard sweep was found filling it: a batch's later
+ * siblings conflict at landing more often, and under `MAX_LOOP_RUNS` a wider
+ * fan-out buys fewer passes rather than more runs. The measurement is in
+ * `docs/agent/workflows-and-schedules/loop-passes.md`.
  */
 export const MAX_FAN_OUT = 10;
 
@@ -3468,6 +3473,12 @@ export interface LandStateDTO {
   pending: PendingWorkDTO | null;
   /** Why landing is refused right now. Null means it is offered. */
   blocked: string | null;
+  /**
+   * The run's checkout, reused by a later run, that Land's and Deliver's verify
+   * command will switch to this branch and back. Null when it need not be, and
+   * when something else already refuses the land.
+   */
+  verifySwitch: { path: string; holds: string } | null;
   /**
    * Why a resolution of the conflict is refused before it is bought — the
    * branch carries a file seeding copied in. Null when Resolve may be offered.

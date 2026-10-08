@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { dayKey, rollUp, selectWritable, signatureOf, type ErrorObservation } from "./dreaming";
-import { buildDreamingPrompt, parseNoteLines } from "./dreamingRun";
+import {
+  buildDreamingPrompt,
+  parseNoteLines,
+  rederivedNotePaths,
+  type ClaimedRow,
+} from "./dreamingRun";
 
 /**
  * The four pure functions Dreaming's behaviour is decided by, and every one of
@@ -284,5 +289,73 @@ describe("parseNoteLines", () => {
     // used, so the first line is the better guess than the last.
     const got = parseNoteLines("NOTE 1 first.md\nNOTE 1 second.md", 1);
     assert.deepEqual([...got], [[1, "first.md"]]);
+  });
+});
+
+/**
+ * The decision half of the one-off that repairs rows attached while the parser
+ * kept the last line of an item's report. A wrong answer here either leaves a
+ * hub in the retraction list or moves a real note's path onto the wrong row, and
+ * the pane shows a real file either way.
+ */
+describe("rederivedNotePaths", () => {
+  const row = (signature: string, notePath: string | null, promptItem: number | null = null): ClaimedRow => ({
+    signature,
+    notePath,
+    promptItem,
+  });
+  const report = [
+    "Done.",
+    "NOTE 1 created Notes/New.md",
+    "NOTE 1 edited Hubs/Standing Failures.md",
+    "NOTE 2 edited Notes/Existing.md",
+    "NOTE 2 edited Hubs/Standing Failures.md",
+  ].join("\n");
+
+  it("replaces the hub the last-line parser stored with the note the item created", () => {
+    const rows = [row("a", "Hubs/Standing Failures.md", 1), row("b", "Hubs/Standing Failures.md", 2)];
+    assert.deepEqual(rederivedNotePaths(rows, report), [
+      { signature: "a", notePath: "Notes/New.md" },
+      { signature: "b", notePath: "Notes/Existing.md" },
+    ]);
+  });
+
+  it("leaves a row that already holds the note the parser now chooses", () => {
+    const rows = [row("a", "Notes/New.md", 1), row("b", "Notes/Existing.md", 2)];
+    assert.deepEqual(rederivedNotePaths(rows, report), []);
+  });
+
+  it("leaves a row that has no path for the reconciler to attach", () => {
+    assert.deepEqual(rederivedNotePaths([row("a", null, 1)], report), []);
+  });
+
+  it("changes nothing when the report no longer yields a line for the item", () => {
+    // Retention trims events, and a reopened run can end on prose. Either way the
+    // row's path is the only record left and must not be blanked or replaced.
+    const rows = [row("a", "Hubs/Standing Failures.md", 1)];
+    assert.deepEqual(rederivedNotePaths(rows, ""), []);
+    assert.deepEqual(rederivedNotePaths(rows, "All finished, nothing to report."), []);
+    assert.deepEqual(rederivedNotePaths(rows, "NOTE 2 created Notes/Other.md"), []);
+  });
+
+  it("does not touch a path the report never gave this item", () => {
+    // Rows with no item number are matched by position, which is wrong once an
+    // earlier row has been forgotten: item 2's row sits where item 1 was looked
+    // up. Its path is not among item 1's lines, so it is not item 1's to replace.
+    const rows = [row("b", "Hubs/Standing Failures.md", null)];
+    assert.deepEqual(rederivedNotePaths(rows, "NOTE 1 created Notes/New.md\nNOTE 1 edited Hubs/Hub.md"), []);
+  });
+
+  it("repairs a legacy report with no verbs by keeping the first line", () => {
+    const rows = [row("a", "Hub.md", null)];
+    assert.deepEqual(rederivedNotePaths(rows, "NOTE 1 Note.md\nNOTE 1 Hub.md"), [
+      { signature: "a", notePath: "Note.md" },
+    ]);
+  });
+
+  it("is idempotent: applying its answer gives nothing further to change", () => {
+    const rows = [row("a", "Hubs/Standing Failures.md", 1)];
+    const [update] = rederivedNotePaths(rows, report);
+    assert.deepEqual(rederivedNotePaths([row("a", update.notePath, 1)], report), []);
   });
 });

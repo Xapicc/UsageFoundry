@@ -85,6 +85,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 
 - A pass is the section instantiated, and there is one scheduler.
 - `MAX_LOOP_RUNS` is the arithmetic nobody does, and an orchestrator member's fan-out is spent per pass.
+- `MAX_FAN_OUT` stays 10 though the taskboard sweep fills it, because a wider batch lands worse and the pass cap is not what runs out.
 - Nothing is manufactured within a pass, and nothing at all is carried between passes.
 - The instance page draws a pass as the group of members it is, and `passesOf` is the one reader that decides what is in one.
 - `passMemberId` owns the spelling of a member id and `passNumberOf` is the only thing that reads one back.

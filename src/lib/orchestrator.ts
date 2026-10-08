@@ -3328,6 +3328,18 @@ export type SlotBorrow =
     };
 
 /**
+ * Who would refuse `borrowSlot` right now, taking nothing: what the Land card
+ * asks at every poll, where claiming the slot to find out would hold it for
+ * the length of a read nobody is waiting on. The answer is a moment old by the
+ * time anyone acts on it, so a press asks `borrowSlot` itself.
+ */
+export function slotHolder(slotPath: string): "check" | "run" | null {
+  if (slotsUnderCheck.has(slotPath)) return "check";
+  if (activeRuns().some((r) => r.worktree_path === slotPath)) return "run";
+  return null;
+}
+
+/**
  * Take a slot for the length of one verify command that will switch it to a
  * different branch, or say who has it.
  *
@@ -3340,7 +3352,8 @@ export type SlotBorrow =
  * under the command. Synchronous, for `holdSlot`'s reason.
  */
 export function borrowSlot(slotPath: string): SlotBorrow {
-  if (slotsUnderCheck.has(slotPath)) return { ok: false, holder: "check" };
+  const holder = slotHolder(slotPath);
+  if (holder) return { ok: false, holder };
   const release = holdSlot(slotPath);
   if (!release) return { ok: false, holder: "run" };
   slotsBorrowed.add(slotPath);
