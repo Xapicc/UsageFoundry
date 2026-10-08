@@ -4,22 +4,6 @@
 
 ## Verified
 
-- **One workflow run against either of two saved folders, 2026-10-08**
-  (production standalone build from this branch, scratch `DATA_DIR`, one mount
-  holding two git repositories `alpha` and `beta`, a `CLAUDE_BIN` that exits 1,
-  Chromium at 1280px): a run block set to follow the chosen folder, saved with
-  both folders, POSTed 200. In the editor, *Move up* on the second folder and
-  *Save changes* stored `["beta","alpha"]` and re-pointed the block's stored
-  folder at `beta`. On the detail page the *Folder to run against* picker
-  chose a folder and Run created a run whose folder was `…/workspace/beta`,
-  the instance recorded `chosenFolder` `beta` and its page named it; an earlier
-  pass chose `beta` while `alpha` was first, with the same result. A press with
-  no body was refused 400 ("saved against 2 folders. Choose which one…"), and
-  one naming `../` 400 ("not one of the folders saved on this workflow"). No
-  console errors. Caveat: the workflow was first saved through the API with
-  the body the editor sends, not by drawing the block; no agent ran, and a
-  scheduled start's folder is covered by `runOrigin.test.ts` only.
-
 - **A loop as a region, 2026-09-21** (production standalone build from this
   branch, scratch `DATA_DIR`, one-repo vault, Chromium): a graph whose section
   holds a run block, an orchestrator block capped at 2 and a merge block at its
