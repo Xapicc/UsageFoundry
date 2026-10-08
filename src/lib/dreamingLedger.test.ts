@@ -235,6 +235,23 @@ describe("reconcileDreamingNotes", () => {
     );
   });
 
+  it("records the note an item created rather than the hub it edited to link it", () => {
+    finishedRun(
+      "run-hub",
+      [
+        "Done.",
+        "NOTE 1 created notes/new.md",
+        "NOTE 1 edited notes/Hub.md",
+        "NOTE 2 edited notes/Existing.md",
+        "NOTE 2 edited notes/Hub.md",
+      ].join("\n"),
+    );
+    ledger.claimSignatures("2026-09-02", "run-hub", [rollup("sig-a", 2), rollup("sig-b", 2)]);
+
+    runs.reconcileDreamingNotes();
+    assert.deepEqual(paths(), { "sig-a": "notes/new.md", "sig-b": "notes/Existing.md" });
+  });
+
   it("falls back to claim order for rows that predate the item number", () => {
     // Rows claimed before `prompt_item` existed carry null there, and they must
     // still reconcile the way they always did rather than stop attaching at all.
