@@ -1503,6 +1503,86 @@ describe("normalizeWorkflowInput — continuing a branch", () => {
     );
   });
 
+  it("lets an on-success block and an on-failure block both carry on one branch", () => {
+    // Only one of the two conditions can ever be met, so the two never both
+    // commit: a fixer can carry on the branch its sibling would have.
+    for (const [first, second] of [
+      ["on-success", "on-failure"],
+      ["on-failure", "on-success"],
+    ] as const) {
+      const v = value(
+        graph(
+          [node("a"), node("b"), node("c")],
+          [
+            edge("a", "b", { edge: first, continueBranch: true }),
+            edge("a", "c", { edge: second, continueBranch: true }),
+          ],
+        ),
+      );
+      assert.equal(v.graph.edges.filter((e) => e.continueBranch).length, 2, `${first} then ${second}`);
+    }
+  });
+
+  it("refuses any other pair of conditions carrying on one branch", () => {
+    // on-finish is met by every ending, so it overlaps both halves of the
+    // exempt pair as well as itself; the same condition twice overlaps itself.
+    for (const [first, second] of [
+      ["on-success", "on-success"],
+      ["on-failure", "on-failure"],
+      ["on-finish", "on-success"],
+      ["on-failure", "on-finish"],
+      ["on-finish", "on-finish"],
+    ] as const) {
+      assert.match(
+        error(
+          graph(
+            [node("a"), node("b"), node("c")],
+            [
+              edge("a", "b", { edge: first, continueBranch: true }),
+              edge("a", "c", { edge: second, continueBranch: true }),
+            ],
+          ),
+        ),
+        /cannot extend one branch/,
+        `${first} then ${second}`,
+      );
+    }
+  });
+
+  it("refuses a third block carrying on the branch beside the exempt pair", () => {
+    // Whichever condition it waits on, it overlaps one of the two: and the
+    // refusal names all three, not the pair it would have joined.
+    for (const third of ["on-success", "on-failure", "on-finish"] as const) {
+      const message = error(
+        graph(
+          [node("a"), node("b"), node("c"), node("d")],
+          [
+            edge("a", "b", { edge: "on-success", continueBranch: true }),
+            edge("a", "c", { edge: "on-failure", continueBranch: true }),
+            edge("a", "d", { edge: third, continueBranch: true }),
+          ],
+        ),
+      );
+      assert.match(message, /cannot extend one branch/, third);
+      assert.match(message, /“B”.*“C”.*“D”/, third);
+    }
+  });
+
+  it("does not read an exempt pair out of the same block's other links", () => {
+    // The pair is two links out of *one* block. Two different blocks each
+    // carrying on a different predecessor are two branches, not a rival.
+    const v = value(
+      graph(
+        [node("a"), node("b"), node("c"), node("d")],
+        [
+          edge("a", "c", { edge: "on-success", continueBranch: true }),
+          edge("b", "d", { edge: "on-failure", continueBranch: true }),
+        ],
+      ),
+    );
+    assert.equal(v.graph.edges.length, 2);
+  });
+
   it("refuses a hand-over from guards that work in the folder", () => {
     // The predecessor has no branch to give: its template turns isolation off.
     assert.match(

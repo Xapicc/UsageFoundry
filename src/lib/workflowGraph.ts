@@ -6,6 +6,7 @@ import {
   type DependencyEdge,
   type DependencyLink,
 } from "./orchestrator";
+import { edgesExclude } from "./branchRival";
 import type { LandStrategy } from "./land";
 import {
   normalizeInstanceBudget,
@@ -2466,21 +2467,25 @@ function graphRefusal(
   // Two runs on one ref is a branch git will not check out twice, and it leaves
   // the landing rules with no last link to name. `admitDependencies` refuses it
   // between live runs; this is the same rule inside one graph, where both would
-  // be created in the same pass.
-  const continued = new Set<string>();
+  // be created in the same pass. The exception is the pair `edgesExclude` names,
+  // one on-success and one on-failure: only one of them can ever start, so a
+  // fixer can carry on the branch its sibling would have.
+  const continuing = new Map<string, WorkflowEdge[]>();
   for (const e of edges) {
     if (!e.continueBranch) continue;
-    if (continued.has(e.from)) {
+    const earlier = continuing.get(e.from) ?? [];
+    if (earlier.some((other) => !edgesExclude(other.edge, e.edge))) {
       const source = byId.get(e.from)!;
       const takers = edges
         .filter((other) => other.continueBranch && other.from === e.from)
         .map((other) => `“${byId.get(other.to)!.name}”`);
       return (
         `${takers.join(" and ")} are both set to carry on “${source.name}”'s ` +
-        "branch. Two runs cannot extend one branch."
+        "branch. Two runs cannot extend one branch, unless one starts only on " +
+        "success and the other only on failure."
       );
     }
-    continued.add(e.from);
+    continuing.set(e.from, [...earlier, e]);
   }
 
   // A pass runs its section as a graph of its own, and a member that was not
