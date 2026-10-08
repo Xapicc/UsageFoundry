@@ -934,7 +934,7 @@ export interface Settings {
   /**
    * Limit in USD on the run one night may create. Never null.
    *
-   * `schedules.ts:529` refuses to schedule a workflow whose instance budget
+   * `scheduleRefusal` in `schedules.ts` refuses to schedule a workflow whose instance budget
    * sets nothing, with a reason that applies here word for word: "every other
    * press of Run is bounded by a person being there to see what it cost and
    * decide whether to press it again; a schedule removes the person and keeps
