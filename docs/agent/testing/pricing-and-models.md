@@ -122,6 +122,28 @@ second runs `[1m]`, a snapshot and both provider decorations onto it; the pinned
 CLI names no `claude-sonnet-5-5[1m]`, but a newer CLI's or a transcript's would
 price there.
 
+**Claude Haiku 5.5 earned a block, because its trap is the sum rather than a
+neighbour.** It is the first row priced by each request's prompt length: $0.10
+input up to a 100,000-token prompt and $0.50 above it, with output, cache reads
+and both write classes stepping up with it. Every failure is a dollar figure and
+nothing else. The block writes the page's two rows out in dollars per MTok, not
+derived from the multipliers, so a wrong multiplier fails it as well as a wrong
+tier; it pins exactly 100,000 as the low tier and 100,001 as the high one with
+every column present in the prompt, that each of the five input classes counts
+towards it and output never does, and that two 60,000-token requests price at
+the low tier while their sum read as one request would price five times dearer —
+the line the design exists to hold. It pins the guard for a prompt of unknown
+size at the high tier and `costOf` at the low, and that a request known short is
+not charged the ceiling. The id cases are the same set as Sonnet 5.5's plus
+`claude-haiku-5-6` and the bare `claude-haiku-5` at null, and `[1m]` costing what
+its base costs for the same request. Flipping `>` to `>=` in `rateFor` fails four
+of them. Beside it, `windows.test.ts` pins that the counterfactual's tier follows
+each turn and not the bucket's sum, `chatStream.test.ts` that a turn's guard
+figure is a sum of per-response prices (the one place that used to price a sum),
+and `transcriptPromptTier.test.ts` that the scan asks for the tier at all —
+`parseLine` is the one call site where forgetting `"request"` is silent, since
+the default shows every Haiku turn at the short row.
+
 **Claude Opus 4 and Sonnet 4 under their dated ids earned a block, because the
 table keyed them only as the alias spellings.** `claude-opus-4-0` and
 `claude-sonnet-4-0` are what a person types; the id a response, a transcript and

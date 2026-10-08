@@ -148,6 +148,47 @@ describe("readChatEvent", () => {
     assert.ok(Math.abs(acc.costGuardUSD - 2 * one.costGuardUSD) < 1e-12);
   });
 
+  it("prices each response at the tier its own prompt earns, not the turn's sum", () => {
+    // Claude Haiku 5.5 charges more for a request whose prompt is over 100,000
+    // tokens. Two responses of 60,000 are two cheap requests though `tokens`
+    // reads as a 120,000-token prompt, so the turn's guard figure is two
+    // single-response figures added — not one price put on the sum.
+    const usage = {
+      input_tokens: 10_000,
+      cache_read_input_tokens: 50_000,
+      output_tokens: 2_000,
+    };
+    const haiku = (id: string, u: Record<string, unknown>) =>
+      assistant({ id, model: "claude-haiku-5-5", usage: u });
+
+    const acc = newChatTurnAccumulator();
+    readChatEvent(acc, haiku("msg_1", usage));
+    readChatEvent(acc, haiku("msg_2", usage));
+    const one = newChatTurnAccumulator();
+    readChatEvent(one, haiku("msg_1", usage));
+    assert.equal(totalTokens(acc.tokens), 2 * totalTokens(one.tokens));
+    assert.ok(Math.abs(acc.costGuardUSD - 2 * one.costGuardUSD) < 1e-12);
+    // 10,000 input at $0.10, 50,000 cache reads at $0.01, 2,000 output at $0.50.
+    assert.ok(
+      Math.abs(one.costGuardUSD - (10_000 * 0.1 + 50_000 * 0.01 + 2_000 * 0.5) / 1e6) < 1e-12,
+      `a 60,000-token response priced at $${one.costGuardUSD}`,
+    );
+
+    // The control: one response past 100,000 is the dear row.
+    const long = newChatTurnAccumulator();
+    readChatEvent(long, haiku("msg_3", { ...usage, input_tokens: 50_001 }));
+    assert.ok(
+      Math.abs(long.costGuardUSD - (50_001 * 0.5 + 50_000 * 0.05 + 2_000 * 2.5) / 1e6) < 1e-12,
+      `a 100,001-token response priced at $${long.costGuardUSD}`,
+    );
+
+    // A later block of the same response replaces its price rather than adding.
+    const blocks = newChatTurnAccumulator();
+    readChatEvent(blocks, haiku("msg_1", { ...usage, output_tokens: 4 }));
+    readChatEvent(blocks, haiku("msg_1", usage));
+    assert.equal(blocks.costGuardUSD, one.costGuardUSD);
+  });
+
   it("prices an unplaced model rather than charging it nothing", () => {
     const acc = newChatTurnAccumulator();
     readChatEvent(

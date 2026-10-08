@@ -14,7 +14,7 @@ import {
   CACHE_WRITE_5M_MULTIPLIER,
   cacheReadMultiplierOf,
   cacheWriteTokens,
-  resolvePrice,
+  resolveFlatPrice,
 } from "./pricing";
 import { scanUsage, type UsageEntry } from "./transcripts";
 import type {
@@ -4426,7 +4426,10 @@ export function netReceipt(
   // resume billed at wherever one has, and `at` is the receipt's own
   // timestamp rather than now — `byAgent.counterfactualUSD`'s rule: a rate
   // looked up at read time prices last week's prune at this week's list.
-  const price = resolvePrice(row.model ?? undefined, { at: row.ts });
+  // `resolveFlatPrice`: this values a *difference in tokens* over turns whose
+  // prompts it never sees, so a model priced by prompt length has no rate to
+  // read here and is reported unpriced rather than at a tier nothing chose.
+  const price = resolveFlatPrice(row.model ?? undefined, { at: row.ts });
   if (!price) {
     return {
       turnsAfter,

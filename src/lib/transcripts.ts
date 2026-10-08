@@ -516,8 +516,12 @@ function parseLine(
     ts,
     model: intern(model || "unknown"),
     tokens,
-    costUSD: costOf(tokens, price),
-    costGuardUSD: guardCostOf(tokens, price),
+    // One deduplicated API response, so its own prompt size is what picks the
+    // tier of a model priced by prompt length. This is the only place the tier
+    // is decided for transcript spend: `aggregate` adds these dollars up and
+    // never re-prices the tokens it adds.
+    costUSD: costOf(tokens, price, "request"),
+    costGuardUSD: guardCostOf(tokens, price, "request"),
     project: cwdRef.value,
     sessionId: intern(typeof rec.sessionId === "string" ? rec.sessionId : ""),
     isSidechain: rec.isSidechain === true,

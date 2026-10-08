@@ -21,6 +21,25 @@
   Sonnet 5.5 a 1M window. Caveat: this is the published list price. It has not
   been compared with any billed or CLI-reported figure for a Sonnet 5.5 turn.
 
+- **Claude Haiku 5.5's rates, and its prompt-length tier, read off the pricing
+  page, not measured, 2026-10-08** (`platform.claude.com/docs/en/about-claude/pricing.md`,
+  fetched with `curl`). The model-pricing table has two Haiku 5.5 rows. "(for
+  prompts up to 100,000 tokens)": $0.10 input, $0.125 5m write, $0.20 1h write,
+  $0.01 cache hit, $0.50 output per MTok. "(for prompts over 100,000 tokens)":
+  $0.50, $0.625, $1, $0.05, $2.50. Both are 0.1x / 1.25x / 2x of their own input
+  rate and the model has no cache footnote, so neither needs a
+  `cacheReadMultiplier`; it is not in the fast-mode table. The long-context
+  section reads "Claude Haiku 5.5 is priced by prompt length: a prompt of over
+  100,000 tokens pays higher prices", and the model page (`/docs/en/models/haiku-5-5/overview.md`)
+  puts output in the same step ("$0.50 / MTok for prompts up to 100,000 tokens;
+  $2.50 / MTok for prompts over"). None of those pages defines the prompt for
+  this purpose; the prompt-caching page's "total input tokens" is
+  `cache_read_input_tokens + cache_creation_input_tokens + input_tokens`, and
+  that is the rule `promptTokensOf` uses. Caveat: this is the published list
+  price and a reading of "prompt" from the neighbouring page. Neither has been
+  compared with a billed or CLI-reported figure for a Haiku 5.5 turn, so whether
+  the API counts exactly those three fields at the boundary is unmeasured.
+
 - **Dedup verified:** 99 → 31 records.
 
 - **Dedup keeps each turn's highest-output line, 40,885 turns / 1,011 files,

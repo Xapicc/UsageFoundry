@@ -720,6 +720,10 @@ function counterfactualByAgent(
   // is memoised on the only two things it varies with. `undefined` means absent
   // here and nothing ever stores it, so a genuine `null` (an unpriceable target)
   // is cached rather than re-resolved on every turn.
+  //
+  // Prompt length is not a third key, and must not become one: a model priced by
+  // prompt length (Claude Haiku 5.5) resolves to one schedule whatever the
+  // request, and `costOf` picks the tier below from each entry's own tokens.
   const prices = new Map<string, ModelPrice | null>();
   const out = new Map<string, number>();
 
@@ -731,7 +735,9 @@ function counterfactualByAgent(
       prices.set(memo, price);
     }
     const bucket = e.agent ?? MAIN_THREAD_BUCKET;
-    out.set(bucket, (out.get(bucket) ?? 0) + costOf(e.tokens, price));
+    // `e` is one request, so the target model's tier follows from this turn's
+    // own prompt — as if that same prompt had been sent to it.
+    out.set(bucket, (out.get(bucket) ?? 0) + costOf(e.tokens, price, "request"));
   }
   return out;
 }

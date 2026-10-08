@@ -5,11 +5,15 @@ import {
   CACHE_READ_MULTIPLIER,
   UNKNOWN_MODEL_PRICE,
   ZERO_TOKENS,
+  addTokens,
   cacheReadMultiplierOf,
   costOf,
   costSplitOf,
   guardCostOf,
+  promptTokensOf,
+  resolveFlatPrice,
   resolvePrice,
+  type TokenCounts,
 } from "./pricing";
 
 /**
@@ -411,5 +415,205 @@ describe("Claude Opus 4 and Sonnet 4 under their dated ids", () => {
     assert.equal(resolvePrice("claude-opus-4-20250515"), null);
     assert.equal(resolvePrice("claude-opus-4-9"), null);
     assert.equal(resolvePrice("claude-sonnet-4-9"), null);
+  });
+});
+
+/**
+ * Claude Haiku 5.5, whose rate depends on how long each request's prompt was.
+ *
+ * Rates are the pricing page's own two rows (fetched 2026-10-08), written out in
+ * dollars per million tokens rather than derived from the multipliers, so that a
+ * wrong multiplier shows up here as well as a wrong tier. Up to 100,000 tokens
+ * of prompt: $0.10 input, $0.125 5m write, $0.20 1h write, $0.01 cache hit,
+ * $0.50 output; over 100,000: $0.50, $0.625, $1, $0.05, $2.50.
+ *
+ * Every failure is silent. The model resolves, and a tier chosen wrongly is only
+ * a dollar figure — five times too low on a long prompt, which lets a run through
+ * a guard, or five times too high on a short one, which is the 100x-early refusal
+ * this row exists to end when the alternative was `UNKNOWN_MODEL_PRICE`. The
+ * subtle one is the sum: two 60,000-token requests are two short-prompt requests
+ * even though their tokens add to 120,000, and nothing about the arithmetic
+ * notices.
+ */
+describe("claude-haiku-5-5 is priced by each request's own prompt length", () => {
+  const haiku = resolvePrice("claude-haiku-5-5");
+  const PER_MTOK = {
+    low: { input: 0.1, write5m: 0.125, write1h: 0.2, read: 0.01, output: 0.5 },
+    high: { input: 0.5, write5m: 0.625, write1h: 1, read: 0.05, output: 2.5 },
+  };
+  const dollars = (t: TokenCounts, r: (typeof PER_MTOK)["low"]) =>
+    (t.input * r.input +
+      t.cacheWrite5m * r.write5m +
+      t.cacheWrite1h * r.write1h +
+      t.cacheRead * r.read +
+      t.output * r.output) /
+    1_000_000;
+  const near = (actual: number, expected: number, what: string) =>
+    assert.ok(
+      Math.abs(actual - expected) <= 1e-12 * Math.max(1, Math.abs(expected)),
+      `${what}: ${actual} is not ${expected}`,
+    );
+
+  /** A request of every class, whose prompt is 99,000 plus `extra` tokens of input. */
+  const request = (extra: number): TokenCounts => ({
+    ...ZERO_TOKENS,
+    input: 39_000 + extra,
+    cacheRead: 50_000,
+    cacheWrite5m: 5_000,
+    cacheWrite1h: 5_000,
+    output: 1_000_000,
+  });
+
+  it("charges the short-prompt row at exactly 100,000 tokens, every column", () => {
+    const t = request(1_000);
+    assert.equal(promptTokensOf(t), 100_000);
+    assert.ok(haiku);
+    near(costOf(t, haiku, "request"), dollars(t, PER_MTOK.low), "at the boundary");
+    near(guardCostOf(t, haiku, "request"), dollars(t, PER_MTOK.low), "guard at the boundary");
+  });
+
+  it("charges the long-prompt row, every column, from 100,001 tokens", () => {
+    const t = request(1_001);
+    assert.equal(promptTokensOf(t), 100_001);
+    assert.ok(haiku);
+    // The output column steps up too: it is priced by the prompt, not by itself.
+    near(costOf(t, haiku, "request"), dollars(t, PER_MTOK.high), "one token over");
+    near(guardCostOf(t, haiku, "request"), dollars(t, PER_MTOK.high), "guard one token over");
+  });
+
+  it("prices a plain million-token class at each row's published figure", () => {
+    assert.ok(haiku);
+    const read = (n: number): TokenCounts => ({ ...ZERO_TOKENS, cacheRead: n });
+    near(costOf(read(100_000), haiku, "request"), 0.001, "100k reads at $0.01/MTok");
+    near(costOf(read(100_001), haiku, "request"), 100_001 * 0.05e-6, "100,001 reads at $0.05/MTok");
+    const input = (n: number): TokenCounts => ({ ...ZERO_TOKENS, input: n });
+    near(costOf(input(100_000), haiku, "request"), 0.01, "100k input at $0.10/MTok");
+    near(costOf(input(100_001), haiku, "request"), 100_001 * 0.5e-6, "100,001 input at $0.50/MTok");
+  });
+
+  it("counts every class of the request's input, and never its output", () => {
+    for (const field of ["input", "cacheRead", "cacheWrite5m", "cacheWrite1h", "cacheWriteUnattributed"] as const) {
+      const t = { ...ZERO_TOKENS, [field]: 100_001 };
+      assert.equal(promptTokensOf(t), 100_001, field);
+      assert.ok(haiku);
+      assert.ok(costOf(t, haiku, "request") > costOf({ ...t, [field]: 100_000 }, haiku, "request") * 4, field);
+    }
+    // A short prompt with a huge answer is a short-prompt request.
+    const longAnswer = { ...ZERO_TOKENS, input: 1_000, output: 5_000_000 };
+    assert.equal(promptTokensOf(longAnswer), 1_000);
+    assert.ok(haiku);
+    near(costOf(longAnswer, haiku, "request"), dollars(longAnswer, PER_MTOK.low), "output is not prompt");
+  });
+
+  it("prices two requests under 100k each at the short row though they add to more", () => {
+    assert.ok(haiku);
+    const one: TokenCounts = { ...ZERO_TOKENS, input: 10_000, cacheRead: 50_000, output: 2_000 };
+    assert.equal(promptTokensOf(one), 60_000);
+    const sum = addTokens(one, one);
+    assert.equal(promptTokensOf(sum), 120_000);
+
+    // Per request, then added: the only shape an aggregate may take.
+    const perRequest = costOf(one, haiku, "request") + costOf(one, haiku, "request");
+    near(perRequest, 2 * dollars(one, PER_MTOK.low), "two short requests");
+    // What pricing the sum as a request would have done, which is the bug this
+    // design rules out: the long row on tokens no single request carried.
+    const asIfOneRequest = costOf(sum, haiku, "request");
+    near(asIfOneRequest, dollars(sum, PER_MTOK.high), "the sum read as one request");
+    assert.ok(asIfOneRequest > perRequest * 4);
+    // Unlabelled tokens are not read as one request: a caller that forgets to
+    // say gets the short row for display, not a tier picked from the sum.
+    near(costOf(sum, haiku), perRequest, "the sum with no basis stated");
+  });
+
+  it("charges a turn of unknown prompt size the long row in the guard", () => {
+    assert.ok(haiku);
+    // Only an aggregate is available: 90k of input, 1k of output.
+    const unknown: TokenCounts = { ...ZERO_TOKENS, input: 90_000, output: 1_000 };
+    near(guardCostOf(unknown, haiku), dollars(unknown, PER_MTOK.high), "guard, no basis");
+    near(guardCostOf(unknown, haiku, "unknown"), dollars(unknown, PER_MTOK.high), "guard, unknown");
+    // And shows the floor, so the dashboard's hatched band draws the gap.
+    near(costOf(unknown, haiku, "unknown"), dollars(unknown, PER_MTOK.low), "shown, unknown");
+    assert.ok(guardCostOf(unknown, haiku) > costOf(unknown, haiku));
+
+    // A request known to be short is not charged the ceiling: that is what
+    // knowing it buys.
+    near(guardCostOf(unknown, haiku, "request"), dollars(unknown, PER_MTOK.low), "guard, known short");
+
+    // The unattributed-write premium is taken at the same tier as the rest.
+    const unattributed: TokenCounts = { ...ZERO_TOKENS, cacheWriteUnattributed: 1_000 };
+    near(guardCostOf(unattributed, haiku), (1_000 * 0.5 * 2) / 1_000_000, "unattributed, guard");
+    near(costOf(unattributed, haiku), (1_000 * 0.1 * 1.25) / 1_000_000, "unattributed, shown");
+  });
+
+  it("splits a bill the way it totals it, at either row", () => {
+    assert.ok(haiku);
+    for (const [name, t, basis] of [
+      ["short", request(1_000), "request"],
+      ["long", request(1_001), "request"],
+      ["unknown", request(1_001), "unknown"],
+    ] as const) {
+      const split = costSplitOf(t, haiku, basis);
+      assert.equal(split.total, costOf(t, haiku, basis), name);
+      near(split.input + split.output + split.cacheRead + split.cacheWrite, split.total, name);
+    }
+    near(costSplitOf(request(1_001), haiku, "request").output, 2.5, "long-row output share");
+    near(costSplitOf(request(1_000), haiku, "request").output, 0.5, "short-row output share");
+  });
+
+  it("resolves the bare id, a snapshot, [1m] and both providers' spellings to one row", () => {
+    assert.ok(haiku);
+    for (const id of [
+      "claude-haiku-5-5",
+      "claude-haiku-5-5-20261001",
+      "claude-haiku-5-5[1m]",
+      "anthropic.claude-haiku-5-5",
+      "us.anthropic.claude-haiku-5-5-v1:0",
+      "claude-haiku-5-5@20261001",
+      "Claude-Haiku-5-5",
+    ]) {
+      assert.equal(resolvePrice(id), haiku, id);
+    }
+    // `[1m]` is the same row, so it picks its tier by the prompt and not by the
+    // suffix: the same short request costs the same with or without it.
+    const t = request(1_000);
+    assert.equal(
+      costOf(t, resolvePrice("claude-haiku-5-5[1m]"), "request"),
+      costOf(t, haiku, "request"),
+    );
+  });
+
+  it("does not let a successor, or the bare family, borrow the row", () => {
+    for (const id of [
+      "claude-haiku-5-6",
+      "claude-haiku-5-6[1m]",
+      "claude-haiku-5-6-20270101",
+      "claude-haiku-5",
+    ]) {
+      assert.equal(resolvePrice(id), null, id);
+    }
+    const output = { ...ZERO_TOKENS, output: 1_000_000 };
+    assert.equal(guardCostOf(output, resolvePrice("claude-haiku-5-6")), 50);
+    assert.deepEqual(resolvePrice("claude-haiku-4-5"), { input: 1, output: 5 });
+  });
+
+  it("has no fast-mode row, so a fast request prices at the same schedule", () => {
+    assert.equal(resolvePrice("claude-haiku-5-5", { speed: "fast" }), haiku);
+  });
+
+  it("hands a caller that reads a rate directly no schedule to misread", () => {
+    assert.equal(resolveFlatPrice("claude-haiku-5-5"), null);
+    assert.equal(resolveFlatPrice("claude-haiku-5-5[1m]"), null);
+    assert.equal(resolveFlatPrice("claude-haiku-5-6"), null);
+    assert.equal(resolveFlatPrice("claude-opus-5-5"), resolvePrice("claude-opus-5-5"));
+    assert.equal(resolveFlatPrice("claude-haiku-4-5"), resolvePrice("claude-haiku-4-5"));
+  });
+
+  it("leaves a single-rate model untouched by the basis it is asked under", () => {
+    const opus = resolvePrice("claude-opus-5");
+    const t = request(1_001);
+    const expected = costOf(t, opus);
+    assert.equal(costOf(t, opus, "request"), expected);
+    assert.equal(costOf(t, opus, "unknown"), expected);
+    assert.equal(guardCostOf(t, opus, "request"), guardCostOf(t, opus, "unknown"));
   });
 });
