@@ -20,7 +20,9 @@ import {
   instanceCanMove,
   instanceOutcomeDetail,
   landingSummary,
+  loopSpendShown,
   passRuns,
+  passSpend,
   passesOf,
   pollFailureMessage,
   STATUS_LABEL,
@@ -116,27 +118,6 @@ const BLOCK_TONE: Record<BlockStatus, BadgeTone> = {
 
 type BlockDTO = WorkflowInstanceDTO["blocks"][number];
 type NodeDTO = WorkflowInstanceDTO["nodes"][number];
-
-/**
- * What one pass spent, as the clause beside its run count.
- *
- * Empty where **nothing** in the pass reported a cost, rather than `$0.00`: a
- * null `spentUSD` is a provider that reports no cost, which the rows under it
- * already draw as a dash, and a zero here would be a figure nobody measured.
- * A pass where some runs reported and others did not is summed from the ones
- * that did — the same partial reading the workflow's own meter takes, and the
- * count beside it says how many runs the figure is over.
- */
-function passSpend(runs: readonly NodeDTO[]): { usd: number | null; reported: number } {
-  const reported = runs
-    .map((n) => n.run?.spentUSD)
-    .filter((usd): usd is number => usd !== null && usd !== undefined);
-  if (reported.length === 0) return { usd: null, reported: 0 };
-  return {
-    usd: reported.reduce((total, usd) => total + usd, 0),
-    reported: reported.length,
-  };
-}
 
 /**
  * How a set of runs ended, most common first: "9 completed · 1 needs-review".
@@ -648,7 +629,7 @@ function LoopCard({
   onRefused: () => void;
 }) {
   const runs = passes.flatMap(passRuns);
-  const spend = passSpend(runs);
+  const spend = loopSpendShown(passes);
   const waits = loop.waitsFor.map((wait) => fmtInstanceWait(wait, nodeName));
   const [pressing, setPressing] = useState(false);
   const [pressError, setPressError] = useState<string | null>(null);
@@ -752,7 +733,7 @@ function LoopCard({
             <StatSub>{statusTally(runs)}</StatSub>
           </div>
           <div>
-            <div className="text-xs text-ink-muted">Spent by its runs</div>
+            <div className="text-xs text-ink-muted">Spent by its passes</div>
             {/* A dash rather than $0.00 when nothing reported: see `passSpend`. */}
             <Stat>{spend.usd === null ? "—" : fmtUSD(spend.usd)}</Stat>
             <StatSub>
@@ -762,6 +743,14 @@ function LoopCard({
               {spend.reported < runs.length &&
                 ` · ${spend.reported} of ${runs.length} reported a cost`}
             </StatSub>
+            {/* Said only beside a limit, and without the figure: the guard's
+                number is never rendered, so the card names the difference. */}
+            {loop.maxLoopCostUSD !== null && (
+              <StatSub>
+                Checked against a figure that also counts cycles cut short before
+                they reported
+              </StatSub>
+            )}
           </div>
         </div>
       )}
