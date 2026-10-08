@@ -46,6 +46,45 @@ Settings guards: you saved a graph that said "under these guards", and a run
 started under different ones is what the refusal exists to prevent. The detail
 page marks such a block in red before you press anything.
 
+## One workflow, several folders
+
+A workflow can be saved against **more than one folder**, so one graph serves
+several projects instead of being saved once per project. In the editor, add
+each folder under *Folders to choose from at Run*, and switch on *Work in the
+folder chosen at Run* on each run or orchestrator block that should move with
+the choice. When you press Run on a workflow with more than one saved folder,
+the detail page asks which one; a workflow with one saved folder uses it.
+
+What moves, and what does not:
+
+- **Only the blocks you switched on follow the choice.** A block with its own
+  workspace and folder keeps them, whatever is chosen. Merge, review, deliver
+  and gate blocks name no folder and work with the branches in front of them,
+  so they follow along through those runs. A loop's *stop when the board has*
+  condition keeps the folder it names.
+- **Run only ever chooses among the folders you saved.** Nothing typed at Run
+  can point a block anywhere else: the server accepts exactly an entry on the
+  saved list and refuses everything else with a sentence. Every saved folder is
+  checked when you save, the way a block's own folder is.
+- **A schedule uses the first saved folder.** Nobody is there to ask, and the
+  schedule holds no folder of its own; *Move up* in the editor decides which
+  folder is first. The schedule card says which one it will use.
+- **Each press of Run keeps its choice.** The instance records the folder it
+  was started against and shows it on its page; every later pass of a loop,
+  every block created later and every run an orchestrator block starts uses
+  that choice, even if you edit the workflow meanwhile.
+- **An orchestrator block is told which folder was chosen.** Its bounds already
+  name the folder it works in, and a block that follows the choice is also told
+  that this folder is the project its brief is about — so one brief, written as
+  "the project in your folder", serves every saved folder.
+
+A workflow saved before this, or one whose blocks each name their own folder,
+asks nothing at Run and behaves exactly as it always did. Two limits of this
+first version: the chat cannot propose a workflow with a folder list (add the
+list in the editor after approving), and a workflow still runs **one** press at
+a time — a press against a second folder waits until the first one's runs have
+finished, as below.
+
 ## A block that decides what to run
 
 The blocks above are fixed: you write the task, and that task is what runs. An
@@ -805,6 +844,10 @@ anyway, the runs already created are stopped and the instance is recorded as
 successors were never created, so what would be left running is a prefix nobody
 asked for.
 
+On a workflow saved against more than one folder, the folder picker beside Run
+decides which one the blocks that follow the choice work in — see *One
+workflow, several folders* above.
+
 Starting a workflow whose previous press still has unfinished runs is
 **refused**, with a count and a sentence. The second instance would point the
 same blocks at the same folders, and a block set to carry on a branch would be
@@ -913,7 +956,9 @@ names or under the untemplated guards in Settings, the workflow's own limits
 still bound the whole graph, and *Stop all* still halts it. There is no field on
 the schedule form, no argument on the API and no column in the database that
 could set a permission mode, a budget or an isolation choice. The schedule
-decides *when*; a person already decided *what* and *how much*.
+decides *when*; a person already decided *what* and *how much*. On a workflow
+saved against more than one folder, that includes *where*: a schedule always
+starts in the first saved folder.
 
 **A workflow with no limits of its own cannot be scheduled.** If *Limits for the
 whole workflow* is empty — no spending limit, no 5-hour guard, no weekly

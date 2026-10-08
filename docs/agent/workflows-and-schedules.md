@@ -14,6 +14,10 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - A block that emits nothing blocks what is behind it, and that is a decision rather than a fallout.
 - An `on-failure` link is drawn only out of a run block and only outside a loop, and a node on the branch it did not take is `not-needed` in the ledger as it is in `runs`.
 - A run a restart closed out blocks every edge out of it until it is picked up, and what it holds back is revived rather than failed.
+- One saved graph may run against more than one folder, and every folder it may work in is one a person saved on it.
+
+## [Gate blocks](workflows-and-schedules/gate-blocks.md)
+
 - A gate is a block that waits for a person, and it is a ledger row that never has a turn.
 - It is `waiting` the whole time, and `held_at` is the only thing that says it was reached.
 - A gate hands on no runs, and that is the cost the diagram pays.
