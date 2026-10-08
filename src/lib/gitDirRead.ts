@@ -271,7 +271,7 @@ async function readHooksPath(
   // `/dev/null` is the usual way to turn hooks off, and is no directory on
   // either side.
   if (configured === null || configured === "/dev/null") return { hooks: [], unread: null };
-  const shown = configured.slice(0, SHOWN_CHARS);
+  const shown = configured.slice(0, SHOWN_CHARS) || "empty";
   const unread = (why: string) => ({
     hooks: [],
     unread: `core.hooksPath is ${shown}, ${why}, so the hooks there were not compared.`,
@@ -284,7 +284,7 @@ async function readHooksPath(
   if (!path.isAbsolute(configured)) {
     if (path.basename(commonDir) !== ".git") {
       return unread(
-        `a relative path, and ${commonDir} is not a checkout's .git, so this app cannot tell what it is relative to`,
+        `a relative path, and ${commonDir} is not a checkout's .git for it to be relative to`,
       );
     }
     candidate = `${path.dirname(commonDir)}/${configured}`;
@@ -295,12 +295,18 @@ async function readHooksPath(
       `and ${located.link} on the way there is a symlink to ${located.target}, which the container does not have`,
     );
   }
-  const real = located.state === "found" ? located.real : located.nearest;
-  if (!(await insideAMount(real))) {
-    return unread(`which resolves to ${real}, outside every configured folder`);
+  if (located.state === "missing") {
+    return (await insideAMount(located.nearest))
+      ? { hooks: [], unread: null }
+      : unread("which is outside every configured folder and does not exist in the container");
   }
-  if (located.state === "missing") return { hooks: [], unread: null };
-  return { hooks: await readHookDir(real, `${HOOKS_PATH_PREFIX}${real}/`), unread: null };
+  if (!(await insideAMount(located.real))) {
+    return unread(`which resolves to ${located.real}, outside every configured folder`);
+  }
+  return {
+    hooks: await readHookDir(located.real, `${HOOKS_PATH_PREFIX}${located.real}/`),
+    unread: null,
+  };
 }
 
 /**

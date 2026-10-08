@@ -241,7 +241,7 @@ describe("a core.hooksPath the repository already had", () => {
       // Outside every configured folder: this server would be reading as root.
       [elsewhere, /outside every configured folder/],
       // A host path the container does not have, whose absence is not the host's.
-      ["/Users/someone/hooks", /resolves to \/, outside every configured folder/],
+      ["/Users/someone/hooks", /outside every configured folder and does not exist in the/],
       // The operator's home on the host, which the container cannot know.
       ["~/.githooks", /~\/\.githooks, which git expands against your host's home/],
     ];
