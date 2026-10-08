@@ -1032,6 +1032,28 @@ function boardConditionIsOff(raw: unknown): boolean {
   return raw === null || raw === undefined || String(raw) === "";
 }
 
+/**
+ * Why a cap that has to be a number when it is given is some other type, or
+ * null when it is a number, a string or absent (`null` counts as absent).
+ *
+ * `notStringRefusal`'s counterpart for the fields read through `Number()`,
+ * which reads `["3"]` as 3 and `true` as 1, and `[]` and `false` as 0 — a legal
+ * count of fix rounds, a spending cap that is off, and the strictest board
+ * threshold there is. A string is let through for the checks behind this one,
+ * because a form field holds one; what `Number()` makes of it is theirs.
+ */
+function notNumberRefusal(key: string, value: unknown): string | null {
+  if (
+    value === undefined ||
+    value === null ||
+    typeof value === "number" ||
+    typeof value === "string"
+  ) {
+    return null;
+  }
+  return `"${key}" has to be a number when it is given; got ${jsonKind(value)}.`;
+}
+
 export type BoardConditionNormalization =
   | { ok: true; value: LoopBoardCondition | null }
   | { ok: false; error: string };
@@ -1190,6 +1212,12 @@ export function normalizeBoardCondition(
           "the lower one would never be reached.",
       };
     }
+
+    const notNumber = notNumberRefusal(
+      `stopWhenTasks.thresholds[${at}].atMost`,
+      raw.atMost,
+    );
+    if (notNumber) return { ok: false, error: `“${nodeName}”: ${notNumber}` };
 
     // Missing and blank are refused rather than coerced, which is the one place
     // this field parts company with the spending cap above: `Number(null)` and
@@ -1397,6 +1425,8 @@ function normalizeNode(
     // the run loop refuses a policy with no monotone terminus.
     let fanOut: number | null = null;
     if (kind === "orchestrator") {
+      const notNumber = notNumberRefusal("fanOut", n.fanOut);
+      if (notNumber) return { ok: false, error: `“${nodeName}”: ${notNumber}` };
       const raw = Number(n.fanOut);
       if (!Number.isInteger(raw) || raw < 1) {
         return {
@@ -1473,6 +1503,9 @@ function normalizeNode(
     // local model is not going to get past it.
     let fixRounds: number | null = null;
     if (kind === "review") {
+      // `true` was one billed fix round per rejected branch.
+      const notNumber = notNumberRefusal("fixRounds", n.fixRounds);
+      if (notNumber) return { ok: false, error: `“${nodeName}”: ${notNumber}` };
       const raw = Number(n.fixRounds ?? 0);
       if (!Number.isInteger(raw) || raw < 0 || raw > MAX_REVIEW_FIX_ROUNDS) {
         return {
@@ -1547,6 +1580,8 @@ function normalizeNode(
     let stopWhenTasks: LoopBoardCondition | null = null;
     let bodyNodeIds: string[] = [];
     if (kind === "loop") {
+      const notPasses = notNumberRefusal("maxPasses", n.maxPasses);
+      if (notPasses) return { ok: false, error: `“${nodeName}”: ${notPasses}` };
       const raw = Number(n.maxPasses);
       if (!Number.isInteger(raw) || raw < 1) {
         return {
@@ -1567,6 +1602,10 @@ function normalizeNode(
       }
       maxPasses = raw;
 
+      // Before the "off" readings below, because an object is `NaN` and `NaN`
+      // is off: a cap the caller tried to set would be dropped without a word.
+      const notCost = notNumberRefusal("maxLoopCostUSD", n.maxLoopCostUSD);
+      if (notCost) return { ok: false, error: `“${nodeName}”: ${notCost}` };
       const cost = Number(n.maxLoopCostUSD);
       maxLoopCostUSD =
         n.maxLoopCostUSD === null ||
