@@ -2582,7 +2582,21 @@ export type WorkflowListItemDTO = Omit<
 > & {
   /** How many blocks the saved graph holds. Both lists print exactly this. */
   nodeCount: number;
+  /**
+   * The newest press of Run, null if there has never been one.
+   *
+   * Three fields rather than an instance: the list links it and names how it
+   * ended, and nothing else. `status` is the derived reading
+   * `WorkflowInstanceDTO.status` explains — read and shown here, never acted on.
+   */
+  lastInstance: WorkflowLastInstanceDTO | null;
 };
+
+export interface WorkflowLastInstanceDTO {
+  id: string;
+  createdAt: number;
+  status: WorkflowInstanceDTO["status"];
+}
 
 /**
  * One thing an instance member starts after, and on what condition.

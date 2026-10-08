@@ -12,6 +12,7 @@ import { passMemberIn } from "../../../lib/passIds";
 import { isDependencyEdge, type WorkflowEdge } from "../../../lib/workflowGraph";
 import {
   blockSpendReading,
+  lastInstanceOf,
   lastRunAt,
   liveBlocksOf,
   liveInstanceIdOf,
@@ -74,6 +75,9 @@ export function workflowDTO(workflow: Workflow): WorkflowDTO {
  * the duplicate route all still need the whole graph. Derived from `workflowDTO`
  * rather than restated so the fields the two shapes share cannot drift apart:
  * what this drops is the graph and the instance budget, and nothing else.
+ *
+ * What it adds is the newest press of Run, one `LIMIT 1` read per row beside the
+ * ones `workflowDTO` already makes, so the list can link it and say how it ended.
  */
 export function workflowListDTO(workflow: Workflow): WorkflowListItemDTO {
   const {
@@ -82,7 +86,11 @@ export function workflowListDTO(workflow: Workflow): WorkflowListItemDTO {
     instanceBudget: _instanceBudget,
     ...rest
   } = workflowDTO(workflow);
-  return { ...rest, nodeCount: nodes.length };
+  return {
+    ...rest,
+    nodeCount: nodes.length,
+    lastInstance: lastInstanceOf(workflow.id),
+  };
 }
 
 /**

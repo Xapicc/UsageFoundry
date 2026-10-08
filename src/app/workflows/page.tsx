@@ -3,7 +3,12 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import type { WorkflowListItemDTO } from "@/lib/apiTypes";
-import { fmtDateTime, pollFailureMessage } from "@/lib/format";
+import {
+  fmtDateTime,
+  INSTANCE_OUTCOME_LABEL,
+  INSTANCE_OUTCOME_TONE,
+  pollFailureMessage,
+} from "@/lib/format";
 import { startPoll } from "@/lib/poll";
 import { Badge } from "@/components/ui/Badge";
 import { ButtonLink } from "@/components/ui/Button";
@@ -153,7 +158,27 @@ export default function WorkflowsPage() {
                       label="Last run"
                       className="whitespace-nowrap align-top text-ink-muted"
                     >
-                      {w.lastRunAt ? fmtDateTime(w.lastRunAt) : "never"}
+                      {w.lastInstance ? (
+                        <>
+                          {/* The press itself, so "did last night's schedule
+                              work" is one hop. The badge is the derived reading
+                              the workflow's own page shows for the same press:
+                              shown here and never acted on. */}
+                          <Link
+                            href={`/workflows/${w.id}/instances/${w.lastInstance.id}`}
+                            className="inline-flex text-ink hover:text-accent max-md:min-h-11 max-md:items-center"
+                          >
+                            {fmtDateTime(w.lastInstance.createdAt)}
+                          </Link>
+                          <div className="mt-1">
+                            <Badge tone={INSTANCE_OUTCOME_TONE[w.lastInstance.status]}>
+                              {INSTANCE_OUTCOME_LABEL[w.lastInstance.status]}
+                            </Badge>
+                          </div>
+                        </>
+                      ) : (
+                        "never"
+                      )}
                     </Td>
                   </Tr>
                 ))}

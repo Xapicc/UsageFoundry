@@ -3253,6 +3253,34 @@ export function lastRunAt(workflowId: string): number | null {
   return row?.at ?? null;
 }
 
+/**
+ * The newest press of Run and where it has got to, for the list that polls.
+ *
+ * One row and one member tally rather than `rowToInstance`, which parses the
+ * graph snapshot and reads the node, block and spend rows for a detail nothing
+ * on the list draws. The status goes through `instanceStatus` over that
+ * instance's own members, because the stored column only says what was done *to*
+ * the instance: read raw, a graph that finished an hour ago is "started" for
+ * ever and the list calls it working. Ordered as `findInstances` orders, so the
+ * row the list links is the first one the workflow's own page shows.
+ */
+export function lastInstanceOf(
+  workflowId: string,
+): { id: string; createdAt: number; status: WorkflowInstanceStatus } | null {
+  const row = db()
+    .prepare(
+      `SELECT id, created_at AS createdAt, status FROM workflow_instances
+        WHERE workflow_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+    )
+    .get(workflowId) as { id: string; createdAt: number; status: string } | undefined;
+  if (!row) return null;
+  return {
+    id: row.id,
+    createdAt: row.createdAt,
+    status: instanceStatus(row.status, memberTally(row.id)),
+  };
+}
+
 export function getInstance(id: string): WorkflowInstance | null {
   const row = db()
     .prepare(`SELECT ${INSTANCE_COLUMNS} FROM workflow_instances WHERE id = ?`)
