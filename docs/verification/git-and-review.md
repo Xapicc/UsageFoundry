@@ -113,6 +113,34 @@
   sideways scroll, and a 180-character value wrapped. Not measured in the
   ascii skin.
 
+- **git resolves a relative `core.hooksPath` against the root of the work
+  tree it runs in, 2026-10-08, git 2.39.5.** Board task `602e9c65`. A scratch
+  repository with `core.hooksPath=.husky/_` and an executable
+  `.husky/_/pre-commit` writing a marker, with a scratch `HOME` and
+  `GIT_CONFIG_NOSYSTEM=1`. `git commit --allow-empty` run from a subdirectory
+  wrote that marker. A linked worktree given its own `.husky/_/pre-commit`
+  ran that copy, not the main checkout's. A bare `hooksPath` key made git
+  refuse to commit at all (`missing value for 'core.hookspath'`). An empty
+  value ran neither the work tree's `pre-commit` nor `.git/hooks/pre-commit`,
+  and where git looked instead was not established. Caveat: the container's
+  git as uid 1000, not a host's.
+
+- **The `core.hooksPath` rows and not-read notes render on the run page and
+  the Land card, 2026-10-08.** Board task `602e9c65`, standalone build of
+  `a7f84588`. One run was seeded through `POST /api/runs` against a scratch
+  `DATA_DIR` and a `CLAUDE_BIN` that exits 1. Playwright then answered
+  `GET /api/runs/<id>` as a completed worktree run carrying an injected
+  `gitDir`, and `/land` as a fast-forward. The states were `changed` with
+  hooksPath rows (`pre-commit`, a non-executable `h`, the directory itself)
+  and a not-read note, `unchanged` with a not-read note, and plain
+  `unchanged`. Both of the first two were drawn as warnings in the inspector
+  and on the Land card, and the last as the muted line in the inspector only.
+  Checked at 390px and 1280px in both skins, with no console error and no
+  sideways scroll. Over a 68-character hyphen-free path, no box was wider
+  than its parent once `a7f84588` added `break-all`; before it, the path ran
+  past the notice. Caveat: the reports were injected, so this says nothing
+  about what the server reads.
+
 ## Not yet verified by hand
 
 - **A planted `core.fsmonitor` running in the operator's own git on the
@@ -187,3 +215,13 @@
     neither "changed, never named" nor "named, and not changed" — the item
     most likely to be wrong;
   - `/api/runs/[id]/touched` is fetched once per tab open, never on the poll.
+
+- **A pre-existing `core.hooksPath` directory compared in a booted image.**
+  Unmeasured: the server listing and hashing `.husky/_` as root across a bind
+  mount the agent uid writes, and resolving it against the container's real
+  mounts. To settle it, in a scratch repository under a mount, run
+  `git config core.hooksPath .husky/_`, make `.husky/_/pre-commit` an
+  executable script, and start an isolated run whose prompt is to rewrite
+  that file in the repository's main checkout. `run.gitDir.report` from
+  `GET /api/runs/<id>` should list one hook finding named
+  `core.hooksPath:<the directory's real path>/pre-commit`.

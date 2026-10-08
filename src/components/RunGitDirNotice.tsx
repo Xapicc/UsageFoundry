@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import type {
-  GitDirChangeDTO,
-  GitDirCommandClassDTO,
-  GitDirDTO,
-  GitDirFindingDTO,
+import {
+  hooksPathEntryOf,
+  type GitDirChangeDTO,
+  type GitDirCommandClassDTO,
+  type GitDirDTO,
+  type GitDirFindingDTO,
 } from "../lib/apiTypes";
 import { fmtDateTime } from "../lib/format";
 import { Notice } from "./ui/Notice";
@@ -48,8 +49,8 @@ export type GitDirPlacement = "inspector" | "land";
 function Inspect() {
   return (
     <>
-      <code>git config --list --show-scope --show-origin</code>, <code>ls .git/hooks</code> and{" "}
-      <code>cat .git/info/attributes</code>
+      <code>git config --list --show-scope --show-origin</code>, <code>ls .git/hooks</code> or the
+      directory a <code>core.hooksPath</code> there names, and <code>cat .git/info/attributes</code>
     </>
   );
 }
@@ -87,6 +88,61 @@ function ValueOf({
   );
 }
 
+/**
+ * An entry of the directory a `core.hooksPath` names. Its name is not always
+ * a hook's — husky's stubs all source one file, `h` — so whether git runs it
+ * by name and whether a hook there can run it are both said.
+ */
+function HooksPathRow({
+  finding,
+  dir,
+  entry,
+}: {
+  finding: Extract<GitDirFindingDTO, { kind: "hook" }>;
+  dir: string;
+  entry: string;
+}) {
+  const where = (
+    <>
+      <span className="mono break-all">{dir}</span>, the directory <code>core.hooksPath</code> has
+      git run hooks from
+    </>
+  );
+  if (entry === ".") {
+    return (
+      <li>
+        The directory <code>core.hooksPath</code> has git run hooks from,{" "}
+        <span className="mono break-all">{dir}</span>, was itself {CHANGE_WORD[finding.change]}
+      </li>
+    );
+  }
+  if (entry === "…") {
+    return <li>More entries in {where} than this app reads at once, so some were not compared</li>;
+  }
+  return (
+    <li>
+      <code>{entry}</code> {CHANGE_WORD[finding.change]} in {where}
+      {finding.change !== "removed" &&
+        (finding.executable
+          ? " — git runs it on the command it is named for, and any hook there can run it"
+          : " — not executable, so git does not run it as a hook, but a hook there can source it")}
+    </li>
+  );
+}
+
+/** What git runs hooks from that this app could not read, as the report words it. */
+function NotRead({ notRead }: { notRead: string[] }) {
+  return (
+    <>
+      {notRead.map((sentence) => (
+        <p key={sentence} className="mt-2">
+          {sentence}
+        </p>
+      ))}
+    </>
+  );
+}
+
 function FindingRow({ finding, commonDir }: { finding: GitDirFindingDTO; commonDir: string }) {
   if (finding.kind === "config") {
     return (
@@ -105,6 +161,8 @@ function FindingRow({ finding, commonDir }: { finding: GitDirFindingDTO; commonD
     );
   }
   if (finding.kind === "hook") {
+    const inHooksPath = hooksPathEntryOf(finding.name);
+    if (inHooksPath) return <HooksPathRow finding={finding} {...inHooksPath} />;
     if (finding.name === ".") {
       return <li>The hooks directory itself was {CHANGE_WORD[finding.change]}</li>;
     }
@@ -161,6 +219,23 @@ export function RunGitDirNotice({
     );
   }
 
+  if (report.state === "unchanged" && report.notRead) {
+    return (
+      <Notice tone="warn" className="mt-3">
+        <p>
+          <strong>Part of where your own git runs hooks from was not checked.</strong> Nothing
+          this app did read in <span className="mono break-all">{report.commonDir}</span> changed
+          between{" "}
+          {fmtDateTime(report.since)} and {fmtDateTime(report.checkedAt)}.
+        </p>
+        <NotRead notRead={report.notRead} />
+        <p className="mt-2">
+          Before you run git in that checkout, look: <Inspect />.
+        </p>
+      </Notice>
+    );
+  }
+
   if (report.state === "unchanged") {
     if (placement === "land") return null;
     return (
@@ -185,8 +260,8 @@ export function RunGitDirNotice({
     <Notice tone="warn" className="mt-3">
       <p>
         <strong>
-          <span className="mono">{report.commonDir}</span> changed where your own git runs commands
-          from
+          <span className="mono break-all">{report.commonDir}</span> changed where your own git runs
+          commands from
         </strong>{" "}
         between {fmtDateTime(report.since)} and {fmtDateTime(report.checkedAt)}. None of it is in
         the branch, its diff or Land.
@@ -216,6 +291,7 @@ export function RunGitDirNotice({
           </>
         )}
       </p>
+      {report.notRead && <NotRead notRead={report.notRead} />}
       <p className="mt-2">
         Before you run git in that checkout, look: <Inspect />.
       </p>

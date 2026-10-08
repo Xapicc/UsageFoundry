@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
 
+import { HOOKS_PATH_PREFIX } from "./apiTypes";
 import { compareGitDir, type GitDirBaseline } from "./gitDirWatch";
 
 /**
@@ -52,8 +53,8 @@ function markersWritten(): string[] {
   return fs.readdirSync(root).filter((name) => name.startsWith("ran-"));
 }
 
-function writeHook(gitDir: string, name: string, body: string) {
-  const file = path.join(gitDir, "hooks", name);
+function writeHook(hooksDir: string, name: string, body: string) {
+  const file = path.join(hooksDir, name);
   fs.writeFileSync(file, `#!/bin/sh\n${body}\n`);
   fs.chmodSync(file, 0o755);
 }
@@ -101,8 +102,12 @@ describe("reading a planted repository", () => {
     );
     fs.mkdirSync(path.join(gitDir, "info"), { recursive: true });
     fs.writeFileSync(path.join(gitDir, "info", "attributes"), "* filter=x diff=x\n");
-    writeHook(gitDir, "post-checkout", `touch ${marker("post-checkout")}`);
-    writeHook(gitDir, "reference-transaction", `touch ${marker("reference-transaction")}`);
+    writeHook(path.join(gitDir, "hooks"), "post-checkout", `touch ${marker("post-checkout")}`);
+    writeHook(
+      path.join(gitDir, "hooks"),
+      "reference-transaction",
+      `touch ${marker("reference-transaction")}`,
+    );
     // Neither may stall or be followed: a FIFO would hold a read for ever, and
     // a symlink would have this server read wherever it points.
     execFileSync("mkfifo", [path.join(gitDir, "hooks", "pre-push")]);
@@ -145,7 +150,7 @@ describe("reading a planted repository", () => {
     assert.deepEqual(baseline.snapshot.attributes?.driverLines, ["* filter=x diff=x"]);
 
     // What a work cycle adds after the start.
-    writeHook(gitDir, "pre-commit", `touch ${marker("pre-commit")}`);
+    writeHook(path.join(gitDir, "hooks"), "pre-commit", `touch ${marker("pre-commit")}`);
     setupGit(repo, ["config", "core.pager", `touch ${marker("pager")}`]);
     const end = await read.readGitDirAgain(baseline);
     const report = compareGitDir(baseline, end, [], 2_000);
@@ -162,6 +167,101 @@ describe("reading a planted repository", () => {
     plainGit(repo, ["status", "--short"]);
     assert.ok(markersWritten().includes("ran-fsmonitor"), markersWritten().join(", "));
     assert.ok(markersWritten().includes("ran-clean"), markersWritten().join(", "));
+  });
+});
+
+describe("a core.hooksPath the repository already had", () => {
+  it("compares the directory it names, which is where git runs hooks from", async () => {
+    const { repo, worktree } = makeRepository(workspace, "husky");
+    // husky v9's layout. The directory is gitignored, so nothing written there
+    // is in a branch or its diff.
+    const hooksDir = path.join(repo, ".husky", "_");
+    fs.mkdirSync(hooksDir, { recursive: true });
+    fs.writeFileSync(path.join(hooksDir, ".gitignore"), "*\n");
+    fs.writeFileSync(path.join(hooksDir, "h"), "#!/bin/sh\n");
+    writeHook(hooksDir, "pre-commit", '. "$(dirname "$0")/h"');
+    setupGit(repo, ["config", "core.hooksPath", ".husky/_"]);
+
+    const baseline = await read.readGitDirBaseline(worktree, 1_000);
+    assert.ok(baseline?.ok, JSON.stringify(baseline));
+    const before = compareGitDir(baseline, await read.readGitDirAgain(baseline), [], 2_000);
+    assert.equal(before.state, "unchanged", JSON.stringify(before));
+
+    // What a work cycle can do to the operator's main checkout.
+    writeHook(hooksDir, "pre-commit", `touch ${marker("husky-pre-commit")}`);
+    const report = compareGitDir(baseline, await read.readGitDirAgain(baseline), [], 3_000);
+    assert.equal(report.state, "changed", JSON.stringify(report));
+    assert.deepEqual(report.state === "changed" && report.findings, [
+      {
+        kind: "hook",
+        name: `${HOOKS_PATH_PREFIX}${fs.realpathSync(hooksDir)}/pre-commit`,
+        change: "changed",
+        executable: true,
+      },
+    ]);
+    assert.ok(!markersWritten().includes("ran-husky-pre-commit"), "reading ran the hook");
+
+    // The control: from a subdirectory of the main checkout, git runs exactly
+    // the file compared, so the path was resolved where git resolves it.
+    plainGit(path.join(repo, ".husky"), [
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@t",
+      "commit",
+      "-q",
+      "--allow-empty",
+      "-m",
+      "two",
+    ]);
+    assert.ok(markersWritten().includes("ran-husky-pre-commit"), markersWritten().join(", "));
+  });
+
+  it("reads one that does not exist yet as empty, so a hook created there is added", async () => {
+    const { repo, worktree } = makeRepository(workspace, "husky-later");
+    setupGit(repo, ["config", "core.hooksPath", ".husky/_"]);
+    const baseline = await read.readGitDirBaseline(worktree, 1_000);
+    assert.ok(baseline?.ok && baseline.snapshot.hooksPathUnread === null, JSON.stringify(baseline));
+
+    const hooksDir = path.join(repo, ".husky", "_");
+    fs.mkdirSync(hooksDir, { recursive: true });
+    writeHook(hooksDir, "pre-commit", "true");
+    const report = compareGitDir(baseline, await read.readGitDirAgain(baseline), [], 2_000);
+    assert.deepEqual(
+      report.state === "changed" && report.findings.map((f) => f.kind === "hook" && f.name),
+      [`${HOOKS_PATH_PREFIX}${fs.realpathSync(hooksDir)}/pre-commit`],
+    );
+  });
+
+  it("says which it did not read, never that nothing changed", async () => {
+    const elsewhere = path.join(root, "elsewhere-hooks");
+    fs.mkdirSync(elsewhere);
+    writeHook(elsewhere, "pre-commit", "true");
+    const cases: Array<[string, RegExp]> = [
+      // Outside every configured folder: this server would be reading as root.
+      [elsewhere, /outside every configured folder/],
+      // A host path the container does not have, whose absence is not the host's.
+      ["/Users/someone/hooks", /outside every configured folder and does not exist in the/],
+      // The operator's home on the host, which the container cannot know.
+      ["~/.githooks", /~\/\.githooks, which git expands against your host's home/],
+    ];
+    for (const [i, [configured, reason]] of cases.entries()) {
+      const { repo, worktree } = makeRepository(workspace, `unread-${i}`);
+      setupGit(repo, ["config", "core.hooksPath", configured]);
+      const baseline = await read.readGitDirBaseline(worktree, 1_000);
+      assert.ok(baseline?.ok, JSON.stringify(baseline));
+      assert.deepEqual(
+        baseline.snapshot.hooks.filter((hook) => hook.name.startsWith(HOOKS_PATH_PREFIX)),
+        [],
+        configured,
+      );
+      const report = compareGitDir(baseline, await read.readGitDirAgain(baseline), [], 2_000);
+      assert.equal(report.state, "unchanged", configured);
+      const notRead = report.state === "unchanged" ? (report.notRead ?? []) : [];
+      assert.equal(notRead.length, 1, `${configured}: ${JSON.stringify(report)}`);
+      assert.match(notRead[0], /^At the run's start and end: core\.hooksPath is /);
+      assert.match(notRead[0], reason);
+    }
   });
 });
 

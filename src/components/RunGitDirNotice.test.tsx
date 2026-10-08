@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { RunGitDirNotice, type GitDirPlacement } from "./RunGitDirNotice";
-import type { GitDirDTO, GitDirReportDTO } from "../lib/apiTypes";
+import { HOOKS_PATH_PREFIX, type GitDirDTO, type GitDirReportDTO } from "../lib/apiTypes";
 
 /**
  * Which of a run's git-directory readings reach the operator, and where.
@@ -102,4 +102,48 @@ test("nothing changed is the run page's to say, and no baseline is nothing at al
   assert.equal(render(gitDir(report), "land"), "");
   assert.equal(render(null, "inspector"), "");
   assert.equal(render(null, "land"), "");
+});
+
+test("a hook in core.hooksPath's directory is drawn in both places, with the directory", () => {
+  const report: GitDirReportDTO = {
+    state: "changed",
+    commonDir: COMMON,
+    since: 1_000,
+    checkedAt: 2_000,
+    findings: [
+      {
+        kind: "hook",
+        name: `${HOOKS_PATH_PREFIX}/workspace/repo/.husky/_/pre-commit`,
+        change: "changed",
+        executable: true,
+      },
+    ],
+    concurrentRunIds: [],
+  };
+  for (const placement of ["inspector", "land"] as const) {
+    assert.match(
+      render(gitDir(report), placement),
+      /<code>pre-commit<\/code> changed in <span[^>]*>\/workspace\/repo\/\.husky\/_<\/span>, the directory <code>core\.hooksPath<\/code>/,
+      placement,
+    );
+  }
+});
+
+test("a core.hooksPath directory not read is drawn in both places, never as unchanged", () => {
+  const sentence = "At the run's start and end: core.hooksPath is ~/.githooks, unread.";
+  const unchanged: GitDirReportDTO = {
+    state: "unchanged",
+    commonDir: COMMON,
+    since: 1_000,
+    checkedAt: 2_000,
+    notRead: [sentence],
+  };
+  const changed: GitDirReportDTO = { ...CHANGED, notRead: [sentence] };
+  for (const report of [unchanged, changed]) {
+    for (const placement of ["inspector", "land"] as const) {
+      const html = render(gitDir(report), placement);
+      assert.match(html, /core\.hooksPath is ~\/\.githooks, unread\./, placement);
+      assert.doesNotMatch(html, /No setting, hook or attributes line/, placement);
+    }
+  }
 });

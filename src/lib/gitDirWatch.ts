@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
-import type {
-  GitDirChangeDTO,
-  GitDirCommandClassDTO,
-  GitDirDTO,
-  GitDirFindingDTO,
-  GitDirReportDTO,
+import {
+  hooksPathEntryOf,
+  type GitDirChangeDTO,
+  type GitDirCommandClassDTO,
+  type GitDirDTO,
+  type GitDirFindingDTO,
+  type GitDirReportDTO,
 } from "./apiTypes";
 
 /**
@@ -47,7 +48,11 @@ export interface WatchedConfigEntry {
   shown: string | null;
 }
 
-/** One entry of `<common>/hooks` that is not a `.sample`, or `"."` for the directory itself. */
+/**
+ * One entry of `<common>/hooks` that is not a `.sample`, or `"."` for the
+ * directory itself; or the same of the directory a `core.hooksPath` names,
+ * under `HOOKS_PATH_PREFIX`.
+ */
 export interface HookEntry {
   name: string;
   /** `file:<sha256>`, `large:<size>:<mtime>`, `symlink:<target>`, `dir` or `other`. */
@@ -66,6 +71,12 @@ export interface GitDirSnapshot {
   hooks: HookEntry[];
   /** null when `info/attributes` does not exist. */
   attributes: AttributesFile | null;
+  /**
+   * Why the directory the repository's own `core.hooksPath` names was not
+   * read, or null when none is set or it was. Absent from a snapshot taken
+   * before this app read that directory at all.
+   */
+  hooksPathUnread?: string | null;
 }
 
 /**
@@ -218,6 +229,29 @@ export function watchedConfigOf(listing: string): WatchedConfigEntry[] {
   return out;
 }
 
+/**
+ * The `core.hooksPath` git runs the main checkout's hooks from, as the
+ * repository sets it, or null when it sets none.
+ *
+ * The last `local` or `worktree` value, since for a single-valued key the last
+ * one wins; system and global are not the repository's, and `command` is this
+ * app's own `/dev/null`. A bare key is null too: git refuses to run at all
+ * with one, so it runs no hook.
+ */
+export function hooksPathOf(listing: string): string | null {
+  const fields = listing.split("\0");
+  let found: string | null = null;
+  for (let i = 0; i + 2 < fields.length; i += 3) {
+    if (fields[i] !== "local" && fields[i] !== "worktree") continue;
+    const record = fields[i + 2];
+    const newline = record.indexOf("\n");
+    const key = newline < 0 ? record : record.slice(0, newline);
+    if (key.toLowerCase() !== "core.hookspath") continue;
+    found = newline < 0 ? null : record.slice(newline + 1);
+  }
+  return found;
+}
+
 /** `info/attributes` as the snapshot keeps it: a digest, and the driver lines for showing. */
 export function attributesFileOf(text: string): AttributesFile {
   const driverLines = text
@@ -332,14 +366,26 @@ export function compareGitDir(
   }
   const was = baseline.snapshot;
   const now = after.snapshot;
+  // A baseline from before this app read `core.hooksPath`'s directory holds
+  // none of its entries, so every one at the end would read as added.
+  const predates = was.hooksPathUnread === undefined;
+  const nowHooks = predates
+    ? now.hooks.filter((hook) => hooksPathEntryOf(hook.name) === null)
+    : now.hooks;
   const findings = [
     ...configFindings(was.config, now.config),
-    ...hookFindings(was.hooks, now.hooks),
+    ...hookFindings(was.hooks, nowHooks),
     ...attributesFindings(was.attributes, now.attributes),
   ];
+  const notRead = notReadOf(
+    predates && nowHooks.length < now.hooks.length
+      ? "this app did not yet read the directory core.hooksPath names, so the hooks there were not compared."
+      : (was.hooksPathUnread ?? null),
+    now.hooksPathUnread ?? null,
+  );
   const since = baseline.takenAt;
   if (findings.length === 0) {
-    return { state: "unchanged", commonDir: baseline.commonDir, since, checkedAt };
+    return { state: "unchanged", commonDir: baseline.commonDir, since, checkedAt, ...notRead };
   }
   return {
     state: "changed",
@@ -348,7 +394,22 @@ export function compareGitDir(
     checkedAt,
     findings,
     concurrentRunIds: [...concurrentRunIds].sort(),
+    ...notRead,
   };
+}
+
+/**
+ * What git runs hooks from that either end could not read, as the report
+ * keeps it. Never folded into "unchanged": that is a claim this app can only
+ * make about what it read twice.
+ */
+function notReadOf(start: string | null, end: string | null): { notRead?: string[] } {
+  if (start !== null && start === end) return { notRead: [`At the run's start and end: ${start}`] };
+  const notRead = [
+    ...(start === null ? [] : [`At the run's start: ${start}`]),
+    ...(end === null ? [] : [`At the run's end: ${end}`]),
+  ];
+  return notRead.length === 0 ? {} : { notRead };
 }
 
 /**
