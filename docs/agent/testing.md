@@ -33,7 +33,7 @@ Twenty-two are renderings rather than functions — every `*.test.tsx` in the tr
 | `repoSpendAdmission.test.ts` |  |
 | `runOrigin.test.ts` |  |
 | `slotProbes.test.ts` |  |
-| `windows.test.ts` | [harnesses] |
+| `windows.test.ts` | [harnesses], [pricing] |
 
 ## [Work-cycle prompts, endings and deadlines](testing/work-cycle-prompts-and-endings.md)
 
@@ -109,6 +109,7 @@ Twenty-two are renderings rather than functions — every `*.test.tsx` in the tr
 | `transcriptCache.test.ts` |  |
 | `transcriptCompaction.test.ts` |  |
 | `transcriptDedupe.test.ts` |  |
+| `transcriptPromptTier.test.ts` | [pricing] |
 | `transcripts.test.ts` | [argv] |
 | `transcriptScan.test.ts` |  |
 | `transcriptScanMemo.test.ts` |  |
@@ -175,7 +176,7 @@ Units that are about no test file in the tree:
 | `chat.test.ts` | [proposals], [argv], [pricing], [task-deps], [landing] |
 | `chatOrder.test.ts` |  |
 | `chatRequest.test.ts` |  |
-| `chatStream.test.ts` |  |
+| `chatStream.test.ts` | [pricing] |
 | `chatThread.test.ts` | [proposals] |
 | `chatTurn.test.ts` |  |
 | `jsonRequest.test.ts` |  |
@@ -210,6 +211,7 @@ Units that are about no test file in the tree:
 | Test file | Also in |
 |---|---|
 | `validation.test.ts` |  |
+| `validationQueue.test.ts` |  |
 | `validationSettle.test.ts` |  |
 | `validationStop.test.ts` |  |
 

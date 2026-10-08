@@ -70,8 +70,20 @@ export interface ChatTurnAccumulator {
    * block before the last carries a streaming placeholder in the output field.
    */
   countedById: Map<string, TokenCounts>;
-  /** Our own price for those tokens: a guard figure, never a shown one. */
+  /**
+   * Our own price for those tokens: a guard figure, never a shown one.
+   *
+   * The sum of each response's own price (`guardCostById` and
+   * `guardCostUnidentified`), **not** a price put on `tokens`. `tokens` is a sum
+   * over many responses, and a model priced by prompt length (Claude Haiku 5.5)
+   * is billed at a tier chosen from each response's own prompt: two 60k-token
+   * responses are two cheap ones, though `tokens` reads as a 120k-token prompt.
+   */
   costGuardUSD: number;
+  /** The guard price of each response in `countedById`, replaced when a later block of it arrives. */
+  guardCostById: Map<string, number>;
+  /** The guard price of every response that carried no `message.id`, each counted once as it came. */
+  guardCostUnidentified: number;
   sessionId: string | null;
   /**
    * The first provider refusal the turn met, or null.
@@ -105,6 +117,8 @@ export function newChatTurnAccumulator(): ChatTurnAccumulator {
     tokens: { ...ZERO_TOKENS },
     countedById: new Map(),
     costGuardUSD: 0,
+    guardCostById: new Map(),
+    guardCostUnidentified: 0,
     sessionId: null,
     apiError: null,
     result: null,
@@ -235,7 +249,13 @@ export function readChatEvent(
       // ceiling that stops existing the day a new model ships is worse than one
       // that over-charges.
       const model = typeof message?.model === "string" ? message.model : undefined;
-      acc.costGuardUSD = guardCostOf(acc.tokens, resolvePrice(model));
+      // `used` is this one response's whole usage, so it may name its own tier;
+      // a response's later block replaces its earlier price rather than adding.
+      const guardCost = guardCostOf(used, resolvePrice(model), "request");
+      if (id === null) acc.guardCostUnidentified += guardCost;
+      else acc.guardCostById.set(id, guardCost);
+      acc.costGuardUSD = acc.guardCostUnidentified;
+      for (const cost of acc.guardCostById.values()) acc.costGuardUSD += cost;
     }
     return { textGrew: acc.text.length > before, spendGrew, sawResult: false };
   }

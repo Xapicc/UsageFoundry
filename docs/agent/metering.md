@@ -26,6 +26,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - `cache_creation` splits into 5m (1.25×) and 1h (2×).
 - The cache read multiplier is a property of the model, and `cacheReadMultiplierOf` is the only thing that may read it.
 - Pricing changes over time: `resolvePrice(model, {at, speed})` is speed-aware (`speed: "fast"` has its own table, which *replaces* the base entry rather than overlaying it — so a fast-mode row …
+- A rate can depend on how long a request's prompt was, and the tier is chosen per request from that request's own prompt — never from a sum.
 
 ## [Transcript parsing and the usage scan](metering/transcripts.md)
 

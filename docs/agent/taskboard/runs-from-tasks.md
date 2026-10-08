@@ -128,6 +128,16 @@ shows of what a run holds — a run linked to more could claim a task it is neve
 shown. `runs.task_id` and `chat_proposals.task_id` are backfilled into
 `run_tasks` and `task_ids` and are no longer written or read; they stay because
 dropping them is a rebuild and a rolled-back image still reads them.
+A list has a failure of its own, and both system prompts name it beside the
+`taskIds` rule: a run holding more tasks than its work-cycle limit leaves room
+to finish ends with the rest claimed, because nothing releases a claim when a
+run ends. The same bullet says several closes fit in one reply, since a turn is
+a work cycle and a brief telling its run to close one task per turn — written
+while a second close really did go unchecked (`completion-validation.md`) —
+spent a cycle on each close and stranded the tasks behind them. It is guidance
+rather than a refusal at the door: how many tasks fit in a cycle is a property
+of the tasks, and a count would refuse five small ones as readily as it let
+through two large ones.
 
 **A brief that names a board task its run is not linked to is refused, and that
 is what keeps the list from being optional.** A list the model may leave short is

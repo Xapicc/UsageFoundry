@@ -107,6 +107,7 @@ const MODEL_LABELS: Record<string, string> = {
   "claude-3-7-sonnet": "Claude 3.7 Sonnet",
   "claude-3-5-sonnet": "Claude 3.5 Sonnet",
 
+  "claude-haiku-5-5": "Claude Haiku 5.5",
   "claude-haiku-4-5": "Claude Haiku 4.5",
   "claude-3-5-haiku": "Claude 3.5 Haiku",
   "claude-3-haiku": "Claude 3 Haiku",
@@ -159,7 +160,11 @@ const ONE_MEGA_VARIANTS: { id: string; base: string }[] = [
  *
  * `claude-sonnet-5-5` is off for the first clause: current, GA and priced, but
  * the pinned 2.1.280 binary names neither it nor a `[1m]` of it, which is also
- * why `ONE_MEGA_VARIANTS` has no row for it.
+ * why `ONE_MEGA_VARIANTS` has no row for it. `claude-haiku-5-5` is off and
+ * variant-less for the same reason, measured the same way (0 hits for
+ * `haiku-5-5`), and a `[1m]` of it would in any case price like its base: its
+ * 1M window is native, and what raises its rate is the length of a request's
+ * prompt, not which deployment sent it.
  */
 const ENABLED_ON_SEED: ReadonlySet<string> = new Set([
   "claude-fable-5-1",

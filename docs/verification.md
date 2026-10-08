@@ -25,7 +25,7 @@ measurement under *Verified* and cut the item down to what is still open.
 
 | Area | File | Verified | Not yet verified |
 |---|---|--:|--:|
-| Metering and cost | [metering-and-cost.md](verification/metering-and-cost.md) | 25 | 13 |
+| Metering and cost | [metering-and-cost.md](verification/metering-and-cost.md) | 26 | 13 |
 | Budgets and guards | [budgets-and-guards.md](verification/budgets-and-guards.md) | 9 | 4 |
 | Run lifecycle | [run-lifecycle.md](verification/run-lifecycle.md) | 27 | 33 |
 | Run lifecycle | [run-lifecycle-background-work.md](verification/run-lifecycle-background-work.md) — a work cycle's wait for background tasks, and what stopping one tells the next cycle | 4 | 3 |
@@ -41,7 +41,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Concurrency and ownership | [concurrency-and-ownership.md](verification/concurrency-and-ownership.md) | 21 | 9 |
 | Isolation and landing | [isolation-and-landing.md](verification/isolation-and-landing.md) | 15 | 11 |
 | Git and review | [git-and-review.md](verification/git-and-review.md) | 16 | 11 |
-| Agents, templates and models | [agents-templates-and-models.md](verification/agents-templates-and-models.md) | 21 | 9 |
+| Agents, templates and models | [agents-templates-and-models.md](verification/agents-templates-and-models.md) | 22 | 9 |
 | Other providers | [other-providers.md](verification/other-providers.md) — Codex, and the local provider | 30 | 8 |
 | Other providers | [codex-account-and-models.md](verification/codex-account-and-models.md) — Codex's usage windows and model list, read through `codex app-server` | 6 | 5 |
 | Knowledge and plugins | [knowledge-and-plugins.md](verification/knowledge-and-plugins.md) | 16 | 11 |
@@ -64,4 +64,4 @@ measurement under *Verified* and cut the item down to what is still open.
 | Interface | [interface-narrow-viewports.md](verification/interface-narrow-viewports.md) — pages at 390px, layout sweeps and smoke-pages | 15 | 9 |
 | Interface | [interface-canvases.md](verification/interface-canvases.md) — the graph canvases, touched map and replay | 5 | 2 |
 | Interface | [interface-pages-and-api.md](verification/interface-pages-and-api.md) — pages, panels and API payloads | 20 | 12 |
-| **Total** | | **476** | **282** |
+| **Total** | | **477** | **282** |

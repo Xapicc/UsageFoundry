@@ -45,6 +45,7 @@ import {
   pollFailureMessage,
   shortPath,
 } from "@/lib/format";
+import { totalTokens } from "@/lib/pricing";
 
 /**
  * Describe the ceiling a window's percentage is measured against.
@@ -127,6 +128,14 @@ const DIMENSION_OPTIONS = DIMENSIONS.map((value) => ({
 interface BreakdownRow {
   label: string;
   cost: number;
+  /**
+   * `totalTokens` of the bucket, cache reads included — the figure the window
+   * cards and the period table print, so a column of these adds up to
+   * `s.weekly.tokens` the way Share adds up to 100%. Beside the dollars because
+   * a cost alone cannot tell a small job on an expensive model from a large one
+   * on a cheap one.
+   */
+  tokens: number;
   mark?: { text: string; tone: BadgeTone } | null;
   /**
    * The same recorded turns repriced at a cheaper model's rates, or null/absent
@@ -390,16 +399,25 @@ export default function Dashboard() {
     const s = data.snapshot;
     return {
       model: {
-        rows: s.byModel.map((m) => ({ label: m.model, cost: m.agg.costUSD })),
+        rows: s.byModel.map((m) => ({
+          label: m.model,
+          cost: m.agg.costUSD,
+          tokens: totalTokens(m.agg.tokens),
+        })),
       },
       project: {
         rows: s.byProject.map((p) => ({
           label: shortPath(p.project),
           cost: p.agg.costUSD,
+          tokens: totalTokens(p.agg.tokens),
         })),
       },
       effort: {
-        rows: s.byEffort.map((r) => ({ label: r.effort, cost: r.agg.costUSD })),
+        rows: s.byEffort.map((r) => ({
+          label: r.effort,
+          cost: r.agg.costUSD,
+          tokens: totalTokens(r.agg.tokens),
+        })),
       },
       agent: {
         // The bucket is still whatever the CLI recorded on the turn; the chip
@@ -409,6 +427,7 @@ export default function Dashboard() {
         rows: s.byAgent.map((r) => ({
           label: r.agent,
           cost: r.agg.costUSD,
+          tokens: totalTokens(r.agg.tokens),
           mark: agentOriginBadge(r.origin),
           counterfactual: r.counterfactualUSD,
         })),
@@ -423,7 +442,11 @@ export default function Dashboard() {
           : "Sub-agent turns are excluded in Settings, but a session started as an agent can still record its name here.",
       },
       skill: {
-        rows: s.bySkill.map((r) => ({ label: r.skill, cost: r.agg.costUSD })),
+        rows: s.bySkill.map((r) => ({
+          label: r.skill,
+          cost: r.agg.costUSD,
+          tokens: totalTokens(r.agg.tokens),
+        })),
       },
     };
   }, [data]);
@@ -1097,14 +1120,17 @@ export default function Dashboard() {
             <ListView box="capped">
               <Table stack>
                 <caption className="sr-only">
-                  Cost by {DIMENSION_LABEL[dimension].toLowerCase()} over{" "}
-                  {s.weekly.label.toLowerCase()}, highest first
+                  Cost and tokens by {DIMENSION_LABEL[dimension].toLowerCase()}{" "}
+                  over {s.weekly.label.toLowerCase()}, highest cost first
                 </caption>
                 <THead>
                   <tr>
                     <Th className={STICKY_HEAD}>{DIMENSION_LABEL[dimension]}</Th>
                     <Th num className={STICKY_HEAD}>
                       Cost
+                    </Th>
+                    <Th num className={STICKY_HEAD}>
+                      Tokens
                     </Th>
                     {showCounterfactual && (
                       <Th num className={STICKY_HEAD}>
@@ -1138,6 +1164,9 @@ export default function Dashboard() {
                       </Td>
                       <Td num label="Cost">
                         {fmtUSD(r.cost)}
+                      </Td>
+                      <Td num label="Tokens">
+                        {fmtTokens(r.tokens)}
                       </Td>
                       {/* Labelled with the model rather than "Counterfactual":
                           stacked below `md` this line is read on its own, and
