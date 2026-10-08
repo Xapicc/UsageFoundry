@@ -1850,11 +1850,15 @@ const BLOCK_TOOLS = [
  * that gains a sentence about a feature that is not on is paid for by every
  * cycle of every run.
  *
- * It states the mechanism and not a promise about the answer. The last two
+ * It states the mechanism and not a promise about the answer. The last three
  * sentences are the ones that earn their tokens: commit before calling, because
- * the branch is what gets read and uncommitted work is invisible to it, and
- * there is nothing to poll — a model told "this is being checked" and not told
- * to stop looking will call `list_my_tasks` in a loop until its budget runs out.
+ * the branch is what gets read and uncommitted work is invisible to it; there
+ * is nothing to poll — a model told "this is being checked" and not told to
+ * stop looking will call `list_my_tasks` in a loop until its budget runs out;
+ * and several closes fit in one turn. That last one is there because the
+ * opposite was believed and written into briefs while a second close really
+ * did go unchecked: "one complete_task per turn" spends a work cycle on each
+ * close, and runs holding more tasks than cycles ended with the rest claimed.
  */
 const CHECKED_COMPLETE_TASK =
   "Mark a task this run holds as done. You can complete only a task already " +
@@ -1866,7 +1870,9 @@ const CHECKED_COMPLETE_TASK =
   "something is missing you will be told what, in your next turn, and the " +
   "task stays yours. So commit your work before you call this — anything " +
   "uncommitted is not on the branch and cannot be seen. Do not call this " +
-  "again to find out what happened, and do not wait for it. If you cannot " +
+  "again to find out what happened, and do not wait for it. You can complete " +
+  "several tasks in the same turn: each is read in turn, one after another, " +
+  "so there is no need to end your turn between them. If you cannot " +
   "finish the task, call release_task instead, with the reason.";
 
 /**
@@ -4637,11 +4643,17 @@ async function completeTaskForRun(args: Record<string, unknown>, runId: string) 
     return text(outcome.error, true);
   }
 
-  if (outcome.kind === "checking") {
+  if (outcome.kind === "checking" || outcome.kind === "queued") {
+    const reading =
+      outcome.kind === "checking"
+        ? "What this run has committed to its branch is being read against what " +
+          "the task asks for"
+        : `${outcome.ahead === 0 ? "It is next in line" : `${outcome.ahead === 1 ? "One check is" : `${outcome.ahead} checks are`} ahead of it, one at a time`}; ` +
+          "then what this run has committed to its branch is read against what " +
+          "the task asks for";
     return text(
-      `“${outcome.task.title}” is **not closed yet**. What this run has ` +
-        "committed to its branch is being read against what the task asks for, " +
-        "and the task closes by itself if that reading finds everything there.\n\n" +
+      `“${outcome.task.title}” is **not closed yet**. ${reading}, and the task ` +
+        "closes by itself if that reading finds everything there.\n\n" +
         "Two things follow. Anything you have changed but not committed is not " +
         "on the branch and cannot be seen, so commit it now if it is part of " +
         "the work. And if the reading comes back saying something is missing, " +

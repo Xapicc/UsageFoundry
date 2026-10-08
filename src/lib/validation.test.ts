@@ -300,7 +300,6 @@ describe("validationSkipReason", () => {
     enabled: true,
     isolation: "worktree" as string | null,
     worktreeBranch: "uf/run-1",
-    otherCheckRunning: false,
   };
 
   it("checks an isolated run with a branch", () => {
@@ -313,14 +312,6 @@ describe("validationSkipReason", () => {
     // there. The pitch makes this a non-goal for the same reason.
     assert.ok(validationSkipReason({ ...base, isolation: "none" }));
     assert.ok(validationSkipReason({ ...base, worktreeBranch: null }));
-  });
-
-  it("skips a run whose other task is already being checked", () => {
-    // Only ever reached for a *different* task: the same claim asked twice is
-    // answered with the reading already in flight, one layer up, because this
-    // branch closes the task and closing it is exactly what that reading was
-    // started to gate.
-    assert.ok(validationSkipReason({ ...base, otherCheckRunning: true }));
   });
 
   it("says nothing at all when the feature is off", () => {

@@ -474,7 +474,28 @@ export function buildValidationPrompt(o: {
  */
 export type CompletionOutcome =
   | { kind: "closed"; task: Task; note: string | null }
-  | { kind: "checking"; task: Task; reviewId: string };
+  // `reviewId` is null only for the same claim asked again while its check is
+  // still reading the diff, before the row that names it exists.
+  | { kind: "checking"; task: Task; reviewId: string | null }
+  // Another of this run's tasks is being checked, and this one waits its turn.
+  // `ahead` counts the checks before it, the one in flight included.
+  | { kind: "queued"; task: Task; ahead: number };
+
+/**
+ * Each run whose check is between its `complete_task` and its spawn, with the
+ * task it is for.
+ *
+ * `runningValidation` answers only once the row exists, and the door awaits a
+ * diff read before it writes one — so two `complete_task` calls in one turn,
+ * which a model issues in parallel as readily as in sequence, both saw nothing
+ * running and both started a check. Set before the first await and cleared
+ * once the row is written or the claim is closed, which leaves no instant where
+ * a run's check is neither here nor `running`. Its own `globalThis` key for
+ * CLAUDE.md's reason.
+ */
+const startingChecks = ((globalThis as unknown as {
+  __ufValidationStarting?: Map<string, string>;
+}).__ufValidationStarting ??= new Map<string, string>());
 
 /**
  * Whether this run's claim can be checked at all.
@@ -490,24 +511,6 @@ export function validationSkipReason(o: {
   enabled: boolean;
   isolation: string | null;
   worktreeBranch: string | null;
-  /**
-   * A check of this run is already in flight.
-   *
-   * **Only a skip for a task that is not the one being checked**, and the
-   * asymmetry is the whole reason this is a parameter rather than a test inside
-   * the caller. A second `complete_task` for the *same* task is idempotent — it
-   * is answered with the check that is already running, and starting a second
-   * child for one claim would be paying twice for one reading. A second one for
-   * a *different* task cannot be checked concurrently and is closed unchecked,
-   * which is the fail-open rule applied to a shortage of exactly one slot.
-   *
-   * Read the two together and the hole this closes is visible: without the
-   * same-task case, an agent that called `complete_task` twice in a row would
-   * have the first call start a check and the second call close the task while
-   * that check was still reading — the gate defeated by repetition, silently,
-   * with the verdict landing afterwards against a task already closed.
-   */
-  otherCheckRunning: boolean;
 }): string | null {
   if (!o.enabled) return null;
   if (o.isolation !== "worktree" || !o.worktreeBranch) {
@@ -517,23 +520,21 @@ export function validationSkipReason(o: {
     // makes this a non-goal for the same reason.
     return "this run works in a shared folder rather than on its own branch, so there is no diff that is only its work";
   }
-  if (o.otherCheckRunning) {
-    return "another task of this run is already being checked, and only one can be";
-  }
   return null;
 }
 
+type CompletionAnswer =
+  | CompletionOutcome
+  | { kind: "refused"; error: string; missing: boolean };
+
 /**
- * Start one, or say why the task was simply closed.
- *
- * The order here is the same order `startReview` takes and for its reasons: the
- * cheap refusals first, the diff — which costs subprocesses — next, and the slot
- * last, because the row `startAssist` writes is what fills one.
+ * Start one, queue it behind the run's check in flight, or say why the task
+ * was simply closed.
  */
 export async function completeTaskWithValidation(
   taskId: string,
   runId: string,
-): Promise<CompletionOutcome | { kind: "refused"; error: string; missing: boolean }> {
+): Promise<CompletionAnswer> {
   const run = getRun(runId);
   const settings = getSettings();
 
@@ -545,17 +546,20 @@ export async function completeTaskWithValidation(
 
   // The same claim, said twice. Answered with the reading already in flight
   // rather than with a second child or — the failure this branch exists for —
-  // with the close that reading was started to gate.
+  // with the close that reading was started to gate. A claim already waiting
+  // its turn is the queue's insert below, which ignores a repeat.
   const live = task ? runningValidation(runId) : null;
   if (task && live && live.task_id === task.id) {
     return { kind: "checking", task, reviewId: live.id };
+  }
+  if (task && startingChecks.get(runId) === task.id) {
+    return { kind: "checking", task, reviewId: null };
   }
 
   const skip = validationSkipReason({
     enabled: settings.validateTaskCompletion,
     isolation: run?.isolation ?? null,
     worktreeBranch: run?.worktree_branch ?? null,
-    otherCheckRunning: live !== null,
   });
 
   if (!settings.validateTaskCompletion || skip !== null || !run) {
@@ -569,84 +573,284 @@ export async function completeTaskWithValidation(
     return closeNow(taskId, runId, null);
   }
 
-  const diff = await runDiff(runId);
-  const refusal = diff.kind === "none" ? null : await assistRefusal();
+  // A different task of the same run, while one is being checked. It used to
+  // be closed unchecked — fail-open applied to a shortage of one slot — and
+  // the cost of that was paid in work cycles rather than in checks: a brief
+  // that wanted every close read told its run to close one task per turn, a
+  // turn is a work cycle, and a run holding more tasks than it had cycles left
+  // ended with the rest claimed by a finished run. Queued, it is read when the
+  // one ahead of it settles, against the branch as it is then.
+  if (live !== null || startingChecks.has(runId) || queuedChecks(runId).length > 0) {
+    const ahead = queueCheck(runId, task);
+    // Only reached with nothing in flight between a settle and the drain it
+    // schedules, and harmless otherwise: the drain starts nothing while a
+    // check of this run is starting or running.
+    setImmediate(() => void drainValidationQueue(runId));
+    return { kind: "queued", task, ahead };
+  }
 
-  // After the last await and ahead of every close as well as the start: a Stop
-  // that landed while those read has no child to reach, and either a close or
-  // a check that settles later would be this run acting after it. The task is
-  // left as `settleValidation` leaves a stopped check's.
-  if (runStoppedBeforeCheck(runId)) {
+  return startCheck(task, run);
+}
+
+/**
+ * Read the branch and spawn the check, or say why the task was closed instead.
+ *
+ * The order here is the same order `startReview` takes and for its reasons: the
+ * cheap refusals first, the diff — which costs subprocesses — next, and the slot
+ * last, because the row `startAssist` writes is what fills one.
+ *
+ * The run's place in `startingChecks` is taken before the first await and given
+ * up once the row is written or the task closed, and a claim that got no child
+ * hands the turn to the next one queued, since there is no settle to do it.
+ */
+async function startCheck(task: Task, run: RunRow): Promise<CompletionAnswer> {
+  const runId = run.id;
+  const settings = getSettings();
+  startingChecks.set(runId, task.id);
+  let spawned = false;
+  try {
+    const diff = await runDiff(runId);
+    const refusal = diff.kind === "none" ? null : await assistRefusal();
+
+    // After the last await and ahead of every close as well as the start: a
+    // Stop that landed while those read has no child to reach, and either a
+    // close or a check that settles later would be this run acting after it.
+    // The task is left as `settleValidation` leaves a stopped check's.
+    if (runStoppedBeforeCheck(runId)) {
+      logRun(
+        runId,
+        `The run was stopped before “${task.title}” could be checked, so no check was started and the task was not closed. It stays claimed by this run.`,
+      );
+      return {
+        kind: "refused",
+        error: `This run has been stopped, so “${task.title}” was not closed. It stays claimed by this run for the operator to close or release.`,
+        missing: false,
+      };
+    }
+
+    if (diff.kind === "none") {
+      return closeNow(
+        task.id,
+        runId,
+        `the branch could not be read (${diff.reason ?? "no reason given"})`,
+      );
+    }
+
+    if (refusal) {
+      // Closed rather than held, and this is the branch most worth stating.
+      // The commonest cap it hits is `maxConcurrentAssists`, a bound on how
+      // many Node processes this container carries: holding a task open for
+      // that would convert a memory limit into work, exactly when the fleet is
+      // busiest. The install's daily limit closes it the same way — a check it
+      // refuses costs nothing, and a task held open would sit claimed behind a
+      // run that same limit stops at its next pre-cycle guard.
+      return closeNow(task.id, runId, `no check could be started (${refusal})`);
+    }
+
+    const { text, truncated } = diffAsText(diff, VALIDATION_DIFF_BYTES);
+
+    const started = startAssist({
+      run,
+      kind: "validate",
+      cwd: run.worktree_path ?? run.folder,
+      // The one guarantee that a validator cannot change what it is judging,
+      // and the reason the same mode is chosen for a review: a named mode
+      // survives a CLI upgrade where a deny list has to grow an entry for every
+      // new write tool and fails open when it does not.
+      permissionMode: "plan",
+      prompt: buildValidationPrompt({
+        task,
+        runPrompt: run.prompt,
+        diff,
+        diffText: text,
+        truncated,
+      }),
+      counts: { files: diff.files.length, shown: diff.files.length, truncated },
+      taskId: task.id,
+      // What the child was shown was measured from here, which after a merge
+      // of the target is not the run's base.
+      baseSha: diff.measuredFrom?.commit ?? diff.base,
+      headSha: diff.head,
+      // The one spender in this app that only ever starts itself, so it must
+      // not be able to run away: nothing presses anything here.
+      maxBudgetUSD: settings.validationBudgetUSD,
+      after: async (result) => {
+        try {
+          return settleValidation(task.id, runId, result);
+        } finally {
+          // `setImmediate` because `finish` writes this row only once `after`
+          // has resolved, and a drain that ran first would read it still
+          // `running` and start nothing.
+          setImmediate(() => void drainValidationQueue(runId));
+        }
+      },
+    });
+
+    if (!started.ok) {
+      return closeNow(task.id, runId, `the check could not be started (${started.reason})`);
+    }
+    spawned = true;
+
     logRun(
       runId,
-      `The run was stopped before “${task.title}” could be checked, so no check was started and the task was not closed. It stays claimed by this run.`,
+      `Checking “${task.title}” against this run's branch before closing it. The task stays open until that comes back.`,
     );
-    return {
-      kind: "refused",
-      error: `This run has been stopped, so “${task.title}” was not closed. It stays claimed by this run for the operator to close or release.`,
-      missing: false,
-    };
-  }
 
-  if (diff.kind === "none") {
-    return closeNow(
-      taskId,
+    return { kind: "checking", task, reviewId: started.id };
+  } finally {
+    startingChecks.delete(runId);
+    if (!spawned) setImmediate(() => void drainValidationQueue(runId));
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Claims waiting their turn                                           */
+/* ------------------------------------------------------------------ */
+
+/** This run's queued claims, oldest first. */
+function queuedChecks(runId: string): string[] {
+  return (
+    db()
+      .prepare("SELECT task_id FROM validation_queue WHERE run_id = ? ORDER BY asked_at, rowid")
+      .all(runId) as { task_id: string }[]
+  ).map((row) => row.task_id);
+}
+
+/**
+ * Put a claim in the run's queue, and say how many checks are ahead of it.
+ *
+ * A repeat of a claim already waiting is ignored rather than queued twice,
+ * which is the same-claim rule above for a claim that has no row yet.
+ */
+function queueCheck(runId: string, task: Task): number {
+  const inserted = db()
+    .prepare(
+      "INSERT OR IGNORE INTO validation_queue (run_id, task_id, asked_at) VALUES (?, ?, ?)",
+    )
+    .run(runId, task.id, Date.now());
+  const queued = queuedChecks(runId);
+  const inFlight = runningValidation(runId) !== null || startingChecks.has(runId) ? 1 : 0;
+  const ahead = inFlight + queued.indexOf(task.id);
+  if (inserted.changes > 0) {
+    logRun(
       runId,
-      `the branch could not be read (${diff.reason ?? "no reason given"})`,
+      `“${task.title}” will be checked against this run's branch ${ahead === 0 ? "next" : `after the ${ahead === 1 ? "check" : `${ahead} checks`} ahead of it, one at a time`}. The task stays open until that comes back.`,
     );
   }
+  return ahead;
+}
 
-  if (refusal) {
-    // Closed rather than held, and this is the branch most worth stating. The
-    // commonest cap it hits is `maxConcurrentAssists`, a bound on how many Node
-    // processes this container carries: holding a task open for that would
-    // convert a memory limit into work, exactly when the fleet is busiest. The
-    // install's daily limit closes it the same way — a check it refuses
-    // costs nothing, and a task held open would sit claimed behind a run that
-    // same limit stops at its next pre-cycle guard.
-    return closeNow(taskId, runId, `no check could be started (${refusal})`);
+/**
+ * Start the run's oldest queued claim, if nothing of this run is being checked.
+ *
+ * Reached from a settle, from a claim that got no child, and from the door, so
+ * it is called more often than there is anything to start and the first test
+ * is the cheap no. Nothing awaits between taking the row and `startCheck`
+ * taking the run's place in `startingChecks`, so two drains cannot both start
+ * one.
+ *
+ * **It never throws**, for `settleValidation`'s reason, and because every
+ * caller drops its promise: once the claim has left the queue a failure that
+ * escaped would leave its task claimed for good by a run that believed it was
+ * being checked, so the task is closed on the run's word instead. One before
+ * that leaves the claim queued, where the next drain or the boot finds it.
+ */
+async function drainValidationQueue(runId: string): Promise<void> {
+  let taskId: string | undefined;
+  try {
+    if (startingChecks.has(runId) || runningValidation(runId)) return;
+    taskId = queuedChecks(runId)[0];
+    if (!taskId) return;
+    db()
+      .prepare("DELETE FROM validation_queue WHERE run_id = ? AND task_id = ?")
+      .run(runId, taskId);
+    await startQueuedCheck(taskId, runId);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (taskId === undefined) {
+      console.error(`validation queue for run ${runId} could not be read: ${message}`);
+      return;
+    }
+    try {
+      closeAfterVerdict(
+        taskId,
+        runId,
+        `It could not be checked (${message}), so it is closed on the run's own word.`,
+      );
+    } catch {
+      /* nothing further to try, and throwing would be an unhandled rejection */
+    }
+    setImmediate(() => void drainValidationQueue(runId));
+  }
+}
+
+/**
+ * The door's decisions again, for a claim that waited: everything may have
+ * moved since it was asked.
+ *
+ * Nobody reads this answer the way the run reads its tool result, so every
+ * close is said on the run's log, where a close at the door was said in the
+ * reply. A task the operator moved meanwhile is left where they put it, and a
+ * run they stopped meanwhile is `startCheck`'s refusal, which leaves the task
+ * claimed exactly as a check its Stop reached would.
+ */
+async function startQueuedCheck(taskId: string, runId: string): Promise<void> {
+  const task = getTask(taskId);
+  if (!task || task.status !== "claimed" || task.claimedByRunId !== runId) {
+    logRun(
+      runId,
+      task
+        ? `“${task.title}” was not checked: it was moved off this run while it waited, and is left where that put it.`
+        : "A task this run asked to close was deleted while it waited to be checked.",
+    );
+    setImmediate(() => void drainValidationQueue(runId));
+    return;
   }
 
-  const { text, truncated } = diffAsText(diff, VALIDATION_DIFF_BYTES);
-
-  const started = startAssist({
-    run,
-    kind: "validate",
-    cwd: run.worktree_path ?? run.folder,
-    // The one guarantee that a validator cannot change what it is judging, and
-    // the reason the same mode is chosen for a review: a named mode survives a
-    // CLI upgrade where a deny list has to grow an entry for every new write
-    // tool and fails open when it does not.
-    permissionMode: "plan",
-    prompt: buildValidationPrompt({
-      task,
-      runPrompt: run.prompt,
-      diff,
-      diffText: text,
-      truncated,
-    }),
-    counts: { files: diff.files.length, shown: diff.files.length, truncated },
-    taskId: task.id,
-    // What the child was shown was measured from here, which after a merge
-    // of the target is not the run's base.
-    baseSha: diff.measuredFrom?.commit ?? diff.base,
-    headSha: diff.head,
-    // The one spender in this app that only ever starts itself, so it must not
-    // be able to run away: nothing presses anything here.
-    maxBudgetUSD: settings.validationBudgetUSD,
-    after: async (result) => settleValidation(task.id, runId, result),
+  const run = getRun(runId);
+  const settings = getSettings();
+  const skip = validationSkipReason({
+    enabled: settings.validateTaskCompletion,
+    isolation: run?.isolation ?? null,
+    worktreeBranch: run?.worktree_branch ?? null,
   });
+  const outcome =
+    !settings.validateTaskCompletion || skip !== null || !run
+      ? closeNow(taskId, runId, skip ?? (run ? "completion checks were switched off" : null))
+      : await startCheck(task, run);
 
-  if (!started.ok) {
-    return closeNow(taskId, runId, `the check could not be started (${started.reason})`);
+  if (outcome.kind === "closed") {
+    logRun(
+      runId,
+      outcome.note
+        ? `Closed “${task.title}” without checking it, because ${outcome.note}.`
+        : `Closed “${task.title}”.`,
+    );
+  } else if (outcome.kind === "refused" && !runStoppedBeforeCheck(runId)) {
+    logRun(runId, `The task was not closed: ${outcome.error}`);
   }
+}
 
-  logRun(
-    runId,
-    `Checking “${task.title}” against this run's branch before closing it. The task stays open until that comes back.`,
-  );
-
-  return { kind: "checking", task, reviewId: started.id };
+/**
+ * Close every claim a restart left waiting, as its check would have.
+ *
+ * A restart is one more way of having no verdict, and the settle that would
+ * have started these died with the old process — `closeStrandedValidations`'
+ * case one step earlier. The run is the actor, so a task the operator has
+ * since moved stays where they put it.
+ */
+export function closeQueuedValidations(): void {
+  const rows = db()
+    .prepare("SELECT run_id, task_id FROM validation_queue ORDER BY asked_at, rowid")
+    .all() as { run_id: string; task_id: string }[];
+  db().prepare("DELETE FROM validation_queue").run();
+  for (const row of rows) {
+    closeAfterVerdict(
+      row.task_id,
+      row.run_id,
+      "The server restarted before this task could be checked, so it is closed on the run's own word.",
+    );
+  }
 }
 
 /** Close it exactly as the unvalidated path does, carrying why if there is a why. */
@@ -810,9 +1014,16 @@ export function closeStrandedValidations(rows: readonly ReviewRow[]): void {
 /* What the run loop reads                                             */
 /* ------------------------------------------------------------------ */
 
-/** A validation that has not settled yet, or null. */
+/**
+ * Whether this run has a check reading, starting, or waiting its turn — every
+ * state whose verdict the boundary has not seen yet.
+ */
 export function validationInFlight(runId: string): boolean {
-  return assistRunning(runId, "validate");
+  return (
+    assistRunning(runId, "validate") ||
+    startingChecks.has(runId) ||
+    queuedChecks(runId).length > 0
+  );
 }
 
 /**
@@ -932,7 +1143,7 @@ export function validationPushback(o: {
 }
 
 /**
- * How long the run loop will wait at a cycle boundary for a verdict.
+ * How long the run loop will wait at a cycle boundary for one check's verdict.
  *
  * The assist's own clock is ten minutes and `spawnAssist` gives the child five
  * seconds to die after it; this is that plus a margin, so the wait ends because
@@ -995,9 +1206,22 @@ export async function validationAtBoundary(
   const settings = getSettings();
   if (!settings.validateTaskCompletion) return null;
 
-  const deadline = Date.now() + VERDICT_WAIT_MS;
-  while (validationInFlight(runId) && Date.now() < deadline) {
+  // The wait is per check rather than per boundary: a run that closed several
+  // tasks in its last turn has them read one after another, each on its own
+  // ten-minute clock, so the deadline starts again whenever a different check
+  // is the one reading. It still ends: the queue is at most the tasks the run
+  // holds, `MAX_RUN_TASKS`, and nothing joins it while no cycle is running.
+  // What it holds meanwhile is the run's own folder and slot.
+  let reading: string | null = null;
+  let deadline = Date.now() + VERDICT_WAIT_MS;
+  while (validationInFlight(runId)) {
     if (interrupted()) return null;
+    const current = runningValidation(runId)?.id ?? null;
+    if (current !== reading) {
+      reading = current;
+      deadline = Date.now() + VERDICT_WAIT_MS;
+    }
+    if (Date.now() >= deadline) break;
     await new Promise((resolve) => setTimeout(resolve, VERDICT_POLL_MS));
   }
 

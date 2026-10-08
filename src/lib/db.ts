@@ -1264,6 +1264,27 @@ function migrate(db: Database.Database) {
   addColumn(db, "run_reviews", "base_sha", "TEXT");
   addColumn(db, "run_reviews", "head_sha", "TEXT");
 
+  // A run's `complete_task` claims waiting for that run's check in flight to
+  // settle, oldest first. A run is checked one task at a time, and a second
+  // claim used to be closed unchecked; queued instead, it is checked when the
+  // one ahead of it settles, so a run may close every task it holds in one
+  // turn rather than spending a work cycle on each. A row, not a `globalThis`
+  // list, because a restart has to find these: the settle that would start
+  // them dies with the process, and a claim nobody starts is a task left
+  // claimed for good — so the boot closes each on the run's word, as it does a
+  // check that was cut off mid-read. Neither end is a foreign key, for
+  // `run_tasks`' reasons, and a row lives only until its check starts. A new
+  // table, so no `SCHEMA_VERSION` bump. See
+  // docs/agent/taskboard/completion-validation.md.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS validation_queue (
+      run_id   TEXT NOT NULL,
+      task_id  TEXT NOT NULL,
+      asked_at INTEGER NOT NULL,
+      PRIMARY KEY (run_id, task_id)
+    );
+  `);
+
   // A proposal may now name no template at all, which the column above was
   // declared NOT NULL to forbid. SQLite cannot relax that with ALTER, so the
   // table is rebuilt — once, only where the old shape is still there.

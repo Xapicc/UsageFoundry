@@ -181,7 +181,7 @@ async function startCheck(runId: string, task: Task): Promise<string> {
   const outcome = await validation.completeTaskWithValidation(task.id, runId);
   assert.equal(outcome.kind, "checking", JSON.stringify(outcome));
   await until("the validator to start", () => fs.existsSync(control("started")));
-  return outcome.kind === "checking" ? outcome.reviewId : "";
+  return outcome.kind === "checking" ? (outcome.reviewId ?? "") : "";
 }
 
 async function until(what: string, ready: () => boolean): Promise<void> {

@@ -185,8 +185,12 @@ export async function register() {
 
       // A validation among them was holding a task open, and the settle that
       // closes it died with the old process — so the close happens here.
-      const { closeStrandedValidations } = await import("./lib/validation");
+      // And a claim still queued behind one was never started at all.
+      const { closeStrandedValidations, closeQueuedValidations } = await import(
+        "./lib/validation"
+      );
       closeStrandedValidations(strandedAssists);
+      closeQueuedValidations();
 
       // And a resolution among them left its merge open in a checkout, since
       // its `after` is the only thing that closes one. Left open, the Land card

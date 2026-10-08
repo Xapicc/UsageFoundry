@@ -130,6 +130,7 @@ The paragraphs themselves live in `docs/agent/taskboard/`, one topic file per he
 ## [Validating a run's claim to have finished a task](taskboard/completion-validation.md)
 
 - A run's claim to have finished a task can be checked before the board acts on it, and every way that check can fail closes the task anyway.
+- A run's checks run one at a time, and a claim on a second task waits its turn rather than closing unchecked.
 - The judge is never told that a run claims to be finished, and the prompt is a measuring instrument rather than a setting.
 - What the judge is shown is the branch, and uncommitted work is named as not delivered.
 - An unfinished verdict buys work cycles, and it may extend exactly one guard.

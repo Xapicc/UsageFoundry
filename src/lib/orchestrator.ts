@@ -670,8 +670,8 @@ const assistProcs = ((globalThis as unknown as {
  * set it synchronously and that module imports this one.
  *
  * Keyed by run because a run has one validation in flight at a time: a claim
- * on a second task while one is reading is closed unchecked
- * (`validationSkipReason`). Its own key for `__ufAssistProcs`' reason.
+ * on a second task while one is reading waits in `validation_queue` for it to
+ * settle. Its own key for `__ufAssistProcs`' reason.
  */
 const validationProcs = ((globalThis as unknown as {
   __ufValidationProcs?: Map<string, { child: SignalTarget; stopped: boolean }>;
