@@ -1497,7 +1497,9 @@ export function WorkflowCanvas({
                               }`
                             : null,
                           block.kind === "review"
-                            ? `${block.fixRounds || "0"} fix round${block.fixRounds === "1" ? "" : "s"}`
+                            ? block.verdictSource === "status"
+                              ? "by run status"
+                              : `${block.fixRounds || "0"} fix round${block.fixRounds === "1" ? "" : "s"}`
                             : null,
                           // Where the work goes when it is not Claude, which
                           // is a fact about the run worth seeing at a glance.
