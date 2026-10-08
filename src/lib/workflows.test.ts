@@ -539,6 +539,109 @@ describe("normalizeWorkflowInput — name and blocks", () => {
     assert.equal(value(graph([node("a", { kind: undefined })])).graph.nodes[0].kind, "run");
   });
 
+  it("refuses a block's workspace, folder, template, agent or provider that is not a string", () => {
+    // `["work"]` read through `String()` is the workspace `work`, and the same
+    // for the folder and the agent: a billed run started in a directory, or as
+    // an agent, that the caller wrote inside a list rather than as itself.
+    const fields: Array<[string, unknown]> = [
+      ["mountId", ["work"]],
+      ["folder", ["repo"]],
+      ["templateId", ["t-iso"]],
+      ["agentId", ["a-rev"]],
+      ["provider", ["local"]],
+    ];
+    for (const [field, wrapped] of fields) {
+      for (const wrong of [wrapped, { id: "x" }, 7]) {
+        for (const make of [node, decider]) {
+          const refusal = error(graph([make("a", { [field]: wrong })]));
+          assert.match(
+            refusal,
+            new RegExp(`^“A”: "${field}" has to be a string when it is given; got `),
+            `${field}: ${JSON.stringify(wrong)}`,
+          );
+        }
+      }
+    }
+    // Absent and null keep their meaning: no folder is the mount root, no
+    // template is the guards in Settings, no agent and no provider are none.
+    const plain = value(
+      graph([node("a", { folder: null, templateId: null, agentId: null, provider: null })]),
+    ).graph.nodes[0];
+    assert.equal(plain.folder, "");
+    assert.equal(plain.templateId, null);
+    assert.equal(plain.agentId, null);
+    assert.equal(plain.provider, null);
+    assert.equal(value(graph([node("a", { folder: undefined })])).graph.nodes[0].folder, "");
+  });
+
+  it("refuses a merge block's strategy, agent or provider that is not a string, and nothing it drops", () => {
+    for (const field of ["mergeStrategy", "agentId", "provider"]) {
+      assert.match(
+        error(graph([node("a"), merger("m", { [field]: ["squash"] })], [edge("a", "m")])),
+        new RegExp(`^“M”: "${field}" has to be a string when it is given; got `),
+        field,
+      );
+    }
+    // The workspace, folder and template a merge block drops unread are not
+    // refused, whatever they hold.
+    const merged = value(
+      graph(
+        [node("a"), merger("m", { mountId: ["work"], folder: {}, templateId: [1] })],
+        [edge("a", "m")],
+      ),
+    ).graph.nodes[1];
+    assert.equal(merged.mountId, "");
+    assert.equal(merged.folder, "");
+    assert.equal(merged.templateId, null);
+  });
+
+  it("refuses a loop's body id that is not a string rather than reading the id inside it", () => {
+    for (const wrong of [["la"], { id: "la" }, 3]) {
+      assert.match(
+        error(
+          graph(
+            [repeater("l", { bodyNodeIds: [wrong] }), node("la"), merger("lm")],
+            [edge("la", "lm")],
+          ),
+        ),
+        /^“L”: "bodyNodeIds\[0\]" has to be a string when it is given; got /,
+        JSON.stringify(wrong),
+      );
+    }
+  });
+
+  it("refuses a board condition's workspace, folder, status or priority that is not a string", () => {
+    const board = (extra: Record<string, unknown>) =>
+      looped({
+        stopWhenTasks: {
+          mountId: "work",
+          folder: "repo",
+          statuses: ["open"],
+          thresholds: [{ priority: "any", atMost: 0 }],
+          ...extra,
+        },
+      });
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ mountId: ["work"] }, "stopWhenTasks.mountId"],
+      [{ folder: ["repo"] }, "stopWhenTasks.folder"],
+      [{ statuses: [["open"]] }, "stopWhenTasks.statuses\\[0\\]"],
+      [{ thresholds: [{ priority: ["high"], atMost: 0 }] }, "stopWhenTasks.thresholds\\[0\\].priority"],
+    ];
+    for (const [extra, field] of cases) {
+      assert.match(
+        error(board(extra)),
+        new RegExp(`^“L”: "${field}" has to be a string when it is given; got `),
+        JSON.stringify(extra),
+      );
+    }
+    // Absent keeps its meaning: no folder is the mount root, no priority is
+    // the project whole.
+    const kept = value(board({ folder: undefined, thresholds: [{ atMost: 0 }] }))
+      .graph.nodes[0].stopWhenTasks;
+    assert.equal(kept?.folder, "");
+    assert.equal(kept?.thresholds[0].priority, "any");
+  });
+
   it("refuses a loop's not-told field that is not a string, rather than reading it as blank", () => {
     // `String([])` is `""`, so an empty list in `task` or `folder` was "told
     // nothing" and the block was saved with a value the loop's refusal exists

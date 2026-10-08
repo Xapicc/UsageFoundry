@@ -787,6 +787,12 @@ export function normalizeBoardCondition(
   }
   const o = raw as Record<string, unknown>;
 
+  // Asked before the `String(…)` that reads each one: `["work"]` was the
+  // workspace `work`, and a list-wrapped folder a project nobody named.
+  for (const field of ["mountId", "folder"]) {
+    const notString = notStringRefusal(`stopWhenTasks.${field}`, o[field]);
+    if (notString) return { ok: false, error: `“${nodeName}”: ${notString}` };
+  }
   const mountId = String(o.mountId ?? "").trim();
   if (!mountId) {
     return {
@@ -807,7 +813,10 @@ export function normalizeBoardCondition(
 
   const rawStatuses = Array.isArray(o.statuses) ? o.statuses : [];
   const statuses: TaskStatusDTO[] = [];
-  for (const entry of rawStatuses) {
+  for (const [at, entry] of rawStatuses.entries()) {
+    // `["open"]` was the status `open`, for `String()`'s reason above.
+    const notString = notStringRefusal(`stopWhenTasks.statuses[${at}]`, entry);
+    if (notString) return { ok: false, error: `“${nodeName}”: ${notString}` };
     const status = String(entry ?? "").trim();
     if (GROWING_TASK_STATUSES.includes(status as TaskStatusDTO)) {
       return {
@@ -869,11 +878,17 @@ export function normalizeBoardCondition(
   }
 
   const thresholds: LoopBoardThreshold[] = [];
-  for (const entry of rawThresholds) {
+  for (const [at, entry] of rawThresholds.entries()) {
     const raw = (entry ?? {}) as Record<string, unknown>;
     // Missing is `any` rather than a refusal: that is what the single-number
     // shape meant, and it is the only reading a threshold with no priority on
-    // it could have.
+    // it could have. A list-wrapped one is neither, and was read as the
+    // priority inside it.
+    const notString = notStringRefusal(
+      `stopWhenTasks.thresholds[${at}].priority`,
+      raw.priority,
+    );
+    if (notString) return { ok: false, error: `“${nodeName}”: ${notString}` };
     const priority = String(raw.priority ?? "any").trim() || "any";
     if (!THRESHOLD_PRIORITIES.includes(priority as TaskPriorityDTO)) {
       return {
@@ -1103,6 +1118,9 @@ function normalizeNode(
     let mergeStrategy: LandStrategy | null = null;
     let mergeAutoResolve = false;
     if (kind === "merge") {
+      // `["squash"]` was the strategy inside the list.
+      const notStrategy = notStringRefusal("mergeStrategy", n.mergeStrategy);
+      if (notStrategy) return { ok: false, error: `“${nodeName}”: ${notStrategy}` };
       const raw = String(n.mergeStrategy ?? "");
       if (raw !== "merge" && raw !== "squash") {
         return {
@@ -1134,7 +1152,10 @@ function normalizeNode(
 
     // Which CLI does the work, on the two kinds whose work is runs. Refused by
     // name anywhere else, on `agentId`'s grounds below: a provider named on a
-    // block that starts no run is a choice no process will ever act on.
+    // block that starts no run is a choice no process will ever act on. Typed
+    // on every kind for that reason: every kind reads it, if only to refuse it.
+    const notProvider = notStringRefusal("provider", n.provider);
+    if (notProvider) return { ok: false, error: `“${nodeName}”: ${notProvider}` };
     const rawProvider =
       n.provider === null || n.provider === undefined ? "" : String(n.provider).trim();
     if (rawProvider && !(RUN_PROVIDERS as readonly string[]).includes(rawProvider)) {
@@ -1203,10 +1224,14 @@ function normalizeNode(
       // Absent, null and a non-array all read as "this loop repeats its own
       // task", which is what every graph saved before the field existed says.
       // Nothing more is decided here: whether these ids name blocks, and
-      // whether the blocks they name can be a body, is `graphRefusal`'s.
-      bodyNodeIds = Array.isArray(n.bodyNodeIds)
-        ? n.bodyNodeIds.map((entry) => String(entry ?? "").trim())
-        : [];
+      // whether the blocks they name can be a body, is `graphRefusal`'s — once
+      // each is an id: `["a"]` was the block `a`.
+      const rawBody: unknown[] = Array.isArray(n.bodyNodeIds) ? n.bodyNodeIds : [];
+      for (const [at, entry] of rawBody.entries()) {
+        const notString = notStringRefusal(`bodyNodeIds[${at}]`, entry);
+        if (notString) return { ok: false, error: `“${nodeName}”: ${notString}` };
+      }
+      bodyNodeIds = rawBody.map((entry) => String(entry ?? "").trim());
     } else if (Array.isArray(n.bodyNodeIds) && n.bodyNodeIds.length > 0) {
       // Refused rather than dropped, on `stopWhenTasks`' grounds one field
       // over: a body is a section of the graph the operator said to repeat, and
@@ -1247,6 +1272,14 @@ function normalizeNode(
     // `resolveConflicts`' — runs under that function's own fixed mode. A loop
     // names none for the same reason, so `guardsFor` is never asked about one;
     // the guards a pass runs under are each member's own.
+    //
+    // Typed only where it is read, `promptOverride`'s rule, and the same for
+    // the workspace and folder below: on a block that starts no run all three
+    // are dropped unread, and a loop's were asked above.
+    for (const field of ["templateId", "mountId", "folder"]) {
+      const notString = startsNoRun ? null : notStringRefusal(field, n[field]);
+      if (notString) return { ok: false, error: `“${nodeName}”: ${notString}` };
+    }
     const templateId =
       startsNoRun ||
       n.templateId === null ||
@@ -1307,6 +1340,14 @@ function normalizeNode(
     // objection was that there was nobody to hand the subtask to, and under
     // `--agent` it is that there is no child for the agent to *be*. Both ends
     // of a `continueBranch` edge are refused by name below on the same grounds.
+    //
+    // Typed on the kinds that read it — the two whose child is started as it,
+    // and the two that refuse it by name — since `["a-rev"]` was the agent
+    // inside the list. A loop's was asked above.
+    const readsAgent =
+      kind === "run" || kind === "orchestrator" || kind === "merge" || kind === "review";
+    const notAgent = readsAgent ? notStringRefusal("agentId", n.agentId) : null;
+    if (notAgent) return { ok: false, error: `“${nodeName}”: ${notAgent}` };
     const namedAgent =
       n.agentId === null || n.agentId === undefined || String(n.agentId).trim() === ""
         ? null
