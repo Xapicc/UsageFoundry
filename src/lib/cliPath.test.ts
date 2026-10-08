@@ -551,4 +551,49 @@ describe("the chat child's own configuration", () => {
       });
     }
   });
+
+  it("denies a sandboxed Bash call the capability directory, in that one --settings, where there is a chat group", async () => {
+    // A git driver a work cycle planted in a checkout's `.git` runs under the
+    // chat group, which reads the capability file. The deny is what keeps the
+    // driver from it, and nothing on the argv fails if it goes missing.
+    const { sandboxOverlay } = await import("./orchestrator");
+    const chatGroup = { gid: 65533, dirMode: 0o710, fileMode: 0o040, scratchDirMode: 0o770 };
+    const denyRead = chat.chatCapabilityDenyRead(chatGroup);
+    assert.deepEqual(denyRead, [chat.MCP_CONFIG_BASE]);
+
+    const overlay = sandboxOverlay({ kind: "confined", allowWrite: ["/workspace"] }, "on", denyRead);
+    const args = chat.chatSettingsArgs(overlay);
+    assert.equal(args.filter((arg) => arg === "--settings").length, 1);
+    const settings = JSON.parse(args[args.indexOf("--settings") + 1]);
+    assert.deepEqual(settings.sandbox.filesystem, {
+      allowWrite: ["/workspace"],
+      denyRead: [chat.MCP_CONFIG_BASE],
+    });
+    // The binary rewrites an enabled policy with no `failIfUnavailable` to
+    // `true`, which would fail every chat `Bash` call wherever bwrap cannot
+    // create a namespace.
+    assert.equal("enabled" in settings.sandbox, false);
+    assert.equal(settings.disableAllHooks, true);
+  });
+
+  it("names nothing to deny without a chat group, and carries no deny on an install with no sandbox", async () => {
+    // Without `UF_CHAT_GID` the file is the agents' own, in a directory the
+    // chat's write set names, so there is nothing to keep this child from.
+    const { sandboxOverlay } = await import("./orchestrator");
+    assert.deepEqual(chat.chatCapabilityDenyRead(null), []);
+    const withoutDeny = sandboxOverlay({ kind: "confined", allowWrite: ["/workspace"] }, "on", []);
+    assert.deepEqual(withoutDeny?.sandbox.filesystem, { allowWrite: ["/workspace"] });
+    // A stock install has no CLI sandbox, so the whole overlay is withheld and
+    // the deny with it: that gap is a decision, recorded in
+    // `docs/agent/security/chat-child-config-files.md`, and this pins that it
+    // stays what the doc says.
+    const stock = sandboxOverlay(
+      { kind: "confined", allowWrite: ["/workspace"] },
+      "none",
+      [chat.MCP_CONFIG_BASE],
+    );
+    assert.equal(stock, null);
+    const stockArgs = chat.chatSettingsArgs(stock);
+    assert.equal("sandbox" in JSON.parse(stockArgs[stockArgs.indexOf("--settings") + 1]), false);
+  });
 });
