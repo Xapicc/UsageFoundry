@@ -5731,11 +5731,17 @@ function proposeRun(args: Record<string, unknown>, chatId: string, decision: Mod
   //
   // Read on every proposal rather than only when ids were named, because the
   // failure is precisely the proposal that named none and put tasks in its text.
+  //
+  // `localRun` is the card's provider, for the orchestrator block's reason: a
+  // task a frontier review marked needs-frontier is refused here by name, where
+  // the chat can still act on it, and nothing at the click would stop the
+  // local run claiming it.
   const board = currentTaskKnowledge();
   const links = readTaskLinks(
     args,
     [title, task, promptOverride ?? ""].join("\n"),
     board,
+    { localRun: provider === "local" },
   );
   if (!links.ok) return text(`${links.reason} Nothing was proposed.`, true);
   const taskIds = links.taskIds;
