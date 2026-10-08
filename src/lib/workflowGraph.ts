@@ -92,6 +92,19 @@ export interface WorkflowNode {
   /** Path within the mount. `""` is the mount root, and is a real answer. */
   folder: string;
   /**
+   * True when this block works in the folder a press of Run chose from the
+   * workflow's saved `folders`, rather than in a folder of its own.
+   *
+   * Absent is false, and it has to be: every graph saved before this existed
+   * names its own folder on every block, and no reading may move one. Only a
+   * run or orchestrator block may carry it — the other kinds name no folder to
+   * replace. Such a block still *stores* a concrete `mountId`/`folder`, the
+   * first saved folder, written by `normalizeWorkflowInput` and never typed by
+   * anybody: every reader of a saved graph that is not instantiation then sees
+   * a folder a person saved, never `""`, which is the mount root.
+   */
+  followsChosenFolder?: boolean;
+  /**
    * What this block is asked to do, or to decide. `""` on a merge block and on
    * a loop, neither of which is asked anything — see `LOOP_IS_TOLD_NOTHING`.
    */
@@ -418,7 +431,27 @@ export interface WorkflowInput {
    * emits can reach it — see `startWorkflow`.
    */
   instanceBudget: InstanceBudgetPolicy;
+  /**
+   * The folders a press of Run may choose among, in the order a person saved
+   * them; the first is the one a schedule uses. Absent or empty on every
+   * workflow saved before this existed, and on one whose blocks each name
+   * their own — Run then asks nothing, as it always did.
+   *
+   * Every entry is a folder a person saved here, so Run is a choice among
+   * saved answers and never a path off the wire.
+   */
+  folders?: WorkflowFolder[];
 }
+
+/** One folder a workflow is saved against: a mount and a path within it. */
+export interface WorkflowFolder {
+  mountId: string;
+  /** `""` is the mount root, as on a node. */
+  folder: string;
+}
+
+/** At most this many saved folders, so the Run control stays a short list. */
+export const MAX_WORKFLOW_FOLDERS = 20;
 
 export interface Workflow extends WorkflowInput {
   id: string;
@@ -553,14 +586,31 @@ export function normalizeWorkflowInput(
     };
   }
 
+  // Before the nodes, because a block that follows the chosen folder stores
+  // the first of these as its own.
+  const folders = normalizeWorkflowFolders(o.folders, known);
+  if (!folders.ok) return folders;
+
   const nodes: WorkflowNode[] = [];
   const byId = new Map<string, WorkflowNode>();
 
   for (const [index, entry] of rawNodes.entries()) {
-    const node = normalizeNode(entry, index, known, byId);
+    const node = normalizeNode(entry, index, known, byId, folders.value[0] ?? null);
     if (!node.ok) return node;
     nodes.push(node.value);
     byId.set(node.value.id, node.value);
+  }
+
+  // A list nothing follows is a question Run would ask whose answer moves no
+  // block — a choice no process acts on — so it is refused rather than kept.
+  if (folders.value.length > 0 && !nodes.some((n) => n.followsChosenFolder)) {
+    return {
+      ok: false,
+      error:
+        "This workflow saves folders to choose from at Run, but no block " +
+        "follows the chosen folder, so the choice would move nothing. Set a " +
+        "run or orchestrator block to follow it, or remove the folders.",
+    };
   }
 
   const edges: WorkflowEdge[] = [];
@@ -763,7 +813,167 @@ export function normalizeWorkflowInput(
   // unstartable *today*. The editor says so beside the field.
   const instanceBudget = normalizeInstanceBudget(o.instanceBudget);
 
-  return { ok: true, value: { name, graph: { nodes, edges }, instanceBudget } };
+  return {
+    ok: true,
+    value: { name, graph: { nodes, edges }, instanceBudget, folders: folders.value },
+  };
+}
+
+type FoldersNormalization =
+  | { ok: true; value: WorkflowFolder[] }
+  | { ok: false; error: string };
+
+/**
+ * A workflow's saved folders off the wire, or the sentence refusing them.
+ *
+ * Absent and null are none, which is every workflow saved before the field.
+ * Each entry is held to a node's own rule — a mounted workspace and a string
+ * path — and whether it resolves on disk is `listedFolderRefusal`'s, the
+ * syscall half, as `folderRefusal` is for a node's. A duplicate is refused:
+ * two entries naming one folder would be two answers at Run that do the same.
+ */
+function normalizeWorkflowFolders(
+  raw: unknown,
+  known: WorkflowKnowledge,
+): FoldersNormalization {
+  if (raw === undefined || raw === null) return { ok: true, value: [] };
+  if (!Array.isArray(raw)) {
+    return { ok: false, error: "folders: expected a list of folders." };
+  }
+  if (raw.length > MAX_WORKFLOW_FOLDERS) {
+    return {
+      ok: false,
+      error: `A workflow saves at most ${MAX_WORKFLOW_FOLDERS} folders to choose from; this one has ${raw.length}.`,
+    };
+  }
+  const value: WorkflowFolder[] = [];
+  const seen = new Set<string>();
+  for (const [index, entry] of raw.entries()) {
+    const where = `Folder ${index + 1}`;
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      return { ok: false, error: `${where} is not a workspace and a folder.` };
+    }
+    const e = entry as Record<string, unknown>;
+    for (const field of ["mountId", "folder"]) {
+      const notString = notStringRefusal(field, e[field]);
+      if (notString) return { ok: false, error: `${where}: ${notString}` };
+    }
+    const mountId = String(e.mountId ?? "");
+    if (!mountId) {
+      return { ok: false, error: `${where} names no workspace.` };
+    }
+    if (!known.mountIds.includes(mountId)) {
+      return {
+        ok: false,
+        error: `${where} names a workspace that is not mounted: ${mountId}.`,
+      };
+    }
+    const folder = String(e.folder ?? "");
+    const key = `${mountId}\u0000${folder}`;
+    if (seen.has(key)) {
+      return {
+        ok: false,
+        error: `${where} is already on the list: ${mountId}/${folder}.`,
+      };
+    }
+    seen.add(key);
+    value.push({ mountId, folder });
+  }
+  return { ok: true, value };
+}
+
+/** Whether two saved folders are the same one — exact, as they were saved. */
+export function sameFolder(a: WorkflowFolder, b: WorkflowFolder): boolean {
+  return a.mountId === b.mountId && a.folder === b.folder;
+}
+
+/** Who pressed Run, as far as choosing a folder is concerned. */
+export type FolderChooser =
+  | { kind: "manual"; folder?: WorkflowFolder | null }
+  | { kind: "schedule" };
+
+export type FolderChoice =
+  | { ok: true; folder: WorkflowFolder | null }
+  | { ok: false; reason: string };
+
+/**
+ * Which saved folder this press of Run works in, or the sentence refusing it.
+ *
+ * Pure and unit-tested because both ways of being wrong are silent: a folder
+ * accepted off the wire that nobody saved is an agent started in a repository
+ * nobody pointed it at, and a schedule reading the wrong entry is the same
+ * thing with nobody present. The rule:
+ *
+ * - No saved folders: nothing to choose, and a choice sent anyway is refused —
+ *   the workflow behaves exactly as it did before the list existed.
+ * - A schedule has nobody to ask and takes the **first** saved folder. There is
+ *   no field on a schedule that could name another.
+ * - A person's choice must be **exactly** a saved entry. None sent is the one
+ *   entry when there is one, and refused when there are several, because
+ *   picking one for them is guessing which repository they meant.
+ */
+export function chooseFolder(
+  folders: readonly WorkflowFolder[],
+  by: FolderChooser,
+): FolderChoice {
+  const requested = by.kind === "manual" ? (by.folder ?? null) : null;
+  if (folders.length === 0) {
+    if (requested) {
+      return {
+        ok: false,
+        reason:
+          "This workflow saves no folders to choose from — each block names " +
+          "its own — so a press of Run cannot name one.",
+      };
+    }
+    return { ok: true, folder: null };
+  }
+  if (by.kind === "schedule") return { ok: true, folder: folders[0] };
+  if (requested) {
+    const saved = folders.find((f) => sameFolder(f, requested));
+    if (!saved) {
+      return {
+        ok: false,
+        reason:
+          `${requested.mountId}/${requested.folder} is not one of the folders ` +
+          "saved on this workflow. Run chooses among the folders saved on it " +
+          "and nothing else; add it in the editor first.",
+      };
+    }
+    return { ok: true, folder: saved };
+  }
+  if (folders.length === 1) return { ok: true, folder: folders[0] };
+  return {
+    ok: false,
+    reason:
+      `This workflow is saved against ${folders.length} folders. Choose ` +
+      "which one this press of Run works in.",
+  };
+}
+
+/**
+ * The graph with every block that follows the chosen folder pointed at it.
+ *
+ * Pure. Applied once, at instantiation, to the graph the instance copies — so
+ * every later reader of that copy (a deferred block, every loop pass, an
+ * orchestrator block's bounds and the runs it emits) reads the choice off the
+ * instance and never off the workflow, which may have been edited since. A
+ * block without the flag is returned as it was, and a null choice returns the
+ * graph unchanged.
+ */
+export function withChosenFolder(
+  graph: WorkflowGraph,
+  chosen: WorkflowFolder | null,
+): WorkflowGraph {
+  if (!chosen) return graph;
+  return {
+    ...graph,
+    nodes: graph.nodes.map((n) =>
+      n.followsChosenFolder
+        ? { ...n, mountId: chosen.mountId, folder: chosen.folder }
+        : n,
+    ),
+  };
 }
 
 type NodeNormalization =
@@ -1037,6 +1247,7 @@ function normalizeNode(
   index: number,
   known: WorkflowKnowledge,
   taken: ReadonlyMap<string, WorkflowNode>,
+  firstSavedFolder: WorkflowFolder | null,
 ): NodeNormalization {
   const n = (entry ?? {}) as Record<string, unknown>;
   const position = `Block ${index + 1}`;
@@ -1424,8 +1635,39 @@ function normalizeNode(
     // Typed only where it is read, `promptOverride`'s rule, and the same for
     // the workspace and folder below: on a block that starts no run all three
     // are dropped unread, and a loop's were asked above.
+    //
+    // A block that follows the folder chosen at Run has its workspace and
+    // folder dropped unread too, and stores the first saved folder instead —
+    // see `WorkflowNode.followsChosenFolder` for why a concrete one is stored.
+    const rawFollows = n.followsChosenFolder;
+    if (rawFollows !== undefined && rawFollows !== null && typeof rawFollows !== "boolean") {
+      return {
+        ok: false,
+        error: `“${nodeName}”: followsChosenFolder is true or false; got ${JSON.stringify(rawFollows)}.`,
+      };
+    }
+    const followsChosenFolder = rawFollows === true;
+    if (followsChosenFolder && kind !== "run" && kind !== "orchestrator") {
+      return {
+        ok: false,
+        error:
+          `“${nodeName}” is a ${kind} block, which names no folder of its ` +
+          "own, so it has none for the folder chosen at Run to replace.",
+      };
+    }
+    if (followsChosenFolder && !firstSavedFolder) {
+      return {
+        ok: false,
+        error:
+          `“${nodeName}” follows the folder chosen at Run, but this workflow ` +
+          "saves no folders to choose from. Add one, or give the block a " +
+          "folder of its own.",
+      };
+    }
+    const following = followsChosenFolder ? firstSavedFolder : null;
     for (const field of ["templateId", "mountId", "folder"]) {
-      const notString = startsNoRun ? null : notStringRefusal(field, n[field]);
+      const unread = startsNoRun || (following !== null && field !== "templateId");
+      const notString = unread ? null : notStringRefusal(field, n[field]);
       if (notString) return { ok: false, error: `“${nodeName}”: ${notString}` };
     }
     const templateId =
@@ -1451,7 +1693,11 @@ function normalizeNode(
     // that decides nothing about it. A loop names none for the same shape of
     // reason: its members each name their own, and the frame round them works
     // nowhere.
-    const mountId = startsNoRun ? "" : String(n.mountId ?? "");
+    const mountId = startsNoRun
+      ? ""
+      : following
+        ? following.mountId
+        : String(n.mountId ?? "");
     if (!startsNoRun) {
       if (!mountId) {
         return {
@@ -1559,7 +1805,14 @@ function normalizeNode(
           // The empty string is the mount root — the one selection that blocks
           // every other run in the tree — so it is kept rather than collapsed into
           // "no folder", exactly as a template's is.
-          folder: startsNoRun ? "" : String(n.folder ?? ""),
+          folder: startsNoRun
+            ? ""
+            : following
+              ? following.folder
+              : String(n.folder ?? ""),
+          // Absent rather than false when off, so a graph saved before the
+          // field is stored back byte for byte.
+          ...(following ? { followsChosenFolder: true } : {}),
           task,
           promptOverride: promptOverride || null,
           fanOut,
@@ -2537,6 +2790,29 @@ export function folderRefusal(graph: WorkflowGraph): string | null {
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       return `“${node.name}” cannot start: ${detail}`;
+    }
+  }
+  return null;
+}
+
+/**
+ * Why a saved folder cannot be worked in, or null when every one resolves.
+ *
+ * `folderRefusal`'s check for the folders a workflow saves to choose from, and
+ * asked at every save door beside it for that function's reason: a folder that
+ * could be saved and never chosen fails weeks away from the form that saved it.
+ * Run does not ask it — only the chosen folder has to resolve then, and
+ * `folderRefusal` asks that one, off the blocks that follow it.
+ */
+export function listedFolderRefusal(
+  folders: readonly WorkflowFolder[] | undefined,
+): string | null {
+  for (const [index, entry] of (folders ?? []).entries()) {
+    try {
+      resolveWorkspaceFolder(entry.folder, entry.mountId);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      return `Folder ${index + 1} cannot be worked in: ${detail}`;
     }
   }
   return null;

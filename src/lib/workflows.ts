@@ -240,10 +240,12 @@ export {
   currentKnowledge,
   folderRefusal,
   isDependencyEdge,
+  listedFolderRefusal,
   loopBody,
   normalizeWorkflowInput,
   type TemplateFacts,
   type WorkflowEdgeCondition,
+  type WorkflowFolder,
   type Workflow,
   type WorkflowDependencyEdge,
   type WorkflowEdge,
@@ -259,13 +261,16 @@ import {
   REPEATS_EDGE,
   commandVerdictRefusal,
   currentKnowledge,
+  chooseFolder,
   folderRefusal,
   isDependencyEdge,
   loopBody,
   loopBodyOwners,
   normalizeBoardCondition,
   normalizeWorkflowInput,
+  withChosenFolder,
   type TemplateFacts,
+  type WorkflowFolder,
   type WorkflowDependencyEdge,
   type Workflow,
   type LoopBoardCondition,
@@ -2313,10 +2318,38 @@ interface WorkflowRow {
   created_at: number;
   updated_at: number;
   instance_budget: string | null;
+  folders: string | null;
 }
 
 const WORKFLOW_COLUMNS =
-  "id, name, graph, created_at, updated_at, instance_budget";
+  "id, name, graph, created_at, updated_at, instance_budget, folders";
+
+/**
+ * A stored folder list, or none. Null and unreadable both read as none — what
+ * every workflow saved before the column has — and an entry that is not a pair
+ * of strings is dropped: `normalizeWorkflowInput` asks the list again at every
+ * Run, so nothing read here reaches a run unchecked.
+ */
+function parseWorkflowFolders(raw: string | null): WorkflowFolder[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((entry: unknown) => {
+      const e = (entry ?? {}) as Record<string, unknown>;
+      return typeof e.mountId === "string" && typeof e.folder === "string"
+        ? [{ mountId: e.mountId, folder: e.folder }]
+        : [];
+    });
+  } catch {
+    return [];
+  }
+}
+
+/** The column's value: null for an empty list, so "none" is stored one way. */
+function storedFolders(folders: readonly WorkflowFolder[] | undefined): string | null {
+  return folders && folders.length > 0 ? JSON.stringify(folders) : null;
+}
 
 /**
  * A stored budget blob as a policy. Null, unparseable and `{}` all read the
@@ -2355,6 +2388,7 @@ function rowToWorkflow(row: WorkflowRow): Workflow {
     name: row.name,
     graph,
     instanceBudget: parseInstanceBudget(row.instance_budget),
+    folders: parseWorkflowFolders(row.folders),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -2398,14 +2432,15 @@ export function createWorkflow(input: WorkflowInput): Workflow {
   withNameConflict(input.name, () =>
     db()
       .prepare(
-        `INSERT INTO workflows (id, name, graph, instance_budget, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO workflows (id, name, graph, instance_budget, folders, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
         input.name,
         JSON.stringify(input.graph),
         JSON.stringify(input.instanceBudget),
+        storedFolders(input.folders),
         now,
         now,
       ),
@@ -2423,12 +2458,13 @@ export function updateWorkflow(
     db()
       .prepare(
         "UPDATE workflows SET name = ?, graph = ?, instance_budget = ?," +
-          " updated_at = ? WHERE id = ?",
+          " folders = ?, updated_at = ? WHERE id = ?",
       )
       .run(
         input.name,
         JSON.stringify(input.graph),
         JSON.stringify(input.instanceBudget),
+        storedFolders(input.folders),
         Date.now(),
         id,
       ),
@@ -2495,6 +2531,7 @@ export function duplicateWorkflow(id: string): Workflow | null {
     ),
     graph: source.graph,
     instanceBudget: source.instanceBudget,
+    folders: source.folders,
   });
 }
 
@@ -2663,6 +2700,12 @@ export interface WorkflowInstance {
    */
   instanceBudget: InstanceBudgetPolicy;
   /**
+   * The saved folder this press of Run chose, or null when the workflow saved
+   * none to choose from. A record of the choice, copied once at
+   * `startWorkflow`; the blocks that followed it already hold it in `graph`.
+   */
+  chosenFolder: WorkflowFolder | null;
+  /**
    * Which press of Run started it, and what authorised that press. Copied onto
    * every member's own `runs.origin`, and read again when a deferred node
    * becomes a run hours later. Null on instances written before the column.
@@ -2688,6 +2731,7 @@ interface InstanceRow {
   stop_cause: string | null;
   stop_reason: string | null;
   instance_budget: string | null;
+  chosen_folder: string | null;
   origin: string | null;
   origin_ref: string | null;
 }
@@ -3554,6 +3598,7 @@ function rowToInstance(row: InstanceRow): WorkflowInstance {
     liveRunCount: members.live,
     blockedCount: members.blocked,
     instanceBudget: parseInstanceBudget(row.instance_budget),
+    chosenFolder: parseWorkflowFolders(row.chosen_folder)[0] ?? null,
     spend: instanceSpend(row.id),
     nodes,
     blocks: blocksOf(row.id),
@@ -3577,6 +3622,7 @@ const INSTANCE_COLUMN_NAMES: Record<keyof InstanceRow, true> = {
   stop_cause: true,
   stop_reason: true,
   instance_budget: true,
+  chosen_folder: true,
   origin: true,
   origin_ref: true,
 };
@@ -3865,7 +3911,13 @@ export type StartOutcome =
  * `startWorkflow`" true.
  */
 export type WorkflowTrigger =
-  | { kind: "manual" }
+  /**
+   * A person's press. `folder` is which of the workflow's saved folders they
+   * chose, checked against that list by `chooseFolder` and never used as a
+   * path on its own.
+   */
+  | { kind: "manual"; folder?: WorkflowFolder | null }
+  /** No folder field, on purpose: a schedule takes the first saved folder. */
   | { kind: "schedule"; scheduleId: string };
 
 /**
@@ -3960,7 +4012,13 @@ export function startWorkflow(
       reason: `This workflow cannot be started as saved: ${checked.error}`,
     };
   }
-  const graph = checked.value.graph;
+  // Which saved folder this press works in, and the graph with every block
+  // that follows it pointed there. Everything below — the plans, the folder
+  // and isolation checks, the instance's copy — reads this graph, so the
+  // choice is checked here exactly as a block's own folder is.
+  const choice = chooseFolder(checked.value.folders ?? [], trigger);
+  if (!choice.ok) return { ok: false, reason: choice.reason };
+  const graph = withChosenFolder(checked.value.graph, choice.folder);
   const instanceBudget = checked.value.instanceBudget;
 
   // The workflow-wide guard, read once before anything exists. Nothing has been
@@ -4116,9 +4174,9 @@ export function startWorkflow(
   db()
     .prepare(
       `INSERT INTO workflow_instances
-         (id, workflow_id, workflow_name, graph, instance_budget, created_at,
-          status, error, origin, origin_ref)
-       VALUES (?, ?, ?, ?, ?, ?, 'started', NULL, ?, ?)`,
+         (id, workflow_id, workflow_name, graph, instance_budget, chosen_folder,
+          created_at, status, error, origin, origin_ref)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'started', NULL, ?, ?)`,
     )
     .run(
       instanceId,
@@ -4129,6 +4187,8 @@ export function startWorkflow(
       // so an edit to the workflow cannot move the guard under a running graph
       // — the same reason the graph blob is copied rather than joined to.
       JSON.stringify(instanceBudget),
+      // Stored as a one-entry list so one parser reads both columns.
+      storedFolders(choice.folder ? [choice.folder] : []),
       now,
       origin,
       originRef,
@@ -9441,6 +9501,15 @@ function blockSystemPrompt(
     `- At most ${node.fanOut} run(s). emit_runs refuses more, and the limit was`,
     "  set when the workflow was saved.",
     ...folderBounds,
+    // How a brief shared by several projects learns which one it is about: the
+    // folder above is the instance's choice, and only a block that follows it
+    // is told so. A block with its own folder is asked exactly what it was.
+    ...(node.followsChosenFolder
+      ? [
+          "  That folder was chosen when this workflow was started, from the",
+          "  folders saved on it, so it is the project your brief is about.",
+        ]
+      : []),
     `- Every run gets its guards — budget, work-cycle limit, permission mode,`,
     `  whether it works in a checkout of its own — from ${guards}.`,
     ...(node.provider === "local"

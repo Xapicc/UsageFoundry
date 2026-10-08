@@ -324,6 +324,84 @@ describe("every creation path records the gate it came through", () => {
 });
 
 /**
+ * Which saved folder a press of Run, or a schedule, starts its runs in.
+ *
+ * Here rather than beside `chooseFolder`'s own cases because the failure it
+ * guards is past that function: a choice that was checked and then not the
+ * folder `createRun` was handed is an agent in a repository nobody chose, and
+ * only the run row says which one it got.
+ */
+describe("a workflow saved against more than one folder", () => {
+  const FOLDERS = [
+    { mountId: "scratch", folder: "project" },
+    { mountId: "scratch", folder: "second" },
+  ];
+
+  function folderOf(instanceId: string): string {
+    const row = dbMod
+      .db()
+      .prepare(
+        `SELECT r.folder FROM workflow_instance_runs m JOIN runs r ON r.id = m.run_id
+          WHERE m.instance_id = ?`,
+      )
+      .get(instanceId) as { folder: string };
+    return row.folder;
+  }
+
+  function saveTwoFolderWorkflow(name: string) {
+    fs.mkdirSync(path.join(workspace, "second"), { recursive: true });
+    return workflows.createWorkflow({
+      name,
+      graph: {
+        nodes: [block("run", "run", { followsChosenFolder: true })],
+        edges: [],
+      },
+      instanceBudget: {
+        maxInstanceCostUSD: null,
+        maxSessionFraction: null,
+        maxWeeklyFraction: null,
+      },
+      folders: FOLDERS,
+    });
+  }
+
+  it("starts a person's press in the saved folder they chose, and records it", async () => {
+    const workflow = saveTwoFolderWorkflow("Either project");
+    const outcome = workflows.startWorkflow(workflow.id, await orch.currentSnapshot(), {
+      kind: "manual",
+      folder: FOLDERS[1],
+    });
+    assert.ok(outcome.ok, `start refused: ${!outcome.ok && outcome.reason}`);
+    assert.equal(path.basename(folderOf(outcome.instance.id)), "second");
+    assert.deepEqual(outcome.instance.chosenFolder, FOLDERS[1]);
+    assert.equal(outcome.instance.graph.nodes[0].folder, "second");
+  });
+
+  it("refuses a folder that is not saved on the workflow, and starts nothing", async () => {
+    const workflow = saveTwoFolderWorkflow("Only saved ones");
+    const outcome = workflows.startWorkflow(workflow.id, await orch.currentSnapshot(), {
+      kind: "manual",
+      folder: { mountId: "scratch", folder: "repo" },
+    });
+    assert.ok(!outcome.ok);
+    assert.match(outcome.reason, /not one of the folders saved on this workflow/);
+    const count = dbMod.db().prepare("SELECT COUNT(*) AS n FROM runs").get() as { n: number };
+    assert.equal(count.n, 0);
+  });
+
+  it("starts a schedule in the first saved folder", async () => {
+    const workflow = saveTwoFolderWorkflow("Nightly, either project");
+    const outcome = workflows.startWorkflow(workflow.id, await orch.currentSnapshot(), {
+      kind: "schedule",
+      scheduleId: "sched-folders",
+    });
+    assert.ok(outcome.ok, `start refused: ${!outcome.ok && outcome.reason}`);
+    assert.equal(path.basename(folderOf(outcome.instance.id)), "project");
+    assert.deepEqual(outcome.instance.chosenFolder, FOLDERS[0]);
+  });
+});
+
+/**
  * The runs a scheduled instance creates after `startWorkflow` has returned.
  *
  * The cases above only see the creating pass, which is handed its origin as an

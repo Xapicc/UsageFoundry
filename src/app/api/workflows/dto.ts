@@ -1,5 +1,6 @@
 import type {
   WorkflowDTO,
+  WorkflowFolderDTO,
   WorkflowInstanceBlockDTO,
   WorkflowInstanceDTO,
   WorkflowInstanceNodeDTO,
@@ -14,7 +15,12 @@ import {
   type ScheduleView,
 } from "../../../lib/schedules";
 import { passMemberIn } from "../../../lib/passIds";
-import { isDependencyEdge, type WorkflowEdge } from "../../../lib/workflowGraph";
+import {
+  isDependencyEdge,
+  type WorkflowEdge,
+  type WorkflowFolder,
+} from "../../../lib/workflowGraph";
+import { mountById } from "../../../lib/config";
 import {
   blockSpendReading,
   lastInstanceOf,
@@ -55,6 +61,19 @@ export function scheduleDTO(view: ScheduleView): WorkflowScheduleDTO {
   };
 }
 
+/** A saved folder with the words a person reads it by. */
+export function workflowFolderDTO(entry: WorkflowFolder): WorkflowFolderDTO {
+  return {
+    mountId: entry.mountId,
+    folder: entry.folder,
+    // The approval card's spelling (`summarizeProposedGraph`), so one folder
+    // reads the same wherever it is named.
+    label: `${mountById(entry.mountId)?.label ?? entry.mountId}${
+      entry.folder ? `/${entry.folder}` : " (mount root)"
+    }`,
+  };
+}
+
 export function workflowDTO(workflow: Workflow): WorkflowDTO {
   const schedule = getSchedule(workflow.id);
   return {
@@ -63,6 +82,7 @@ export function workflowDTO(workflow: Workflow): WorkflowDTO {
     nodes: workflow.graph.nodes,
     edges: workflow.graph.edges,
     instanceBudget: workflow.instanceBudget,
+    folders: (workflow.folders ?? []).map(workflowFolderDTO),
     createdAt: workflow.createdAt,
     updatedAt: workflow.updatedAt,
     liveRunCount: liveRunsOf(workflow.id).length + liveBlocksOf(workflow.id),
@@ -93,6 +113,7 @@ export function workflowListDTO(workflow: Workflow): WorkflowListItemDTO {
     edges: _edges,
     instanceBudget: _instanceBudget,
     scheduleRefusal: _scheduleRefusal,
+    folders: _folders,
     ...rest
   } = workflowDTO(workflow);
   return {
@@ -245,6 +266,7 @@ export function instanceDTO(instance: WorkflowInstance): WorkflowInstanceDTO {
     liveRunCount: instance.liveRunCount,
     blockedCount: instance.blockedCount,
     instanceBudget: instance.instanceBudget,
+    chosenFolder: instance.chosenFolder ? workflowFolderDTO(instance.chosenFolder) : null,
     spentUSD: instance.spend.spentUSD,
     spentGuardUSD: instance.spend.spentGuardUSD,
     spentUnmeasured: instance.spend.unmeasured,

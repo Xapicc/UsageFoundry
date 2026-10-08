@@ -2300,6 +2300,12 @@ export interface WorkflowNodeDTO {
   /** Path within the mount. `""` is the mount root, and is a real answer. */
   folder: string;
   /**
+   * True when the block works in the folder a press of Run chose from the
+   * workflow's `folders`; `mountId`/`folder` then hold the first saved one.
+   * Absent is false. Only on a run or orchestrator block.
+   */
+  followsChosenFolder?: boolean;
+  /**
    * A run block's task; an orchestrator block's brief for what to decide.
    */
   task: string;
@@ -2634,12 +2640,28 @@ export interface WorkflowScheduleDTO {
   refusal: string | null;
 }
 
+/**
+ * One folder a workflow is saved against, as the Run control and the editor
+ * read it. `mountId` and `folder` are what a press of Run sends back, exactly;
+ * `label` is for reading and is never sent.
+ */
+export interface WorkflowFolderDTO {
+  mountId: string;
+  folder: string;
+  label: string;
+}
+
 export interface WorkflowDTO {
   id: string;
   name: string;
   nodes: WorkflowNodeDTO[];
   edges: WorkflowEdgeDTO[];
   instanceBudget: InstanceBudgetDTO;
+  /**
+   * The folders Run chooses among, in saved order; the first is the one a
+   * schedule uses. Empty on a workflow whose blocks each name their own.
+   */
+  folders: WorkflowFolderDTO[];
   createdAt: number;
   updatedAt: number;
   /** Runs from this workflow that have not finished. Empty on most reads. */
@@ -2689,7 +2711,7 @@ export interface WorkflowDTO {
  */
 export type WorkflowListItemDTO = Omit<
   WorkflowDTO,
-  "nodes" | "edges" | "instanceBudget" | "scheduleRefusal"
+  "nodes" | "edges" | "instanceBudget" | "scheduleRefusal" | "folders"
 > & {
   /** How many blocks the saved graph holds. Both lists print exactly this. */
   nodeCount: number;
@@ -3018,6 +3040,8 @@ export interface WorkflowInstanceDTO {
   blockedCount: number;
   /** The limits it was started under — a copy, not the live workflow's. */
   instanceBudget: InstanceBudgetDTO;
+  /** The saved folder this press of Run chose, or null if it chose none. */
+  chosenFolder: WorkflowFolderDTO | null;
   /**
    * What its blocks have spent together.
    *

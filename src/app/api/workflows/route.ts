@@ -4,6 +4,7 @@ import {
   createWorkflow,
   currentKnowledge,
   folderRefusal,
+  listedFolderRefusal,
   listWorkflows,
   normalizeWorkflowInput,
 } from "@/lib/workflows";
@@ -49,7 +50,8 @@ async function postHandler(req: Request) {
     return NextResponse.json({ error: parsed.error }, { status: 400 });
   }
 
-  const missing = folderRefusal(parsed.value.graph);
+  const missing =
+    folderRefusal(parsed.value.graph) ?? listedFolderRefusal(parsed.value.folders);
   if (missing) return NextResponse.json({ error: missing }, { status: 400 });
 
   try {
