@@ -545,7 +545,18 @@ export default function WorkflowPage() {
                           run status, with no model and nothing billed
                         </div>
                       )}
-                      {n.kind === "review" && n.verdictSource?.kind !== "status" && (
+                      {n.kind === "review" && n.verdictSource?.kind === "command" && (
+                        // The command is stated where Run is pressed, because
+                        // it is a program this app runs in every branch's
+                        // checkout with nobody looking.
+                        <div className="mt-0.5 text-accent">
+                          Only branches where{" "}
+                          <span className="mono break-all">{n.verdictSource.command}</span>{" "}
+                          exits 0 go on — run in each branch&rsquo;s checkout,
+                          with no model and nothing billed
+                        </div>
+                      )}
+                      {n.kind === "review" && (n.verdictSource?.kind ?? "model") === "model" && (
                         // Its fix rounds are billed runs with nobody watching,
                         // so they are stated where Run is pressed.
                         <div className="mt-0.5 text-warn">

@@ -58,6 +58,7 @@ import {
 } from "@/lib/canvasGraph";
 import { jsonRequest } from "@/lib/jsonRequest";
 import { exitHref, leaving, registerLeaveGuard } from "@/lib/unsavedWork";
+import { parseVerifyCommand } from "@/lib/verifyCommand";
 import { isCommitChord } from "@/components/shell/shortcuts";
 import {
   EDGE_OPTION_LABEL,
@@ -287,6 +288,17 @@ const DEFAULT_MERGE_STRATEGY: MergeStrategyDTO = "merge";
  */
 const DEFAULT_FIX_ROUNDS = "1";
 
+/**
+ * Why a review block's verify command will be refused at Save, or null —
+ * including while it is blank, which Save names itself and which is every
+ * command's first moment.
+ */
+function verifyCommandRefusal(raw: string): string | null {
+  if (!raw.trim()) return null;
+  const parsed = parseVerifyCommand(raw);
+  return parsed.ok ? null : parsed.reason;
+}
+
 /** What the review block's verdict picker calls each source. */
 const VERDICT_LABEL: Record<ReviewVerdictSourceDTO["kind"], string> = {
   model: "A frontier review",
@@ -332,6 +344,7 @@ function emptyBlock(id: string, mountId: string, kind: WorkflowNodeKind): BlockD
     provider: "",
     fixRounds: DEFAULT_FIX_ROUNDS,
     verdictSource: "model",
+    verifyCommand: "",
   };
 }
 
@@ -382,6 +395,7 @@ function toBlocks(workflow: WorkflowDTO): BlockDraft[] {
     // frontier review those blocks were saved to pay for — `normalizeNode`'s
     // reading.
     verdictSource: n.verdictSource?.kind ?? "model",
+    verifyCommand: n.verdictSource?.kind === "command" ? n.verdictSource.command : "",
   }));
 }
 
@@ -1496,6 +1510,21 @@ function BlockStatement({
     );
   }
 
+  if (block.kind === "review" && block.verdictSource === "command") {
+    return (
+      <p className="mb-3.5 text-sm leading-normal text-ink-muted">
+        Runs your verify command in each branch&rsquo;s own checkout, one branch at
+        a time, and hands on{" "}
+        <strong className="font-semibold text-ink">
+          only the branches where it exits 0
+        </strong>
+        . Any other ending, a timeout included, is set aside with the end of its
+        output. No model, nothing billed, and its tasks are left as the run left
+        them.
+      </p>
+    );
+  }
+
   if (block.kind === "review" && block.verdictSource === "status") {
     return (
       <p className="mb-3.5 text-sm leading-normal text-ink-muted">
@@ -2391,7 +2420,9 @@ function BlockPanel({
           footnote={
             block.verdictSource === "status"
               ? "Reads each run's status, so this block bills nothing"
-              : "Each fix round is a billed run and a billed review for every branch sent back"
+              : block.verdictSource === "command"
+                ? "Runs in each branch's own checkout as the child uid, so this block bills nothing"
+                : "Each fix round is a billed run and a billed review for every branch sent back"
           }
         >
           <ListRow
@@ -2402,7 +2433,9 @@ function BlockPanel({
             description={
               block.verdictSource === "status"
                 ? `Its links in have to be “${EDGE_OPTION_LABEL["on-finish"]}”, or the first run that does not complete blocks it`
-                : "Billed per branch"
+                : block.verdictSource === "command"
+                  ? "Exit 0 approves; anything else sets the branch aside"
+                  : "Billed per branch"
             }
           >
             <div className={ROW_CONTROL}>
@@ -2419,10 +2452,42 @@ function BlockPanel({
               </Select>
             </div>
           </ListRow>
-          {/* Hidden rather than shown at 0 under a status verdict: there is no
-              review for a fix to answer, and `draftToGraph` sends 0 whatever
-              the picker last held, so switching back restores the rounds. */}
-          {block.verdictSource !== "status" && (
+          {block.verdictSource === "command" && (
+            <ListRow
+              label="Verify command"
+              htmlFor={`${block.id}-verify`}
+              description={
+                <>
+                  argv, never a shell line — for{" "}
+                  <span className="mono">a &amp;&amp; b</span> put the two in a
+                  script and name the script
+                </>
+              }
+            >
+              <div className={ROW_CONTROL}>
+                <Input
+                  id={`${block.id}-verify`}
+                  className="mono"
+                  placeholder="npm test"
+                  value={block.verifyCommand}
+                  onChange={(e) => onChange({ verifyCommand: e.target.value })}
+                />
+                {/* Said as it is typed, in the parser's own words, Settings'
+                    reason: Save refuses it anyway, and the obvious
+                    `npm test && npm run build` is worth catching before then. */}
+                {verifyCommandRefusal(block.verifyCommand) !== null && (
+                  <p className="mt-1.5 text-2xs text-danger">
+                    {verifyCommandRefusal(block.verifyCommand)}
+                  </p>
+                )}
+              </div>
+            </ListRow>
+          )}
+          {/* Hidden rather than shown at 0 under a status or command verdict:
+              there is no review for a fix to answer, and `draftToGraph` sends 0
+              whatever the picker last held, so switching back restores the
+              rounds. */}
+          {block.verdictSource === "model" && (
             <ListRow
               label="Fix rounds per rejected branch"
               htmlFor={`${block.id}-fixrounds`}
