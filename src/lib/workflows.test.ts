@@ -13,6 +13,7 @@ import {
   addBlockSpend,
   blockSettlement,
   blockSpendReading,
+  blockTurnRetries,
   blockTurnSpend,
   bootBlockPlan,
   deliverBlockOutcome,
@@ -953,6 +954,56 @@ describe("normalizeWorkflowInput — providers and review blocks", () => {
       ),
       /no branch of its own to hand over/,
     );
+  });
+});
+
+/**
+ * An orchestrator block's `turnRetries` is spend with nobody looking, so a value
+ * that is wrong has to fail at save rather than become a setting. The reading
+ * `Number()` would give is the hazard: `true` is 1, `"2"` is 2 and `[]` is 0.
+ */
+describe("normalizeWorkflowInput — an orchestrator block's turn retries", () => {
+  const retries = (extra: unknown) =>
+    value(graph([decider("d", { turnRetries: extra })])).graph.nodes[0].turnRetries;
+
+  it("keeps 0 to 2, and reads an absent or null field as 0", () => {
+    assert.equal(retries(0), 0);
+    assert.equal(retries(1), 1);
+    assert.equal(retries(2), 2);
+    assert.equal(retries(null), 0);
+    assert.equal(value(graph([decider("d")])).graph.nodes[0].turnRetries, 0);
+  });
+
+  it("refuses a value above the cap, naming the block and the cap", () => {
+    assert.match(
+      error(graph([decider("d", { turnRetries: 3 })])),
+      /“D” may start a failed deciding turn again 0 to 2 times[^]*it is set to 3/,
+    );
+  });
+
+  it("refuses a negative number and one that is not whole", () => {
+    assert.match(error(graph([decider("d", { turnRetries: -1 })])), /it is set to -1/);
+    assert.match(error(graph([decider("d", { turnRetries: 1.5 })])), /it is set to 1.5/);
+  });
+
+  it("refuses what Number() would have read as a count", () => {
+    for (const [given, said] of [
+      [true, "a boolean"],
+      ["1", "a string"],
+      [[], "an array"],
+      [{}, "an object"],
+    ] as Array<[unknown, string]>) {
+      assert.match(
+        error(graph([decider("d", { turnRetries: given })])),
+        new RegExp(`it is set to ${said}`),
+        said,
+      );
+    }
+  });
+
+  it("holds nothing on a block that does not decide", () => {
+    const saved = value(graph([node("a", { turnRetries: 2 })])).graph.nodes[0];
+    assert.equal(saved.turnRetries, null);
   });
 });
 
@@ -4188,6 +4239,68 @@ describe("orchestratorRetryRefusal — which failed deciding turns may be run ag
         new RegExp(`is ${status}, so there is no failed turn`),
         status,
       );
+    }
+  });
+});
+
+/**
+ * Whether a deciding turn that just ended is bought a second time.
+ *
+ * Both wrong answers are silent. Started again when it should not be, the
+ * operator pays twice for a decision this app refused or one already carried
+ * out; settled when it should have been started again, the loop that was saved
+ * with retries ends on the first bad turn, which is the failure these exist for.
+ */
+describe("blockTurnRetries — which ended turns are started again", () => {
+  const ending = (over: Partial<Parameters<typeof blockTurnRetries>[0]> = {}) => ({
+    result: { status: "failed", error: "The CLI exited 1." } as TurnResult,
+    emitted: 0,
+    refused: false,
+    allowed: 1,
+    used: 0,
+    ...over,
+  });
+
+  it("starts again a turn that failed having decided nothing", () => {
+    assert.equal(blockTurnRetries(ending()), true);
+  });
+
+  it("does so whether or not the turn reported a cost", () => {
+    // Most failures measured in this install ended with no `result` event, and
+    // a rule keyed on a cost would have skipped exactly those.
+    assert.equal(blockTurnRetries(ending({ result: { status: "failed", costUSD: 0.4 } })), true);
+    assert.equal(blockTurnRetries(ending({ result: { status: "failed" } })), true);
+  });
+
+  it("allows nothing by default and nothing past the limit", () => {
+    assert.equal(blockTurnRetries(ending({ allowed: 0 })), false);
+    assert.equal(blockTurnRetries(ending({ allowed: 2, used: 1 })), true);
+    assert.equal(blockTurnRetries(ending({ allowed: 2, used: 2 })), false);
+  });
+
+  it("leaves a turn that did not fail alone", () => {
+    assert.equal(blockTurnRetries(ending({ result: { status: "idle", text: "Done." } })), false);
+  });
+
+  it("leaves a turn that decided on runs alone, however it ended", () => {
+    // `blockSettlement` records it `emitted` and its runs go ahead; another
+    // turn would decide over a decision about to be carried out.
+    assert.equal(blockTurnRetries(ending({ emitted: 2 })), false);
+  });
+
+  it("leaves a turn whose emission this app refused alone", () => {
+    assert.equal(blockTurnRetries(ending({ refused: true })), false);
+  });
+
+  it("agrees with blockSettlement about which turns are failures", () => {
+    // The two are asked of the same inputs; a turn one calls `emitted` and the
+    // other restarts would be decided over and carried out at once.
+    for (const emitted of [0, 1]) {
+      for (const status of ["idle", "failed"] as const) {
+        const result: TurnResult = { status, error: status === "failed" ? "x" : undefined };
+        const failed = blockSettlement(result, emitted, []).status === "failed";
+        assert.equal(blockTurnRetries(ending({ result, emitted })), failed, `${status}/${emitted}`);
+      }
     }
   });
 });

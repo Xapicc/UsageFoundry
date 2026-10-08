@@ -4832,6 +4832,26 @@ const blockTurns = ((globalThis as unknown as {
 
 const turnKey = (instanceId: string, nodeId: string) => `${instanceId}:${nodeId}`;
 
+/**
+ * The block turns whose `emit_runs` this app has turned away.
+ *
+ * A turn with a refusal on it decided something and was told no, which is not
+ * the turn failing, so `blockTurnRetries` never starts it again: another billed
+ * turn would be asked to decide the same thing under the same rules. Kept apart
+ * from the notes the refusals also write, because those are prose for an
+ * operator and this is read by a decision. `settleBlockTurn` forgets the key, which
+ * every turn that has a child reaches.
+ */
+const refusedEmissions = ((globalThis as unknown as {
+  __ufBlockRefusedEmissions?: Set<string>;
+}).__ufBlockRefusedEmissions ??= new Set<string>());
+
+/** Note a turn that `emit_runs` was refused for, and remember that it was. */
+function noteRefusedEmission(instanceId: string, nodeId: string, line: string): void {
+  refusedEmissions.add(turnKey(instanceId, nodeId));
+  noteBlock(instanceId, nodeId, line);
+}
+
 /** One block's row, as the scheduler and the emit tool read it. */
 interface BlockRow {
   instance_id: string;
@@ -6842,8 +6862,18 @@ function passState(
  * boundary. What bounds the spend is `settings.chatTurnBudgetUSD`, inside the
  * CLI, for the reason a chat turn's is: it is the same child answering the same
  * kind of question.
+ *
+ * `retriesUsed` is how many times this press of the block has already started
+ * the turn again, and it is an argument rather than a column because the only
+ * thing that reads it is the turn's own settle: `settleBlockTurn` starts the
+ * next attempt through this function, so every question above is asked of a
+ * retry by the code that asked it of the first attempt.
  */
-async function startBlockTurn(instanceId: string, nodeId: string): Promise<void> {
+async function startBlockTurn(
+  instanceId: string,
+  nodeId: string,
+  retriesUsed = 0,
+): Promise<void> {
   const instance = getInstance(instanceId);
   const node = instance ? blockNode(instance, nodeId) : undefined;
   // Every refusal below settles with `costUSD: 0`, because nothing has been
@@ -6975,6 +7005,19 @@ async function startBlockTurn(instanceId: string, nodeId: string): Promise<void>
   // is refused. Handed back to `waiting` rather than written off, the claim's
   // own answer to a held install, so the lift decides it.
   if (newWorkPaused()) {
+    if (retriesUsed > 0) {
+      // Not handed back: the next claim would start at attempt 0 and the block
+      // would get its retries over again. The attempt that failed is already in
+      // the block's notes, and a person can start the turn again from the page.
+      settleBlock(instanceId, nodeId, {
+        status: "failed",
+        error:
+          "New work was held across this install before the failed turn could be " +
+          "started again.",
+        costUSD: 0,
+      });
+      return;
+    }
     releaseBlockClaim(instanceId, nodeId);
     return;
   }
@@ -7015,7 +7058,7 @@ async function startBlockTurn(instanceId: string, nodeId: string): Promise<void>
     onSpawn: (child) => blockTurns.set(key, child),
     onSettle: (result) => {
       blockTurns.delete(key);
-      settleBlock(instanceId, nodeId, result);
+      settleBlockTurn(instanceId, nodeId, result, retriesUsed);
     },
   });
 }
@@ -7148,6 +7191,146 @@ export function blockTurnSpend(result: TurnResult): BlockTurnSpend {
   return { costUSD: 0, costGuardUSD: result.costGuardUSD ?? 0, unreported: 1 };
 }
 
+/** What `blockTurnRetries` is asked about one turn that just ended. */
+export interface BlockTurnEnding {
+  result: TurnResult;
+  /** Runs the turn had already decided on. */
+  emitted: number;
+  /** Whether `emit_runs` was turned away during the turn. */
+  refused: boolean;
+  /** The block's `turnRetries`: attempts allowed beyond the first. */
+  allowed: number;
+  /** Retries this press of the block has already started. */
+  used: number;
+}
+
+/**
+ * Whether a deciding turn that just ended is started again.
+ *
+ * Pure and unit-tested, `blockSettlement`'s reason: it decides whether a billed
+ * turn is bought a second time, and a wrong answer in either direction is silent
+ * — a failure the operator opted into retrying that settles at once, or a
+ * decision this app refused that is paid for again.
+ *
+ * **Only a turn that failed having decided nothing.** That is `blockSettlement`'s
+ * own test for recording `failed`, asked of the same inputs so the two cannot
+ * disagree: a turn that emitted is `emitted` and its runs go ahead, and
+ * starting it again would decide over a decision that is about to be carried
+ * out. A turn this app refused is not the turn failing, so it is left to settle
+ * as it did. The rest — an operator's halt, an instance-budget stop, a shutdown —
+ * are facts about the instance rather than about the turn and are asked by
+ * `settleBlockTurn`, which has the database.
+ */
+export function blockTurnRetries(ending: BlockTurnEnding): boolean {
+  if (ending.result.status !== "failed") return false;
+  if (ending.emitted > 0 || ending.refused) return false;
+  return ending.used < ending.allowed;
+}
+
+/**
+ * Add one turn's spend to the block's three cost columns and its tokens.
+ *
+ * Outside `settleBlock`'s status latch and shared with a retry, for the same
+ * reason: a failed attempt was billed whether or not anything else about it is
+ * still the block's to write, and the instance total is summed from these
+ * columns, so a retry's decision is taken against a total that already includes
+ * the attempt before it.
+ */
+function bankBlockSpend(instanceId: string, nodeId: string, result: TurnResult): void {
+  const spend = blockTurnSpend(result);
+  db()
+    .prepare(
+      `UPDATE workflow_instance_blocks
+          SET cost_usd = cost_usd + ?, cost_usd_est = cost_usd_est + ?,
+              cost_unreported = cost_unreported + ?, tokens = tokens + ?
+        WHERE instance_id=? AND node_id=?`,
+    )
+    .run(
+      spend.costUSD,
+      spend.costGuardUSD,
+      spend.unreported,
+      result.tokens ?? 0,
+      instanceId,
+      nodeId,
+    );
+}
+
+/**
+ * What a deciding turn's ending does: start it again, or settle the block.
+ *
+ * The retry is `retryOrchestratorBlock`'s idea done inside the press of Run
+ * rather than by a person after it — and not its mechanism, because the block
+ * is still `thinking` between attempts. It never goes back to `waiting`, so no
+ * successor is revived, no pass is reopened and the claim does not repeat; what
+ * it does is bank the failed attempt, clear a stored empty decision (`[]` is a
+ * set column, and `emitBlockRuns` refuses a block whose column is set), say what
+ * happened in the block's notes, and enter `startBlockTurn` again. That function
+ * asks the instance budget, the hold, the process budget and the spend limits of
+ * the new attempt exactly as it did of the first, so a retry the instance can no
+ * longer afford is a halt, not a turn.
+ *
+ * Declined when the block is no longer `thinking` — a halt writes it `failed`
+ * before it signals the child, so an operator's stop and the instance guard's
+ * both arrive here as a dead turn on a row that is already written off — and
+ * when the instance is closed or the process is exiting. Those fall through to
+ * `settleBlock`, which still banks the dying turn's cost.
+ */
+export function settleBlockTurn(
+  instanceId: string,
+  nodeId: string,
+  result: TurnResult,
+  retriesUsed: number,
+): void {
+  const key = turnKey(instanceId, nodeId);
+  const row = getBlock(instanceId, nodeId);
+  const instance = getInstance(instanceId);
+  const node = instance ? blockNode(instance, nodeId) : undefined;
+  const allowed = node?.turnRetries ?? 0;
+  const restart =
+    row !== null &&
+    row.status === "thinking" &&
+    instance !== null &&
+    instanceIsOpen(instance.status) &&
+    !isShuttingDown() &&
+    blockTurnRetries({
+      result,
+      emitted: parseSpecs(row.emitted_specs).length,
+      refused: refusedEmissions.has(key),
+      allowed,
+      used: retriesUsed,
+    });
+  if (!restart) {
+    refusedEmissions.delete(key);
+    settleBlock(instanceId, nodeId, result);
+    return;
+  }
+
+  db().transaction(() => {
+    bankBlockSpend(instanceId, nodeId, result);
+    db()
+      .prepare(
+        "UPDATE workflow_instance_blocks SET emitted_specs=NULL" +
+          " WHERE instance_id=? AND node_id=? AND status='thinking'",
+      )
+      .run(instanceId, nodeId);
+    noteBlock(
+      instanceId,
+      nodeId,
+      `Attempt ${retriesUsed + 1} of ${allowed + 1} failed: ` +
+        `${result.error ?? "no reason recorded"} Starting the turn again.`,
+    );
+  })();
+
+  void startBlockTurn(instanceId, nodeId, retriesUsed + 1).catch((err) => {
+    settleBlock(instanceId, nodeId, {
+      status: "failed",
+      error: `The block could not be started again: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    });
+  });
+}
+
 /**
  * Record what a turn said and cost, then start what it asked for.
  *
@@ -7183,23 +7366,8 @@ export function settleBlock(
   // guard `startBlockTurn` could not read. This used to write `error` flat,
   // which wiped that guard note on every turn that did not itself fail.
   const settlement = blockSettlement(result, specs.length, splitNotes(row?.notes ?? null));
-  const spend = blockTurnSpend(result);
   const settled = db().transaction((): boolean => {
-    db()
-      .prepare(
-        `UPDATE workflow_instance_blocks
-            SET cost_usd = cost_usd + ?, cost_usd_est = cost_usd_est + ?,
-                cost_unreported = cost_unreported + ?, tokens = tokens + ?
-          WHERE instance_id=? AND node_id=?`,
-      )
-      .run(
-        spend.costUSD,
-        spend.costGuardUSD,
-        spend.unreported,
-        result.tokens ?? 0,
-        instanceId,
-        nodeId,
-      );
+    bankBlockSpend(instanceId, nodeId, result);
     return (
       db()
         .prepare(
@@ -8582,7 +8750,7 @@ export function emitBlockRuns(
   // the reason a rejected emission is, and the turn is told plainly — a model
   // that reads "refused" with no cause tries again in a different shape.
   if (newWorkPaused()) {
-    noteBlock(
+    noteRefusedEmission(
       instanceId,
       nodeId,
       "It tried to emit runs while new work was held across the install, and was refused.",
@@ -8595,7 +8763,7 @@ export function emitBlockRuns(
     };
   }
   if (block.emitted_specs !== null) {
-    noteBlock(
+    noteRefusedEmission(
       instanceId,
       nodeId,
       "It called emit_runs a second time and was refused — a block emits once.",
@@ -8625,7 +8793,7 @@ export function emitBlockRuns(
     const reason =
       "Every run this block emits goes to Codex, which a saved agent's prompt " +
       "does not reach. Emit the runs again without `agent`.";
-    noteBlock(instanceId, nodeId, `It tried to emit runs and was refused: ${reason}`);
+    noteRefusedEmission(instanceId, nodeId, `It tried to emit runs and was refused: ${reason}`);
     return { ok: false, reason };
   }
 
@@ -8666,7 +8834,7 @@ export function emitBlockRuns(
     // own, a loop among the specs. The model is told why and may well give up
     // without saying so, and then this is the only trace that it ever meant to
     // start anything at all.
-    noteBlock(instanceId, nodeId, `It tried to emit runs and was refused: ${plan.reason}`);
+    noteRefusedEmission(instanceId, nodeId, `It tried to emit runs and was refused: ${plan.reason}`);
     return { ok: false, reason: plan.reason };
   }
 

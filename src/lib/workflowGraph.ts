@@ -26,6 +26,7 @@ import {
   MAX_LOOP_PASSES,
   MAX_LOOP_RUNS,
   MAX_REVIEW_FIX_ROUNDS,
+  MAX_TURN_RETRIES,
   MAX_WORKFLOW_NAME,
   MAX_WORKFLOW_NODES,
   REVIEW_VERDICT_KINDS,
@@ -165,6 +166,19 @@ export interface WorkflowNode {
    * is an unbounded number of billed agents from one press of Run.
    */
   fanOut: number | null;
+  /**
+   * How many times an orchestrator block's deciding turn is started again when
+   * the turn itself failed having decided nothing, 0 to `MAX_TURN_RETRIES`.
+   * Null on every other kind.
+   *
+   * Optional, and absent is 0: every graph saved before the field existed — and
+   * every instance started from one — says nothing here, and reading that as
+   * anything but "never" would bill turns nobody agreed to. It is on the node
+   * for `fanOut`'s reason: it is spend with nobody looking, so the number is
+   * the one a person fixed when they saved the graph, and nothing a model emits
+   * can raise it.
+   */
+  turnRetries?: number | null;
   /**
    * How a merge block puts each branch onto its target. Null on every other
    * kind, never null on a merge one.
@@ -1128,6 +1142,31 @@ function normalizeNode(
       fanOut = raw;
     }
 
+    // How many times a failed deciding turn is started again, on an orchestrator
+    // block and nowhere else. Absent and null are 0, which is what every graph
+    // saved before the field says. Only a whole JS number is accepted: this
+    // authorises billed turns, so `true` (which `Number` reads as 1) and a
+    // numeric string must fail loudly rather than quietly become a setting.
+    let turnRetries: number | null = null;
+    if (kind === "orchestrator") {
+      const given: unknown = n.turnRetries ?? 0;
+      if (
+        typeof given !== "number" ||
+        !Number.isInteger(given) ||
+        given < 0 ||
+        given > MAX_TURN_RETRIES
+      ) {
+        return {
+          ok: false,
+          error:
+            `“${nodeName}” may start a failed deciding turn again 0 to ` +
+            `${MAX_TURN_RETRIES} times, as a whole number; it is set to ` +
+            `${typeof given === "number" ? given : jsonKind(given)}.`,
+        };
+      }
+      turnRetries = given;
+    }
+
     // How a merge block lands, and whether it may pay for a resolution.
     //
     // The strategy is required rather than defaulted to `settings.landStrategy`
@@ -1453,6 +1492,7 @@ function normalizeNode(
           task,
           promptOverride: promptOverride || null,
           fanOut,
+          turnRetries,
           mergeStrategy,
           mergeAutoResolve,
           maxPasses,
