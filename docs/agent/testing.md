@@ -161,6 +161,7 @@ Twenty-two are renderings rather than functions — every `*.test.tsx` in the tr
 | Test file | Also in |
 |---|---|
 | `orchestratorPickUp.test.ts` |  |
+| `orchestratorTurnRetry.test.ts` |  |
 
 ## [Loop blocks and their passes](testing/workflow-loops.md)
 

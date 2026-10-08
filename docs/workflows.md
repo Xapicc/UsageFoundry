@@ -60,6 +60,7 @@ agreeing to when you save one:
 | The workspace and folder it may start runs in | Which folders under that one, and what each run is asked to do |
 | The template every run it starts runs under — budget, work-cycle limit, permission mode, isolation | Nothing about any of these |
 | The most runs it may ever start | How many, up to that |
+| How many times a failed deciding turn is started again (0 to 2, default 0) | Nothing — a retry is the same turn run over, not a new decision |
 | The standing prompt every run it starts begins with | The task appended under it |
 
 The fan-out cap is **required**. A graph with an orchestrator block and no cap
@@ -96,6 +97,27 @@ read at that moment, a run it decided on that could not then be started. And the
 otherwise read alike — *decided there was nothing to start* means it called the
 emit tool and named nothing, *ended without emitting anything* means it never
 called it at all, and those are different problems.
+
+**A turn that failed can be started again, up to a limit you set.** An agent turn
+can die for reasons that have nothing to do with the brief — a dropped
+connection, an overloaded upstream, a process killed. By default that ends the
+block as failed and everything behind it is written off. Set *Retries after a
+failed turn* on the block, 0 to 2, and a turn that failed **having decided
+nothing** is started again before the block gives up. Each retry is another
+billed turn, so the count is a spending limit you agree to when you save the
+graph, and it is stated beside the fan-out cap on the block and on the page you
+press Run from. A retry is not a new press of Run: blocks already finished are
+not repeated, and the instance's workflow-wide limit is asked before each
+attempt exactly as it is before the first, so a graph that has spent its limit
+stops instead of retrying. What is **not** started again: a turn you stopped, a
+workflow halted by *Stop* or by its own limit, a turn that decided on runs
+(those are carried out), and a turn whose `emit_runs` this tool refused — that
+last one is the model's decision being turned away, not the turn failing. The
+instance page notes each failed attempt (*Attempt 1 of 2 failed: …*) and the
+block's spend is the sum of every attempt. A retry creates no run, so it is not
+counted in a loop's run limit, though its cost is counted in the loop's spending
+cap and the workflow's limit. A block that failed anyway can still be decided
+again by hand from the instance page, and that gives it a fresh allowance.
 
 **Its own spend is its own.** A deciding turn's cost is bounded by Settings →
 *Orchestrator chat limit*, exactly as a chat turn's is; it lands on the block, never on
