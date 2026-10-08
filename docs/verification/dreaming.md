@@ -40,6 +40,17 @@
   passing `_Meta/qc.py`'s ERROR gate for nine of twelve signatures, and found
   the scan double-counting the 5.1% of records resumes rewrite.
 
+- **The Nights tab shows how a night's run ended, 2026-10-08**, standalone build
+  at this change's commit, served over a scratch `DATA_DIR` seeded with eleven
+  nights over runs in every state and read in Chromium at 1280px and 390px:
+  `failed`, `completed`, `stopped` and `needs-review` each drew a second badge
+  beside `run started`; a night whose run was `running` or `paused`, one whose
+  run row was deleted, and a night with no run drew none. Two runs on one night
+  showed the later one's `completed`. Caveat: seeded rows, not a real night; the
+  boot sweep rewrote the seeded `running` and `paused` runs to `failed` and
+  `stopped` the moment the server started, so those two states were set after
+  boot with an `UPDATE` through a second connection.
+
 ## Not yet verified by hand
 
 - **Dreaming's timer has not been read off a live install, and nothing has

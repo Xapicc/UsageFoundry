@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { DreamingDTO, DreamingNoteDTO, DreamingSignatureDTO } from "@/lib/apiTypes";
-import { fmtDateTime, pollFailureMessage } from "@/lib/format";
+import { STATUS_LABEL, STATUS_TONE, fmtDateTime, pollFailureMessage } from "@/lib/format";
 import { jsonRequest } from "@/lib/jsonRequest";
 import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonLink, ButtonRow } from "@/components/ui/Button";
@@ -457,7 +457,19 @@ function Nights({ data }: { data: DreamingDTO }) {
                 {/* "Quiet" is the success case for a write-on-recurrence policy
                     and is toned as one. Six of the twenty-three days measured
                     for this feature had no failure reach a second day. */}
-                {n.outcome === "selected" && <Badge tone="accent">run started</Badge>}
+                {n.outcome === "selected" && (
+                  <span className="inline-flex flex-wrap items-center gap-1.5">
+                    <Badge tone="accent">run started</Badge>
+                    {/* How that run ended, once it has. `outcome` is the night's
+                        decision and stays "selected" whatever becomes of the
+                        run, so a failure shows here or nowhere. The run is the
+                        night's latest: a second pass that also selected replaced
+                        the first, and the Log link opens the same one. */}
+                    {n.runEnding && (
+                      <Badge tone={STATUS_TONE[n.runEnding]}>{STATUS_LABEL[n.runEnding]}</Badge>
+                    )}
+                  </span>
+                )}
                 {n.outcome === "quiet" && <Badge tone="ok">nothing recurred</Badge>}
                 {n.outcome === "refused" && <Badge tone="warn">refused</Badge>}
                 {n.outcome === "failed" && <Badge tone="danger">failed</Badge>}

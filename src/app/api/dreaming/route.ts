@@ -14,6 +14,7 @@ import {
 } from "../../../lib/dreamingLedger";
 import { dreamingRefusal, reconcileDreamingNotes } from "../../../lib/dreamingRun";
 import { resolveKnowledgeRoot } from "../../../lib/knowledge";
+import { TERMINAL_STATUSES } from "../../../lib/orchestrator";
 import { getSettings } from "../../../lib/settings";
 
 export const runtime = "nodejs";
@@ -82,7 +83,13 @@ export async function GET() {
       // be deleted at any point after, and the row must not claim otherwise.
       present: root.ok ? noteStillPresent(root.root, n.notePath) : null,
     })),
-    nights: listNights(),
+    nights: listNights().map(({ runStatus, ...night }) => ({
+      ...night,
+      // `TERMINAL_STATUSES` rather than a list of the live ones here: "has this
+      // run ended" has one answer in this codebase, and the dependency release
+      // and Dreaming's own one-at-a-time guard both ask it of that constant.
+      runEnding: runStatus && TERMINAL_STATUSES.includes(runStatus) ? runStatus : null,
+    })),
     noteLimit: NOTE_LIMIT,
     notesTruncated: counts.notes > NOTE_LIMIT,
     nightLimit: NIGHT_LIMIT,
