@@ -56,6 +56,7 @@ import {
 } from "@/lib/canvasGraph";
 import { jsonRequest } from "@/lib/jsonRequest";
 import { exitHref, leaving, registerLeaveGuard } from "@/lib/unsavedWork";
+import { isCommitChord } from "@/components/shell/shortcuts";
 import {
   EDGE_OPTION_LABEL,
   WORKFLOW_LIMIT_TIMING_NOTE,
@@ -1046,6 +1047,22 @@ export function WorkflowEditor({
     }
   }
 
+  /**
+   * ⌘↩ from anywhere in the editor, including the prompt textareas.
+   *
+   * Bound on the two regions this component owns rather than on the document,
+   * so the discard dialog and the shell's quick-open sheet — which are not in
+   * either — can never save a graph from behind. The press is refused while a
+   * save is in flight for the reason Save's `busy` is, and the default is
+   * still prevented then, so a chord that is recognised never types anything.
+   */
+  function onCommitChord(e: React.KeyboardEvent) {
+    if (!isCommitChord(e)) return;
+    e.preventDefault();
+    if (saving) return;
+    void save();
+  }
+
   /* ---------------------------------------------------------------- */
   /* Render                                                            */
   /* ---------------------------------------------------------------- */
@@ -1093,7 +1110,10 @@ export function WorkflowEditor({
           that bounds the whole graph. Column and row are placed explicitly
           rather than left to source order, so on a narrow window the canvas
           leads and the inspector follows it. */}
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_26rem] lg:items-start">
+      <div
+        className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_26rem] lg:items-start"
+        onKeyDown={onCommitChord}
+      >
         <div className="min-w-0 lg:col-start-1 lg:row-start-1">
           <Field label="Name" htmlFor="wf-name">
             <Input
@@ -1291,7 +1311,10 @@ export function WorkflowEditor({
       {/* The pane's footer, in the run form's and Settings' shape: the default
           action at the right edge of the pane it belongs to, and one line
           saying what pressing it does. */}
-      <div className="sticky bottom-0 z-10 -mx-4 -mb-12 mt-5 border-t border-line bg-canvas px-4 py-3 shadow-bar sm:-mx-5 sm:px-5">
+      <div
+        className="sticky bottom-0 z-10 -mx-4 -mb-12 mt-5 border-t border-line bg-canvas px-4 py-3 shadow-bar sm:-mx-5 sm:px-5"
+        onKeyDown={onCommitChord}
+      >
         <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
           {/* A refused save is said here as well as in the notice at the top
               of the page: the footer is where Save is pressed from, and on a
@@ -1326,8 +1349,11 @@ export function WorkflowEditor({
           >
             Cancel
           </Button>
-          <Button onClick={save} busy={saving}>
+          <Button onClick={save} busy={saving} aria-keyshortcuts="Meta+Enter">
             {workflow ? "Save changes" : "Create workflow"}
+            <span aria-hidden="true" className="text-xs opacity-70">
+              ⌘↩
+            </span>
           </Button>
         </div>
       </div>
