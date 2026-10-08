@@ -2516,7 +2516,9 @@ function migrate(db: Database.Database) {
       started_at  INTEGER NOT NULL,
       -- 'selected' when signatures qualified and a run was created, 'quiet'
       -- when none did, 'refused' when something declined to start it, 'failed'
-      -- when the run itself did not finish. Never a success mark on a row: the
+      -- when runDreamingNight threw (run_id is then null: no run is recorded).
+      -- A run that was created and then fails stays 'selected' — this row is not
+      -- rewritten from the run's status. Never a success mark on a row: the
       -- run's own status is the authority, exactly as it is for a review.
       outcome     TEXT NOT NULL,
       -- Why, for 'refused' and 'failed'. A full sentence, never a code.
