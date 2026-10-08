@@ -113,6 +113,18 @@
   sideways scroll, and a 180-character value wrapped. Not measured in the
   ascii skin.
 
+- **git resolves a relative `core.hooksPath` against the root of the work
+  tree it runs in, 2026-10-08, git 2.39.5.** Board task `602e9c65`. A scratch
+  repository with `core.hooksPath=.husky/_` and an executable
+  `.husky/_/pre-commit` writing a marker, with a scratch `HOME` and
+  `GIT_CONFIG_NOSYSTEM=1`. `git commit --allow-empty` run from a subdirectory
+  wrote that marker. A linked worktree given its own `.husky/_/pre-commit`
+  ran that copy, not the main checkout's. A bare `hooksPath` key made git
+  refuse to commit at all (`missing value for 'core.hookspath'`). An empty
+  value ran neither the work tree's `pre-commit` nor `.git/hooks/pre-commit`,
+  and where git looked instead was not established. Caveat: the container's
+  git as uid 1000, not a host's.
+
 ## Not yet verified by hand
 
 - **A planted `core.fsmonitor` running in the operator's own git on the
@@ -187,3 +199,13 @@
     neither "changed, never named" nor "named, and not changed" — the item
     most likely to be wrong;
   - `/api/runs/[id]/touched` is fetched once per tab open, never on the poll.
+
+- **A pre-existing `core.hooksPath` directory compared in a booted image.**
+  Unmeasured: the server listing and hashing `.husky/_` as root across a bind
+  mount the agent uid writes, and resolving it against the container's real
+  mounts. To settle it, in a scratch repository under a mount, run
+  `git config core.hooksPath .husky/_`, make `.husky/_/pre-commit` an
+  executable script, and start an isolated run whose prompt is to rewrite
+  that file in the repository's main checkout. `run.gitDir.report` from
+  `GET /api/runs/<id>` should list one hook finding named
+  `core.hooksPath:<the directory's real path>/pre-commit`.

@@ -4,15 +4,18 @@ import path from "node:path";
 import { WORKSPACE_MOUNTS } from "./config";
 import { db } from "./db";
 import { git } from "./git";
+import { HOOKS_PATH_PREFIX } from "./apiTypes";
 import {
   attributesFileOf,
   compareGitDir,
+  hooksPathOf,
   watchedConfigOf,
   type AttributesFile,
   type GitDirBaseline,
   type GitDirReading,
   type GitDirReport,
   type HookEntry,
+  SHOWN_CHARS,
 } from "./gitDirWatch";
 
 /**
@@ -30,7 +33,7 @@ import {
 
 /** Past this a file is identified by size and mtime rather than read. */
 const MAX_HASHED_BYTES = 1 << 20;
-/** Of `hooks/` entries read; a directory holding more says so as one entry. */
+/** Of one hooks directory's entries read; a directory holding more says so as one entry. */
 const MAX_HOOK_ENTRIES = 256;
 /**
  * Each git call here is a read of a few small files. `include.path` can name a
@@ -63,6 +66,13 @@ async function insideAnyRepository(dir: string): Promise<boolean> {
     if (await exists(path.join(current, ".git"))) return true;
     if (path.dirname(current) === current) return false;
   }
+}
+
+async function insideAMount(real: string): Promise<boolean> {
+  const roots = await Promise.all(
+    WORKSPACE_MOUNTS.map((mount) => fs.promises.realpath(mount.path).catch(() => null)),
+  );
+  return roots.some((root) => root !== null && within(root, real));
 }
 
 /**
@@ -103,10 +113,7 @@ async function resolveCommonDir(
       reason: `${asked.stdout} could not be resolved: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
-  const roots = await Promise.all(
-    WORKSPACE_MOUNTS.map((mount) => fs.promises.realpath(mount.path).catch(() => null)),
-  );
-  if (!roots.some((root) => root !== null && within(root, real))) {
+  if (!(await insideAMount(real))) {
     return {
       ok: false,
       commonDir: real,
@@ -175,8 +182,8 @@ async function identify(
   }
 }
 
-async function readHooks(commonDir: string): Promise<HookEntry[]> {
-  const dir = path.join(commonDir, "hooks");
+/** The entries of a directory git runs hooks from, each name after `prefix`. */
+async function readHookDir(dir: string, prefix: string): Promise<HookEntry[]> {
   const self = await fs.promises.lstat(dir).catch((err: NodeJS.ErrnoException) => {
     if (err.code === "ENOENT") return null;
     throw err;
@@ -186,23 +193,114 @@ async function readHooks(commonDir: string): Promise<HookEntry[]> {
   // it is reported as the one entry rather than listed through.
   if (self.isSymbolicLink()) {
     return [
-      { name: ".", identity: `symlink:${await fs.promises.readlink(dir)}`, executable: false },
+      {
+        name: `${prefix}.`,
+        identity: `symlink:${await fs.promises.readlink(dir)}`,
+        executable: false,
+      },
     ];
   }
-  if (!self.isDirectory()) return [{ name: ".", identity: "other", executable: false }];
+  if (!self.isDirectory()) return [{ name: `${prefix}.`, identity: "other", executable: false }];
   const names = (await fs.promises.readdir(dir)).filter((name) => !name.endsWith(".sample")).sort();
   const listed = names.slice(0, MAX_HOOK_ENTRIES);
   const hooks = await Promise.all(
     listed.map(async (name) => {
       const found = await identify(path.join(dir, name));
-      return found ? { name, identity: found.identity, executable: found.executable } : null;
+      return found
+        ? { name: `${prefix}${name}`, identity: found.identity, executable: found.executable }
+        : null;
     }),
   );
   const present = hooks.filter((hook): hook is HookEntry => hook !== null);
   if (names.length > listed.length) {
-    present.push({ name: "…", identity: `more:${names.length}`, executable: false });
+    present.push({ name: `${prefix}…`, identity: `more:${names.length}`, executable: false });
   }
   return present;
+}
+
+/**
+ * Where a path really is, or, when nothing is there, whether that absence is
+ * also the host's.
+ *
+ * A path inside a mount is the same directory on both sides, so nothing there
+ * means no hook runs from it. Anywhere else the container's view is not the
+ * host's: a host path such as `/Users/…` is simply missing here, and so is the
+ * target of a symlink into one. Walked up by dropping the last component
+ * rather than normalised, because `..` after a symlink is resolved by the
+ * kernel from the link's target, not lexically.
+ */
+async function locate(
+  candidate: string,
+): Promise<
+  | { state: "found"; real: string }
+  | { state: "missing"; nearest: string }
+  | { state: "dangling"; link: string; target: string }
+> {
+  for (let current = candidate; ; current = path.dirname(current)) {
+    try {
+      const real = await fs.promises.realpath(current);
+      return current === candidate ? { state: "found", real } : { state: "missing", nearest: real };
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT" && code !== "ENOTDIR") throw err;
+    }
+    const self = await fs.promises.lstat(current).catch(() => null);
+    if (self?.isSymbolicLink()) {
+      return { state: "dangling", link: current, target: await fs.promises.readlink(current) };
+    }
+  }
+}
+
+/**
+ * The directory the repository's own `core.hooksPath` names, which is where
+ * git runs the main checkout's hooks from instead of `<common>/hooks`: husky
+ * sets `.husky/_`, a gitignored directory a work cycle can write in the
+ * operator's checkout without a line of it in the branch.
+ *
+ * Resolved as git does for the main checkout: relative to its work tree,
+ * which for a non-bare repository is the common directory's parent. What
+ * cannot be placed from the container — a path git expands against the
+ * host's home or install prefix, or one whose base this app cannot tell — and
+ * a directory outside every mount, which this server would be reading as
+ * root, come back as the reason they were not read.
+ */
+async function readHooksPath(
+  commonDir: string,
+  configured: string | null,
+): Promise<{ hooks: HookEntry[]; unread: string | null }> {
+  // `/dev/null` is the usual way to turn hooks off, and is no directory on
+  // either side.
+  if (configured === null || configured === "/dev/null") return { hooks: [], unread: null };
+  const shown = configured.slice(0, SHOWN_CHARS);
+  const unread = (why: string) => ({
+    hooks: [],
+    unread: `core.hooksPath is ${shown}, ${why}, so the hooks there were not compared.`,
+  });
+  if (configured === "") return unread("which names no directory this app can read");
+  if (/^(~|%\(prefix\)\/)/.test(configured)) {
+    return unread("which git expands against your host's home or its install, not the container's");
+  }
+  let candidate = configured;
+  if (!path.isAbsolute(configured)) {
+    if (path.basename(commonDir) !== ".git") {
+      return unread(
+        `a relative path, and ${commonDir} is not a checkout's .git, so this app cannot tell what it is relative to`,
+      );
+    }
+    candidate = `${path.dirname(commonDir)}/${configured}`;
+  }
+  const located = await locate(candidate);
+  if (located.state === "dangling") {
+    return unread(
+      `and ${located.link} on the way there is a symlink to ${located.target}, which the container does not have`,
+    );
+  }
+  const real = located.state === "found" ? located.real : located.nearest;
+  if (!(await insideAMount(real))) {
+    return unread(`which resolves to ${real}, outside every configured folder`);
+  }
+  if (located.state === "missing") return { hooks: [], unread: null };
+  return { hooks: await readHookDir(real, `${HOOKS_PATH_PREFIX}${real}/`), unread: null };
 }
 
 /**
@@ -256,16 +354,18 @@ async function readSnapshot(commonDir: string): Promise<GitDirReading> {
     };
   }
   try {
-    const [hooks, attributes] = await Promise.all([
-      readHooks(commonDir),
+    const [hooks, hooksPath, attributes] = await Promise.all([
+      readHookDir(path.join(commonDir, "hooks"), ""),
+      readHooksPath(commonDir, hooksPathOf(listing.stdout)),
       readAttributes(commonDir),
     ]);
     return {
       ok: true,
       snapshot: {
         config: watchedConfigOf(listing.stdout),
-        hooks,
+        hooks: [...hooks, ...hooksPath.hooks],
         attributes,
+        hooksPathUnread: hooksPath.unread,
       },
     };
   } catch (err) {

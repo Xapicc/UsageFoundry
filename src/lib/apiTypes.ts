@@ -1628,8 +1628,36 @@ export type GitDirFindingDTO =
       /** Every value the key has at the end, in git's order; empty when removed. */
       now: Array<{ scope: "local" | "worktree"; origin: string; shown: string | null }>;
     }
-  | { kind: "hook"; name: string; change: GitDirChangeDTO; executable: boolean }
+  | {
+      kind: "hook";
+      /** An entry of `<common>/hooks`, or one under `HOOKS_PATH_PREFIX`. */
+      name: string;
+      change: GitDirChangeDTO;
+      executable: boolean;
+    }
   | { kind: "attributes"; change: GitDirChangeDTO; driverLines: string[] };
+
+/**
+ * What a hook entry's name starts with when it was read from the directory a
+ * `core.hooksPath` names rather than from `<common>/hooks`, followed by that
+ * directory's real path, a slash and the entry. The directory is in the name
+ * so that a `core.hooksPath` repointed elsewhere reads as the old directory's
+ * hooks going and the new one's arriving.
+ */
+export const HOOKS_PATH_PREFIX = "core.hooksPath:";
+
+/**
+ * The directory and entry of a hook name under `HOOKS_PATH_PREFIX`, or null
+ * for one of `<common>/hooks`.
+ */
+export function hooksPathEntryOf(name: string): { dir: string; entry: string } | null {
+  if (!name.startsWith(HOOKS_PATH_PREFIX)) return null;
+  const rest = name.slice(HOOKS_PATH_PREFIX.length);
+  // A directory entry has no slash in it, so the last one ends the directory.
+  const slash = rest.lastIndexOf("/");
+  if (slash < 0) return null;
+  return { dir: rest.slice(0, slash), entry: rest.slice(slash + 1) };
+}
 
 /**
  * A run's end, compared with its start. `concurrentRunIds` is every other run
@@ -1637,7 +1665,14 @@ export type GitDirFindingDTO =
  * include the operator, the chat or anything outside this app.
  */
 export type GitDirReportDTO =
-  | { state: "unchanged"; commonDir: string; since: number; checkedAt: number }
+  | {
+      state: "unchanged";
+      commonDir: string;
+      since: number;
+      checkedAt: number;
+      /** Where git runs hooks from that was not read, a sentence each; absent when all of it was. */
+      notRead?: string[];
+    }
   | {
       state: "changed";
       commonDir: string;
@@ -1645,6 +1680,7 @@ export type GitDirReportDTO =
       checkedAt: number;
       findings: GitDirFindingDTO[];
       concurrentRunIds: string[];
+      notRead?: string[];
     }
   | { state: "unreadable"; commonDir: string | null; reason: string; checkedAt: number };
 

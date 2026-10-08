@@ -54,6 +54,7 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - A run's end says what changed in its repository's git directory, because nothing else does.
 - The check compares a list of keys that run commands, never the whole file.
 - Reading runs nothing the repository chose, and reads nothing outside a mount.
+- A `core.hooksPath` the repository already had is followed to the directory git runs hooks from.
 - A change is attributed only as far as this app's record goes.
 - A start or end that was not read is a warning, never "unchanged".
 - No credential is kept or shown.

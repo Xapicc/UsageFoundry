@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import { HOOKS_PATH_PREFIX } from "./apiTypes";
 import {
   attributesFileOf,
   commandClassOf,
   compareGitDir,
+  hooksPathOf,
   watchedConfigOf,
   type GitDirBaseline,
   type GitDirFinding,
@@ -66,6 +68,7 @@ function snapshot(
     config: watchedConfigOf(listing(lines)),
     hooks,
     attributes: attributes === null ? null : attributesFileOf(attributes),
+    hooksPathUnread: null,
   };
 }
 
@@ -293,6 +296,63 @@ describe("one case per class of key that runs a command", () => {
       findingsOf(compare(snapshot(ORDINARY), snapshot(ORDINARY, [], "* filter=x\n")))[0].kind,
       "attributes",
     );
+  });
+});
+
+describe("the directory a core.hooksPath the repository already had names", () => {
+  it("is the last value the repository sets, never this app's own", () => {
+    assert.equal(hooksPathOf(listing(ORDINARY)), null);
+    assert.equal(
+      hooksPathOf(
+        listing([
+          ["global", "/root/.gitconfig", "core.hooksPath", "/global/hooks"],
+          ["local", CONFIG, "core.hooksPath", ".husky/_"],
+          ["worktree", `${COMMON}/config.worktree`, "core.hookspath", ".githooks"],
+          ...ORDINARY,
+        ]),
+      ),
+      ".githooks",
+    );
+    // git refuses to run with a bare one, so no hook runs from anywhere.
+    assert.equal(hooksPathOf(listing([["local", CONFIG, "core.hookspath", null]])), null);
+  });
+
+  it("is not compared against a baseline that never read it, and says so", () => {
+    const hook: HookEntry = {
+      name: `${HOOKS_PATH_PREFIX}/workspace/repo/.husky/_/pre-commit`,
+      identity: "file:a",
+      executable: true,
+    };
+    const { hooksPathUnread: _, ...older } = snapshot(ORDINARY);
+    const report = compare(older, snapshot(ORDINARY, [hook]));
+    assert.equal(report.state, "unchanged", JSON.stringify(report));
+    assert.match(
+      report.state === "unchanged" ? (report.notRead ?? []).join() : "",
+      /^At the run's start: this app did not yet read the directory core\.hooksPath names/,
+    );
+    // A baseline that did read it reports the same entry as added.
+    const read = findingsOf(compare(snapshot(ORDINARY), snapshot(ORDINARY, [hook])));
+    assert.equal(read[0].kind, "hook");
+  });
+
+  it("is never unchanged when either end could not read it", () => {
+    const unread = (reason: string): GitDirSnapshot => ({
+      ...snapshot(ORDINARY),
+      hooksPathUnread: reason,
+    });
+    const notReadOf = (report: GitDirReport) =>
+      report.state === "unchanged" || report.state === "changed" ? report.notRead : undefined;
+    assert.equal(notReadOf(compare(snapshot(ORDINARY), snapshot(ORDINARY))), undefined);
+    assert.deepEqual(notReadOf(compare(snapshot(ORDINARY), unread("gone."))), [
+      "At the run's end: gone.",
+    ]);
+    assert.deepEqual(notReadOf(compare(unread("away."), unread("gone."))), [
+      "At the run's start: away.",
+      "At the run's end: gone.",
+    ]);
+    assert.deepEqual(notReadOf(compare(unread("away."), unread("away."))), [
+      "At the run's start and end: away.",
+    ]);
   });
 });
 
