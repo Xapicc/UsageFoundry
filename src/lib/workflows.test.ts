@@ -513,6 +513,78 @@ describe("normalizeWorkflowInput — name and blocks", () => {
     assert.equal(merged.graph.nodes[1].task, "");
   });
 
+  it("refuses a block id or kind that is not a string rather than reading what is inside it", () => {
+    // `["a"]` read through `String()` is the id `a`, and `["orchestrator"]` is
+    // the kind `orchestrator`: a block saved as something other than what the
+    // caller wrote, through a door the save and validate routes share with the
+    // chat, so the chat's own check in front of it is not the only one needed.
+    for (const wrong of [{ text: "a" }, ["a"], 42]) {
+      const label = JSON.stringify(wrong);
+      const refusal = error(graph([node("a", { id: wrong })]));
+      assert.match(refusal, /^Block 1: "id" has to be a string when it is given; got /, label);
+      assert.doesNotMatch(refusal, /\[object Object\]/, label);
+    }
+    for (const wrong of [{ text: "run" }, ["run"], 7]) {
+      const label = JSON.stringify(wrong);
+      assert.match(
+        error(graph([node("a", { kind: wrong })])),
+        /^“A”: "kind" has to be a string when it is given; got /,
+        label,
+      );
+    }
+    // Absent and null keep their meaning: a missing id is refused for that, and a
+    // missing kind is the run block every graph saved before kinds existed is.
+    assert.match(error(graph([node("a", { id: null })])), /^Block 1 has no usable id/);
+    assert.equal(value(graph([node("a", { kind: null })])).graph.nodes[0].kind, "run");
+    assert.equal(value(graph([node("a", { kind: undefined })])).graph.nodes[0].kind, "run");
+  });
+
+  it("refuses a loop's not-told field that is not a string, rather than reading it as blank", () => {
+    // `String([])` is `""`, so an empty list in `task` or `folder` was "told
+    // nothing" and the block was saved with a value the loop's refusal exists
+    // to stop; an object was refused, but in the sentence for a loop that had
+    // been given a task.
+    for (const key of ["task", "templateId", "agentId", "mountId", "folder", "promptOverride"]) {
+      for (const wrong of [[], { text: "x" }, ["x"], 5]) {
+        assert.match(
+          error(looped({ [key]: wrong })),
+          new RegExp(`^“L”: "${key}" has to be a string when it is given; got `),
+          `${key}: ${JSON.stringify(wrong)}`,
+        );
+      }
+      // Blank and absent are still told nothing.
+      value(looped({ [key]: null }));
+      value(looped({ [key]: "  " }));
+    }
+  });
+
+  it("refuses a link's from, to or condition that is not a string, naming the link", () => {
+    // `["a"]` is the block `a` and `["on-finish"]` the condition `on-finish`: a
+    // link joining, or conditioned on, something other than what was written.
+    for (const field of ["from", "to", "edge"]) {
+      for (const wrong of [["a"], { id: "a" }, 1]) {
+        const refusal = error(
+          graph([node("a"), node("b")], [{ ...edge("a", "b"), [field]: wrong }]),
+        );
+        assert.match(
+          refusal,
+          new RegExp(`^Link 1: "${field}" has to be a string when it is given; got `),
+          `${field}: ${JSON.stringify(wrong)}`,
+        );
+        assert.doesNotMatch(refusal, /\[object Object\]/);
+      }
+    }
+    // Absent and null are still what they were, each refused for its own reason.
+    assert.match(
+      error(graph([node("a"), node("b")], [{ ...edge("a", "b"), edge: null }])),
+      /needs a condition for starting after/,
+    );
+    assert.match(
+      error(graph([node("a"), node("b")], [{ ...edge("a", "b"), from: null }])),
+      /Link 1 joins a block that is not in this workflow/,
+    );
+  });
+
   it("carries the workflow-wide limits, and reads a blank field as off", () => {
     // The one guard a workflow itself holds, and the only value on this form
     // that is not about *what work to do*. It earns its place here rather than
@@ -3295,6 +3367,32 @@ describe("planEmission — which specs become runs", () => {
       refused([spec("a"), spec("b", { dependsOn: [{ id: "a", edge: null }] })]),
       /needs a condition for starting after/,
     );
+  });
+
+  it("refuses an emitted run's id, title, task, folder or agent that is not a string, naming the run", () => {
+    // `{…}` as the task was a billed run briefed with "[object Object]", and
+    // `agent: ["reviewer"]` was the agent inside the list: a run started as
+    // something the turn did not write, by a block nobody is reading.
+    for (const field of ["id", "title", "task", "folder", "agent"]) {
+      for (const wrong of [{ text: "x" }, ["reviewer"], 42]) {
+        const reason = refused([spec("a"), spec("b", { [field]: wrong })]);
+        assert.match(
+          reason,
+          new RegExp(`^Run 2: "${field}" has to be a string when it is given; got `),
+          `${field}: ${JSON.stringify(wrong)}`,
+        );
+        assert.doesNotMatch(reason, /\[object Object\]/);
+      }
+    }
+    // Absent and null keep their meaning: each is refused, or accepted, for the
+    // reason it always was, and `""` for a folder is still the mount root.
+    assert.match(refused([spec("a", { id: null })]), /^Run 1 has no usable id/);
+    assert.match(refused([spec("a", { title: null })]), /needs a title/);
+    assert.match(refused([spec("a", { task: null })]), /has no task/);
+    const [plain] = emitted([spec("a", { agent: null, folder: "" })]);
+    assert.equal(plain.agent, null);
+    assert.equal(plain.folder, "");
+    assert.equal(emitted([spec("a", { folder: undefined })])[0].folder, "");
   });
 
   /* ---------------------------------------------------------------- */

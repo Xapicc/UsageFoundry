@@ -82,6 +82,9 @@ before(async () => {
   root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-deliver-")));
   process.env.DATA_DIR = path.join(root, "data");
   process.env.CLAUDE_HOME = path.join(root, "claude");
+  // `planUsage` looks for an OAuth token here, and Resolve asks it before a
+  // spawn: a unit test must not send a request on the operator's own credential.
+  process.env.CLAUDE_CONFIG_DIR = path.join(root, "claude");
   process.env.WORKSPACE_ROOT = path.join(root, MOUNT_DIR);
   process.env.WORKSPACE_ROOTS = "";
   // A credential `planDelivery` accepts. It never leaves this process: the push
@@ -409,6 +412,33 @@ describe("neither exit nor the handoff lets a file seeding copied in leave on th
     assert.equal(again.ok ? "" : again.reason, state?.blocked);
     assert.equal(git(s.repo, "rev-parse", "main").trim(), base);
     assert.equal(git(s.repo, "ls-tree", "--name-only", "main", ".env").trim(), "");
+  });
+
+  it("buys no resolution of a conflicting branch that carries one", async () => {
+    // Read from the code on 2026-10-06: the conflict is `blocked`, so the card
+    // offered Resolve, which spawned and billed a resolution `landRun` then
+    // refused on the file. The merge queue already declined it.
+    const s = forcedEnvScene("seeded-resolve");
+    fs.writeFileSync(path.join(s.repo, "shared.txt"), "main\n");
+    git(s.repo, "commit", "-qam", "main moves under the branch");
+    const tip = git(s.repo, "rev-parse", s.branch).trim();
+
+    const state = await land.landState(s.runId);
+    const pressed = await land.resolveConflicts(s.runId);
+
+    assert.equal(state?.preview.outcome, "conflict");
+    assert.match(state?.blocked ?? "", /^Merging into main conflicts in 1 file/);
+    assert.match(state?.resolveBlocked ?? "", /^uf\/seeded-resolve carries \.env, .*into main's history/);
+    assert.equal(pressed.ok ? "" : pressed.reason, state?.resolveBlocked);
+    // `startAssist` writes this row before it spawns, and it is the only spawn
+    // on this path.
+    const resolves = dbMod
+      .db()
+      .prepare("SELECT COUNT(*) AS n FROM run_reviews WHERE run_id = ? AND kind = 'resolve'")
+      .get(s.runId) as { n: number };
+    assert.equal(resolves.n, 0, "a resolution was started");
+    assert.equal(git(s.repo, "rev-parse", s.branch).trim(), tip);
+    assert.throws(() => git(s.slot, "rev-parse", "-q", "--verify", "MERGE_HEAD"), "a merge was opened");
   });
 
   it("withholds the handoff's merge command in the land's sentence", async () => {

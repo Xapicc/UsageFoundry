@@ -79,6 +79,7 @@ import { RunDiff } from "@/components/RunDiff";
 import { RunActivity } from "@/components/RunActivity";
 import { RunHandoff } from "@/components/RunHandoff";
 import { RunLand } from "@/components/RunLand";
+import { RunGitDirNotice } from "@/components/RunGitDirNotice";
 import { RunOutput } from "@/components/RunOutput";
 import { RunReview } from "@/components/RunReview";
 import { RunTaskComments } from "@/components/RunTaskComments";
@@ -1665,6 +1666,14 @@ export default function RunDetail({
                 on its own — start “{haltedWith}” again to do this work.
               </p>
             )}
+            {/* In the state block because it is part of how the run ended: what
+                it left in the repository's git directory, which nothing in the
+                pane's branch or diff shows. */}
+            <RunGitDirNotice
+              gitDir={run.gitDir}
+              settled={!ACTIVE_STATUSES.has(run.status)}
+              placement="inspector"
+            />
 
             {/* Where the run says it is being held back, next to the Resume
                 button that still works. The chip in the heading is the glance;

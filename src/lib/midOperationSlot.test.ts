@@ -346,6 +346,62 @@ describe("what a checkout stopped mid-operation says before any button is presse
   });
 });
 
+describe("what the Land card says of a detached checkout once a verify command is set", () => {
+  /**
+   * Read from the code on 2026-10-06: `landRun` refuses either state at the
+   * verify gate, naming it, but `landState` never asked the gate, so the card
+   * drew Land with `blocked` null and the operator learned only by pressing.
+   * The card's sentence must be the press's, and with no command configured
+   * the gate asks nothing.
+   */
+  const VERIFY = `${process.execPath} -e 0`;
+
+  /** `blocked` with and without a command, and what a press then answers. */
+  async function cardAndPress(s: Scene) {
+    const unchecked = (await land.landState(s.runId))?.blocked;
+    saveSettings({ landVerifyCommand: VERIFY });
+    try {
+      const blocked = (await land.landState(s.runId))?.blocked ?? null;
+      const landed = await land.landRun(s.runId, "merge");
+      return { unchecked, blocked, pressed: landed.ok ? null : landed.reason };
+    } finally {
+      saveSettings({ landVerifyCommand: "" });
+    }
+  }
+
+  it("withholds Land for a plain detached HEAD in the gate's sentence", async () => {
+    const s = scene("card-gate-detached");
+    // Back to the base, so the land is a fast-forward and nothing else refuses.
+    fixtureGit(s.repo, ["reset", "-q", "--hard", "main~1"]);
+    const main = fixtureGit(s.repo, ["rev-parse", "main"]);
+    fixtureGit(s.slot, ["checkout", "-q", "--detach"]);
+
+    const { unchecked, blocked, pressed } = await cardAndPress(s);
+
+    assert.equal(unchecked, null, "the gate was asked with no command configured");
+    assert.match(blocked ?? "", /detached HEAD rather than on uf\/card-gate-detached/);
+    assert.equal(pressed, blocked, "the card and the press disagree");
+    assert.equal(fixtureGit(s.repo, ["rev-parse", "main"]), main);
+  });
+
+  it("withholds Land for a checkout stopped mid-rebase in the gate's sentence", async () => {
+    const s = scene("card-gate-rebase");
+    rebaseStops(s.slot);
+    // After the rebase has stopped against the target's commit, so the land
+    // is a fast-forward and the rebase is still in progress.
+    fixtureGit(s.repo, ["reset", "-q", "--hard", "main~1"]);
+    const main = fixtureGit(s.repo, ["rev-parse", "main"]);
+
+    const { unchecked, blocked, pressed } = await cardAndPress(s);
+
+    assert.equal(unchecked, null, "the gate was asked with no command configured");
+    assert.match(blocked ?? "", /part-way through a rebase of uf\/card-gate-rebase.*git rebase --abort/s);
+    assert.equal(pressed, blocked, "the card and the press disagree");
+    assert.equal(fixtureGit(s.repo, ["rev-parse", "main"]), main);
+    assert.equal(headOf(s.slot), "HEAD", "the rebase was disturbed");
+  });
+});
+
 describe("a run's checkout on a plain detached HEAD", () => {
   it("is named by Commit and by the verify gate, rather than called gone or taken over", async () => {
     // `git checkout <commit>` detaches the slot with nothing in progress. The

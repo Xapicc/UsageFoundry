@@ -16,7 +16,7 @@ This page is the index. The bar every test is held to comes first, each of its p
 
 `npm run typecheck` plus a `docker compose up --build` smoke test is still the real verification loop, and `docs/verification.md` records what was checked by hand — including its "Not yet verified" list, which must stay honest.
 
-Twenty-one are renderings rather than functions — every `*.test.tsx` in the tree, which is the whole of that class and is countable as `find src -name '*.test.tsx' | wc -l`.
+Twenty-two are renderings rather than functions — every `*.test.tsx` in the tree, which is the whole of that class and is countable as `find src -name '*.test.tsx' | wc -l`.
 
 ## [Run queue and admission](testing/run-queue-and-admission.md)
 
@@ -223,12 +223,17 @@ Units that are about no test file in the tree:
 |---|---|
 | `deleteBranch.test.ts` |  |
 | `diffSlotReuse.test.ts` |  |
-| `landGate.test.ts` |  |
-| `landAfterSquash.test.ts` | [merge-queue] |
+| `landAfterSquash.test.ts` | [resolution] |
 | `landAfterVerify.test.ts` |  |
 | `landUnwind.test.ts` |  |
 | `landView.test.ts` | [cards] |
 | `repoLock.test.ts` |  |
+
+## [The verify gate in front of Land](testing/land-verify-gate.md)
+
+| Test file | Also in |
+|---|---|
+| `landGate.test.ts` |  |
 
 ## [Deliver](testing/delivery.md)
 
@@ -237,19 +242,24 @@ Units that are about no test file in the tree:
 | `deliverRun.test.ts` |  |
 | `delivery.test.ts` |  |
 
-## [The merge queue and conflict resolution](testing/merge-queue-and-resolution.md)
+## [The merge queue](testing/merge-queue.md)
+
+| Test file | Also in |
+|---|---|
+| `mergeQueue.test.ts` | [argv], [resolution] |
+| `mergeQueueDrain.test.ts` | [fleet] |
+| `mergeQueueOrder.test.ts` |  |
+| `mergeQueueView.test.ts` |  |
+
+## [Conflict resolution: its checkout, limits and refusals](testing/conflict-resolution.md)
 
 | Test file | Also in |
 |---|---|
 | `conflictedPaths.test.ts` |  |
-| `mergeQueue.test.ts` | [argv] |
-| `mergeQueueDrain.test.ts` | [fleet] |
-| `mergeQueueOrder.test.ts` |  |
-| `mergeQueueView.test.ts` |  |
 | `midOperationSlot.test.ts` | [landing] |
 | `resolutionBudget.test.ts` |  |
 | `resolutionMarkerless.test.ts` |  |
-| `resolutionSilence.test.ts` |  |
+| `resolutionSilence.test.ts` | [merge-queue] |
 | `resolveCheckout.test.ts` |  |
 
 ## [Run page panels: background tasks, touched files and conflict maps](testing/run-page-panels-and-file-maps.md)
@@ -282,6 +292,7 @@ Units that are about no test file in the tree:
 
 | Test file | Also in |
 |---|---|
+| `blockStartupGit.test.ts` |  |
 | `cliPath.test.ts` |  |
 
 ## [The sandbox, Codex's rules file and the read guard](testing/sandbox-and-read-guard.md)
@@ -394,6 +405,14 @@ Units that are about no test file in the tree:
 | `usageRemaining.test.ts` |  |
 | `UsageRemaining.test.ts` |  |
 
+## [What a run left in its repository's git directory](testing/git-dir-watch.md)
+
+| Test file | Also in |
+|---|---|
+| `gitDirWatch.test.ts` |  |
+| `gitDirRead.test.ts` |  |
+| `RunGitDirNotice.test.tsx` |  |
+
 ## [Components: Meter, the ascii skin, Markdown and the UI kit](testing/components-meter-markdown-and-kit.md)
 
 | Test file | Also in |
@@ -482,7 +501,8 @@ It prints nothing as this is written. Whoever owns a file it names owes that fil
 [tasks]: testing/taskboard-authority-and-moves.md
 [task-deps]: testing/taskboard-comments-deps-and-mcp.md
 [landing]: testing/landing-and-delivery.md
-[merge-queue]: testing/merge-queue-and-resolution.md
+[merge-queue]: testing/merge-queue.md
+[resolution]: testing/conflict-resolution.md
 [run-page]: testing/run-page-panels-and-file-maps.md
 [argv]: testing/spawn-argv-and-child-env.md
 [chat-child]: testing/chat-child-lookups-and-config.md

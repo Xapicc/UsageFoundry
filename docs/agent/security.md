@@ -49,6 +49,16 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - The chat reads the user's settings and nobody's cwd, and runs no hooks.
 - What is still open, and what would settle it.
 
+## [What a run left in its repository's git directory](security/run-git-dir-watch.md)
+
+- A run's end says what changed in its repository's git directory, because nothing else does.
+- The check compares a list of keys that run commands, never the whole file.
+- Reading runs nothing the repository chose, and reads nothing outside a mount.
+- A change is attributed only as far as this app's record goes.
+- A start or end that was not read is a warning, never "unchanged".
+- No credential is kept or shown.
+- What it does not cover.
+
 ## [Middleware, login, sessions and the audit trail](security/middleware-login-and-sessions.md)
 
 - A monitor must not be handed the credential that starts agents. (was line 27)

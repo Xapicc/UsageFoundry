@@ -144,10 +144,15 @@ export async function GET(req: Request) {
     // stopped, read by the run's page and by nothing on this list. It measured
     // as free above only because that capture held no `needs-review` rows, and
     // a fleet that ends that way puts ~200KB back on a four-second poll.
+    //
+    // The two git-directory columns are the run page's alone, which is sent
+    // them parsed as `gitDir`.
     const {
       budget: _budget,
       agent: _agent,
       needs_review_reason: _needsReviewReason,
+      git_dir_baseline: _gitDirBaseline,
+      git_dir_report: _gitDirReport,
       ...rest
     } = r;
     return {
