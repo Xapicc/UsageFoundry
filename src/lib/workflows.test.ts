@@ -597,6 +597,122 @@ describe("normalizeWorkflowInput — name and blocks", () => {
     assert.equal(value(graph([node("a", { folder: undefined })])).graph.nodes[0].folder, "");
   });
 
+  // The board condition every loop-block case below hangs a threshold off.
+  const stopAt = (atMost: unknown) => ({
+    mountId: "work",
+    folder: "repo",
+    statuses: ["open"],
+    thresholds: [{ priority: "any", atMost }],
+  });
+
+  it("refuses a fan-out, fix-round, pass or spending cap, or a threshold, that is neither a number nor a string", () => {
+    // `Number(["3"])` is 3 and `Number(true)` is 1, so a list-wrapped or boolean
+    // value passed the whole-number and range checks behind it: `fixRounds: true`
+    // saved as one billed fix round per rejected branch and `fanOut: ["5"]` as a
+    // cap of 5. `Number([])` and `Number(false)` are 0, which `fixRounds` and the
+    // spending cap both accept as a setting.
+    const review = (fixRounds: unknown) => ({ id: "r", name: "R", kind: "review", fixRounds });
+    const asks: Array<[string, string, (wrong: unknown) => unknown]> = [
+      ["A", "fanOut", (wrong) => graph([decider("a", { fanOut: wrong })])],
+      ["R", "fixRounds", (wrong) => graph([review(wrong)])],
+      ["L", "maxPasses", (wrong) => looped({ maxPasses: wrong })],
+      ["L", "maxLoopCostUSD", (wrong) => looped({ maxLoopCostUSD: wrong })],
+      [
+        "L",
+        "stopWhenTasks\\.thresholds\\[0\\]\\.atMost",
+        (wrong) => looped({ stopWhenTasks: stopAt(wrong) }),
+      ],
+    ];
+    for (const [name, field, make] of asks) {
+      for (const wrong of [["3"], [], { n: 3 }, true, false]) {
+        const refusal = error(make(wrong));
+        assert.match(
+          refusal,
+          new RegExp(`^“${name}”: "${field}" has to be a number when it is given; got `),
+          `${field}: ${JSON.stringify(wrong)}`,
+        );
+        assert.doesNotMatch(refusal, /\[object Object\]/);
+      }
+    }
+  });
+
+  it("still reads a numeric string for those caps, and absent, null and blank as they always were", () => {
+    // The canvas sends numbers, but a string is what a form field holds and the
+    // refusal above is about the type, so `"5"` keeps meaning 5.
+    assert.equal(value(graph([decider("d", { fanOut: " 5 " })])).graph.nodes[0].fanOut, 5);
+    const reviewed = (fixRounds: unknown) =>
+      value(
+        graph(
+          [node("a"), { id: "r", name: "R", kind: "review", fixRounds }, merger("m")],
+          [edge("a", "r"), edge("r", "m")],
+        ),
+      ).graph.nodes.find((n) => n.id === "r")!.fixRounds;
+    assert.equal(reviewed("2"), 2);
+    // No fix rounds is none, which is what every graph saved before the field says.
+    for (const blank of [undefined, null, ""]) {
+      assert.equal(reviewed(blank), 0, `for ${String(blank)}`);
+    }
+    const loop = value(
+      looped({ maxPasses: "4", maxLoopCostUSD: "12.5", stopWhenTasks: stopAt("3") }),
+    ).graph.nodes[0];
+    assert.equal(loop.maxPasses, 4);
+    assert.equal(loop.maxLoopCostUSD, 12.5);
+    assert.equal(loop.stopWhenTasks?.thresholds[0].atMost, 3);
+    // A blank threshold is still refused by name rather than read as zero, the
+    // strictest setting there is.
+    for (const blank of [undefined, null, ""]) {
+      assert.match(
+        error(looped({ stopWhenTasks: stopAt(blank) })),
+        /needs a whole number of tasks to stop at/,
+        `for ${String(blank)}`,
+      );
+    }
+  });
+
+  it("asks a block only for the numbers it reads", () => {
+    // A merge block drops `fanOut` unread, and only a loop reads `maxPasses`,
+    // so a value that would be refused where it is read is not refused where it
+    // is dropped.
+    const wrong = { fanOut: ["5"], fixRounds: true, maxPasses: ["3"], maxLoopCostUSD: true };
+    const saved = value(
+      graph(
+        [
+          node("a", wrong),
+          decider("d", { fixRounds: true, maxPasses: ["3"], maxLoopCostUSD: true }),
+          merger("m", wrong),
+        ],
+        [edge("a", "m")],
+      ),
+    ).graph.nodes;
+    assert.deepEqual(
+      saved.map((n) => [n.fanOut, n.fixRounds, n.maxPasses, n.maxLoopCostUSD]),
+      [
+        [null, null, null, null],
+        [3, null, null, null],
+        [null, null, null, null],
+      ],
+    );
+    const reviewed = value(
+      graph(
+        [
+          node("a"),
+          { id: "r", name: "R", kind: "review", fixRounds: 1, fanOut: ["5"], maxPasses: ["3"], maxLoopCostUSD: true },
+          merger("m"),
+        ],
+        [edge("a", "r"), edge("r", "m")],
+      ),
+    ).graph.nodes.find((n) => n.id === "r")!;
+    assert.deepEqual(
+      [reviewed.fanOut, reviewed.fixRounds, reviewed.maxPasses, reviewed.maxLoopCostUSD],
+      [null, 1, null, null],
+    );
+    const looping = value(looped({ fanOut: ["5"], fixRounds: true })).graph.nodes[0];
+    assert.deepEqual(
+      [looping.fanOut, looping.fixRounds, looping.maxPasses],
+      [null, null, 3],
+    );
+  });
+
   it("refuses a merge block's strategy, agent or provider that is not a string, and nothing it drops", () => {
     for (const field of ["mergeStrategy", "agentId", "provider"]) {
       assert.match(
