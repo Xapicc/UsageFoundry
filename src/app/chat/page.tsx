@@ -273,6 +273,7 @@ const BLOCK_KIND: Record<ProposedBlockDTO["kind"], string> = {
   run: "run",
   orchestrator: "decides what to run",
   merge: "lands branches",
+  deliver: "pushes branches and opens pull requests",
   loop: "repeats a task",
   review: "reviews branches",
 };

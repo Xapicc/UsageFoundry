@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import type { WorkflowDTO } from "@/lib/apiTypes";
+import { pollFailureMessage } from "@/lib/format";
+import { jsonRequest } from "@/lib/jsonRequest";
 import { WorkflowEditor } from "@/components/WorkflowEditor";
 import { Card, Empty, SkeletonText } from "@/components/ui/Card";
 import { Notice } from "@/components/ui/Notice";
@@ -21,24 +23,29 @@ export default function EditWorkflowPage() {
 
   const [workflow, setWorkflow] = useState<WorkflowDTO | null>(null);
   const [loaded, setLoaded] = useState(false);
+  // Null on a 404, which is the only answer that means there is no such
+  // workflow; every other failed read says what it was.
   const [error, setError] = useState<string | null>(null);
+  const [initialBlockId, setInitialBlockId] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`/api/workflows/${id}`, { cache: "no-store" })
-      .then(async (res) => {
-        const data = (await res.json().catch(() => ({}))) as {
-          workflow?: WorkflowDTO;
-          error?: string;
-        };
-        if (!res.ok || !data.workflow) {
-          throw new Error(data.error ?? `Could not read this workflow (${res.status})`);
-        }
-        setWorkflow(data.workflow);
-      })
-      .catch((err: unknown) =>
-        setError(err instanceof Error ? err.message : String(err)),
-      )
-      .finally(() => setLoaded(true));
+    void (async () => {
+      const res = await jsonRequest<{ workflow?: WorkflowDTO }>(
+        `/api/workflows/${id}`,
+      );
+      if (res.ok && res.data.workflow) {
+        setWorkflow(res.data.workflow);
+        // Read here, once, with the workflow: `useSearchParams` would put a
+        // Suspense boundary on a page whose whole point is that nothing
+        // re-seeds the form after it has been mounted.
+        setInitialBlockId(new URLSearchParams(window.location.search).get("block"));
+      } else if (res.ok) {
+        setError(pollFailureMessage(200, "the answer carried no workflow"));
+      } else if (res.status !== 404) {
+        setError(pollFailureMessage(res.status, res.error));
+      }
+      setLoaded(true);
+    })();
   }, [id]);
 
   return (
@@ -65,14 +72,16 @@ export default function EditWorkflowPage() {
           <SkeletonText lines={4} />
         </Card>
       ) : workflow ? (
-        <WorkflowEditor workflow={workflow} />
+        <WorkflowEditor workflow={workflow} initialBlockId={initialBlockId} />
       ) : (
         <>
           <div role="alert">{error && <Notice tone="danger">{error}</Notice>}</div>
           <Card emphasis="quiet">
             <Empty>
-              <div className="font-medium text-ink">No such workflow</div>
-              <div className="mt-3">
+              {!error && (
+                <div className="font-medium text-ink">No such workflow</div>
+              )}
+              <div className={error ? undefined : "mt-3"}>
                 <Link href="/workflows">Back to workflows</Link>
               </div>
             </Empty>

@@ -1001,6 +1001,39 @@ describe("picking up a pass that stopped the loop", () => {
     assert.ok(passTwoOpened(instanceId, "a"), "the loop never took its next pass");
   });
 
+  it("runs a deciding turn again that failed, and the loop carries on", async () => {
+    // The pass stopped on its own first member, so the obstacle to name is that
+    // block and not the loop — which would stop again on the same sentence. The
+    // retried turn is the pass's own claim and adds to the failed turn's bill.
+    const instanceId = scene({ ...DECIDER, maxPasses: 1 });
+    const member = passMemberId("L", 1, "o");
+    workflows.advanceInstances();
+    workflows.settleBlock(instanceId, member, {
+      status: "failed",
+      error: "The CLI exited 1.",
+      costUSD: 0.3,
+    });
+    assert.equal(blockRow(instanceId, member).status, "failed");
+    assert.equal(loopBlock(instanceId).status, "failed");
+
+    const offered = workflows.pickUpsOf(workflows.getInstance(instanceId)!);
+    assert.deepEqual(
+      offered.map((p) => [p.kind, p.kind === "run" ? p.runId : p.nodeId]),
+      [["orchestrator", member]],
+    );
+
+    assert.deepEqual(workflows.retryOrchestratorBlock(instanceId, member), { ok: true });
+    assert.equal(loopBlock(instanceId).status, "looping");
+    assert.equal(blockRow(instanceId, member).status, "thinking", "the pass never took its turn back");
+
+    decide(instanceId, member, twoRuns, 0.2);
+    await drive(instanceId);
+    assert.equal(loopBlock(instanceId).status, "emitted", loopBlock(instanceId).error ?? "");
+    assert.equal(loopBlock(instanceId).emitted, 1);
+    const turn = workflows.blocksOf(instanceId).find((b) => b.nodeId === member)!;
+    assert.ok(Math.abs(turn.costUSD - 0.5) < 1e-9, `the two turns cost ${turn.costUSD}`);
+  });
+
   it("refuses a run that completed, and a loop that ended on its own terms", async () => {
     const instanceId = scene({ ...FAN_OUT, maxPasses: 1 });
     await drive(instanceId);
@@ -1262,6 +1295,100 @@ describe("a successor of a loop", () => {
     const successor = membersOf(instanceId).find((m) => m.memberId === "after");
     assert.ok(successor, "the successor was never created");
     assert.deepEqual(depsOf(successor.runId), []);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* A loop asked to stop after the pass it is on                        */
+/* ------------------------------------------------------------------ */
+
+describe("a loop asked to stop after its pass", () => {
+  const withSuccessor = {
+    nodes: [...FAN_OUT.nodes, node("after")],
+    edges: [...FAN_OUT.edges, { from: "L", to: "after", edge: "on-success" }],
+    body: FAN_OUT.body,
+    maxPasses: 3,
+    ownBlocks: [{ id: "after", kind: "run" }],
+  };
+
+  const stopAfterOf = (instanceId: string) =>
+    workflows.blocksOf(instanceId).find((b) => b.nodeId === "L")?.stopAfterPass;
+
+  it("lands the pass in flight, starts no more, and hands on as a loop that reached its end", async () => {
+    // The column is read in `advanceLoop` and nowhere the pure decision can see:
+    // a reader that passed `null` would typecheck, keep every unit case green,
+    // and take the pass the operator had refused.
+    const instanceId = scene(withSuccessor);
+    workflows.advanceInstances();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const outcome = workflows.setLoopStopAfter(instanceId, "L", true);
+    assert.deepEqual(outcome, { ok: true, stopAfterPass: 1 });
+    assert.equal(stopAfterOf(instanceId), 1);
+
+    // Not a halt: nothing was signalled, nothing written off, and the pass is
+    // still the one in flight.
+    assert.equal(loopBlock(instanceId).status, "looping");
+    for (const member of membersOf(instanceId)) {
+      const run = dbMod
+        .db()
+        .prepare("SELECT status FROM runs WHERE id=?")
+        .get(member.runId) as { status: string };
+      assert.equal(run.status, "queued", `${member.memberId} was touched`);
+    }
+
+    await drive(instanceId);
+
+    // Sorted, because the successor is created at the loop's first advance with
+    // a `waiting` row and its position says nothing about the order it ran in.
+    assert.deepEqual(
+      membersOf(instanceId)
+        .map((m) => m.memberId)
+        .sort(),
+      ["after", ...["a", "b", "c"].map((id) => passMemberId("L", 1, id))].sort(),
+      "pass 1 and the block behind the loop, and no pass 2",
+    );
+    assert.equal(
+      blockRow(instanceId, passMemberId("L", 1, "m")).status,
+      "emitted",
+      "the pass it let finish was landed",
+    );
+    const loop = loopBlock(instanceId);
+    assert.equal(loop.status, "emitted", "a terminus, not a failure");
+    assert.match(loop.error ?? "", /stopped after pass 1, as the operator asked/);
+  });
+
+  it("carries on as before once the request is taken back", async () => {
+    const instanceId = scene({ ...withSuccessor, maxPasses: 2 });
+    workflows.advanceInstances();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    assert.equal(workflows.setLoopStopAfter(instanceId, "L", true).ok, true);
+    assert.deepEqual(workflows.setLoopStopAfter(instanceId, "L", false), {
+      ok: true,
+      stopAfterPass: null,
+    });
+    assert.equal(stopAfterOf(instanceId), null);
+
+    await drive(instanceId);
+    assert.match(loopBlock(instanceId).error ?? "", /limit of 2 pass\(es\)/);
+  });
+
+  it("is refused once Stop has halted the instance, and the halt stands", async () => {
+    const instanceId = scene(withSuccessor);
+    workflows.advanceInstances();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const halt = workflows.stopInstance(instanceId, { kind: "operator" });
+    assert.ok(halt.ok, halt.ok ? "" : halt.reason);
+    const loopBefore = loopBlock(instanceId);
+    assert.equal(loopBefore.status, "failed");
+
+    const outcome = workflows.setLoopStopAfter(instanceId, "L", true);
+    assert.equal(outcome.ok, false);
+    assert.equal(!outcome.ok && outcome.status, 409);
+    assert.equal(stopAfterOf(instanceId), null, "a refused request left no record");
+    assert.deepEqual(loopBlock(instanceId), loopBefore, "the halt's wording was kept");
   });
 });
 

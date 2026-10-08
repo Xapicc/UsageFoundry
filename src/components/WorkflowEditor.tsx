@@ -9,6 +9,7 @@ import type {
   FoldersResponse,
   LoopBoardReadingDTO,
   MergeStrategyDTO,
+  ReviewVerdictSourceDTO,
   RunTemplateDTO,
   SettingsDTO,
   TaskPriorityDTO,
@@ -25,6 +26,7 @@ import {
   MAX_REVIEW_FIX_ROUNDS,
   MAX_WORKFLOW_NAME,
   MAX_WORKFLOW_NODES,
+  REVIEW_VERDICT_KINDS,
   RUN_PROVIDER_LABEL,
   RUN_PROVIDERS,
   boardThresholds,
@@ -56,6 +58,7 @@ import {
 } from "@/lib/canvasGraph";
 import { jsonRequest } from "@/lib/jsonRequest";
 import { exitHref, leaving, registerLeaveGuard } from "@/lib/unsavedWork";
+import { isCommitChord } from "@/components/shell/shortcuts";
 import {
   EDGE_OPTION_LABEL,
   WORKFLOW_LIMIT_TIMING_NOTE,
@@ -284,6 +287,12 @@ const DEFAULT_MERGE_STRATEGY: MergeStrategyDTO = "merge";
  */
 const DEFAULT_FIX_ROUNDS = "1";
 
+/** What the review block's verdict picker calls each source. */
+const VERDICT_LABEL: Record<ReviewVerdictSourceDTO["kind"], string> = {
+  model: "A frontier review",
+  status: "How each run ended",
+};
+
 /** The width a control takes in the inspector's rows. See `ui/Field`'s note:
  *  a width never goes on the control, because two width utilities on one
  *  element resolve by stylesheet order rather than class order. */
@@ -321,6 +330,7 @@ function emptyBlock(id: string, mountId: string, kind: WorkflowNodeKind): BlockD
     stopWhenTasksThresholds: defaultThresholds(),
     provider: "",
     fixRounds: DEFAULT_FIX_ROUNDS,
+    verdictSource: "model",
   };
 }
 
@@ -367,6 +377,10 @@ function toBlocks(workflow: WorkflowDTO): BlockDraft[] {
     // ordinary Claude run — the reading `normalizeNode` gives it.
     provider: n.provider ?? "",
     fixRounds: n.fixRounds?.toString() ?? DEFAULT_FIX_ROUNDS,
+    // Absent on every graph saved before the field existed, which is the
+    // frontier review those blocks were saved to pay for — `normalizeNode`'s
+    // reading.
+    verdictSource: n.verdictSource?.kind ?? "model",
   }));
 }
 
@@ -386,9 +400,17 @@ function toLinks(workflow: WorkflowDTO): LinkDraft[] {
 
 export function WorkflowEditor({
   workflow,
+  initialBlockId,
 }: {
   /** Null for a new workflow; a saved one is edited in place. */
   workflow: WorkflowDTO | null;
+  /**
+   * The block the page was opened on, from the detail page's block table.
+   * Selection is canvas state and no part of the workflow, so this seeds it
+   * and nothing is saved; an id that names no block opens with nothing
+   * selected, as the editor always did.
+   */
+  initialBlockId?: string | null;
 }) {
   const router = useRouter();
 
@@ -400,7 +422,11 @@ export function WorkflowEditor({
     workflow ? toLinks(workflow) : [],
   );
   const [dragged, setDragged] = useState<Record<string, Point>>({});
-  const [selection, setSelection] = useState<CanvasSelection | null>(null);
+  const [selection, setSelection] = useState<CanvasSelection | null>(() =>
+    initialBlockId && workflow?.nodes.some((n) => n.id === initialBlockId)
+      ? { kind: "block", id: initialBlockId }
+      : null,
+  );
 
   // The workflow-wide limits. Held as strings for the reason the run form's
   // are: "" is how a number input says "off", and `normalizeInstanceBudget`
@@ -444,6 +470,9 @@ export function WorkflowEditor({
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // `error` is also where the install read below lands; the footer repeats
+  // only the refusal of the press the operator is standing next to.
+  const [saveFailed, setSaveFailed] = useState(false);
 
   /** What `normalizeWorkflowInput` says about the graph as it stands. */
   const [refusal, setRefusal] = useState<string | null>(null);
@@ -1001,6 +1030,7 @@ export function WorkflowEditor({
   async function save() {
     setSaving(true);
     setError(null);
+    setSaveFailed(false);
     try {
       const res = await fetch(
         workflow ? `/api/workflows/${workflow.id}` : "/api/workflows",
@@ -1025,8 +1055,25 @@ export function WorkflowEditor({
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      setSaveFailed(true);
       setSaving(false);
     }
+  }
+
+  /**
+   * ⌘↩ from anywhere in the editor, including the prompt textareas.
+   *
+   * Bound on the two regions this component owns rather than on the document,
+   * so the discard dialog and the shell's quick-open sheet — which are not in
+   * either — can never save a graph from behind. The press is refused while a
+   * save is in flight for the reason Save's `busy` is, and the default is
+   * still prevented then, so a chord that is recognised never types anything.
+   */
+  function onCommitChord(e: React.KeyboardEvent) {
+    if (!isCommitChord(e)) return;
+    e.preventDefault();
+    if (saving) return;
+    void save();
   }
 
   /* ---------------------------------------------------------------- */
@@ -1076,7 +1123,10 @@ export function WorkflowEditor({
           that bounds the whole graph. Column and row are placed explicitly
           rather than left to source order, so on a narrow window the canvas
           leads and the inspector follows it. */}
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_26rem] lg:items-start">
+      <div
+        className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_26rem] lg:items-start"
+        onKeyDown={onCommitChord}
+      >
         <div className="min-w-0 lg:col-start-1 lg:row-start-1">
           <Field label="Name" htmlFor="wf-name">
             <Input
@@ -1274,16 +1324,28 @@ export function WorkflowEditor({
       {/* The pane's footer, in the run form's and Settings' shape: the default
           action at the right edge of the pane it belongs to, and one line
           saying what pressing it does. */}
-      <div className="sticky bottom-0 z-10 -mx-4 -mb-12 mt-5 border-t border-line bg-canvas px-4 py-3 shadow-bar sm:-mx-5 sm:px-5">
+      <div
+        className="sticky bottom-0 z-10 -mx-4 -mb-12 mt-5 border-t border-line bg-canvas px-4 py-3 shadow-bar sm:-mx-5 sm:px-5"
+        onKeyDown={onCommitChord}
+      >
         <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
+          {/* A refused save is said here as well as in the notice at the top
+              of the page: the footer is where Save is pressed from, and on a
+              tall editor the top is a scroll away, so the press looked like it
+              did nothing. Hidden from assistive technology because the alert
+              up there already announces it once. */}
           <p
             role="status"
             aria-atomic="true"
-            className="mr-auto min-h-5 basis-full text-xs leading-5 text-ink-faint sm:basis-auto"
+            className={`mr-auto min-h-5 basis-full text-xs leading-5 sm:basis-auto ${saveFailed ? "text-danger" : "text-ink-faint"}`}
           >
-            {saving
-              ? "Saving the graph…"
-              : "Nothing starts until you press Run"}
+            {saving ? (
+              "Saving the graph…"
+            ) : saveFailed ? (
+              <span aria-hidden="true">{error}</span>
+            ) : (
+              "Nothing starts until you press Run"
+            )}
           </p>
           {/* Through the same guard the shell's exits use rather than around
               it: Cancel is the one exit this component owns, and an exit that
@@ -1300,8 +1362,11 @@ export function WorkflowEditor({
           >
             Cancel
           </Button>
-          <Button onClick={save} busy={saving}>
+          <Button onClick={save} busy={saving} aria-keyshortcuts="Meta+Enter">
             {workflow ? "Save changes" : "Create workflow"}
+            <span aria-hidden="true" className="text-xs opacity-70">
+              ⌘↩
+            </span>
           </Button>
         </div>
       </div>
@@ -1413,6 +1478,32 @@ function BlockStatement({
         ) : (
           "A conflicting branch is reported and left alone."
         )}
+      </p>
+    );
+  }
+
+  if (block.kind === "deliver") {
+    return (
+      <p className="mb-3.5 text-sm leading-normal text-ink-muted">
+        Pushes every branch in front of it to its repository&rsquo;s remote and{" "}
+        <strong className="font-semibold text-warn">
+          opens a pull request for each
+        </strong>
+        , with nobody pressing anything. It never forces a push, and it spends
+        nothing on a model.
+      </p>
+    );
+  }
+
+  if (block.kind === "review" && block.verdictSource === "status") {
+    return (
+      <p className="mb-3.5 text-sm leading-normal text-ink-muted">
+        Hands on{" "}
+        <strong className="font-semibold text-ink">
+          only the branches whose run completed
+        </strong>
+        , with no model and nothing billed. Any other ending is set aside by
+        name, and its tasks are left as the run left them.
       </p>
     );
   }
@@ -1785,9 +1876,13 @@ function BlockPanel({
   // whichever repository each branch came from; and no task, because what it
   // lands is whatever the blocks in front of it left behind.
   const merge = block.kind === "merge";
-  // A review block holds one field, its fix rounds, for the merge block's
-  // reason: it starts no child of its own, so there is nothing to guard, place
-  // or brief.
+  // A deliver block holds none either, for the merge block's reasons: it starts
+  // no agent, works in whichever repository each branch came from, and has no
+  // task of its own. The pull request's title and body are written from the run.
+  const deliver = block.kind === "deliver";
+  // A review block holds two fields, where its verdict comes from and its fix
+  // rounds, for the merge block's reason: it starts no child of its own, so
+  // there is nothing to guard, place or brief.
   const review = block.kind === "review";
 
   // The section in the order a pass will create it, which is the order the
@@ -2270,6 +2365,18 @@ function BlockPanel({
         </ListGroup>
       )}
 
+      {deliver && (
+        <ListGroup
+          className="mb-4"
+          label="What it does"
+          footnote="Needs a GitHub token for each repository and a remote that is GitHub. The Settings verify command, if set, must pass first. Your own checkout may have uncommitted changes."
+        >
+          <ListRow label="How it publishes">
+            <span className="text-sm text-ink">One pull request per branch</span>
+          </ListRow>
+        </ListGroup>
+      )}
+
       {/* Neither a merge block nor a loop, and for the same reason read one
           level apart: neither starts a child of its own. A merge block's fields
           are coerced away on the server; a loop's are refused **by name** — it
@@ -2280,26 +2387,60 @@ function BlockPanel({
         <ListGroup
           className="mb-4"
           label="What it does"
-          footnote="Each fix round is a billed run and a billed review for every branch sent back"
+          footnote={
+            block.verdictSource === "status"
+              ? "Reads each run's status, so this block bills nothing"
+              : "Each fix round is a billed run and a billed review for every branch sent back"
+          }
         >
           <ListRow
-            label="Fix rounds per rejected branch"
-            htmlFor={`${block.id}-fixrounds`}
+            label="Verdict from"
+            htmlFor={`${block.id}-verdict`}
+            // The link rule on the row it follows from: Save refuses the
+            // other condition by name, and this is where the choice was made.
+            description={
+              block.verdictSource === "status"
+                ? `Its links in have to be “${EDGE_OPTION_LABEL["on-finish"]}”, or the first run that does not complete blocks it`
+                : "Billed per branch"
+            }
           >
-            <div className={ROW_CONTROL_NARROW}>
+            <div className={ROW_CONTROL}>
               <Select
-                id={`${block.id}-fixrounds`}
-                value={block.fixRounds}
-                onChange={(e) => onChange({ fixRounds: e.target.value })}
+                id={`${block.id}-verdict`}
+                value={block.verdictSource}
+                onChange={(e) => onChange({ verdictSource: e.target.value })}
               >
-                {Array.from({ length: MAX_REVIEW_FIX_ROUNDS + 1 }, (_, n) => (
-                  <option key={n} value={String(n)}>
-                    {n}
+                {REVIEW_VERDICT_KINDS.map((kind) => (
+                  <option key={kind} value={kind}>
+                    {VERDICT_LABEL[kind]}
                   </option>
                 ))}
               </Select>
             </div>
           </ListRow>
+          {/* Hidden rather than shown at 0 under a status verdict: there is no
+              review for a fix to answer, and `draftToGraph` sends 0 whatever
+              the picker last held, so switching back restores the rounds. */}
+          {block.verdictSource !== "status" && (
+            <ListRow
+              label="Fix rounds per rejected branch"
+              htmlFor={`${block.id}-fixrounds`}
+            >
+              <div className={ROW_CONTROL_NARROW}>
+                <Select
+                  id={`${block.id}-fixrounds`}
+                  value={block.fixRounds}
+                  onChange={(e) => onChange({ fixRounds: e.target.value })}
+                >
+                  {Array.from({ length: MAX_REVIEW_FIX_ROUNDS + 1 }, (_, n) => (
+                    <option key={n} value={String(n)}>
+                      {n}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </ListRow>
+          )}
         </ListGroup>
       )}
 
@@ -2337,7 +2478,7 @@ function BlockPanel({
         </ListGroup>
       )}
 
-      {!merge && !loop && !review && (
+      {!merge && !deliver && !loop && !review && (
         <>
           {/* The task is the rest of "what it does", so it sits with the caps
               that bound it rather than at the foot of the panel — a run block,

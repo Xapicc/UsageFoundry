@@ -15,15 +15,19 @@ import {
   blockSpendReading,
   blockTurnSpend,
   bootBlockPlan,
+  deliverBlockOutcome,
   memberSpendReading,
   sumMemberSpend,
   emittedFolderRefusal,
   haltPlan,
   instanceStatus,
   loopBody,
+  loopStopAfterRefusal,
+  loopStopStatus,
   mergeBlockOutcome,
   queuedBranchOutcome,
   normalizeWorkflowInput,
+  orchestratorRetryRefusal,
   pickDuplicateName,
   planEmission,
   planEmittedRun,
@@ -35,6 +39,7 @@ import {
   summarizeProposedGraph,
   type BlockStatus,
   type BranchOutcome,
+  type DeliveryOutcome,
   type EmissionLimits,
   type HaltCause,
   type HaltMember,
@@ -129,6 +134,11 @@ function decider(id: string, extra: Record<string, unknown> = {}) {
 /** A merge block, with the strategy a saved graph must carry. */
 function merger(id: string, extra: Record<string, unknown> = {}) {
   return node(id, { kind: "merge", mergeStrategy: "merge", ...extra });
+}
+
+/** A deliver block, which holds no setting of its own. */
+function deliverer(id: string, extra: Record<string, unknown> = {}) {
+  return node(id, { kind: "deliver", ...extra });
 }
 
 /**
@@ -539,6 +549,109 @@ describe("normalizeWorkflowInput — name and blocks", () => {
     assert.equal(value(graph([node("a", { kind: undefined })])).graph.nodes[0].kind, "run");
   });
 
+  it("refuses a block's workspace, folder, template, agent or provider that is not a string", () => {
+    // `["work"]` read through `String()` is the workspace `work`, and the same
+    // for the folder and the agent: a billed run started in a directory, or as
+    // an agent, that the caller wrote inside a list rather than as itself.
+    const fields: Array<[string, unknown]> = [
+      ["mountId", ["work"]],
+      ["folder", ["repo"]],
+      ["templateId", ["t-iso"]],
+      ["agentId", ["a-rev"]],
+      ["provider", ["local"]],
+    ];
+    for (const [field, wrapped] of fields) {
+      for (const wrong of [wrapped, { id: "x" }, 7]) {
+        for (const make of [node, decider]) {
+          const refusal = error(graph([make("a", { [field]: wrong })]));
+          assert.match(
+            refusal,
+            new RegExp(`^“A”: "${field}" has to be a string when it is given; got `),
+            `${field}: ${JSON.stringify(wrong)}`,
+          );
+        }
+      }
+    }
+    // Absent and null keep their meaning: no folder is the mount root, no
+    // template is the guards in Settings, no agent and no provider are none.
+    const plain = value(
+      graph([node("a", { folder: null, templateId: null, agentId: null, provider: null })]),
+    ).graph.nodes[0];
+    assert.equal(plain.folder, "");
+    assert.equal(plain.templateId, null);
+    assert.equal(plain.agentId, null);
+    assert.equal(plain.provider, null);
+    assert.equal(value(graph([node("a", { folder: undefined })])).graph.nodes[0].folder, "");
+  });
+
+  it("refuses a merge block's strategy, agent or provider that is not a string, and nothing it drops", () => {
+    for (const field of ["mergeStrategy", "agentId", "provider"]) {
+      assert.match(
+        error(graph([node("a"), merger("m", { [field]: ["squash"] })], [edge("a", "m")])),
+        new RegExp(`^“M”: "${field}" has to be a string when it is given; got `),
+        field,
+      );
+    }
+    // The workspace, folder and template a merge block drops unread are not
+    // refused, whatever they hold.
+    const merged = value(
+      graph(
+        [node("a"), merger("m", { mountId: ["work"], folder: {}, templateId: [1] })],
+        [edge("a", "m")],
+      ),
+    ).graph.nodes[1];
+    assert.equal(merged.mountId, "");
+    assert.equal(merged.folder, "");
+    assert.equal(merged.templateId, null);
+  });
+
+  it("refuses a loop's body id that is not a string rather than reading the id inside it", () => {
+    for (const wrong of [["la"], { id: "la" }, 3]) {
+      assert.match(
+        error(
+          graph(
+            [repeater("l", { bodyNodeIds: [wrong] }), node("la"), merger("lm")],
+            [edge("la", "lm")],
+          ),
+        ),
+        /^“L”: "bodyNodeIds\[0\]" has to be a string when it is given; got /,
+        JSON.stringify(wrong),
+      );
+    }
+  });
+
+  it("refuses a board condition's workspace, folder, status or priority that is not a string", () => {
+    const board = (extra: Record<string, unknown>) =>
+      looped({
+        stopWhenTasks: {
+          mountId: "work",
+          folder: "repo",
+          statuses: ["open"],
+          thresholds: [{ priority: "any", atMost: 0 }],
+          ...extra,
+        },
+      });
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ mountId: ["work"] }, "stopWhenTasks.mountId"],
+      [{ folder: ["repo"] }, "stopWhenTasks.folder"],
+      [{ statuses: [["open"]] }, "stopWhenTasks.statuses\\[0\\]"],
+      [{ thresholds: [{ priority: ["high"], atMost: 0 }] }, "stopWhenTasks.thresholds\\[0\\].priority"],
+    ];
+    for (const [extra, field] of cases) {
+      assert.match(
+        error(board(extra)),
+        new RegExp(`^“L”: "${field}" has to be a string when it is given; got `),
+        JSON.stringify(extra),
+      );
+    }
+    // Absent keeps its meaning: no folder is the mount root, no priority is
+    // the project whole.
+    const kept = value(board({ folder: undefined, thresholds: [{ atMost: 0 }] }))
+      .graph.nodes[0].stopWhenTasks;
+    assert.equal(kept?.folder, "");
+    assert.equal(kept?.thresholds[0].priority, "any");
+  });
+
   it("refuses a loop's not-told field that is not a string, rather than reading it as blank", () => {
     // `String([])` is `""`, so an empty list in `task` or `folder` was "told
     // nothing" and the block was saved with a value the loop's refusal exists
@@ -746,6 +859,84 @@ describe("normalizeWorkflowInput — providers and review blocks", () => {
       error(graph([node("a", { templateId: "t-flat" }), reviewer("r")], [edge("a", "r")])),
       /leaves no branch for “R” to review/,
     );
+  });
+
+  it("reads a review block's verdict source, and absent as the frontier review", () => {
+    // Absent is `model`: every review block saved before the field existed was
+    // saved to pay for a review, and any other reading hands on branches
+    // nobody looked at.
+    const finish = { edge: "on-finish" as const };
+    const saved = (extra: Record<string, unknown>) =>
+      value(
+        graph(
+          [node("a"), reviewer("r", extra), merger("m")],
+          [edge("a", "r", finish), edge("r", "m")],
+        ),
+      ).graph.nodes.find((n) => n.id === "r")!;
+    assert.deepEqual(saved({}).verdictSource, { kind: "model" });
+    assert.deepEqual(saved({ verdictSource: null }).verdictSource, { kind: "model" });
+    assert.deepEqual(
+      saved({ verdictSource: { kind: "status" }, fixRounds: 0 }).verdictSource,
+      { kind: "status" },
+    );
+    // Dropped unread on a block that is not a review, whatever it holds.
+    const run = value(graph([node("a", { verdictSource: ["status"] })])).graph.nodes[0];
+    assert.equal(run.verdictSource, null);
+  });
+
+  it("refuses a verdict source it cannot read rather than falling back to one", () => {
+    const refusal = (verdictSource: unknown) =>
+      error(
+        graph(
+          [node("a"), reviewer("r", { verdictSource, fixRounds: 0 })],
+          [edge("a", "r", { edge: "on-finish" })],
+        ),
+      );
+    for (const wrong of ["status", ["status"], 1]) {
+      assert.match(
+        refusal(wrong),
+        /^“R”: "verdictSource" has to be an object when it is given; got /,
+        JSON.stringify(wrong),
+      );
+    }
+    assert.match(
+      refusal({ kind: ["status"] }),
+      /^“R”: "verdictSource.kind" has to be a string when it is given; got /,
+    );
+    assert.match(refusal({ kind: "vibes" }), /a source this app does not have: vibes/);
+    assert.match(refusal({}), /a source this app does not have: \(blank\)/);
+  });
+
+  it("refuses fix rounds on a review block that judges by run status", () => {
+    // Refused rather than coerced to 0: the rounds were billed runs the
+    // operator expected, and there is no review for one to answer.
+    assert.match(
+      error(
+        graph(
+          [node("a"), reviewer("r", { verdictSource: { kind: "status" }, fixRounds: 1 })],
+          [edge("a", "r", { edge: "on-finish" })],
+        ),
+      ),
+      /“R” judges each branch by how its run ended, so there is no review for a fix round to answer/,
+    );
+  });
+
+  it("refuses an on-success link into a review block that judges by run status", () => {
+    // Behind on-success the first run that does not complete blocks the
+    // block, which is the stop the status verdict exists to remove — and a Run
+    // would only find that out a pass in.
+    const status = { verdictSource: { kind: "status" }, fixRounds: 0 };
+    assert.match(
+      error(
+        graph(
+          [node("a"), node("b"), reviewer("r", status), merger("m")],
+          [edge("a", "r", { edge: "on-finish" }), edge("b", "r"), edge("r", "m")],
+        ),
+      ),
+      /“R” judges each branch by how its run ended[^]*on-success link from “B”[^]*Set that link to on-finish/,
+    );
+    // The frontier review keeps either link, as it always has.
+    value(graph([node("a"), reviewer("r"), merger("m")], [edge("a", "r"), edge("r", "m")]));
   });
 
   it("refuses an agent on a review block and a branch carried through one", () => {
@@ -1292,6 +1483,280 @@ describe("queuedBranchOutcome — what a merge block makes of a queue row", () =
     assert.equal(queuedBranchOutcome(row("landed", "Merged."), "uf/a").result, "landed");
     assert.equal(queuedBranchOutcome(row("failed", "It conflicts."), "uf/a").result, "failed");
     assert.equal(queuedBranchOutcome(row("cancelled", null), "uf/a").result, "failed");
+  });
+});
+
+/**
+ * What a deliver block may be saved as.
+ *
+ * It is the merge block's sibling for the other exit, so most of these are the
+ * merge block's refusals asked again, and the ones that are not are the
+ * interesting ones: a section may not hold it, because a pass would publish
+ * once per repeat with nobody pressing anything, and a merge block in front of
+ * it does not count as something to push, because a merge hands on no branch.
+ */
+describe("normalizeWorkflowInput — deliver blocks", () => {
+  it("saves behind a run that works in a checkout of its own", () => {
+    const g = value(graph([node("a"), deliverer("push")], [edge("a", "push")]));
+    assert.equal(g.graph.nodes[1].kind, "deliver");
+  });
+
+  it("saves behind an orchestrator block whose runs isolate, and behind a review block", () => {
+    assert.equal(
+      value(graph([decider("d"), deliverer("push")], [edge("d", "push")])).graph.nodes.length,
+      2,
+    );
+    const reviewed = value(
+      graph(
+        [node("a"), node("r", { kind: "review", fixRounds: 0 }), deliverer("push")],
+        [edge("a", "r"), edge("r", "push")],
+      ),
+    );
+    assert.equal(reviewed.graph.nodes[2].kind, "deliver");
+  });
+
+  it("needs a block in front of it that runs something", () => {
+    assert.match(
+      error(graph([deliverer("push")])),
+      /no block in front of it whose branches it could push/,
+    );
+  });
+
+  it("does not count a merge block, a loop or another deliver block as something to push", () => {
+    // None of the three hands on a run. After a merge the work is on its target,
+    // where a pull request from it has no commits to show.
+    assert.match(
+      error(graph([node("a"), merger("land"), deliverer("push")], [
+        edge("a", "land"),
+        edge("land", "push"),
+      ])),
+      /“PUSH” has no block in front of it whose branches it could push/,
+    );
+    assert.match(
+      error(graph([node("a"), deliverer("one"), deliverer("two")], [
+        edge("a", "one"),
+        edge("one", "two"),
+      ])),
+      /“TWO” has no block in front of it/,
+    );
+    // A loop lands each pass's work itself, so by the time it hands on there is
+    // no branch left to push.
+    const afterLoop = looped({}, "l");
+    afterLoop.graph.nodes.push(deliverer("push"));
+    afterLoop.graph.edges.push(edge("l", "push"));
+    assert.match(error(afterLoop), /“PUSH” has no block in front of it/);
+  });
+
+  it("accepts one that is sequenced behind a merge block while a run also feeds it", () => {
+    const g = value(
+      graph([node("a"), node("b"), merger("land"), deliverer("push")], [
+        edge("a", "land"),
+        edge("land", "push", { edge: "on-finish" }),
+        edge("b", "push"),
+      ]),
+    );
+    assert.equal(g.graph.nodes.length, 4);
+  });
+
+  it("refuses a predecessor whose guards leave no branch", () => {
+    // A run that worked in the folder has no branch, and `deliverRun` answers
+    // that with "no branch to deliver" an hour into the graph.
+    assert.match(
+      error(
+        graph([node("a", { templateId: "t-flat" }), deliverer("push")], [
+          edge("a", "push"),
+        ]),
+      ),
+      /leaves no branch for “PUSH” to push/,
+    );
+  });
+
+  it("takes an untemplated predecessor's isolation from the settings guards", () => {
+    const flat: WorkflowKnowledge = { ...KNOWN, defaultIsolate: false };
+    const res = normalizeWorkflowInput(
+      graph([node("a", { templateId: null }), deliverer("push")], [edge("a", "push")]),
+      flat,
+    );
+    assert.ok(!res.ok, "expected a refusal");
+    assert.match(res.error, /leaves no branch/);
+  });
+
+  it("refuses a deliver block at either end of a branch hand-over", () => {
+    // It pushes other blocks' branches and cuts none, so it has none to hand on
+    // or to extend. Named, like the merge block's, rather than left to the
+    // isolation test, which would say something true of neither end.
+    const asSource = error(
+      graph([node("a"), deliverer("push"), node("b")], [
+        edge("a", "push"),
+        edge("push", "b", { continueBranch: true }),
+      ]),
+    );
+    assert.match(asSource, /pushes other blocks' branches/);
+    assert.match(asSource, /no branch of its own to hand over or carry on/);
+    const asTarget = error(
+      graph([node("a"), deliverer("push")], [
+        edge("a", "push", { continueBranch: true }),
+      ]),
+    );
+    assert.match(asTarget, /pushes other blocks' branches/);
+  });
+
+  it("drops a task, template, workspace, folder and prompt it was carrying", () => {
+    // The editor sends whatever the block held before its kind was switched,
+    // and none of it is read by anything a deliver block does.
+    const g = value(
+      graph(
+        [
+          node("a"),
+          deliverer("push", {
+            task: "open the pull requests please",
+            templateId: "t-iso",
+            mountId: "work",
+            folder: "repo",
+            promptOverride: "be careful",
+          }),
+        ],
+        [edge("a", "push")],
+      ),
+    );
+    const push = g.graph.nodes[1];
+    assert.equal(push.task, "");
+    assert.equal(push.templateId, null);
+    assert.equal(push.mountId, "");
+    assert.equal(push.folder, "");
+    assert.equal(push.promptOverride, null);
+    assert.equal(push.fanOut, null);
+    assert.equal(push.mergeStrategy, null);
+    assert.equal(push.mergeAutoResolve, false);
+    assert.equal(push.fixRounds, null);
+  });
+
+  it("refuses an agent or a provider, which it has no child to give them to", () => {
+    assert.match(
+      error(graph([node("a"), deliverer("push", { agentId: "a-rev" })], [edge("a", "push")])),
+      /pushes the branches in front of it and starts no agent/,
+    );
+    assert.match(
+      error(graph([node("a"), deliverer("push", { provider: "local" })], [edge("a", "push")])),
+      /starts no run of its own/,
+    );
+  });
+
+  it("is not a block a section may repeat", () => {
+    // Each pass would push and open pull requests, once per repeat, up to the
+    // pass cap, with nobody pressing anything — and a pass lands its own work
+    // through the section's merge block, so there is nothing for it to add.
+    // The merge block here has its own run in front of it so the refusal under
+    // test is the one that answers.
+    const section = graph(
+      [repeater("l"), node("a"), deliverer("push"), merger("land")],
+      [
+        repeats("l", "a"),
+        edge("a", "push"),
+        edge("a", "land"),
+        edge("push", "land", { edge: "on-finish" }),
+      ],
+    );
+    assert.match(error(section), /“PUSH” is repeated by “L”, and a deliver block pushes/);
+  });
+});
+
+/**
+ * What a deliver block reports, and therefore whether the blocks behind it start.
+ *
+ * `mergeBlockOutcome`'s case again, with the same two silent ways of being
+ * wrong: read as failed, a chain whose branches are all published stops with
+ * nothing to do; read as succeeded, a follow-up starts as though a pull request
+ * existed that does not. The one difference is that a clean delivery is never
+ * silent, because the pull request's address is the product of the block and
+ * the note is the only place the instance page can read it from.
+ */
+describe("deliverBlockOutcome — what a deliver block reports", () => {
+  const delivered = (branch: string, n: number): DeliveryOutcome => ({
+    branch,
+    result: "delivered",
+    reason: `https://github.com/o/r/pull/${n}`,
+  });
+  const skipped = (branch: string, reason: string): DeliveryOutcome => ({
+    branch,
+    result: "skipped",
+    reason,
+  });
+  const failed = (branch: string, reason: string): DeliveryOutcome => ({
+    branch,
+    result: "failed",
+    reason,
+  });
+
+  it("succeeds and names every pull request when every branch was delivered", () => {
+    const out = deliverBlockOutcome([delivered("uf/a", 1), delivered("uf/b", 2)]);
+    assert.equal(out.ok, true);
+    assert.match(out.note ?? "", /Delivered 2 branch\(es\)/);
+    assert.match(out.note ?? "", /uf\/a — https:\/\/github.com\/o\/r\/pull\/1/);
+    assert.match(out.note ?? "", /uf\/b — https:\/\/github.com\/o\/r\/pull\/2/);
+  });
+
+  it("succeeds when a branch had nothing to deliver, and says which", () => {
+    const out = deliverBlockOutcome([
+      delivered("uf/a", 1),
+      skipped("uf/b", "it left no commits of its own"),
+    ]);
+    assert.equal(out.ok, true, "nothing to deliver is not a failure");
+    assert.match(out.note ?? "", /1 had nothing to deliver: uf\/b — it left no commits/);
+  });
+
+  it("succeeds with a note when nothing at all had anything to deliver", () => {
+    const out = deliverBlockOutcome([skipped("uf/a", "already on main")]);
+    assert.equal(out.ok, true);
+    assert.match(out.note ?? "", /^Nothing to deliver: uf\/a — already on main/);
+  });
+
+  it("fails when a branch that should have gone did not, naming both halves", () => {
+    const out = deliverBlockOutcome([
+      delivered("uf/a", 1),
+      failed("uf/b", "No GitHub token is configured for this repository."),
+    ]);
+    assert.equal(out.ok, false);
+    assert.match(out.note ?? "", /Delivered 1 of 2 branch\(es\)/);
+    assert.match(out.note ?? "", /Delivered: uf\/a — https:/);
+    assert.match(out.note ?? "", /Not delivered: uf\/b — No GitHub token/);
+  });
+
+  it("counts the skipped branches out of the denominator", () => {
+    // "Delivered 1 of 2" is about the branches that had something to publish.
+    const out = deliverBlockOutcome([
+      delivered("uf/a", 1),
+      skipped("uf/b", "already on main"),
+      failed("uf/c", "the verify command failed"),
+    ]);
+    assert.equal(out.ok, false);
+    assert.match(out.note ?? "", /Delivered 1 of 2/);
+  });
+
+  it("fails a delivery that failed everywhere without claiming any success", () => {
+    const out = deliverBlockOutcome([failed("uf/a", "refused"), failed("uf/b", "refused")]);
+    assert.equal(out.ok, false);
+    assert.match(out.note ?? "", /Delivered 0 of 2/);
+    assert.doesNotMatch(out.note ?? "", /Delivered:/);
+  });
+
+  it("names a few branches and counts the rest", () => {
+    const out = deliverBlockOutcome(
+      Array.from({ length: 7 }, (_, i) => failed(`uf/${i}`, "refused")),
+    );
+    assert.equal(out.ok, false);
+    assert.match(out.note ?? "", /and 3 more/);
+    const many = deliverBlockOutcome(
+      Array.from({ length: 6 }, (_, i) => delivered(`uf/${i}`, i)),
+    );
+    assert.equal(many.ok, true);
+    assert.match(many.note ?? "", /and 2 more/);
+  });
+
+  it("treats no branches at all as nothing to do", () => {
+    const out = deliverBlockOutcome([]);
+    assert.equal(out.ok, true);
+    assert.match(out.note ?? "", /no branch to deliver/);
   });
 });
 
@@ -3050,6 +3515,18 @@ describe("summarizeProposedGraph — what the approval card has to show", () => 
     assert.equal(a.guardsLabel, untemplated);
   });
 
+  it("says a deliver block has no agent and no folder, like a merge block", () => {
+    const [, push] = summarizeProposedGraph(
+      value(graph([node("a"), deliverer("push")], [edge("a", "push")])).graph,
+      KNOWN,
+      untemplated,
+    );
+    assert.equal(push.kind, "deliver");
+    assert.equal(push.guardsLabel, "no agent");
+    assert.equal(push.folderLabel, null);
+    assert.deepEqual(push.after, ["A"]);
+  });
+
   it("carries the fan-out cap, which is the number the operator is agreeing to", () => {
     // The one figure on the card that bounds agents nobody approves
     // individually. Absent, the decision moves to a canvas that may never be
@@ -3598,10 +4075,46 @@ describe("blockSettlement — what a finished turn is recorded as", () => {
   it("does not record a failed turn that emitted as failed", () => {
     // The specs were accepted while the child was alive and are about to become
     // runs. `failed` blocks every node behind this one, which would strand the
-    // very runs this turn started.
-    const out = settled({ status: "failed", error: "It exited 1 afterwards." }, 2);
+    // very runs this turn started. A `costUSD` marks a turn whose `result`
+    // arrived and said it failed, which is a verdict on the turn.
+    const out = settled(
+      { status: "failed", error: "It exited 1 afterwards.", costUSD: 0.2 },
+      2,
+    );
     assert.equal(out.status, "emitted");
     assert.equal(out.error, "It exited 1 afterwards.", "the failure is still recorded");
+    assert.deepEqual(out.notes, []);
+  });
+
+  it("notes, and does not fail, a turn that emitted and ended with no result", () => {
+    // No `costUSD` is `turnResultOf`'s failure with no `result` event to read.
+    // The runs it emitted go ahead, so the block is not failed; and what the
+    // turn ended on is how it finished, so it is a note beside the unreported
+    // cost and not an `error` on a block whose decision stood.
+    const out = settled(
+      {
+        status: "failed",
+        error: "The chat produced no readable output (exit 0).",
+        tokens: 40,
+        costGuardUSD: 0.05,
+      },
+      2,
+    );
+    assert.equal(out.status, "emitted");
+    assert.equal(out.error, null);
+    assert.equal(out.reply, null);
+    assert.equal(out.notes.length, 1);
+    assert.match(out.notes[0], /ended without a result/);
+    assert.match(out.notes[0], /no readable output \(exit 0\)/);
+  });
+
+  it("still fails a turn that ended with no result and emitted nothing", () => {
+    // The other side of the note above: with nothing emitted there is nothing
+    // for the sentence to sit beside, and it is the failure itself.
+    const out = settled({ status: "failed", error: "The stub went silent." }, 0);
+    assert.equal(out.status, "failed");
+    assert.equal(out.error, "The stub went silent.");
+    assert.deepEqual(out.notes, []);
   });
 
   it("carries forward what was recorded while the turn was running", () => {
@@ -3627,6 +4140,55 @@ describe("blockSettlement — what a finished turn is recorded as", () => {
     // Empty rather than a reassuring line: the page draws every note, and a
     // standing "no problems" would train the eye past the ones that matter.
     assert.deepEqual(settled({ status: "idle", text: "Started one." }, 1).notes, []);
+  });
+});
+
+/**
+ * Which failed deciding turns the pick-up may run again.
+ *
+ * Both wrong answers are silent. Offered for a block that had decided, a retry
+ * is a second turn deciding the same runs over a first whose specs are still
+ * stored; refused for one that had not, the only way past a turn that failed
+ * for want of a signed-in provider is a fresh Run, which repeats every block
+ * that already finished.
+ */
+describe("orchestratorRetryRefusal — which failed deciding turns may be run again", () => {
+  const block = (over: Partial<Parameters<typeof orchestratorRetryRefusal>[0]> = {}) => ({
+    nodeName: "Decide",
+    status: "failed" as BlockStatus,
+    emitted: 0,
+    started: 0,
+    ...over,
+  });
+
+  it("allows a turn that failed having decided nothing", () => {
+    assert.equal(orchestratorRetryRefusal(block()), null);
+  });
+
+  it("refuses a block that had decided on runs, and says how many", () => {
+    // Reachable only through a restart: `reconcileBlocksOnBoot` writes a
+    // `thinking` block failed without settling it, specs still stored.
+    const one = orchestratorRetryRefusal(block({ emitted: 1 }));
+    assert.match(one ?? "", /“Decide” had already decided on 1 run when its turn failed/);
+    const three = orchestratorRetryRefusal(block({ emitted: 3 }));
+    assert.match(three ?? "", /on 3 runs when/);
+    assert.match(three ?? "", /Run the workflow again instead/);
+  });
+
+  it("refuses a block that already has runs, whatever its count of specs says", () => {
+    // `started` is read off the membership rows and `emitted` off the stored
+    // specs; either one above zero means work exists or is decided.
+    assert.match(orchestratorRetryRefusal(block({ emitted: 0, started: 2 })) ?? "", /on 2 runs/);
+  });
+
+  it("refuses a block that is not failed, naming what it is", () => {
+    for (const status of ["waiting", "thinking", "emitted", "blocked"] as BlockStatus[]) {
+      assert.match(
+        orchestratorRetryRefusal(block({ status })) ?? "",
+        new RegExp(`is ${status}, so there is no failed turn`),
+        status,
+      );
+    }
   });
 });
 
@@ -4689,6 +5251,168 @@ describe("planInstanceStep — merge blocks", () => {
   });
 });
 
+describe("planInstanceStep — deliver blocks", () => {
+  const deliverNode = (id: string, name: string): WorkflowNode =>
+    graphNode(id, name, { kind: "deliver", mountId: "", folder: "", task: "" });
+
+  /** Two run blocks feeding one deliver block, with a run block behind it. */
+  const SHIP: WorkflowGraph = {
+    nodes: [
+      { ...FAN.nodes[1], id: "left", name: "Left" },
+      { ...FAN.nodes[1], id: "right", name: "Right" },
+      deliverNode("ship", "Ship it"),
+      { ...FAN.nodes[1], id: "after", name: "After" },
+    ],
+    edges: [
+      edge("left", "ship"),
+      edge("right", "ship"),
+      edge("ship", "after"),
+    ],
+  };
+
+  it("hands a deliver block every branch its satisfied edges resolved to", () => {
+    const step = stepOf(
+      {
+        left: ran("r-left", "completed"),
+        right: ran("r-right", "completed"),
+        ship: decided("waiting"),
+      },
+      SHIP,
+    );
+    assert.deepEqual(step.deliver, [{ nodeId: "ship", runIds: ["r-left", "r-right"] }]);
+    assert.deepEqual(step.merge, [], "it is not a merge block");
+    assert.deepEqual(step.spawn, [], "it spawns no agent");
+    assert.deepEqual(step.create, [], "and it is never created as a run");
+  });
+
+  it("waits for every predecessor before pushing anything", () => {
+    const step = stepOf(
+      {
+        left: ran("r-left", "completed"),
+        right: ran("r-right", "running", 0),
+        ship: decided("waiting"),
+      },
+      SHIP,
+    );
+    assert.deepEqual(step.deliver, []);
+  });
+
+  it("takes every run an orchestrator block emitted, once each", () => {
+    const g: WorkflowGraph = {
+      nodes: [FAN.nodes[0], deliverNode("ship", "Ship it")],
+      edges: [edge("pick", "ship", { edge: "on-success" })],
+    };
+    const step = stepOf(
+      {
+        pick: decided("emitted", [
+          ["r-1", "completed"],
+          ["r-2", "completed"],
+        ]),
+        ship: decided("waiting"),
+      },
+      g,
+    );
+    assert.deepEqual(step.deliver, [{ nodeId: "ship", runIds: ["r-1", "r-2"] }]);
+
+    // The diamond: a second push of one branch opens a pull request GitHub
+    // refuses as already existing.
+    const diamond: WorkflowGraph = {
+      nodes: [{ ...FAN.nodes[1], id: "build", name: "Build" }, deliverNode("ship", "Ship it")],
+      edges: [
+        edge("build", "ship", { edge: "on-success" }),
+        { from: "build", to: "ship", edge: "on-finish", continueBranch: false },
+      ],
+    };
+    assert.deepEqual(
+      stepOf({ build: ran("r-build", "completed"), ship: decided("waiting") }, diamond).deliver,
+      [{ nodeId: "ship", runIds: ["r-build"] }],
+    );
+  });
+
+  it("releases what is behind it with no dependency on a run", () => {
+    const step = stepOf(
+      {
+        left: ran("r-left", "completed"),
+        right: ran("r-right", "completed"),
+        ship: decided("emitted"),
+      },
+      SHIP,
+    );
+    assert.deepEqual(step.create, [{ nodeId: "after", dependsOn: [] }]);
+  });
+
+  it("stops an on-success successor when a branch was not delivered, in the delivery's words", () => {
+    const step = stepOf(
+      {
+        left: ran("r-left", "completed"),
+        right: ran("r-right", "completed"),
+        ship: decided("failed", [], "Delivered 1 of 2 branch(es)."),
+      },
+      SHIP,
+    );
+    assert.deepEqual(step.create, []);
+    assert.match(step.block[0].reason, /did not deliver everything it was given/);
+    assert.doesNotMatch(step.block[0].reason, /land/);
+  });
+
+  it("releases an on-finish successor of a failed delivery", () => {
+    const g: WorkflowGraph = {
+      ...SHIP,
+      edges: [
+        edge("left", "ship"),
+        edge("right", "ship"),
+        edge("ship", "after", { edge: "on-finish" }),
+      ],
+    };
+    const step = stepOf(
+      {
+        left: ran("r-left", "completed"),
+        right: ran("r-right", "completed"),
+        ship: decided("failed", [], "Delivered 1 of 2 branch(es)."),
+      },
+      g,
+    );
+    assert.deepEqual(step.create, [{ nodeId: "after", dependsOn: [] }]);
+  });
+
+  it("blocks behind a delivery that never ran, whatever the condition", () => {
+    for (const condition of ["on-success", "on-finish"] as const) {
+      const g: WorkflowGraph = {
+        ...SHIP,
+        edges: [
+          edge("left", "ship"),
+          edge("right", "ship"),
+          edge("ship", "after", { edge: condition }),
+        ],
+      };
+      const step = stepOf(
+        {
+          left: ran("r-left", "completed"),
+          right: ran("r-right", "completed"),
+          ship: decided("blocked", [], "The workflow was stopped."),
+        },
+        g,
+      );
+      assert.deepEqual(step.create, [], condition);
+      assert.match(step.block[0].reason, /never ran/);
+    }
+  });
+
+  it("holds a successor while the delivery is still running, and does not claim it twice", () => {
+    const step = stepOf(
+      {
+        left: ran("r-left", "completed"),
+        right: ran("r-right", "completed"),
+        ship: decided("thinking"),
+      },
+      SHIP,
+    );
+    assert.deepEqual(step.create, []);
+    assert.deepEqual(step.deliver, []);
+    assert.deepEqual(step.block, []);
+  });
+});
+
 /* ------------------------------------------------------------------ */
 /* What a restart leaves waiting                                        */
 /* ------------------------------------------------------------------ */
@@ -4896,6 +5620,7 @@ function loopOf(
     // this line is the loop as it behaved before the board could end one.
     stopWhenTasks: null,
     boardCounts: null,
+    stopAfterPass: null,
     ...extra,
   });
 }
@@ -5360,6 +6085,146 @@ describe("planLoopPass — the board condition", () => {
     assert.deepEqual(
       loopOf([], { ...boardOf(0), boardCounts: null }),
       { kind: "pass", pass: 1 },
+    );
+  });
+});
+
+describe("planLoopPass — an operator's request to stop after a pass", () => {
+  it("waits for the pass in flight, which carries on as it was", () => {
+    // The whole point of the control: the request is read only once the pass has
+    // settled, so its merge still lands. A decision that stopped here would be
+    // `stopInstance` by another name.
+    for (const status of ["waiting", "queued", "running", "paused"] as const) {
+      assert.deepEqual(
+        loopOf([pass(1, status)], { stopAfterPass: 1 }),
+        { kind: "wait" },
+        status,
+      );
+    }
+  });
+
+  it("ends the loop once that pass settled, as a terminus and in the operator's words", () => {
+    const d = loopOf([pass(1, "completed")], { stopAfterPass: 1 });
+    assert.equal(d.kind === "stop" && d.code, "requested");
+    assert.match(
+      d.kind === "stop" ? d.reason : "",
+      /“Chip away at it” stopped after pass 1, as the operator asked\./,
+    );
+    // `emitted`, so an `on-success` block behind the loop proceeds as after a
+    // pass cap. `failed` here would withhold it from a pass that went well.
+    assert.equal(loopStopStatus("requested"), "emitted");
+  });
+
+  it("takes the next pass when the request names a later one", () => {
+    assert.deepEqual(
+      loopOf([pass(1, "completed")], { stopAfterPass: 2 }),
+      { kind: "pass", pass: 2 },
+    );
+  });
+
+  it("takes no pass beyond the one named, even when the latest is a later one", () => {
+    // A pick-up can reopen a later pass as the latest while a request recorded
+    // for an earlier one stands; `===` would read that as no request at all.
+    const d = loopOf([pass(1, "completed"), pass(2, "completed")], {
+      stopAfterPass: 1,
+    });
+    assert.equal(d.kind === "stop" && d.code, "requested");
+    assert.match(d.kind === "stop" ? d.reason : "", /after pass 1,/);
+  });
+
+  it("still says a pass failed when it did, rather than that the operator stopped it", () => {
+    // A stop the operator asked for is `emitted`; a pass that did not finish
+    // must stay `failed`, or an `on-success` successor starts on work that never
+    // arrived.
+    const failed = loopOf([pass(1, "failed")], { stopAfterPass: 1 });
+    assert.equal(failed.kind === "stop" && failed.code, "failed");
+
+    const empty = loopOf([{ pass: 1, members: [] }], { stopAfterPass: 1 });
+    assert.equal(empty.kind === "stop" && empty.code, "empty");
+
+    const unlanded = loopOf(
+      [
+        {
+          pass: 1,
+          members: [
+            runMember("body", "completed"),
+            blockMember("merge", "merge", "failed", { error: "conflict in a.txt" }),
+          ],
+        },
+      ],
+      { stopAfterPass: 1 },
+    );
+    assert.equal(unlanded.kind === "stop" && unlanded.code, "failed");
+    assert.match(unlanded.kind === "stop" ? unlanded.reason : "", /did not land/);
+  });
+
+  it("still says the work is complete when the agents said so", () => {
+    const d = loopOf([pass(1, "completed", { done: true })], { stopAfterPass: 1 });
+    assert.equal(d.kind === "stop" && d.code, "done");
+  });
+
+  it("is the sentence given when the pass cap or a clear board would also have ended the loop", () => {
+    const atCap = loopOf(
+      [pass(1, "completed"), pass(2, "completed"), pass(3, "completed")],
+      { stopAfterPass: 3 },
+    );
+    assert.equal(atCap.kind === "stop" && atCap.code, "requested");
+
+    const clearBoard = loopOf([pass(1, "completed")], {
+      ...boardOf(0),
+      stopAfterPass: 1,
+    });
+    assert.equal(clearBoard.kind === "stop" && clearBoard.code, "requested");
+  });
+});
+
+describe("loopStopAfterRefusal — when the control cannot be pressed", () => {
+  const looping = { name: "Chip away", status: "looping" } as const;
+
+  it("answers a loop that is still repeating, in both directions", () => {
+    assert.equal(
+      loopStopAfterRefusal({ instanceStatus: "started", loop: looping, latestPass: 2 }),
+      null,
+    );
+  });
+
+  it("refuses everything once Stop has halted the instance, so Stop wins", () => {
+    // `stopInstance` has already written the loop `failed`, but the instance's
+    // own word is what the refusal reads first: "Keep going" on a halted run
+    // must not read as having revived a loop the operator took down.
+    for (const instanceStatus of ["stopping", "stopped", "failed"] as const) {
+      const refusal = loopStopAfterRefusal({
+        instanceStatus,
+        loop: looping,
+        latestPass: 1,
+      });
+      assert.equal(refusal?.status, 409, instanceStatus);
+      assert.match(refusal?.error ?? "", new RegExp(`is ${instanceStatus}`));
+    }
+  });
+
+  it("refuses a loop that has already ended, whichever way", () => {
+    for (const status of ["emitted", "failed", "blocked", "waiting"] as const) {
+      const refusal = loopStopAfterRefusal({
+        instanceStatus: "started",
+        loop: { name: "Chip away", status },
+        latestPass: 1,
+      });
+      assert.equal(refusal?.status, 409, status);
+      assert.match(refusal?.error ?? "", new RegExp(`is ${status}`));
+    }
+  });
+
+  it("refuses a loop that has opened no pass, and a block that is no loop here", () => {
+    assert.equal(
+      loopStopAfterRefusal({ instanceStatus: "started", loop: looping, latestPass: null })
+        ?.status,
+      409,
+    );
+    assert.equal(
+      loopStopAfterRefusal({ instanceStatus: "started", loop: null, latestPass: null })
+        ?.status,
+      404,
     );
   });
 });

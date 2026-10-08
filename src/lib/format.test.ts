@@ -16,6 +16,7 @@ import {
   instanceCanMove,
   instanceOutcomeDetail,
   landingSummary,
+  loopSpendShown,
   passRuns,
   passesOf,
   pollFailureMessage,
@@ -418,6 +419,7 @@ const passBlock = (
   bodyNodeIds: [],
   maxPasses: null,
   maxLoopCostUSD: null,
+  stopAfterPass: null,
   passMember,
   ...over,
 });
@@ -548,6 +550,56 @@ test("the landing is stated once the merge member has run, and not before", () =
     "a pass that landed nothing is what leaves the next one where this one started",
   );
   assert.equal(landingSummary(null), null);
+});
+
+/**
+ * The loop card's "Spent" figure is read against a cost limit that `loopSpend`
+ * checks on more than the runs: a deciding turn and a merge's conflict
+ * resolution are money the loop spent. A figure of runs alone reads as a loop
+ * that stopped "on its cost limit" while well under it, and nothing on the page
+ * says why — so the sum that drops the block turns is the silent failure.
+ */
+test("a loop's shown spend adds the orchestrator and merge turns to its runs", () => {
+  const spending = (usd: number | null) =>
+    ({ run: { spentUSD: usd } }) as Partial<WorkflowInstanceNodeDTO>;
+  const passes = passesOf(nightly, {
+    nodes: [
+      passRun("loop#pass-1#a", member("loop", 1, "a"), spending(1)),
+      passRun("loop#pass-2#a", member("loop", 2, "a"), spending(2)),
+    ],
+    blocks: [
+      passBlock("loop#pass-1#o", "orchestrator", member("loop", 1, "o"), {
+        costUSD: 0.5,
+      }),
+      passBlock("loop#pass-1#m", "merge", member("loop", 1, "m"), { costUSD: 0.25 }),
+      // Nothing measured it: left out, not added as a free turn.
+      passBlock("loop#pass-2#m", "merge", member("loop", 2, "m"), {
+        costUSD: null,
+        costUnknown: true,
+      }),
+    ],
+  });
+  assert.deepEqual(loopSpendShown(passes), { usd: 3.75, reported: 2 });
+});
+
+test("a loop whose turns alone reported still shows their sum, and one with nothing shows none", () => {
+  const onlyTurns = passesOf(nightly, {
+    nodes: [],
+    blocks: [passBlock("loop#pass-1#m", "merge", member("loop", 1, "m"), { costUSD: 0.4 })],
+  });
+  assert.deepEqual(loopSpendShown(onlyTurns), { usd: 0.4, reported: 0 });
+
+  const nothing = passesOf(nightly, {
+    nodes: [passRun("loop#pass-1#a", member("loop", 1, "a"), { run: null })],
+    blocks: [
+      passBlock("loop#pass-1#m", "merge", member("loop", 1, "m"), { costUSD: null }),
+    ],
+  });
+  assert.deepEqual(
+    loopSpendShown(nothing),
+    { usd: null, reported: 0 },
+    "a dash, never $0.00 — a measurement nobody made",
+  );
 });
 
 test("a graph with no loop groups nothing, and its runs stay where they were", () => {

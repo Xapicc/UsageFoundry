@@ -4,6 +4,7 @@ import { getProposal, markProposal } from "./chat";
 import { db } from "./db";
 import { fmtDateTimeInZone } from "./format";
 import { mayWriteDataDir } from "./serverLock";
+import type { WorkflowGraph } from "./workflowGraph";
 import { currentSnapshot } from "./orchestrator";
 import { newWorkPaused } from "./settings";
 import { isTimeZone, zonedParts, zoneOffset } from "./windows";
@@ -530,20 +531,43 @@ export function decideSchedule(ctx: ScheduleContext): ScheduleDecision {
  * `startWorkflow`'s door — which is why this asks `instanceBudgetIsOff` rather
  * than asking for a cost limit by name.
  *
+ * **A workflow with a deliver block is refused too**, and that one is not about
+ * money. A deliver block pushes branches to a remote and opens pull requests,
+ * which is the one thing this app does that leaves the machine, and
+ * `deliverRun` is reached from a person's press and from nothing in the run loop
+ * for exactly that reason. A saved graph is that person's decision when they
+ * press Run on it; a schedule keeps the press and removes the person, and
+ * nothing a budget bounds is what gets published. Refusing it is the cautious
+ * default and easy to lift, where the reverse is not: a branch that reached a
+ * remote has been read by everyone who can see it.
+ *
  * Checked at creation, where there is an error channel and a person, and again
- * at every fire, because clearing the budget on the workflow afterwards is one
- * edit away and nothing about that edit knows a schedule exists.
+ * at every fire, because clearing the budget — or adding a block — on the
+ * workflow afterwards is one edit away and nothing about that edit knows a
+ * schedule exists.
  */
 export function scheduleRefusal(workflow: {
   name: string;
   instanceBudget: InstanceBudgetPolicy;
+  graph: Pick<WorkflowGraph, "nodes">;
 }): string | null {
-  if (!instanceBudgetIsOff(workflow.instanceBudget)) return null;
-  return (
-    `“${workflow.name}” sets no limit for a whole press of Run, and a schedule ` +
-    "presses Run with nobody there to see what it cost. Set a spending limit " +
-    "or a window guard under “Limits for the whole workflow” first."
-  );
+  if (instanceBudgetIsOff(workflow.instanceBudget)) {
+    return (
+      `“${workflow.name}” sets no limit for a whole press of Run, and a schedule ` +
+      "presses Run with nobody there to see what it cost. Set a spending limit " +
+      "or a window guard under “Limits for the whole workflow” first."
+    );
+  }
+  const deliver = workflow.graph.nodes.find((n) => n.kind === "deliver");
+  if (deliver) {
+    return (
+      `“${workflow.name}” has a deliver block, “${deliver.name}”, which pushes ` +
+      "branches and opens pull requests, and a schedule presses Run with nobody " +
+      "there to look at what is being published. Run it by hand, or take the " +
+      "deliver block out."
+    );
+  }
+  return null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1216,7 +1240,7 @@ export type ScheduleProposalPlan =
  */
 export function planScheduleProposal(
   proposal: { schedule: string | null },
-  workflow: Pick<Workflow, "id" | "name" | "instanceBudget"> | null,
+  workflow: Pick<Workflow, "id" | "name" | "instanceBudget" | "graph"> | null,
   now: number,
 ): ScheduleProposalPlan {
   const stored = proposedScheduleOf(proposal);

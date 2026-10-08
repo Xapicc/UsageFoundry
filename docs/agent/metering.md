@@ -57,6 +57,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - What a run is spending *now* is a third reading on the dashboard, never a correction to the meters.
 - What each repository cost is a fifth reading, and it is a report rather than a source.
 - A Codex run's spend is tokens wherever a report shows spend, and it is never folded into a dollar figure.
+- A loop's cost limit is checked on the guard figure and its card shows the floor with the pass blocks' turns added, and the card says so rather than showing the difference.
 
 ## [Attribution by effort, agent and skill](metering/attribution.md)
 
