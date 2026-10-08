@@ -123,7 +123,7 @@ scrolls in response to a poll. Full list at the foot of
 ## Neighbours
 
 [OperatorInterface](../OperatorInterface/) is the shape this survey follows.
-[KnowledgeSection](../KnowledgeSection/) is the nearest precedent for the
+KnowledgeSection (`git show a74a1bb:"proposals/implemented - KnowledgeSection/README.md"`) is the nearest precedent for the
 argument used here about a combination beating any single option: the complaint
 covers three passes, and **no option scores on more than one of them**.
 
