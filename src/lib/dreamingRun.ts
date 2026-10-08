@@ -439,8 +439,8 @@ export function nextDreamingFire(s: Settings, after: number): number {
  *
  * `reconcileSchedulesOnBoot`'s rule, for its reason: a server coming back up
  * must not start an unattended agent because of something that should have
- * happened hours ago. The cursor jumps to the current night whatever it finds,
- * so the grace below can only ever cover a late tick and never a restart.
+ * happened hours ago. The cursor jumps to the boot instant whatever it finds,
+ * so a window that closed during the downtime is behind it and cannot fire.
  */
 export function reconcileDreamingOnBoot(now = Date.now()): void {
   // The boot instant, so every window that closed while this process was down
