@@ -60,8 +60,8 @@ measurement under *Verified* and cut the item down to what is still open.
 | Build and release | [build-and-release.md](verification/build-and-release.md) | 4 | 0 |
 | Interface | [interface-ascii-skin.md](verification/interface-ascii-skin.md) — the ascii skin | 17 | 4 |
 | Interface | [interface-styles.md](verification/interface-styles.md) — buttons, contrast, colour and legacy CSS | 8 | 0 |
-| Interface | [interface-app-shell.md](verification/interface-app-shell.md) — the toolbar, drawer, sheets and shared layer | 6 | 2 |
+| Interface | [interface-app-shell.md](verification/interface-app-shell.md) — the toolbar, drawer, sheets and shared layer | 7 | 2 |
 | Interface | [interface-narrow-viewports.md](verification/interface-narrow-viewports.md) — pages at 390px, layout sweeps and smoke-pages | 15 | 9 |
 | Interface | [interface-canvases.md](verification/interface-canvases.md) — the graph canvases, touched map and replay | 5 | 2 |
 | Interface | [interface-pages-and-api.md](verification/interface-pages-and-api.md) — pages, panels and API payloads | 20 | 12 |
-| **Total** | | **475** | **282** |
+| **Total** | | **476** | **282** |
