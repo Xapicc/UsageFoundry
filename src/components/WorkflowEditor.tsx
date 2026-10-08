@@ -456,6 +456,9 @@ export function WorkflowEditor({
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // `error` is also where the install read below lands; the footer repeats
+  // only the refusal of the press the operator is standing next to.
+  const [saveFailed, setSaveFailed] = useState(false);
 
   /** What `normalizeWorkflowInput` says about the graph as it stands. */
   const [refusal, setRefusal] = useState<string | null>(null);
@@ -1013,6 +1016,7 @@ export function WorkflowEditor({
   async function save() {
     setSaving(true);
     setError(null);
+    setSaveFailed(false);
     try {
       const res = await fetch(
         workflow ? `/api/workflows/${workflow.id}` : "/api/workflows",
@@ -1037,6 +1041,7 @@ export function WorkflowEditor({
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      setSaveFailed(true);
       setSaving(false);
     }
   }
@@ -1288,14 +1293,23 @@ export function WorkflowEditor({
           saying what pressing it does. */}
       <div className="sticky bottom-0 z-10 -mx-4 -mb-12 mt-5 border-t border-line bg-canvas px-4 py-3 shadow-bar sm:-mx-5 sm:px-5">
         <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
+          {/* A refused save is said here as well as in the notice at the top
+              of the page: the footer is where Save is pressed from, and on a
+              tall editor the top is a scroll away, so the press looked like it
+              did nothing. Hidden from assistive technology because the alert
+              up there already announces it once. */}
           <p
             role="status"
             aria-atomic="true"
-            className="mr-auto min-h-5 basis-full text-xs leading-5 text-ink-faint sm:basis-auto"
+            className={`mr-auto min-h-5 basis-full text-xs leading-5 sm:basis-auto ${saveFailed ? "text-danger" : "text-ink-faint"}`}
           >
-            {saving
-              ? "Saving the graph…"
-              : "Nothing starts until you press Run"}
+            {saving ? (
+              "Saving the graph…"
+            ) : saveFailed ? (
+              <span aria-hidden="true">{error}</span>
+            ) : (
+              "Nothing starts until you press Run"
+            )}
           </p>
           {/* Through the same guard the shell's exits use rather than around
               it: Cancel is the one exit this component owns, and an exit that
