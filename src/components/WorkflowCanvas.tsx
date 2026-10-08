@@ -1687,7 +1687,11 @@ export function WorkflowCanvas({
                       </span>
                     )}
                   </span>
-                  {block.kind !== "merge" && !isLoop && block.mountId ? (
+                  {block.kind !== "merge" &&
+                  block.kind !== "deliver" &&
+                  block.kind !== "review" &&
+                  !isLoop &&
+                  block.mountId ? (
                     /* `truncate` for the card's reason: a folder is the one
                        fact on this row with no length a reader can predict,
                        and four wrapped lines of it would bury the name above
