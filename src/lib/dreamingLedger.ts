@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { db } from "./db";
 import type { SignatureRollup } from "./dreaming";
+// Type-only, so the ledger stays loadable without the orchestrator behind it.
+import type { RunStatus } from "./orchestrator";
 
 /**
  * What Dreaming has written, and what a night decided.
@@ -37,6 +39,12 @@ export interface DreamingNight {
   reason: string | null;
   runId: string | null;
   selected: number;
+  /**
+   * The status of `runId`'s run, joined in by `listNights` and never stored:
+   * `recordNight` takes a night without it. Null when the night created no run
+   * or its run row is gone.
+   */
+  runStatus: RunStatus | null;
 }
 
 /** How many notes and nights the two lists below return before cutting. */
@@ -179,7 +187,7 @@ export function forgetNote(signature: string): boolean {
  * later pass found nothing, which is the uninteresting half; `dreaming_notes`
  * keeps the authoritative record of what each run claimed.
  */
-export function recordNight(night: DreamingNight): void {
+export function recordNight(night: Omit<DreamingNight, "runStatus">): void {
   db()
     .prepare(
       `INSERT INTO dreaming_nights (night, started_at, outcome, reason, run_id, selected)
@@ -201,11 +209,31 @@ export function recordNight(night: DreamingNight): void {
     .run(night);
 }
 
+/**
+ * Newest night first, each with the status of the run its `run_id` names.
+ *
+ * `outcome` is a record of what the night decided and is never rewritten from
+ * the run: a run that was created and then failed, stopped or was killed stays
+ * `selected`. The run's own row is the authority on how it ended, so the status
+ * is read from there at list time rather than copied into this table, where it
+ * would be stale the moment the run moved.
+ *
+ * A LEFT JOIN, because retention deletes old runs and the night happened
+ * whether or not its run is still there; an inner join would drop it from the
+ * list. `runStatus` is null for a night with no run and for one whose run is
+ * gone, and the two read the same on purpose — neither has a status to show.
+ *
+ * `run_id` is the **latest** run of the night (`recordNight` overwrites it when
+ * a second pass also selects), so the status is the latest run's too.
+ */
 export function listNights(limit = NIGHT_LIMIT): DreamingNight[] {
   const rows = db()
     .prepare(
-      `SELECT night, started_at, outcome, reason, run_id, selected
-         FROM dreaming_nights ORDER BY night DESC LIMIT ?`,
+      `SELECT n.night, n.started_at, n.outcome, n.reason, n.run_id, n.selected,
+              r.status AS run_status
+         FROM dreaming_nights n
+         LEFT JOIN runs r ON r.id = n.run_id
+        ORDER BY n.night DESC LIMIT ?`,
     )
     .all(limit) as Record<string, unknown>[];
   return rows.map((r) => ({
@@ -215,6 +243,7 @@ export function listNights(limit = NIGHT_LIMIT): DreamingNight[] {
     reason: (r.reason as string | null) ?? null,
     runId: (r.run_id as string | null) ?? null,
     selected: Number(r.selected),
+    runStatus: (r.run_status as RunStatus | null) ?? null,
   }));
 }
 

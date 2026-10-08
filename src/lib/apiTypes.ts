@@ -4863,6 +4863,18 @@ export interface DreamingNightDTO {
   reason: string | null;
   runId: string | null;
   selected: number;
+  /**
+   * How `runId`'s run ended, as `RunDTO["status"]`; null while it is still live.
+   * Also null when the night created no run or its run row has been deleted.
+   *
+   * Ended runs only, because the pane reads once on mount and never polls: a
+   * `running` shown here would be a claim about a moment that has passed, and an
+   * ending cannot go stale. `outcome` above is the night's decision and stays
+   * `selected` whatever happens to the run; this is the run's own word. It
+   * belongs to the **latest** run of the night — a second pass that also selects
+   * replaces `runId`, and this follows it.
+   */
+  runEnding: RunDTO["status"] | null;
 }
 
 /**
