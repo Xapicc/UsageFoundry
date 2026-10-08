@@ -2200,6 +2200,24 @@ export interface ReviewItemDTO {
  */
 export const MAX_REVIEW_FIX_ROUNDS = 3;
 
+/**
+ * Where a review block's verdict on each branch comes from. `model` is the
+ * frontier review, billed per branch. `status` reads how each run ended: a
+ * `completed` one is approved and any other ending is set aside, with no model
+ * and no spend.
+ *
+ * An object keyed on `kind` rather than a bare word, so a source that carries a
+ * setting of its own — a saved command to run — is one more member here rather
+ * than a second field beside this one that every reader has to pair with it.
+ */
+export type ReviewVerdictSourceDTO = { kind: "model" } | { kind: "status" };
+
+/** Every `ReviewVerdictSourceDTO` kind, in the order the editor offers them. */
+export const REVIEW_VERDICT_KINDS: readonly ReviewVerdictSourceDTO["kind"][] = [
+  "model",
+  "status",
+];
+
 /** How a branch is put onto its target. `settings.landStrategy`'s vocabulary. */
 export type MergeStrategyDTO = "merge" | "squash";
 
@@ -2336,6 +2354,12 @@ export interface WorkflowNodeDTO {
    * rejects is sent back for a fix and reviewed again. Null on every other kind.
    */
   fixRounds?: number | null;
+  /**
+   * Where a review block's verdict comes from. Absent and null are `model`, so
+   * every graph saved before the field existed keeps its frontier review. Null
+   * on every other kind.
+   */
+  verdictSource?: ReviewVerdictSourceDTO | null;
 }
 
 /**
@@ -2562,6 +2586,16 @@ export interface WorkflowDTO {
   lastRunAt?: number | null;
   /** Null when nothing starts this workflow but a person. */
   schedule?: WorkflowScheduleDTO | null;
+  /**
+   * Why a schedule on this workflow would be refused as things stand, or null.
+   *
+   * The server's own `scheduleRefusal(workflow)`, sent so the schedule card can
+   * say so before it offers a form that would only be answered with it — and so
+   * the browser decides nothing about it. A reading and never the gate: the same
+   * check runs again when a schedule is saved and at every fire. Distinct from
+   * `schedule.refusal`, which is about a schedule that already exists.
+   */
+  scheduleRefusal: string | null;
 }
 
 /**
@@ -2587,11 +2621,25 @@ export interface WorkflowDTO {
  */
 export type WorkflowListItemDTO = Omit<
   WorkflowDTO,
-  "nodes" | "edges" | "instanceBudget"
+  "nodes" | "edges" | "instanceBudget" | "scheduleRefusal"
 > & {
   /** How many blocks the saved graph holds. Both lists print exactly this. */
   nodeCount: number;
+  /**
+   * The newest press of Run, null if there has never been one.
+   *
+   * Three fields rather than an instance: the list links it and names how it
+   * ended, and nothing else. `status` is the derived reading
+   * `WorkflowInstanceDTO.status` explains — read and shown here, never acted on.
+   */
+  lastInstance: WorkflowLastInstanceDTO | null;
 };
+
+export interface WorkflowLastInstanceDTO {
+  id: string;
+  createdAt: number;
+  status: WorkflowInstanceDTO["status"];
+}
 
 /**
  * One thing an instance member starts after, and on what condition.
@@ -2785,6 +2833,12 @@ export interface WorkflowInstanceBlockDTO {
    */
   maxPasses: number | null;
   maxLoopCostUSD: number | null;
+  /**
+   * The pass this loop was asked to end after, or null for no request. Set by
+   * "Stop after this pass" and cleared by "Keep going"; left on a loop that has
+   * ended, where the stop sentence says whether it was what ended it.
+   */
+  stopAfterPass: number | null;
   /** Which pass this ledger row is a member of — see `PassMemberDTO`. */
   passMember: PassMemberDTO | null;
 }
@@ -2805,6 +2859,15 @@ export type WorkflowPickUpDTO =
       nodeName: string;
       error: string | null;
       /** Why it cannot be retried, or null when it can. */
+      retryRefusal: string | null;
+    }
+  | {
+      /** An orchestrator block whose deciding turn failed. */
+      kind: "orchestrator";
+      nodeId: string;
+      nodeName: string;
+      error: string | null;
+      /** Why its turn cannot be run again, or null when it can. */
       retryRefusal: string | null;
     }
   | {
@@ -2843,6 +2906,12 @@ export interface WorkflowInstanceDTO {
     | "stopping"
     | "stopped";
   error: string | null;
+  /**
+   * Who pressed Run: a schedule firing with nobody present, or a person. An
+   * instance stored with no origin predates the column, when only a person
+   * could press it, and reads `workflow`.
+   */
+  origin: "workflow" | "schedule";
   /** When the halt closed the door — not when the last child died. */
   stoppedAt: number | null;
   /**
