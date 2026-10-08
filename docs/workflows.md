@@ -9,11 +9,14 @@ they follow have settled. It is the answer to "the same four steps, in the same
 order, every time" — the thing templates cannot do, because a template is one
 run and this is the shape of several.
 
-There are two other kinds. An **orchestrator block** decides what to run instead
+There are other kinds. An **orchestrator block** decides what to run instead
 of being told, and its runs start without an approval — a real trade, with [its
 own section](#a-block-that-decides-what-to-run) below. A **merge block** lands
 the branches the blocks in front of it left behind, optionally paying Claude to
-reconcile a conflict; it too has [a section](#a-block-that-lands-the-work).
+reconcile a conflict; it too has [a section](#a-block-that-lands-the-work). Its
+sibling, a **deliver block**, [pushes those branches and opens a pull
+request for each](#a-block-that-delivers-the-work) instead of touching your
+checkout.
 
 ## What a block holds, and what it does not
 
@@ -162,6 +165,63 @@ Two things it is not. It has no checkout of its own, so it cannot be at either
 end of a branch hand-over. And it needs at least one block in front of it that
 runs something whose guards isolate — both refused when you save the graph, not
 discovered an hour in.
+
+## A block that delivers the work
+
+A merge block puts a branch into your own checkout. A **deliver block** is the
+other way out: it takes every branch its predecessors left, pushes each one to
+its repository's remote and opens a pull request for it. That is the push and
+the pull request the *Open pull request* button on a run's Land card makes, one
+branch after another, with nothing asking first. It holds no task, starts no
+agent and spends nothing on a model.
+
+**Your checkout does not need to be clean.** A merge block refuses a repository
+whose checkout has uncommitted changes or is on the wrong branch, because it
+writes into it. A deliver block does not look: pushing reads the remote and
+writes the repository's `.git/config`, and leaves your working tree exactly as it
+was. What it does refuse is a run still working *in that folder*, and a land or
+a delivery already holding it. Those arrive as one failed branch, with the
+reason.
+
+Everything delivery already checks, it checks per branch, and adds nothing of
+its own:
+
+- the repository needs a **GitHub token** (`UF_GITHUB_TOKEN`, or an entry for
+  that repository in `UF_GITHUB_TOKENS`), and a remote that is GitHub;
+- the **verify command** in Settings, if there is one, runs in the run's own
+  tree and has to pass;
+- a branch whose history carries a file that seeding copied in, a `.env`
+  usually, is refused;
+- a local model's branch waits for the frontier review that Land waits for, so
+  put a review block in front of it;
+- nothing is ever force-pushed.
+
+**One pull request per branch.** A branch that already has one is skipped, and
+so is a branch with nothing on it or one already on its target; none of those
+is a failure, and the block's line says which it skipped. What fails the block
+is a predecessor that should have left a branch and left none, and any refusal
+above. A branch that fails does not stop the ones after it. The block's note on
+the instance page names every pull request it opened.
+
+What follows it follows it on its condition: *only if it completes* waits until
+every branch is delivered or had nothing to deliver, *once it finishes* runs
+either way. A deliver block that failed cannot be retried from the instance page
+yet; deliver the branches it missed from their Land cards.
+
+It has the merge block's two limits. It has no checkout of its own, so it
+cannot be at either end of a branch hand-over, and it needs at least one block
+in front of it that runs something whose guards isolate. A merge block, a loop
+or another deliver block in front of it does not count, because none of them
+hands on a branch: after a merge the work is on its target, and a pull request
+from it would have no commits to show. Both are refused when you save the graph.
+
+**Because nothing asks, three places are closed to it.** A loop's section may
+not hold one, since every pass would push and open pull requests, up to the pass
+cap, and a pass already lands its own work through the section's merge block. A
+workflow that holds one cannot be put on a schedule, however well its limits
+bound the spend: a schedule presses Run with nobody there to look at what is
+being published. And the chat cannot draft one; add it in the editor, where its
+effect is stated beside it.
 
 ## A region that repeats
 
@@ -398,9 +458,10 @@ Three things are refused, each naming the block to fix:
   says this one as you draw it rather than waiting for Save.
 
 **A section holds run blocks, orchestrator blocks and merge blocks.** A loop
-inside a loop is the one kind left out, and it is refused by name: one pass cap
-multiplying another is a number nobody can work out from the two they typed.
-Repeat one section, not a section that repeats.
+inside a loop is left out, and it is refused by name: one pass cap multiplying
+another is a number nobody can work out from the two they typed. Repeat one
+section, not a section that repeats. A deliver block is left out too, for a
+different reason: it publishes, and a section would publish once per pass.
 
 Every block of a section that works in a checkout needs guards that isolate,
 because it has to leave a branch for the section's merge block to land. An
@@ -554,16 +615,18 @@ run says so rather than reading as approval.
 
 A workflow that can be saved but never started fails weeks away from the form
 that caused it, so both moments check the same things: a name, at least one
-block, a task on every block that runs one — every block but a merge block and a
-loop that repeats a section, neither of which is sent one — a template that
+block, a task on every block that runs one — every block but a merge block, a
+deliver block and a loop that repeats a section, none of which is sent one — a
+template that
 exists, a workspace that is
 mounted and a folder that resolves inside it, a condition on every link, no
 block waiting for itself, no loop, no branch hand-over between blocks whose
-guards do not isolate — nor one touching an orchestrator or merge block, neither
-of which has a checkout and so neither of which has a branch — a fan-out cap on
+guards do not isolate — nor one touching an orchestrator, merge or deliver block,
+none of which has a checkout and so none of which has a branch — a fan-out cap on
 every orchestrator block, and, on every merge block, a strategy and at least one
-predecessor that runs something whose guards leave a branch. Every refusal names
-the block it is about.
+predecessor that runs something whose guards leave a branch; a deliver block
+needs that predecessor too, and is refused inside a loop's section. Every
+refusal names the block it is about.
 
 The workflow-wide limits are the one exception, and only in one direction: a
 fraction guard with no ceiling behind it saves fine and is refused at Run. A
@@ -579,9 +642,10 @@ That pass has no `await` in it, and that is a correctness requirement rather
 than a style: the folder claim that keeps two agents out of one directory is
 only atomic within one event-loop turn.
 
-A graph with an orchestrator or merge block in it is created in stages instead,
-for the obvious reason: the blocks behind one cannot name runs that a model has
-not decided on yet, or that a merge block will never create at all. Those blocks
+A graph with an orchestrator, merge or deliver block in it is created in stages
+instead, for the obvious reason: the blocks behind one cannot name runs that a
+model has not decided on yet, or that a merge or deliver block will never create
+at all. Those blocks
 are created when the block in front of them finishes, and until then they hold
 nothing at all — no folder, no checkout, no place in the queue — so they cost
 exactly as much as a `waiting` run does, which is nothing. The instance page
@@ -713,6 +777,14 @@ is about happens every night for the next month. Any one of the three is enough.
 The two window guards are the ones that bound *repetition* rather than one press,
 since a graph that would start into an already-spent window is refused at the
 door.
+
+**A workflow with a deliver block cannot be scheduled either,** whatever its
+limits. They bound what a press of Run *spends*, and what a deliver block does
+is publish: it pushes branches to a remote and opens pull requests, which is not
+spend and is not undone by a limit. A schedule presses Run with nobody there to
+look at what is being published, so the schedule form refuses it with a
+sentence, and so does every fire if the block is added afterwards. Run it by
+hand.
 
 **How often.** Three choices, and no cron expression:
 

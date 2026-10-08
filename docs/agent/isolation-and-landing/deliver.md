@@ -6,8 +6,10 @@ Read before editing `deliverRun`, `deliveredPullRequest`, `deliveryState`, `seed
 
 **The other exit.** `deliverRun` pushes a run's branch and opens a pull request
 on the checkout's GitHub remote. It is reached from one endpoint on one press
-and from nothing in the run loop: an outward-facing action taken by a loop is a
-different product from one taken by a person. It never force-pushes, it runs
+and from a workflow's deliver block (below), and from nothing in the run loop:
+an outward-facing action taken by a loop is a different product from one taken
+by a person, and the block is the person's decision taken earlier, when they
+saved the graph and pressed Run on it. It never force-pushes, it runs
 the same verify gate Land does against the same `verifyTree` — an operator who
 said "not unless this passes" has said nothing about which exit the work leaves
 by — and with no token for the repository it refuses, which is the honest
@@ -35,6 +37,8 @@ gates and waits for it as it does Land**: `isShuttingDown()` is read after
 holds it from the claim to the row write, because an exit between the push and
 that write published a branch with no pull request and no record. Nothing reads
 the flag after the push, where refusing would leave exactly that.
+
+**A workflow's deliver block is the second caller, and it asks nothing the button does not.** `startDeliverBlock` in `workflows.ts` calls `deliverRun` once per branch, one after another, and keeps none of its decisions: the verify gate, the seeded-file refusal, the certification gate, the per-repository token, the `landing` claim and the shutdown gate are all `deliverRun`'s, so the block reaches no remote the button could not. `deliverHold` still asks as a person — `null` for the asker — because a pass of a loop never reaches Deliver: a deliver block is refused inside a loop section at save. **Neither exit's refusals about the operator's checkout apply to it.** `deliverRun` takes from `landState` the branch, the target, `seeded`, `certification` and `checkout.path`, and never `blocked`, which is where `landRefusal` keeps a dirty tree and a checkout on the wrong branch; the only commands it runs in the checkout are `remote get-url` and `push --set-upstream`, and the second writes `.git/config` and nothing else. What it does refuse there is a run working in that folder (`runWorkingIn`) and a delivery or land already holding the claim, which a block meets as a failed branch. The block's side — its outcome, its save-time refusals and the schedule and chat doors it keeps shut — is in `workflows-and-schedules/orchestrator-and-merge-blocks.md`.
 
 **Deliver refuses a branch that can still move, in Land's own words.** It
 pushed the branch of a `running`, `queued` or `paused` run, of a chain link with

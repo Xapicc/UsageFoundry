@@ -22,6 +22,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - `taskIds` on an emitted spec is not a sixth field on the list `emit_runs` refuses to grow, and it is not on the node at all.
 - Acyclicity stops being a property of who wrote the graph, so it is checked as a property of the data.
 - A block can land what the blocks in front of it built, and every protection that made `land.ts` safe stays where it is.
+- A block can publish what the blocks in front of it built, and it removes the person, so two doors stay shut.
 
 ## [Halting, status and pick-ups of a workflow instance](workflows-and-schedules/instance-lifecycle.md)
 
