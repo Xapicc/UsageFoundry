@@ -4295,10 +4295,11 @@ function haltBlocks(instanceId: string, cause: string): number {
         // later; one in flight is left to finish, exactly as `cancelBatch` has
         // it, so the batch's own rows stay the record of which branches landed.
         `${cause} while it was landing branches.`,
-        // A push already under way is left to finish too, and for the same
-        // reason: `deliverRun` is waited on by the shutdown and writes the pull
-        // request to the run's row, which is the record of what was delivered.
-        // The block stops before it starts the next branch.
+        // A push already under way is not cancelled: `deliverRun` writes the
+        // pull request to the run's row, which is the record of what was
+        // delivered, and a halt that killed it between the push and that write
+        // would leave a published branch with no record. The block stops before
+        // it starts the next branch.
         `${cause} while it was delivering branches.`,
         `${cause} while it was reviewing branches.`,
         `${cause} while it was deciding what to start.`,
