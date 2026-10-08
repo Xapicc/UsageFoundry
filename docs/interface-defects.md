@@ -263,3 +263,13 @@ nothing about it.
   Chromium with a fake stream; fixed by following in a layout effect. Turning
   anchoring off was measured and refused: it carried a reader who had scrolled
   up back to the tail within three events.
+- **2026-10-08, `a7f84588`, class B, arguably D.** `RunGitDirNotice` set the
+  repository's git directory as a `mono` span with no `break-all`, in the
+  `changed` heading and in the not-read lead board task `602e9c65` added. A
+  path with no hyphen in it ran about 110px past a 290px paragraph at 390px
+  and cut off `.git`, and `AppShell` clips, so the document never scrolled.
+  Class B because an unbreakable path in a bounded box is in the markup;
+  arguably D because whether it overflows is the width's to say. Found by
+  rendering the new states over a 68-character hyphen-free path in a
+  standalone build; fixed with `break-all` on both. The run page's muted
+  "nothing changed" line has the same span and is board task `386f64c8`.

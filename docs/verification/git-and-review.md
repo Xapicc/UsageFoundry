@@ -125,6 +125,22 @@
   and where git looked instead was not established. Caveat: the container's
   git as uid 1000, not a host's.
 
+- **The `core.hooksPath` rows and not-read notes render on the run page and
+  the Land card, 2026-10-08.** Board task `602e9c65`, standalone build of
+  `a7f84588`. One run was seeded through `POST /api/runs` against a scratch
+  `DATA_DIR` and a `CLAUDE_BIN` that exits 1. Playwright then answered
+  `GET /api/runs/<id>` as a completed worktree run carrying an injected
+  `gitDir`, and `/land` as a fast-forward. The states were `changed` with
+  hooksPath rows (`pre-commit`, a non-executable `h`, the directory itself)
+  and a not-read note, `unchanged` with a not-read note, and plain
+  `unchanged`. Both of the first two were drawn as warnings in the inspector
+  and on the Land card, and the last as the muted line in the inspector only.
+  Checked at 390px and 1280px in both skins, with no console error and no
+  sideways scroll. Over a 68-character hyphen-free path, no box was wider
+  than its parent once `a7f84588` added `break-all`; before it, the path ran
+  past the notice. Caveat: the reports were injected, so this says nothing
+  about what the server reads.
+
 ## Not yet verified by hand
 
 - **A planted `core.fsmonitor` running in the operator's own git on the
