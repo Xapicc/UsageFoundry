@@ -1,3 +1,4 @@
+import { edgesExclude } from "./branchRival";
 import type { ProposalDependency, ProposalStatus } from "./chat";
 
 /**
@@ -40,15 +41,25 @@ export interface ContinuationCandidate {
  * ones, because a rival needs no label of its own to claim a branch — a model
  * naming ids only for the proposals something points *at* writes exactly that
  * shape, and it is the case a scan of `labels` alone would miss entirely.
+ *
+ * A pending rival under the condition `edgesExclude` pairs with `edge` is no
+ * rival, for the reason `continuationRival` lets its waiting twin through: a
+ * pending proposal has no run yet, so it is as unreleased as a run can be, and
+ * only one of an on-success and an on-failure run behind the same predecessor
+ * can ever start.
  */
 export function rivalContinuation(
   label: string,
+  edge: ProposalDependency["edge"],
   proposals: readonly ContinuationCandidate[],
 ): ContinuationCandidate | null {
   for (const proposal of proposals) {
     if (proposal.status !== "pending") continue;
     const claims = proposal.dependsOn.some(
-      (dependency) => dependency.continueBranch && dependency.specId === label,
+      (dependency) =>
+        dependency.continueBranch &&
+        dependency.specId === label &&
+        !edgesExclude(dependency.edge, edge),
     );
     if (claims) return proposal;
   }

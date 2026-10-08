@@ -5638,6 +5638,7 @@ function proposeRun(args: Record<string, unknown>, chatId: string, decision: Mod
     // refuses the correction of any card that carries a branch on.
     const rival = rivalContinuation(
       continuing[0].specId,
+      continuing[0].edge,
       proposals.filter((p) => p.id !== superseded?.id).map((p) => ({
         specId: p.spec_id,
         title: p.title,
@@ -5652,7 +5653,8 @@ function proposeRun(args: Record<string, unknown>, chatId: string, decision: Mod
         : "That one carries no id, so nothing can be chained behind it: drop ";
       return text(
         `${named} is already waiting to carry on "${continuing[0].specId}"'s ` +
-          `branch, and two runs cannot extend the same one. ${instead}` +
+          "branch, and two runs cannot extend the same one unless one starts only " +
+          `on success and the other only on failure. ${instead}` +
           "continueBranch so this one cuts a branch of its own.",
         true,
       );

@@ -469,14 +469,17 @@ describe("a second run continuing a branch whose continuer was refunded", () => 
   let seq = 0;
   const made: string[] = [];
 
-  function create(folder: string, dependsOn: Array<{ runId: string; continueBranch: boolean }>): string {
+  function create(
+    folder: string,
+    dependsOn: Array<{ runId: string; continueBranch: boolean; edge?: "on-success" | "on-finish" | "on-failure" }>,
+  ): string {
     const run = createRun({
       folder,
       mountId: null,
       prompt: "carry on",
       budget: { maxIterations: 1 },
       origin: "form",
-      dependsOn: dependsOn.map((d) => ({ ...d, edge: "on-finish" as const })),
+      dependsOn: dependsOn.map((d) => ({ ...d, edge: d.edge ?? ("on-finish" as const) })),
     });
     made.push(run.id);
     return run.id;
@@ -537,6 +540,108 @@ describe("a second run continuing a branch whose continuer was refunded", () => 
     const { folder, predecessor, first } = stoppedContinuer("refusal_pauses");
     db().prepare("UPDATE runs SET pause_count = 1 WHERE id = ?").run(first);
     assert.doesNotThrow(() => create(folder, [{ runId: predecessor, continueBranch: true }]));
+  });
+
+  // The one pair admission lets share a branch: an on-success continuer and an
+  // on-failure one, both still waiting on a predecessor that has not ended. The
+  // rows are what `branchRivalOf` reads the opposite condition off.
+  describe("beside a sibling waiting on the opposite condition", () => {
+    const orch = require("./orchestrator") as typeof import("./orchestrator");
+    const land = require("./land") as typeof import("./land");
+
+    function waitingPair() {
+      seq += 1;
+      setNewWorkPaused(true);
+      const folder = `pair-${seq}`;
+      makeRepo(folder);
+      const predecessor = create(folder, []);
+      assert.equal(getRun(predecessor)!.isolation, "worktree", "the premise: the predecessor has a branch");
+      const success = create(folder, [{ runId: predecessor, edge: "on-success", continueBranch: true }]);
+      const fixer = create(folder, [{ runId: predecessor, edge: "on-failure", continueBranch: true }]);
+      return { folder, predecessor, success, fixer };
+    }
+
+    it("admits both, each recorded as continuing the predecessor", () => {
+      const { predecessor, success, fixer } = waitingPair();
+      for (const id of [success, fixer]) {
+        assert.equal(getRun(id)!.status, "waiting", id);
+        assert.equal(getRun(id)!.continues_run, predecessor, id);
+      }
+    });
+
+    it("refuses a third continuer whatever condition it waits on", () => {
+      const { folder, predecessor, success, fixer } = waitingPair();
+      // Each overlaps one half of the pair, and a run it overlaps is named.
+      // on-finish overlaps both, and which of the two is named is not decided.
+      const overlapped = {
+        "on-success": [success],
+        "on-failure": [fixer],
+        "on-finish": [success, fixer],
+      } as const;
+      for (const edge of ["on-success", "on-failure", "on-finish"] as const) {
+        const named = overlapped[edge].map((id) => id.slice(0, 8)).join("|");
+        assert.throws(
+          () => create(folder, [{ runId: predecessor, edge, continueBranch: true }]),
+          new RegExp(`Run (${named}) is already set to continue run ${predecessor.slice(0, 8)}'s branch`),
+          edge,
+        );
+      }
+    });
+
+    it("starts only the fixer when the predecessor fails", () => {
+      const { predecessor, success, fixer } = waitingPair();
+      db()
+        .prepare("UPDATE runs SET status = 'failed', iterations = 1, finished_at = ? WHERE id = ?")
+        .run(Date.now(), predecessor);
+      // The hold kept the pair from being promoted while it was built; a release
+      // pass does nothing under it, and admission queues without promoting.
+      setNewWorkPaused(false);
+      orch.releaseDependents();
+      assert.equal(getRun(fixer)!.status, "queued", getRun(fixer)!.stop_reason ?? "");
+      assert.equal(getRun(fixer)!.worktree_branch, getRun(predecessor)!.worktree_branch);
+      assert.equal(getRun(success)!.status, "blocked");
+      // The success run is the older row and is still on the branch's books, so
+      // this is the readers' case: the chain has to follow the continuer that
+      // can still commit, and the branch has one owner.
+      assert.deepEqual(
+        land.chainRuns(getRun(predecessor)!).map((r) => r.id),
+        [predecessor, fixer],
+      );
+      assert.equal(land.branchOwnerOf(getRun(fixer)!), fixer);
+    });
+
+    it("starts only the success run when the predecessor completes, the fixer being not needed", () => {
+      const { predecessor, success, fixer } = waitingPair();
+      db()
+        .prepare("UPDATE runs SET status = 'completed', iterations = 1, finished_at = ? WHERE id = ?")
+        .run(Date.now(), predecessor);
+      setNewWorkPaused(false);
+      orch.releaseDependents();
+      assert.equal(getRun(success)!.status, "queued", getRun(success)!.stop_reason ?? "");
+      assert.equal(getRun(fixer)!.status, "not-needed");
+      assert.deepEqual(
+        land.chainRuns(getRun(predecessor)!).map((r) => r.id),
+        [predecessor, success],
+      );
+      assert.equal(land.branchOwnerOf(getRun(success)!), success);
+    });
+
+    it("refuses to release the fixer onto a branch the success run already worked on", () => {
+      // A completed predecessor picked up and ended failed meets the other
+      // condition after all, by which time its success continuer has committed.
+      const { predecessor, success, fixer } = waitingPair();
+      db().prepare("UPDATE runs SET status = 'completed', iterations = 1 WHERE id = ?").run(success);
+      db()
+        .prepare("UPDATE runs SET status = 'failed', iterations = 1, finished_at = ? WHERE id = ?")
+        .run(Date.now(), predecessor);
+      // The hold kept the pair from being promoted while it was built; a release
+      // pass does nothing under it, and admission queues without promoting.
+      setNewWorkPaused(false);
+      orch.releaseDependents();
+      const row = getRun(fixer)!;
+      assert.equal(row.status, "failed");
+      assert.match(row.stop_reason ?? "", new RegExp(`Run ${success.slice(0, 8)} already carries on run ${predecessor.slice(0, 8)}'s branch`));
+    });
   });
 });
 

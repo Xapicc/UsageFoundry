@@ -43,6 +43,7 @@ import {
   type MountPointResult,
 } from "./sandboxMountPoints";
 import { baselineFrom, taskSignature, type CostBaseline } from "./costBaseline";
+import { continuationRival, type Continuer } from "./branchRival";
 import { db } from "./db";
 import {
   getSettings,
@@ -4435,6 +4436,54 @@ function continuedBranchOf(run: RunRow): ContinuedBranch {
 }
 
 /**
+ * The run that bars `askerId` from continuing `predecessorId`'s branch on
+ * `edge`, or null: `continuationRival` over the runs the table says already
+ * continue it.
+ *
+ * Built from `TERMINAL_STATUSES` rather than spelled out again: a second copy of
+ * "which statuses have settled" is a second thing to forget when one is added,
+ * and forgetting it here is the expensive direction — a settled run reads as
+ * still holding the branch, so nothing may ever be created to carry it on and
+ * the refusal names a run that finished hours ago. Every continuer is read
+ * rather than the first, so a third run is found behind an exempt pair.
+ */
+function branchRivalOf(
+  askerId: string,
+  predecessorId: string,
+  edge: DependencyEdge | null,
+): (Continuer & { status: RunStatus }) | null {
+  const rows = db()
+    .prepare(
+      `SELECT r.id, r.status, r.iterations, ${refundedCyclesSql("r")} AS refundedCycles,
+              d.edge AS edge
+         FROM runs r
+         LEFT JOIN run_deps d ON d.run_id = r.id AND d.depends_on = r.continues_run
+        WHERE r.continues_run = ? AND r.id != ?
+        ORDER BY r.created_at`,
+    )
+    .all(predecessorId, askerId) as Array<{
+    id: string;
+    status: RunStatus;
+    iterations: number;
+    refundedCycles: number;
+    edge: DependencyEdge | null;
+  }>;
+  return continuationRival(
+    edge,
+    rows.map((row) => {
+      const worked = ranWorkCycle(row);
+      return {
+        id: row.id,
+        status: row.status,
+        edge: row.edge,
+        holdsBranch: worked || !TERMINAL_STATUSES.includes(row.status),
+        isPending: row.status === "waiting" && !worked,
+      };
+    }),
+  );
+}
+
+/**
  * Read the dependency list off a request, and say what it means for admission.
  *
  * Every refusal here is a graph that cannot be satisfied, and each one is
@@ -4527,23 +4576,12 @@ function admitDependencies(
       // and was then parked or cut, and reading that as empty admitted a second
       // run onto the branch beside its commits.
       //
-      // Built from `TERMINAL_STATUSES` rather than spelled out again: a second
-      // copy of "which statuses have settled" is a second thing to forget when
-      // one is added, and forgetting it here is the expensive direction — a
-      // settled run reads as still holding the branch, so nothing may ever be
-      // created to carry it on and the refusal names a run that finished hours
-      // ago.
-      const rival = db()
-        .prepare(
-          `SELECT id, status FROM runs
-            WHERE continues_run = ?
-              AND (iterations > 0 OR ${refundedCyclesSql()} > 0
-                   OR status NOT IN (${TERMINAL_STATUSES.map(() => "?").join(",")}))
-            LIMIT 1`,
-        )
-        .get(runId, ...TERMINAL_STATUSES) as
-        | { id: string; status: RunStatus }
-        | undefined;
+      // And except for the one run `edgesExclude` pairs with this one's
+      // condition while it is still waiting: only one of an on-success and an
+      // on-failure continuer can ever be released, so a fixer can carry on the
+      // branch its sibling would have. The decision is `continuationRival`'s,
+      // and `admitWaiting` asks it again at release.
+      const rival = branchRivalOf(id, runId, edge);
       if (rival) {
         throw new Error(
           `Run ${shortId(rival.id)} is already set to continue run ${shortId(runId)}'s branch (it is ${rival.status}). ` +
@@ -6180,6 +6218,23 @@ function admitWaiting(run: RunRow): boolean {
   let workDir: string;
   let repository: string | null;
   try {
+    // Admission let this run beside a sibling only because the pair could not
+    // both start. A completed dependency picked up and ended failed can satisfy
+    // the other half after all, and by then the sibling may already be on the
+    // branch: two runs committing to one ref is the failure admission exists
+    // to refuse, so the release asks again.
+    if (run.continues_run) {
+      const mine = db()
+        .prepare("SELECT edge FROM run_deps WHERE run_id = ? AND depends_on = ?")
+        .get(run.id, run.continues_run) as { edge: DependencyEdge } | undefined;
+      const rival = branchRivalOf(run.id, run.continues_run, mine?.edge ?? null);
+      if (rival) {
+        throw new Error(
+          `Run ${shortId(rival.id)} already carries on run ${shortId(run.continues_run)}'s branch (it is ${rival.status}), ` +
+            "and two runs cannot extend the same branch.",
+        );
+      }
+    }
     // `isolation === 'none'` on a waiting row is the operator's own answer,
     // recorded at creation; anything else means the question was deferred.
     //
