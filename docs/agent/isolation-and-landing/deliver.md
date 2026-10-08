@@ -10,7 +10,7 @@ and from a workflow's deliver block (below), and from nothing in the run loop:
 an outward-facing action taken by a loop is a different product from one taken
 by a person, and the block is the person's decision taken earlier, when they
 saved the graph and pressed Run on it. It never force-pushes, it runs
-the same verify gate Land does against the same `verifyTree` — an operator who
+the same verify gate Land does against the same `verifyRunBranch` — an operator who
 said "not unless this passes" has said nothing about which exit the work leaves
 by — and with no token for the repository it refuses, which is the honest
 default for a feature that publishes. **The credential is passed explicitly and

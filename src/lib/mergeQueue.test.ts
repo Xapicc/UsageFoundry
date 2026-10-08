@@ -50,6 +50,7 @@ const base: LandState = {
   checkout: { path: "/workspace/repo", headBranch: "main", dirty: false, readable: true },
   pending: null,
   blocked: null,
+  verifySwitch: null,
   certification: { required: false },
   seeded: { ok: true, paths: [] },
   resolveBlocked: null,
@@ -81,6 +82,20 @@ const open = { autoResolve: true, resolutionsRefused: null };
 describe("planItem", () => {
   it("lands a branch that is ready", () => {
     assert.deepEqual(planItem(base, open), { action: "land" });
+  });
+
+  it("lands a row whose reused checkout the press will switch, and fails one it cannot", () => {
+    // The card's verdict is the queue's: `landState` stops calling a switchable
+    // slot blocked, so the row reaches `landRun`, which does the switch. One
+    // that cannot be switched is blocked in the press's own sentence.
+    const switchable = { ...base, verifySwitch: { path: "/w/slot-1", holds: "uf/later" } };
+    assert.deepEqual(planItem(switchable, open), { action: "land" });
+
+    const refusal = "It was not switched back to uf/repo-1234abcd, because a run is working in it.";
+    assert.deepEqual(planItem({ ...base, blocked: refusal }, open), {
+      action: "fail",
+      reason: refusal,
+    });
   });
 
   it("resolves a conflict when that was authorised", () => {

@@ -77,6 +77,12 @@ if (mode === "edit") {
   }
 } else if (mode === "mark") {
   fs.writeFileSync(path.join(dir, "ran"), "");
+} else if (mode === "record") {
+  // What the check saw: the branch the slot stood on and the file the run's
+  // work changed, read from the command's own working directory.
+  const head = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { encoding: "utf8" });
+  fs.writeFileSync(path.join(dir, "head"), head.trim());
+  fs.writeFileSync(path.join(dir, "shared"), fs.readFileSync("shared.txt", "utf8"));
 }
 `;
 
@@ -402,6 +408,213 @@ describe("the check runs against what the land would carry", () => {
       assert.equal(landedAt(s.runId), null);
     });
   }
+});
+
+/** The branch a checkout stands on. */
+const headOf = (dir: string) => git(dir, "rev-parse", "--abbrev-ref", "HEAD").trim();
+
+interface ReusedScene extends Scene {
+  /** The later run that took the slot, and the branch it left standing in it. */
+  laterId: string;
+  laterBranch: string;
+}
+
+/**
+ * `scene`, then a later run in the same repository that was given the run's
+ * checkout the way `allocateSlotPath` gives out a clean one: its own branch cut
+ * in the slot, a commit on it, and a row recording the same slot.
+ */
+function reusedScene(name: string): ReusedScene {
+  const s = scene(name);
+  const laterBranch = `${s.branch}-later`;
+  git(s.slot, "checkout", "-q", "-b", laterBranch, s.base);
+  fs.writeFileSync(path.join(s.slot, "other.txt"), "later\n");
+  git(s.slot, "commit", "-qam", "the later run's work");
+  const laterId = `run-${name}-later`;
+  dbMod
+    .db()
+    .prepare(
+      `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
+                         created_at, finished_at, isolation, repo_root, worktree_path,
+                         worktree_branch, worktree_base, worktree_base_branch)
+       VALUES (?, ?, 'a later task', 'completed', '{}', 1, 1, ?, ?, 'worktree', ?, ?, ?, ?, 'main')`,
+    )
+    .run(laterId, s.repo, Date.now() + 1, Date.now() + 1, s.repo, s.slot, laterBranch, s.base);
+  return { ...s, laterId, laterBranch };
+}
+
+describe("a checkout a later run reused, with a verify command set", () => {
+  it("is offered, switched to the run's branch for the check, and back before the merge", async () => {
+    const s = reusedScene("reused");
+    verifyWith("record", s.signals);
+
+    const offered = await land.landState(s.runId);
+    assert.equal(offered?.blocked, null, "the card still withholds a slot Land would switch");
+    assert.deepEqual(offered?.verifySwitch, { path: s.slot, holds: s.laterBranch });
+
+    const landed = await land.landRun(s.runId, "merge");
+
+    assert.equal(landed.ok, true, landed.ok ? "" : landed.reason);
+    // What the check ran against: this run's branch and tree, not the later run's.
+    assert.equal(fs.readFileSync(path.join(s.signals, "head"), "utf8"), s.branch);
+    assert.equal(fs.readFileSync(path.join(s.signals, "shared"), "utf8"), "branch\n");
+    assert.ok(contains(s.repo, "main", s.branch));
+    assert.equal(contains(s.repo, "main", s.laterBranch), false, "the later run's branch was landed too");
+    // Undone before the merge returned, with the later run's tree untouched.
+    assert.equal(headOf(s.slot), s.laterBranch);
+    assert.equal(git(s.slot, "status", "--porcelain").trim(), "");
+    assert.equal(fs.readFileSync(path.join(s.slot, "other.txt"), "utf8"), "later\n");
+
+    // The later run, whose slot was never anyone else's from its own side.
+    const later = await land.landState(s.laterId);
+    assert.equal(later?.blocked, null);
+    assert.equal(later?.verifySwitch, null);
+    const second = await land.landRun(s.laterId, "merge");
+    assert.equal(second.ok, true, second.ok ? "" : second.reason);
+    assert.ok(contains(s.repo, "main", s.laterBranch));
+  });
+
+  it("is borrowed for the whole check, so another press finds it said so", async () => {
+    const s = reusedScene("borrowed");
+    verifyWith("wait", s.signals);
+
+    const landing = land.landRun(s.runId, "merge");
+    await until(path.join(s.signals, "started"));
+    assert.equal(orchestrator.isSlotBorrowed(s.slot), true);
+    assert.equal(headOf(s.slot), s.branch, "the check was started before the switch");
+
+    // The later run's own card, mid-switch: its slot is standing on this
+    // branch, and it cannot be switched under a command that is running.
+    const later = await land.landState(s.laterId);
+    assert.match(
+      later?.blocked ?? "",
+      /It was not switched back to uf\/borrowed-later for the check, because another verify command is running in it\./,
+    );
+    const pressed = await land.landRun(s.laterId, "merge");
+    assert.equal(pressed.ok, false);
+    assert.equal(pressed.ok ? "" : pressed.reason, later?.blocked);
+
+    fs.writeFileSync(path.join(s.signals, "go"), "");
+    const landed = await landing;
+    assert.equal(landed.ok, true, landed.ok ? "" : landed.reason);
+    assert.equal(orchestrator.isSlotBorrowed(s.slot), false);
+    assert.equal(headOf(s.slot), s.laterBranch);
+  });
+
+  it("withholds Land, naming why, while the later run's work is uncommitted in it", async () => {
+    const s = reusedScene("dirty");
+    fs.writeFileSync(path.join(s.slot, "scratch.txt"), "the later run's, not committed\n");
+    verifyWith("mark", s.signals);
+
+    const state = await land.landState(s.runId);
+    const reason =
+      "It was not switched back to uf/dirty for the check, because it holds 1 uncommitted " +
+      "path(s) from uf/dirty-later: scratch.txt.";
+    assert.ok(state?.blocked?.includes(reason), state?.blocked ?? "not blocked");
+    assert.match(state?.blocked ?? "", /Nothing was landed\./);
+    assert.equal(state?.verifySwitch, null);
+
+    const landed = await land.landRun(s.runId, "merge");
+
+    assert.equal(landed.ok, false);
+    assert.equal(landed.ok ? "" : landed.reason, state?.blocked);
+    assert.equal(fs.existsSync(path.join(s.signals, "ran")), false, "the command ran anyway");
+    assert.equal(headOf(s.slot), s.laterBranch);
+    assert.ok(fs.existsSync(path.join(s.slot, "scratch.txt")), "the later run's file was touched");
+    assert.equal(git(s.repo, "rev-parse", "main").trim(), s.base);
+  });
+
+  it("withholds Land while a run is working in it, and switches nothing", async () => {
+    const s = reusedScene("working");
+    dbMod.db().prepare("UPDATE runs SET status = 'running' WHERE id = ?").run(s.laterId);
+    verifyWith("mark", s.signals);
+
+    const state = await land.landState(s.runId);
+    assert.match(state?.blocked ?? "", /because a run is working in it\. Nothing was landed\./);
+
+    const landed = await land.landRun(s.runId, "merge");
+
+    assert.equal(landed.ok, false);
+    assert.equal(landed.ok ? "" : landed.reason, state?.blocked);
+    assert.equal(fs.existsSync(path.join(s.signals, "ran")), false, "the command ran anyway");
+    assert.equal(headOf(s.slot), s.laterBranch);
+    assert.equal(git(s.repo, "rev-parse", "main").trim(), s.base);
+  });
+
+  it("refuses two runs whose checkouts hold each other's branch, which git cannot switch", async () => {
+    const a = scene("swapped");
+    const bBranch = `${a.branch}-b`;
+    const bSlot = path.join(orchestrator.worktreeStore(a.repo)!, `${orchestrator.repoSlug(a.repo)}-2`);
+    git(a.repo, "worktree", "add", "-q", "-b", bBranch, bSlot, a.base);
+    fs.writeFileSync(path.join(bSlot, "other.txt"), "b's work\n");
+    git(bSlot, "commit", "-qam", "b's work");
+    dbMod
+      .db()
+      .prepare(
+        `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
+                           created_at, finished_at, isolation, repo_root, worktree_path,
+                           worktree_branch, worktree_base, worktree_base_branch)
+         VALUES ('run-swapped-b', ?, 'b', 'completed', '{}', 1, 1, ?, ?, 'worktree', ?, ?, ?, ?, 'main')`,
+      )
+      .run(a.repo, Date.now(), Date.now(), a.repo, bSlot, bBranch, a.base);
+    // Each slot now holds the other run's branch. git lets a branch be checked
+    // out in one worktree only, so neither can be switched back to its own.
+    git(a.slot, "checkout", "-q", "--detach");
+    git(bSlot, "checkout", "-q", "--detach");
+    git(bSlot, "checkout", "-q", a.branch);
+    git(a.slot, "checkout", "-q", bBranch);
+    verifyWith("mark", a.signals);
+
+    for (const [runId, branch, heldBy] of [
+      [a.runId, a.branch, bSlot],
+      ["run-swapped-b", bBranch, a.slot],
+    ] as const) {
+      const state = await land.landState(runId);
+      assert.ok(
+        state?.blocked?.includes(`because ${branch} is checked out in ${heldBy}.`),
+        state?.blocked ?? "not blocked",
+      );
+      const landed = await land.landRun(runId, "merge");
+      assert.equal(landed.ok, false);
+      assert.equal(landed.ok ? "" : landed.reason, state?.blocked);
+    }
+    assert.equal(fs.existsSync(path.join(a.signals, "ran")), false, "the command ran anyway");
+    assert.equal(headOf(a.slot), bBranch);
+    assert.equal(headOf(bSlot), a.branch);
+    assert.equal(git(a.repo, "rev-parse", "main").trim(), a.base);
+  });
+
+  it("asks who owns the branch again after the switch is undone", async () => {
+    // A run told to carry this branch on, created while the check is running in
+    // the switched slot: the tip has not moved, so only the chain says this run
+    // no longer lands it. The refusal must come after the slot is back, so the
+    // later run is not left standing on the wrong branch by a land that stopped.
+    const s = reusedScene("continued");
+    verifyWith("wait", s.signals);
+
+    const landing = land.landRun(s.runId, "merge");
+    await until(path.join(s.signals, "started"));
+    dbMod
+      .db()
+      .prepare(
+        `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
+                           created_at, isolation, repo_root, worktree_path, work_dir,
+                           worktree_branch, worktree_base, worktree_base_branch, continues_run)
+         VALUES ('run-successor', ?, 'carry on', 'queued', '{}', 1, 0, ?, 'worktree', ?, ?, ?, ?, ?, 'main', ?)`,
+      )
+      .run(s.repo, Date.now(), s.repo, path.join(root, "elsewhere"), path.join(root, "elsewhere"), s.branch, s.base, s.runId);
+    fs.writeFileSync(path.join(s.signals, "go"), "");
+    const landed = await landing;
+
+    assert.equal(landed.ok, false, "the land went ahead under a run that now owns the branch");
+    assert.match(
+      landed.ok ? "" : landed.reason,
+      /Run run-succ carries this branch on from here and is the one that lands it/,
+    );
+    assert.equal(headOf(s.slot), s.laterBranch);
+    assert.equal(git(s.repo, "rev-parse", "main").trim(), s.base);
+    assert.equal(landedAt(s.runId), null);
+  });
 });
 
 const OPERATORS_FILE = '{ "Values": { "API_KEY": "the-operators-own-key" } }\n';

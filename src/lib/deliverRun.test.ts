@@ -658,6 +658,70 @@ describe("migrate carries a pull request delivered before the column existed", (
  * `shutdownRuns` sets a flag nothing clears, and every case after it would run
  * in a process that is going down.
  */
+describe("deliverRun on a checkout a later run reused, with a verify command set", () => {
+  /** A later run's branch cut in the run's slot, as `allocateSlotPath` hands a clean one out. */
+  function reuse(s: Scene): string {
+    const later = `${s.branch}-later`;
+    git(s.slot, "checkout", "-q", "-b", later, "main");
+    return later;
+  }
+
+  /** A command that records which branch and which `shared.txt` it ran against. */
+  function recordingCommand(name: string): string {
+    const signals = path.join(root, "signals", name);
+    fs.mkdirSync(signals, { recursive: true });
+    const probe = path.join(root, `record-${name}.js`);
+    fs.writeFileSync(
+      probe,
+      `const fs = require("node:fs");
+const path = require("node:path");
+const { execFileSync } = require("node:child_process");
+const head = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { encoding: "utf8" });
+fs.writeFileSync(path.join(process.argv[2], "head"), head.trim());
+fs.writeFileSync(path.join(process.argv[2], "shared"), fs.readFileSync("shared.txt", "utf8"));
+`,
+    );
+    return `${process.execPath} ${probe} ${signals}`;
+  }
+
+  it("switches it to the run's branch for the check, pushes that branch and puts the slot back", async () => {
+    const s = scene("reused-ok");
+    const later = reuse(s);
+    settings.saveSettings({ landVerifyCommand: recordingCommand("reused-ok") });
+
+    const delivered = await land.deliverRun(s.runId);
+
+    assert.equal(delivered.ok, true, delivered.ok ? "" : delivered.reason);
+    const signals = path.join(root, "signals", "reused-ok");
+    assert.equal(fs.readFileSync(path.join(signals, "head"), "utf8"), s.branch);
+    assert.equal(fs.readFileSync(path.join(signals, "shared"), "utf8"), "branch\n");
+    assert.equal(remoteTip(s), git(s.repo, "rev-parse", s.branch).trim());
+    assert.equal(git(s.slot, "rev-parse", "--abbrev-ref", "HEAD").trim(), later);
+  });
+
+  it("refuses in Deliver's words while the later run's work is uncommitted, and pushes nothing", async () => {
+    const s = scene("reused-dirty");
+    const later = reuse(s);
+    fs.writeFileSync(path.join(s.slot, "scratch.txt"), "the later run's\n");
+    settings.saveSettings({ landVerifyCommand: recordingCommand("reused-dirty") });
+
+    const delivered = await land.deliverRun(s.runId);
+
+    assert.equal(delivered.ok, false);
+    const reason = delivered.ok ? "" : delivered.reason;
+    assert.ok(
+      reason.includes(
+        `It was not switched back to ${s.branch} for the check, because it holds 1 uncommitted ` +
+          `path(s) from ${later}: scratch.txt. Nothing was delivered.`,
+      ),
+      reason,
+    );
+    assert.equal(remoteTip(s), null);
+    assert.equal(opened.length, 0);
+    assert.equal(git(s.slot, "rev-parse", "--abbrev-ref", "HEAD").trim(), later);
+  });
+});
+
 describe("deliverRun at a shutdown", () => {
   it("finishes the delivery that has pushed, and pushes nothing for the one still in its check", async () => {
     const pushing = scene("pushing");

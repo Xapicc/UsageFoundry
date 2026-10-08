@@ -215,3 +215,14 @@
   into one repository that each commit, with a command review behind it, and
   confirm the instance page shows each branch approved or set aside with its own
   command's output, never "a later run has taken that checkout over".
+
+- **Land and Deliver's switch of a reused checkout has not been driven in the
+  app.** Pinned by `landAfterVerify.test.ts` and `deliverRun.test.ts` against
+  real repositories, with a command that records the branch it ran on; no
+  browser has drawn the card's "The check switches … and back" hint, and the
+  extra `landState` reads (a `status`, a `MERGE_HEAD`, a `rev-parse` and a
+  `worktree list`, for a slot standing on another branch) were not counted with
+  a counting `spawn`. Settle: on a repository with two finished runs whose
+  slots were reused, set `landVerifyCommand` to `npm test`, open the earlier
+  run's `/runs/[id]`, read the hint, press Land, and confirm the later run's
+  branch is back in the slot (`git -C <slot> branch --show-current`).

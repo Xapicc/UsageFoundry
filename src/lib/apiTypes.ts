@@ -3454,6 +3454,12 @@ export interface LandStateDTO {
   /** Why landing is refused right now. Null means it is offered. */
   blocked: string | null;
   /**
+   * The run's checkout, reused by a later run, that Land's and Deliver's verify
+   * command will switch to this branch and back. Null when it need not be, and
+   * when something else already refuses the land.
+   */
+  verifySwitch: { path: string; holds: string } | null;
+  /**
    * Why a resolution of the conflict is refused before it is bought — the
    * branch carries a file seeding copied in. Null when Resolve may be offered.
    */
