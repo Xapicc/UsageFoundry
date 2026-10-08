@@ -68,7 +68,8 @@ What moves, and what does not:
   checked when you save, the way a block's own folder is.
 - **A schedule uses the first saved folder.** Nobody is there to ask, and the
   schedule holds no folder of its own; *Move up* in the editor decides which
-  folder is first. The schedule card says which one it will use.
+  folder is first. The detail page says, under the schedule card, which one
+  it will use.
 - **Each press of Run keeps its choice.** The instance records the folder it
   was started against and shows it on its page; every later pass of a loop,
   every block created later and every run an orchestrator block starts uses
