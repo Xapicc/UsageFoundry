@@ -56,6 +56,36 @@ claim order — right until one of its rows is forgotten, which is all those row
 ever had. `dreamingLedger.test.ts` pins both: forget-then-reconcile, and the
 fallback.
 
+**An item's row records the note the item is about, never the hub that links it.**
+The vault's `LINK/orphan` rule makes every new note two writes — the note, then a
+hub edited to point at it — so a run reports several files for one item, and the
+parser used to keep the **last** line, which is the hub. Measured 2026-10-08 over
+the 19 Dreaming transcripts under `~/.claude/projects/-workspace2/`, taking each
+one's final assistant message: 16 reported several files for an item, 49 items
+did, the last line was a hub (`Agent Error Memory.md`, `Standing Failures in This
+Install.md`, a `… MOC.md`) in 45 of them and the first line in none. Recorded, a
+hub makes `note_path` — the list a person deletes from — name a file shared by
+every other item, and `noteStillPresent` then badges a row "deleted" or "present"
+on the hub's account rather than the note's. Nothing reports it: the path is real
+and the file is there. The prompt now asks for `NOTE <n> created <path>`, or
+`NOTE <n> edited <path>` when the item grew an existing note and wrote none, and
+says not to report a file edited only to link; `parseNoteLines` keeps the first
+`created` line, else the first of the rest. First, because no real report listed a
+hub before its note and a line with no verb — the old format, and what a run that
+was never reconciled still holds — cannot say. The prompt and the parser change
+together: a prompt that stopped saying it would still run and the parser would
+still parse, and only the ledger would drift back to the hubs.
+
+One path and not all of them, because `note_path` is one column and every reader
+takes one — the DTO, the pane's cell, `noteStillPresent`, `list_recurring_failures`
+— and because a second note an item created (a source, a question) is a note other
+notes link to, so the one the item is about is the one to send a person to. Two
+limits follow. The row does not record which verb it came from, so an `edited`
+row names a note that existed before Dreaming and the pane cannot say so. And a
+row reconciled before this change keeps the hub path it was given, since
+`reconcileDreamingNotes` never overwrites one; only a row still waiting on its
+report is read by the new parser.
+
 **`recordNight`'s `selected` is sticky.** A night that had already started a run
 and then found nothing left on a second pass read back as `quiet`, so the one
 surface that shows this feature reported a night that wrote into somebody's vault

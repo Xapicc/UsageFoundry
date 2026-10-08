@@ -49,6 +49,7 @@ import {
 } from "../../../lib/dreamingLedger";
 import { resolveKnowledgeRoot } from "../../../lib/knowledge";
 import {
+  commandVerdictRefusal,
   currentKnowledge,
   emitBlockRuns,
   emittedModelWork,
@@ -1420,7 +1421,7 @@ const CHAT_TOOLS = [
               },
               edge: {
                 type: "string",
-                enum: ["on-success", "on-finish"],
+                enum: ["on-success", "on-finish", "on-failure"],
                 description:
                   "There is no default: pick the one you mean. on-success " +
                   "starts only if that run completed — which ends a chain " +
@@ -1430,7 +1431,10 @@ const CHAT_TOOLS = [
                   "run opens on. Use on-finish for work that is worth doing " +
                   "whether or not the first run got there, and on-success " +
                   "for work that reads, reviews or builds on what the first " +
-                  "run produced.",
+                  "run produced. on-failure starts only if that run failed " +
+                  "or asked for review — a fix or a fallback — and when it " +
+                  "completes this one is not needed and never starts; a run " +
+                  "somebody stopped starts neither.",
               },
               continueBranch: {
                 type: "boolean",
@@ -1508,7 +1512,7 @@ const CHAT_TOOLS = [
               name: { type: "string", description: "What this step is called." },
               kind: {
                 type: "string",
-                enum: ["run", "orchestrator", "merge", "review"],
+                enum: ["run", "orchestrator", "merge", "review", "gate"],
                 description:
                   "run (default) is a fixed task. orchestrator is a short turn " +
                   "that decides, when the workflow gets there, which runs to " +
@@ -1517,7 +1521,14 @@ const CHAT_TOOLS = [
                   "left, and takes no task, folder or template. review has a " +
                   "frontier model approve or reject every branch in front of " +
                   "it and hands on only the approved ones — put it before a " +
-                  "merge; it takes fixRounds and no task, folder or template.",
+                  "merge; it takes fixRounds and no task, folder or template. " +
+                  "gate stops the workflow until the operator presses Continue " +
+                  "on its run page, and holds everything after it until then — " +
+                  "put one before a merge, or between two stages the operator " +
+                  "should look at. It starts nothing and costs nothing, takes " +
+                  "no task, folder, template or agent, and hands on no " +
+                  "branches: link the block that built them to the merge " +
+                  "directly as well as to the gate.",
               },
               templateId: {
                 type: "string",
@@ -1563,6 +1574,15 @@ const CHAT_TOOLS = [
                   "the number the operator is agreeing to. Ignored on any " +
                   "other kind.",
               },
+              turnRetries: {
+                type: "number",
+                description:
+                  "An orchestrator block's retries, 0 to 2: how many times " +
+                  "its deciding turn is started again when the turn itself " +
+                  "failed having decided nothing. Each retry is another billed " +
+                  "turn, so leave it out (0) unless asked. Ignored on any " +
+                  "other kind.",
+              },
               mergeStrategy: {
                 type: "string",
                 enum: ["merge", "squash"],
@@ -1600,10 +1620,14 @@ const CHAT_TOOLS = [
                     id: { type: "string", description: "An id from this graph." },
                     edge: {
                       type: "string",
-                      enum: ["on-success", "on-finish"],
+                      enum: ["on-success", "on-finish", "on-failure"],
                       description:
                         "on-success starts only if that block completed; " +
-                        "on-finish starts once it is out of the way.",
+                        "on-finish starts once it is out of the way; " +
+                        "on-failure starts only if that run block failed or " +
+                        "asked for review, and is not needed when it " +
+                        "completes. on-failure is refused out of any block but " +
+                        "a run block, and inside a loop.",
                     },
                     continueBranch: {
                       type: "boolean",
@@ -2928,7 +2952,10 @@ function workflowReport() {
             kind: n.kind,
             templateId: n.templateId,
             mountId: n.mountId || null,
-            folder: n.kind === "merge" || n.kind === "deliver" ? null : n.folder,
+            folder:
+              n.kind === "merge" || n.kind === "deliver" || n.kind === "gate"
+                ? null
+                : n.folder,
             fanOut: n.fanOut,
             after: w.graph.edges
               // A `repeats` link is containment, not a wait: the loop it names
@@ -3052,7 +3079,7 @@ function proposeWorkflow(args: Record<string, unknown>, chatId: string) {
     // here, exactly as `propose_run` requires a folder beside a mountId. `null`
     // is refused with it: it is how a model spells "no value", and the
     // normalizer's `?? ""` would read it as the mount root all the same.
-    const startsNoRun = ["merge", "review"].includes(String(b.kind ?? "run"));
+    const startsNoRun = ["merge", "review", "gate"].includes(String(b.kind ?? "run"));
     if (!startsNoRun && (b.folder === undefined || b.folder === null)) {
       return text(
         `“${String(b.name ?? to)}” names no folder. Pass it exactly as ` +
@@ -3097,6 +3124,12 @@ function proposeWorkflow(args: Record<string, unknown>, chatId: string) {
     known,
   );
   if (!parsed.ok) return text(parsed.error, true);
+
+  // Refused by name, `deliver`'s way above but asked of the normalized graph:
+  // a review block's verify command is a program this app runs in every
+  // branch's checkout, and only a person saves one. See `commandVerdictRefusal`.
+  const commandVerdict = commandVerdictRefusal(parsed.value.graph);
+  if (commandVerdict) return text(commandVerdict, true);
 
   const missing = folderRefusal(parsed.value.graph);
   if (missing) return text(missing, true);
@@ -5731,11 +5764,17 @@ function proposeRun(args: Record<string, unknown>, chatId: string, decision: Mod
   //
   // Read on every proposal rather than only when ids were named, because the
   // failure is precisely the proposal that named none and put tasks in its text.
+  //
+  // `localRun` is the card's provider, for the orchestrator block's reason: a
+  // task a frontier review marked needs-frontier is refused here by name, where
+  // the chat can still act on it, and nothing at the click would stop the
+  // local run claiming it.
   const board = currentTaskKnowledge();
   const links = readTaskLinks(
     args,
     [title, task, promptOverride ?? ""].join("\n"),
     board,
+    { localRun: provider === "local" },
   );
   if (!links.ok) return text(`${links.reason} Nothing was proposed.`, true);
   const taskIds = links.taskIds;

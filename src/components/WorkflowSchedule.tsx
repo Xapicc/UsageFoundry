@@ -142,6 +142,7 @@ export function WorkflowSchedule({
   workflowId,
   schedule,
   refusal,
+  hasGate,
   newWorkPaused,
   onChanged,
 }: {
@@ -154,6 +155,12 @@ export function WorkflowSchedule({
    * server asks again at the save and at every fire.
    */
   refusal: string | null;
+  /**
+   * Whether the graph holds a gate. A scheduled run that reaches one stops
+   * there with nobody necessarily present, which no limit on this card bounds
+   * and which the overlap rule then turns into skipped windows.
+   */
+  hasGate: boolean;
   /**
    * The install-wide hold. A held install starts nothing, so a "Next start"
    * beside it names an occurrence that will be recorded as missed — and looks,
@@ -259,6 +266,14 @@ export function WorkflowSchedule({
             </Notice>
           )}
         </div>
+
+        {hasGate && (
+          <Notice tone="info" className="mb-4">
+            This workflow has a gate. A scheduled run stops there, waiting for
+            you, and the schedule skips its later windows until you continue or
+            stop it.
+          </Notice>
+        )}
 
         {!schedule && !editing && (
           <div className="flex flex-wrap items-center justify-between gap-3">

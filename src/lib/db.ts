@@ -503,7 +503,7 @@ function migrate(db: Database.Database) {
     CREATE TABLE IF NOT EXISTS run_deps (
       run_id     TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
       depends_on TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-      -- 'on-success' | 'on-finish'
+      -- 'on-success' | 'on-finish' | 'on-failure'
       edge       TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       PRIMARY KEY (run_id, depends_on)
@@ -634,7 +634,8 @@ function migrate(db: Database.Database) {
       position      INTEGER NOT NULL,
       -- 'orchestrator' | 'loop' | 'run'. See above.
       kind          TEXT NOT NULL,
-      -- 'waiting' | 'thinking' | 'looping' | 'emitted' | 'failed' | 'blocked'.
+      -- 'waiting' | 'thinking' | 'looping' | 'emitted' | 'failed' | 'blocked'
+      -- | 'not-needed'.
       -- 'looping' is a loop with passes in flight or another one to decide on;
       -- it is live wherever 'thinking' is, and deliberately not a settled
       -- status — a block behind it must not be released while the loop can
@@ -1689,6 +1690,13 @@ function migrate(db: Database.Database) {
   // and every row written before the column existed reads that way.
   addColumn(db, "workflow_instance_blocks", "stop_after_pass", "INTEGER");
 
+  // When a gate block was reached and began waiting for a person. A gate is a
+  // `waiting` row for the whole of that wait, so the status cannot say whether
+  // it has been reached yet; this can, and it is what lets the notification go
+  // out once, the boot sweep spare the row, and the page offer Continue. Null
+  // on every other kind and on a gate not yet reached.
+  addColumn(db, "workflow_instance_blocks", "held_at", "INTEGER");
+
   // Whether this run was closed out because the server went down under it,
   // rather than for any reason of its own.
   //
@@ -2516,7 +2524,9 @@ function migrate(db: Database.Database) {
       started_at  INTEGER NOT NULL,
       -- 'selected' when signatures qualified and a run was created, 'quiet'
       -- when none did, 'refused' when something declined to start it, 'failed'
-      -- when the run itself did not finish. Never a success mark on a row: the
+      -- when runDreamingNight threw (run_id is then null: no run is recorded).
+      -- A run that was created and then fails stays 'selected' — this row is not
+      -- rewritten from the run's status. Never a success mark on a row: the
       -- run's own status is the authority, exactly as it is for a review.
       outcome     TEXT NOT NULL,
       -- Why, for 'refused' and 'failed'. A full sentence, never a code.

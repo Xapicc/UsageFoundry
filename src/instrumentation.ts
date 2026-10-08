@@ -257,7 +257,7 @@ export async function register() {
       reconcileSchedulesOnBoot();
 
       // The same rule for the other clock in this app. Dreaming's cursor is a
-      // night rather than an instant, and a boot moves it to the current night
+      // an instant rather than a day, and a boot moves it to the boot instant
       // whatever it finds — so a server coming back at noon writes nothing
       // about a 03:04 that passed while it was down. Its timer is started here
       // for the schedules' reason: two processes deciding one night would point

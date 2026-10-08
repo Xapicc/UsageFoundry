@@ -42,9 +42,13 @@ import { TBody, THead, Table, TableWrap, Td, Th, Tr } from "@/components/ui/Tabl
  * most of what this page is for. Never configured is a sentence and a link to
  * Settings. Ran and wrote nothing is the *success* case for a write-on-
  * recurrence policy — six of the twenty-three measured days had no failure
- * reach a second day — and must not read as a failure. Ran and failed links to
- * the run. The nights table below carries all three, which is why it exists
- * separately from the notes.
+ * reach a second day — and must not read as a failure. The nights table below
+ * carries all three, which is why it exists separately from the notes.
+ *
+ * A night row says what the night *decided*, never how its run ended: `failed`
+ * is only a night whose decision threw, and has no run to link. A run that was
+ * created and then failed still reads `selected`, so the Run column's link to
+ * its log is where that is found.
  */
 
 type Tab = "recurring" | "written" | "nights";
@@ -453,7 +457,7 @@ function Nights({ data }: { data: DreamingDTO }) {
                 {/* "Quiet" is the success case for a write-on-recurrence policy
                     and is toned as one. Six of the twenty-three days measured
                     for this feature had no failure reach a second day. */}
-                {n.outcome === "selected" && <Badge tone="accent">wrote</Badge>}
+                {n.outcome === "selected" && <Badge tone="accent">run started</Badge>}
                 {n.outcome === "quiet" && <Badge tone="ok">nothing recurred</Badge>}
                 {n.outcome === "refused" && <Badge tone="warn">refused</Badge>}
                 {n.outcome === "failed" && <Badge tone="danger">failed</Badge>}

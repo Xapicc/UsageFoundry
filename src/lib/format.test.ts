@@ -318,6 +318,7 @@ test("both edge maps offer the unanswered state as a real option", () => {
       "",
       "on-success",
       "on-finish",
+      "on-failure",
       "repeats",
     ]);
     for (const [edge, label] of Object.entries(map)) {
@@ -423,6 +424,7 @@ const passBlock = (
   position: 0,
   kind,
   status: "emitted",
+  heldAt: null,
   startedAt: null,
   finishedAt: null,
   costUSD: null,

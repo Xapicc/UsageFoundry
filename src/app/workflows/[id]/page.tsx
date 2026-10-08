@@ -450,6 +450,7 @@ export default function WorkflowPage() {
         workflowId={id}
         schedule={workflow.schedule ?? null}
         refusal={workflow.scheduleRefusal}
+        hasGate={workflow.nodes.some((n) => n.kind === "gate")}
         newWorkPaused={newWorkPaused}
         onChanged={load}
       />
@@ -514,6 +515,9 @@ export default function WorkflowPage() {
                         <div className="mt-0.5 text-warn">
                           Decides what to run — starts up to {n.fanOut} run(s)
                           with no approval
+                          {(n.turnRetries ?? 0) > 0
+                            ? `; a failed deciding turn is started again up to ${n.turnRetries} time(s), each billed`
+                            : ""}
                         </div>
                       )}
                       {n.kind === "merge" && (
@@ -528,6 +532,12 @@ export default function WorkflowPage() {
                           {n.mergeAutoResolve
                             ? " — a conflict is resolved by Claude, and billed"
                             : " — a conflicting branch is left alone"}
+                        </div>
+                      )}
+                      {n.kind === "gate" && (
+                        <div className="mt-0.5 text-accent">
+                          Waits for you to continue — nothing behind it starts
+                          until you do
                         </div>
                       )}
                       {n.kind === "deliver" && (
@@ -545,7 +555,18 @@ export default function WorkflowPage() {
                           run status, with no model and nothing billed
                         </div>
                       )}
-                      {n.kind === "review" && n.verdictSource?.kind !== "status" && (
+                      {n.kind === "review" && n.verdictSource?.kind === "command" && (
+                        // The command is stated where Run is pressed, because
+                        // it is a program this app runs in every branch's
+                        // checkout with nobody looking.
+                        <div className="mt-0.5 text-accent">
+                          Only branches where{" "}
+                          <span className="mono break-all">{n.verdictSource.command}</span>{" "}
+                          exits 0 go on — run in each branch&rsquo;s checkout,
+                          with no model and nothing billed
+                        </div>
+                      )}
+                      {n.kind === "review" && (n.verdictSource?.kind ?? "model") === "model" && (
                         // Its fix rounds are billed runs with nobody watching,
                         // so they are stated where Run is pressed.
                         <div className="mt-0.5 text-warn">
@@ -625,7 +646,8 @@ export default function WorkflowPage() {
                       {n.kind !== "merge" &&
                         n.kind !== "deliver" &&
                         n.kind !== "loop" &&
-                        n.kind !== "review" && (
+                        n.kind !== "review" &&
+                        n.kind !== "gate" && (
                         <>
                           <div className="mono mt-0.5 break-words text-ink-muted">
                             {n.mountId} / {n.folder || "."}
@@ -642,17 +664,19 @@ export default function WorkflowPage() {
                     <Td label="Guards" className="align-top">
                       {/* A loop starts no child of its own, so it is under no
                           guard set: every run of a pass is a member's, under
-                          the member's. A merge, deliver or review block starts
-                          no agent either, and `normalizeNode` stores no
+                          the member's. A merge, deliver, review or gate block
+                          starts no agent either, and `normalizeNode` stores no
                           template on it. A badge here would name a template
                           these blocks never reach, and for a null one it reads
                           "Settings guards", which none of them runs under. The
-                          chat's approval card says "no agent" for the three. */}
+                          chat's approval card says "no agent" for the three
+                          that card covers. */}
                       {n.kind === "loop" ? (
                         <span className="text-ink-faint">each member&rsquo;s own</span>
                       ) : n.kind === "merge" ||
                         n.kind === "deliver" ||
-                        n.kind === "review" ? (
+                        n.kind === "review" ||
+                        n.kind === "gate" ? (
                         <span className="text-ink-faint">no agent</span>
                       ) : (
                         <Badge tone={guards.tone}>{guards.text}</Badge>

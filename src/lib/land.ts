@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { runVerify } from "./landGate";
+import { runVerify, type VerifyOutcome } from "./landGate";
 import { openPullRequest, planDelivery, type DeliveryRequest } from "./delivery";
 import path from "node:path";
 import { git, headBranchOf } from "./git";
@@ -1494,6 +1494,22 @@ const EXIT_WORDS: Record<BranchExit, { done: string; does: string; doing: string
   land: { done: "landed", does: "lands", doing: "Landing" },
   deliver: { done: "delivered", does: "delivers", doing: "Delivering" },
 };
+
+/**
+ * Who runs a verify command in a run's own checkout: either exit, or a review
+ * block deciding whether the branch goes on towards one.
+ */
+export type VerifyAsker = BranchExit | "review";
+
+/**
+ * The last sentence of a verify refusal: what it meant for the exit that asked,
+ * or nothing for a review block. The block's note already says the branch was
+ * set aside, and every exit's sentence here — nothing was landed, clear the
+ * command in Settings, land again — is advice about a door the block is not.
+ */
+function verifyRefusalEnd(asker: VerifyAsker, end: (exit: BranchExit) => string): string {
+  return asker === "review" ? "" : ` ${end(asker)}`;
+}
 
 /**
  * Why this branch may not leave by `exit` yet because something can still
@@ -3648,15 +3664,23 @@ export function verifyTreeVerdict(s: {
    * read — which is not the same as clean.
    */
   uncommitted: readonly string[] | null;
+  /**
+   * Whose command it is. Land's sentences when absent — Deliver's too, which
+   * has always been handed them. See `verifyRefusalEnd`.
+   */
+  asker?: VerifyAsker;
 }): VerifyTree {
+  const asker = s.asker ?? "land";
+  const exitEnd = (rest: string) => verifyRefusalEnd(asker, () => rest);
+  const carries = asker === "review" ? "would be handed on" : "the land would carry";
   if (!s.slotPath) {
     return {
       ok: false,
       reason:
         "A verify command is configured, but this run has no checkout of its " +
         "own to run it in, so nothing here can tell whether its branch is " +
-        "good. Nothing was landed. Clear the command in Settings to land " +
-        "without a check.",
+        "good." +
+        exitEnd("Nothing was landed. Clear the command in Settings to land without a check."),
     };
   }
   // Ahead of the comparison below, which it fails only because the operation
@@ -3667,8 +3691,11 @@ export function verifyTreeVerdict(s: {
       reason:
         `A verify command is configured, but ${s.slotPath} is part-way through a ` +
         `${s.operation} of ${s.runBranch ?? "this run's branch"}, which leaves it on no ` +
-        `branch, so there is nothing there to run the check against. Nothing was landed. ` +
-        `Run \`${OPERATION_ENDED_BY[s.operation]}\` there, or finish it, and land again.`,
+        `branch, so there is nothing there to run the check against.` +
+        exitEnd(
+          `Nothing was landed. Run \`${OPERATION_ENDED_BY[s.operation]}\` there, or ` +
+            "finish it, and land again.",
+        ),
     };
   }
   // Nor a plain `git checkout <commit>`, which detaches it the same way with
@@ -3680,8 +3707,8 @@ export function verifyTreeVerdict(s: {
       ok: false,
       reason:
         `A verify command is configured, but ${s.slotPath} is on a detached HEAD rather than on ` +
-        `${branch}, so what is there need not be what the land would carry. Nothing was landed. ` +
-        `Switch it back to ${branch} there and land again.`,
+        `${branch}, so what is there need not be what ${carries}.` +
+        exitEnd(`Nothing was landed. Switch it back to ${branch} there and land again.`),
     };
   }
   if (!s.runBranch || s.checkedOutBranch !== s.runBranch) {
@@ -3691,8 +3718,8 @@ export function verifyTreeVerdict(s: {
         `A verify command is configured, but ${s.slotPath} no longer holds ` +
         `${s.runBranch ?? "this run's branch"} — a later run has taken that ` +
         `checkout over, so there is nowhere to run the check against this ` +
-        `work. Nothing was landed. Clear the command in Settings to land ` +
-        `without a check.`,
+        `work.` +
+        exitEnd("Nothing was landed. Clear the command in Settings to land without a check."),
     };
   }
   // The command runs against the files on disk and the land carries only the
@@ -3707,8 +3734,8 @@ export function verifyTreeVerdict(s: {
       reason:
         `A verify command is configured, but git could not read the status of ` +
         `${s.slotPath}, so there is no telling whether the check would run ` +
-        `against ${s.runBranch}'s commits or against edits that are not on it. ` +
-        `Nothing was landed. Check that checkout by hand.`,
+        `against ${s.runBranch}'s commits or against edits that are not on it.` +
+        exitEnd("Nothing was landed. Check that checkout by hand."),
     };
   }
   if (s.uncommitted.length > 0) {
@@ -3719,9 +3746,11 @@ export function verifyTreeVerdict(s: {
       reason:
         `A verify command is configured, but ${n} path(s) in ${s.slotPath} are ` +
         `not committed to ${s.runBranch}: ${named}${n > 5 ? `, and ${n - 5} more` : ""}. ` +
-        `The check would run against them and the land would carry only the ` +
-        `commits, so nothing was landed. Commit them first — "Commit ${n}" under ` +
-        `"Uncommitted in the checkout" on this card — or discard them.`,
+        (asker === "review"
+          ? "The check would run against them and only the commits would be handed on."
+          : `The check would run against them and the land would carry only the ` +
+            `commits, so nothing was landed. Commit them first — "Commit ${n}" under ` +
+            `"Uncommitted in the checkout" on this card — or discard them.`),
     };
   }
   return { ok: true, path: s.slotPath };
@@ -3733,7 +3762,7 @@ async function verifyTree(run: RunRow): Promise<VerifyTree> {
 }
 
 /** `verifyTreeVerdict` against a slot already read. */
-function verifyTreeIn(run: RunRow, slot: SlotState): VerifyTree {
+function verifyTreeIn(run: RunRow, slot: SlotState, asker?: VerifyAsker): VerifyTree {
   return verifyTreeVerdict({
     slotPath: slot.path,
     checkedOutBranch: slot.checkedOutBranch,
@@ -3741,6 +3770,7 @@ function verifyTreeIn(run: RunRow, slot: SlotState): VerifyTree {
     operation: slot.operation,
     detached: slot.detached,
     uncommitted: slot.readable ? slot.files.map((f) => f.path) : null,
+    asker,
   });
 }
 
@@ -3781,18 +3811,26 @@ async function verifyInSlot(
   slot: string,
   branch: string,
   command: string,
-  exit: BranchExit,
-): Promise<{ passed: boolean; reason: string }> {
+  asker: VerifyAsker,
+): Promise<VerifyOutcome> {
+  const refused = (reason: string): VerifyOutcome => ({
+    ran: false,
+    passed: false,
+    reason,
+    ending: "",
+    tail: "",
+  });
   const release = holdSlot(slot);
   if (!release) {
-    return {
-      passed: false,
-      reason:
-        `A verify command is configured, but a later run has just been given ` +
+    return refused(
+      `A verify command is configured, but a later run has just been given ` +
         `${slot}, where ${branch} is checked ` +
-        `out, so there is nowhere to run the check against this work. Nothing ` +
-        `was landed. Clear the command in Settings to land without a check.`,
-    };
+        `out, so there is nowhere to run the check against this work.` +
+        verifyRefusalEnd(
+          asker,
+          () => "Nothing was landed. Clear the command in Settings to land without a check.",
+        ),
+    );
   }
   try {
     // HEAD rather than the branch: it is what the command's tree is, and
@@ -3800,32 +3838,52 @@ async function verifyInSlot(
     // since, the comparison below refuses, which is the right answer.
     const checked = await git(slot, ["rev-parse", "--verify", "-q", "HEAD"], NO_CLOCK);
     if (!checked.ok) {
-      return {
-        passed: false,
-        reason:
-          `A verify command is configured, but git could not read which commit ` +
+      return refused(
+        `A verify command is configured, but git could not read which commit ` +
           `${slot} holds, so there would be no telling afterwards whether the ` +
-          `check saw what ${branch} points at. Nothing was ${EXIT_WORDS[exit].done}.`,
-      };
+          `check saw what ${branch} points at.` +
+          verifyRefusalEnd(asker, (exit) => `Nothing was ${EXIT_WORDS[exit].done}.`),
+      );
     }
     const verdict = await runVerify(slot, command);
     if (!verdict.passed) return verdict;
     const tip = await git(slot, ["rev-parse", "--verify", "-q", branch], NO_CLOCK);
     if (!tip.ok || tip.stdout !== checked.stdout) {
-      return {
-        passed: false,
-        reason:
-          `${branch} moved while the verify command ran — it was checked at ` +
+      return refused(
+        `${branch} moved while the verify command ran — it was checked at ` +
           `${checked.stdout.slice(0, 8)} and now points at ` +
           `${tip.ok ? tip.stdout.slice(0, 8) : "nothing git can read"} — so what ` +
-          `passed is not what would leave. Nothing was ${EXIT_WORDS[exit].done}. ` +
-          `Try again once nothing is committing to it.`,
-      };
+          `passed is not what would leave.` +
+          verifyRefusalEnd(
+            asker,
+            (exit) =>
+              `Nothing was ${EXIT_WORDS[exit].done}. Try again once nothing is committing to it.`,
+          ),
+      );
     }
     return verdict;
   } finally {
     release();
   }
+}
+
+/**
+ * A review block's verify command against one run's branch, in that run's own
+ * checkout: `verifyTreeVerdict` to find it, then `verifyInSlot` to run it.
+ *
+ * The same two steps Land and Deliver take and not a copy of them, because both
+ * decide what the command sees — the run's tree rather than the operator's, a
+ * clean one, on this branch, with the slot kept from a later run until the
+ * command returns and the branch proved not to have moved under it — and a
+ * second reading of any of that would check one tree and hand on another. The
+ * refusals are worded for a review block, whose note already says the branch
+ * was set aside. The command is the block's, never `landVerifyCommand`.
+ */
+export async function verifyBranchForReview(run: RunRow, command: string): Promise<VerifyOutcome> {
+  const tree = verifyTreeIn(run, await slotState(run), "review");
+  if (!tree.ok) return { ran: false, passed: false, reason: tree.reason, ending: "", tail: "" };
+  // `verifyTreeVerdict` refuses a run with no branch, so the name is there.
+  return verifyInSlot(tree.path, run.worktree_branch!, command, "review");
 }
 
 /**

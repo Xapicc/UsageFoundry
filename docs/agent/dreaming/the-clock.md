@@ -8,9 +8,9 @@ Read before editing `startDreaming`, `armDreaming`, `dreamingDue`, `reconcileDre
 expensively.** The timer *stops* rather than skips when the data-directory claim
 is lost, because two processes deciding one night is two agents writing into one
 vault. A tick already running does not stack. And **a boot never catches up**:
-`reconcileDreamingOnBoot` moves the cursor to the current night whatever it
-finds, so a server coming back at noon writes nothing about an 03:04 that passed
-while it was down. The cursor is a night key rather than an instant, and it is
+`reconcileDreamingOnBoot` moves the cursor to the boot instant whatever it finds,
+so a server coming back at noon writes nothing about an 03:04 that passed while
+it was down. The cursor is an instant (the next paragraph is why), and it is
 advanced *before* the work so a night that throws is not retried every minute
 until midnight.
 

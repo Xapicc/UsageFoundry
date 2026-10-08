@@ -39,6 +39,7 @@ import {
 import {
   agentGitEnv,
   createRun,
+  DEPENDENCY_EDGES,
   dependencyCycle,
   promptArgs,
   sandboxOverlayFor,
@@ -389,8 +390,9 @@ export function proposalDeps(
       const e = (entry ?? {}) as Record<string, unknown>;
       const specId = String(e.specId ?? "");
       const edge = String(e.edge ?? "");
-      if (!specId || (edge !== "on-success" && edge !== "on-finish")) return [];
-      return [{ specId, edge, continueBranch: e.continueBranch === true }];
+      if (!specId || !(DEPENDENCY_EDGES as readonly string[]).includes(edge)) return [];
+      // Narrowed by the membership test above, which `includes` cannot express.
+      return [{ specId, edge: edge as DependencyEdge, continueBranch: e.continueBranch === true }];
     });
   } catch {
     return [];
@@ -4266,7 +4268,9 @@ function systemPrompt(): string {
     "  collision the folder claim already prevents.",
     "- dependsOn has no default edge: pick the one you mean, because on-success",
     "  ends a chain the operator meant to run regardless and on-finish starts",
-    "  work on top of a run that crashed.",
+    "  work on top of a run that crashed. on-failure is for a fix or a fallback:",
+    "  it starts only if that run failed or asked for review, and when that run",
+    "  completes it is not needed and never starts.",
     "- Say in your reply that they have to be approved in the same click. A",
     "  dependent approved on its own is failed by name rather than started.",
     "",

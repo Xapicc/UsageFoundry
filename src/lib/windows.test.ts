@@ -1179,12 +1179,11 @@ describe("agent attribution", () => {
  * have been free, and `null` collapsing to `0` says the same thing about the
  * whole column on the guard path — which is the one caller that never asks.
  *
- * What is **not** pinned here any more is the per-day memo key. It used to be,
- * against Sonnet 5's introductory rate turning over at a UTC midnight, and
- * Anthropic cancelled that increase rather than letting it land — so no entry in
- * `pricing.ts` varies with time today and there is nothing a coarser key could
- * get wrong to assert. `resolvePrice`'s own note says where the next dated rate
- * goes; a case for the memo comes back with it.
+ * The per-day memo key is pinned against Claude Sonnet 5.5's cache read, the one
+ * dated rate `pricing.ts` has: it turns over at a UTC midnight, which is the
+ * only reason keying the memo on the UTC day is exact. It was pinned once
+ * against Sonnet 5's introductory rate, went with that rate when Anthropic
+ * cancelled the increase, and came back with this one.
  */
 describe("cheaper-model counterfactual", () => {
   const tokenEntry = (
@@ -1270,6 +1269,48 @@ describe("cheaper-model counterfactual", () => {
     const reviewer = byName.get("Reviewer")?.counterfactualUSD ?? NaN;
     assert.ok(Math.abs(main - 120_000 * 0.1e-6) < 1e-12, `main thread: ${main}`);
     assert.ok(Math.abs(reviewer - 100_001 * 0.5e-6) < 1e-12, `reviewer: ${reviewer}`);
+  });
+
+  it("prices each turn at the rate in force on the day it ran", () => {
+    // Claude Sonnet 5.5 reads its cache at 0.10x of a $2 input before
+    // 2026-10-08T00:00:00Z and 0.05x from it, so a million reads are $0.20 on
+    // one side and $0.10 on the other — the same tokens at two prices. Dropping
+    // `at` from the lookup prices every turn at today's rate, and a memo keyed
+    // on anything coarser than the UTC day hands the first turn's price to all
+    // the rest; either way the figure is a plausible dollar amount beside a real
+    // one. The pair at the cut is the point: the last millisecond of the 7th and
+    // the first of the 8th are different days, and the memo has to say so.
+    // Every instant is fixed: a wall-clock one would pass or fail depending on
+    // which side of the cut the day it ran fell.
+    const reads = (ts: number, agent: string): UsageEntry => ({
+      ...entry(ts, 0),
+      agent,
+      tokens: { ...ZERO_TOKENS, cacheRead: 1_000_000 },
+    });
+    const later = Date.UTC(2026, 9, 9, 12);
+    const snap = buildSnapshot(
+      [
+        reads(Date.UTC(2026, 9, 6, 12), "days before"),
+        reads(Date.UTC(2026, 9, 7, 0), "start of the 7th"),
+        reads(Date.UTC(2026, 9, 7, 23, 59, 59, 999), "last millisecond before the cut"),
+        reads(Date.UTC(2026, 9, 8, 0), "the cut itself"),
+        reads(Date.UTC(2026, 9, 8, 12), "midday after the cut"),
+      ],
+      NO_LIMITS,
+      later,
+      null,
+      null,
+      null,
+      [],
+      "claude-sonnet-5-5",
+    );
+
+    const byName = new Map(snap.byAgent.map((r) => [r.agent, r.counterfactualUSD]));
+    assert.equal(byName.get("days before"), 0.2);
+    assert.equal(byName.get("start of the 7th"), 0.2);
+    assert.equal(byName.get("last millisecond before the cut"), 0.2);
+    assert.equal(byName.get("the cut itself"), 0.1);
+    assert.equal(byName.get("midday after the cut"), 0.1);
   });
 
   it("reprices a turn upwards when the target is dearer than what ran", () => {

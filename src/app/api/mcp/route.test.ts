@@ -725,6 +725,58 @@ test("release_task offers needsFrontier to a local run only, and the flag reache
   assert.doesNotMatch(unflagged.note, /needsFrontier/, "the sentence costs tokens when no row needs it");
 });
 
+// The refusal is `readTaskLinks`' and the flag it reads is `localRun`, which a
+// chat's `propose_run` left unset: a local card on a task a frontier review had
+// already turned the local model down on was accepted, and the run claimed it
+// when it started. Pinned on both sides, since a refusal that fired for a Claude
+// card would lock the lane the flag exists to send the task to.
+test("propose_run refuses a local card on a needs-frontier task by name, and a Claude one is not refused", async () => {
+  const { token, proposals } = proposingChat();
+  const templateId = randomUUID();
+  db()
+    .prepare(
+      `INSERT INTO run_templates (id, name, prompt, mount_id, folder, permission_mode,
+         isolate, budget, created_at, updated_at)
+       VALUES (?, ?, 'p', ?, 'RepoOne', 'plan', 0, ?, 0, 0)`,
+    )
+    .run(templateId, `Template ${templateId}`, MOUNT, JSON.stringify({ maxIterations: 3 }));
+  db()
+    .prepare(
+      `INSERT INTO local_provider (id, base_url, token, model, signed_in_at)
+       VALUES (1, 'http://192.168.0.190:1234', NULL, 'qwen3', 0)`,
+    )
+    .run();
+
+  try {
+    const hard = file(HERE, { title: "Beyond the local model, for propose_run" });
+    const flagged = tasks.updateTask(hard.id, { needsFrontier: true }, { kind: "operator" });
+    if (!flagged.ok) throw new Error(`fixture refused: ${flagged.error}`);
+    const propose = (provider: string | null) =>
+      callTool(token, "propose_run", {
+        templateId,
+        title: `For ${provider ?? "claude"} ${randomUUID()}`,
+        task: "Do the thing.",
+        taskIds: [hard.id],
+        ...(provider ? { provider } : {}),
+      });
+
+    const local = await propose("local");
+    assert.equal(local.isError, true, local.text);
+    assert.match(local.text, /needs-frontier/);
+    assert.ok(local.text.includes(hard.title), "refused by name");
+    assert.match(local.text, /Nothing was proposed/);
+    assert.equal(proposals(), 0, "the refusal wrote no card");
+
+    for (const provider of [null, "claude"]) {
+      const accepted = await propose(provider);
+      assert.equal(accepted.isError, false, `${provider ?? "unnamed"}: ${accepted.text}`);
+    }
+    assert.equal(proposals(), 2, "a Claude card on the same task is proposed");
+  } finally {
+    db().prepare("DELETE FROM local_provider").run();
+  }
+});
+
 test("complete_task refuses a task another run closed rather than saying this run did", async () => {
   const reader = seedRun(HERE);
   const other = seedRun(ELSEWHERE);
@@ -1629,6 +1681,47 @@ test("propose_workflow refuses a deliver block, which publishes, and writes no c
   assert.match(deliver.text, /“Open the PRs” is a deliver block/);
   assert.match(deliver.text, /workflow editor/);
   assert.equal(proposals(), 0, "and wrote no card");
+});
+
+test("propose_workflow refuses a review block whose verdict is a verify command, and writes no card", async () => {
+  // The command is a program this app spawns in every branch's checkout with
+  // nobody looking, and the card shows a review block as "no agent", so the
+  // person approving it would never read it. Only the workflow editor saves one.
+  const { token, proposals } = proposingChat();
+  const templateId = isolatingTemplate();
+  const propose = (verdictSource: unknown) =>
+    callTool(token, "propose_workflow", {
+      name: `Checked ${randomUUID()}`,
+      blocks: [
+        { id: "a", name: "Build", templateId, mountId: MOUNT, folder: "RepoOne", task: "Do a thing." },
+        {
+          id: "check",
+          name: "Run the tests",
+          kind: "review",
+          fixRounds: 0,
+          verdictSource,
+          dependsOn: [{ id: "a", edge: "on-finish" }],
+        },
+      ],
+    });
+
+  const command = await propose({ kind: "command", command: "npm test" });
+  assert.equal(command.isError, true, "propose_workflow refuses it");
+  assert.match(command.text, /“Run the tests” judges branches by a verify command, and only a person may save one/);
+  assert.match(command.text, /workflow editor/);
+  assert.equal(proposals(), 0, "and wrote no card");
+
+  // Asked of the graph as normalized, so a spelling the normalizer reads as a
+  // command is refused as one.
+  const spaced = await propose({ kind: " command ", command: "npm test" });
+  assert.equal(spaced.isError, true, spaced.text);
+  assert.match(spaced.text, /only a person may save one/);
+  assert.equal(proposals(), 0);
+
+  // The same block judging by run status is a card like any other.
+  const status = await propose({ kind: "status" });
+  assert.equal(status.isError, false, status.text);
+  assert.equal(proposals(), 1);
 });
 
 test("ask_operator refuses a question too long to be answered, and asks nothing", async () => {

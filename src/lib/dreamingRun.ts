@@ -197,12 +197,22 @@ export function buildDreamingPrompt(rollups: readonly SignatureRollup[], night: 
     `## When you are done`,
     ``,
     `Regenerate the vault's index if its conventions ask you to. Then finish your`,
-    `final message with one line per note you created or edited, exactly:`,
+    `final message with one line for each item you wrote a note for, naming the`,
+    `note that item is about, exactly:`,
     ``,
-    `NOTE <item number> <path relative to this directory>`,
+    `NOTE <item number> created <path relative to this directory>`,
     ``,
-    `Write that line only for a file you actually wrote. If you wrote nothing for`,
-    `an item, write no line for it.`,
+    `or, when you wrote no new note for the item and grew an existing one in`,
+    `place:`,
+    ``,
+    `NOTE <item number> edited <path relative to this directory>`,
+    ``,
+    `Report the note, not every file you touched. Do not write a line for a file`,
+    `you edited only to link to or list that note — an index, a hub, a MOC, a`,
+    `project overview — because many items share those and none of them is what`,
+    `this item wrote. If you created more than one note for an item, put the one`,
+    `the item is about first. Write a line only for a file you actually wrote. If`,
+    `you wrote nothing for an item, write no line for it.`,
     ``,
     `## The items`,
     ``,
@@ -211,25 +221,40 @@ export function buildDreamingPrompt(rollups: readonly SignatureRollup[], night: 
 }
 
 /**
- * Parse the `NOTE n path` lines a run reports.
+ * Parse the `NOTE n [created|edited] path` lines a run reports, one path per item.
+ *
+ * Which path an item keeps is the point. The vault's orphan rule makes every new
+ * note two writes — the note, then a hub that links it — so a run reports several
+ * files for one item and the hub comes last. The ledger holds one path per item
+ * and it is "the list a person deletes from", so the item keeps the first
+ * `created` line, else the first of the rest. The first rather than the last
+ * because every real report listed the note before the hubs, and a line with no
+ * verb (what the prompt asked for before there was one) cannot say otherwise.
  *
  * Tolerant on purpose: an agent that writes the line with a stray bullet, a
  * backtick or extra spacing has still told us what we asked for, and the cost
  * of being strict is a ledger row pointing at nothing. Anything that does not
- * resolve to a known item number is dropped rather than guessed at.
+ * resolve to a known item number is dropped rather than guessed at. A verb is
+ * stripped only when a path follows it, so a path that merely begins with the
+ * same letters stays whole.
  */
 export function parseNoteLines(text: string, count: number): Map<number, string> {
-  const out = new Map<number, string>();
+  const kept = new Map<number, { path: string; created: boolean }>();
   for (const raw of text.split("\n")) {
     const line = raw.trim().replace(/^[-*]\s*/, "");
     const m = /^NOTE\s+(\d+)\s+(.+)$/i.exec(line);
     if (!m) continue;
     const index = Number(m[1]);
     if (!Number.isInteger(index) || index < 1 || index > count) continue;
-    const p = m[2].trim().replace(/^[`"']|[`"']$/g, "");
-    if (p) out.set(index, p);
+    const verb = /^(created|edited)(?::\s*|\s+)(.+)$/i.exec(m[2].trim());
+    const p = (verb ? verb[2] : m[2]).trim().replace(/^[`"']|[`"']$/g, "");
+    if (!p) continue;
+    const created = verb?.[1].toLowerCase() === "created";
+    const held = kept.get(index);
+    if (held && (held.created || !created)) continue;
+    kept.set(index, { path: p, created });
   }
-  return out;
+  return new Map([...kept].map(([index, { path }]) => [index, path]));
 }
 
 /**
@@ -439,8 +464,8 @@ export function nextDreamingFire(s: Settings, after: number): number {
  *
  * `reconcileSchedulesOnBoot`'s rule, for its reason: a server coming back up
  * must not start an unattended agent because of something that should have
- * happened hours ago. The cursor jumps to the current night whatever it finds,
- * so the grace below can only ever cover a late tick and never a restart.
+ * happened hours ago. The cursor jumps to the boot instant whatever it finds,
+ * so a window that closed during the downtime is behind it and cannot fire.
  */
 export function reconcileDreamingOnBoot(now = Date.now()): void {
   // The boot instant, so every window that closed while this process was down

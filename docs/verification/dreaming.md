@@ -4,6 +4,23 @@
 
 ## Verified
 
+- **Dreaming's nightly timer fired unattended at its default time on 16 days,
+  2026-10-08**, at `9bf2ef8c`, read from the session transcripts under
+  `~/.claude/projects/-workspace2/`. Nineteen sessions open with
+  `buildDreamingPrompt`'s first sentence, "You are writing into this knowledge
+  vault, which is your working directory." Sixteen of them have a first record
+  between 03:04:09 and 03:05:05 UTC, on sixteen distinct days from 2026-09-09
+  to 2026-10-08 — the `DEFAULTS` fire time (`dreamingMinutes` 3 × 60 + 4 in
+  `dreamingTimeZone` `"UTC"`, `src/lib/settings.ts`) to the minute, with the
+  seconds scattered as a 60-second interval timer's phase scatters them. The
+  other three start at 03:20:53 on 2026-09-14, 11:46:06 on 2026-09-17 and
+  03:33:27 on 2026-09-19. Caveat: this infers the timer from the clock time of
+  the prompt and does not read `runs.origin` or `dreaming_nights`, which sit
+  under `/data` and are unreadable from a work cycle. It also says nothing
+  about the other 14 of those 30 days: a quiet or refused night starts no run
+  and leaves no transcript, so a missing session cannot tell a quiet night from
+  a timer that did not fire.
+
 - **The dreaming pane's cold read, streamed rather than read whole,
   2026-09-11**, at `8b7f1e2` on Node 22.23.2 over a real 1.91 GiB corpus (2,260
   `.jsonl` files). A fresh `next start` per run was asked for `/api/usage` and
@@ -25,8 +42,14 @@
 
 ## Not yet verified by hand
 
-- **Dreaming's nightly timer has never fired**: every night was a press, and
-  `tickDreaming`, `reconcileDreamingOnBoot` and `armDreaming` have never run
-  unattended; two faults a press cannot expose were found only by reading the
-  code. Nothing enforces that an agent reads `CLAUDE.md` first. Settle: one
-  03:04 that nobody is present for.
+- **Dreaming's timer has not been read off a live install, and nothing has
+  shown a restart leaving it armed**: the 16 fires above are inferred from
+  transcript times, the 14 days without a 03:04 session cannot be told apart
+  as quiet, refused or never fired, and the three off-time sessions are
+  unexplained. `reconcileDreamingOnBoot` and `armDreaming` have not been seen
+  to run across a restart; two faults a press cannot expose were found only by
+  reading the code. Nothing enforces that an agent reads `CLAUDE.md` first.
+  Settle, from a shell that can read `DATA_DIR`: `SELECT night, outcome,
+  run_id FROM dreaming_nights ORDER BY night` and `SELECT origin, started_at
+  FROM runs WHERE origin_ref LIKE 'dreaming:%'` in `usagefoundry.db`, then
+  compare each night with the data directory's restart times.

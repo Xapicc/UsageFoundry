@@ -13,6 +13,7 @@ import { dataDirRefusal } from "./serverLock";
 import { getSettings } from "./settings";
 import {
   CERTIFICATION_PROMPT_LINES,
+  isFrontierReviewModel,
   parseCertificationVerdict,
 } from "./localCertification";
 import { localRunsOnBranch } from "./localProvider";
@@ -310,6 +311,15 @@ export async function startReview(
      * get a billed reviewer started into a workflow already stopped.
      */
     stillWanted?: () => boolean;
+    /**
+     * Refuse rather than review on a model that is not a frontier one. A
+     * workflow's review block words a rejection "by the frontier review" and
+     * marks the task needs-frontier on it, so a review it starts is one or it
+     * does not run. `assistModel` already moves a below-frontier run to the
+     * Settings default; what is left to refuse is a default that is itself a
+     * Haiku. Not asked of the Review button, whose review calls itself nothing.
+     */
+    requireFrontier?: boolean;
   } = {},
 ): Promise<ReviewOutcome> {
   // A review is a billed child and a `run_reviews` row, so it is a write like
@@ -352,6 +362,21 @@ export async function startReview(
 
   if (opts.stillWanted && !opts.stillWanted()) {
     return { ok: false, reason: "The review was no longer wanted by the time it could start." };
+  }
+
+  // Last, with no `await` between it and `startAssist`, which reads the setting
+  // again to write the row: a default changed in a window between the two
+  // would otherwise run a review on a model this check never saw.
+  if (opts.requireFrontier) {
+    const model = assistModel(run, getSettings().defaultModel, "review");
+    if (!isFrontierReviewModel(model)) {
+      return {
+        ok: false,
+        reason:
+          `A frontier review was asked for, but this one would run on ${model}, ` +
+          "which is not a frontier model. Set a frontier default model in Settings.",
+      };
+    }
   }
 
   const { text, shown, truncated } = diffAsText(diff, REVIEW_DIFF_BYTES);
@@ -505,7 +530,7 @@ export function startAssist(req: AssistRequest): ReviewOutcome {
   // recorded under the Codex id while its child ran Claude.
   const spawned: SpawnedAssist = {
     ...req,
-    model: assistModel(req.run, getSettings().defaultModel),
+    model: assistModel(req.run, getSettings().defaultModel, req.kind),
     after:
       after &&
       ((result) => {
@@ -1014,14 +1039,26 @@ async function settleAssist(
  * Codex run's model is an id that CLI does not take. Such a run is assisted on
  * the Claude default Settings names when the assist starts; a Claude run keeps
  * the model frozen onto it at creation, as it always has.
+ *
+ * With one exception, for the two kinds that *judge* the run's work: a review
+ * and a validation of a Claude run whose model is not a frontier one (a Haiku,
+ * or an id `pricing.ts` cannot place) go to the default as well. A review block
+ * calls its review frontier and marks tasks on its word, and a validator closes
+ * a task on its word, on a prompt measured on claude-sonnet-4-5
+ * (`scripts/validator-spike/RESULT.md`); a Haiku grading a Haiku's branch is
+ * neither. A resolution is an edit and judges nothing, so it keeps the model
+ * its run ran on.
  */
 export function assistModel(
   run: Pick<RunRow, "model" | "provider">,
   defaultModel: string | null,
+  kind: AssistKind,
 ): string | null {
   // A local run's model is an id only its own server knows, and its review is
   // the frontier check its branch is held to — so never that id.
-  return run.provider === "codex" || run.provider === "local" ? defaultModel : run.model;
+  if (run.provider === "codex" || run.provider === "local") return defaultModel;
+  if (kind !== "resolve" && !isFrontierReviewModel(run.model)) return defaultModel;
+  return run.model;
 }
 
 /**

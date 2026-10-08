@@ -2,39 +2,40 @@
 // Where this install's runs spend their window: main loop against sub-agents,
 // by model, by sub-agent type, and whether each sub-agent ever wrote anything.
 //
-//   node proposals/LocalModelOffload/scripts/window-share.mjs [projectsDir] [dirRegex] [--json]
+//   node --experimental-strip-types proposals/LocalModelOffload/scripts/window-share.mjs [projectsDir] [dirRegex] [--json]
 //
 // Defaults: ~/.claude/projects and /^-workspace--uf-worktrees-/, which selects
 // transcripts of runs that had a worktree of their own. A run with isolation
 // off writes under its folder's own directory, next to anything else that ran
 // there, so it is left out rather than guessed at.
 //
-// The weight is API list price including cache multipliers, copied from
-// src/lib/pricing.ts. That is the proxy the vault's Local Offload Economics
-// uses; the subscription formula is unpublished, so a share here is a share of
-// list-price weight and not of the five-hour window.
+// The weight is API list price including cache multipliers, priced by the
+// repo's own src/lib/pricing.ts (imported, not copied) one deduplicated request
+// at a time, so a model priced by prompt length (claude-haiku-5-5) is charged
+// the tier its own request falls in. That is the proxy the vault's Local
+// Offload Economics uses; the subscription formula is unpublished, so a share
+// here is a share of list-price weight and not of the five-hour window.
 import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { resolvePrice, costOf, cacheReadMultiplierOf, promptTokensOf } from "../../../src/lib/pricing.ts";
 
 const args = process.argv.slice(2).filter((a) => a !== "--json");
 const asJson = process.argv.includes("--json");
 const ROOT = args[0] ?? join(homedir(), ".claude", "projects");
 const DIR_RE = new RegExp(args[1] ?? "^-workspace--uf-worktrees-");
 
-// src/lib/pricing.ts:28-30 (multipliers) and :63-103 (per-MTok rates).
-const CACHE_WRITE_5M = 1.25;
-const CACHE_WRITE_1H = 2.0;
-const PRICES = [
-  ["claude-fable-5-1", 10, 50, 0.025],
-  ["claude-fable-5", 10, 50, 0.1],
-  ["claude-opus-5-5", 4, 20, 0.05],
-  ["claude-opus-5", 5, 25, 0.1],
-  ["claude-opus-4", 5, 25, 0.1],
-  ["claude-sonnet", 2, 10, 0.1],
-  ["claude-haiku", 1, 5, 0.1],
-];
-const priceOf = (model) => PRICES.find(([p]) => model.startsWith(p));
+// Same as transcripts.ts readTokens.
+function readTokens(usage) {
+  const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  const cc = usage.cache_creation ?? {};
+  const d5 = num(cc.ephemeral_5m_input_tokens), d1 = num(cc.ephemeral_1h_input_tokens);
+  const total = num(usage.cache_creation_input_tokens);
+  return {
+    input: num(usage.input_tokens), output: num(usage.output_tokens), cacheRead: num(usage.cache_read_input_tokens),
+    cacheWrite5m: d5, cacheWrite1h: d1, cacheWriteUnattributed: Math.max(0, total - d5 - d1),
+  };
+}
 
 // What a tool call does, for the "did this sub-agent only read" question.
 const READ_TOOLS = new Set(["Read", "Grep", "Glob", "LS", "NotebookRead", "WebFetch", "WebSearch", "TodoWrite", "ToolSearch"]);
@@ -51,23 +52,19 @@ function classifyTool(block) {
   return "other";
 }
 
-function weigh(usage, model) {
-  const p = priceOf(model);
-  if (!p) return null;
-  const [, input, output, cacheRead] = p;
-  const cc = usage.cache_creation ?? {};
-  const w5 = cc.ephemeral_5m_input_tokens ?? 0;
-  const w1 = cc.ephemeral_1h_input_tokens ?? 0;
-  // Anything not split by TTL is priced at the 5m floor, as costOf does.
-  const wRest = Math.max(0, (usage.cache_creation_input_tokens ?? 0) - w5 - w1);
-  return (
-    ((usage.input_tokens ?? 0) * input +
-      (w5 + wRest) * input * CACHE_WRITE_5M +
-      w1 * input * CACHE_WRITE_1H +
-      (usage.cache_read_input_tokens ?? 0) * input * cacheRead +
-      (usage.output_tokens ?? 0) * output) /
-    1e6
-  );
+// A request's list-price cost, and the part of it that was cache reads. Null
+// for a model pricing.ts cannot place, which the caller counts as unpriced.
+function weigh(r) {
+  const price = resolvePrice(r.model, { at: r.at, speed: r.usage.speed });
+  if (!price) return null;
+  const tokens = readTokens(r.usage);
+  // pricing.ts keeps its tier chooser private; this is its rule (a prompt
+  // strictly longer than `above` takes the long rate, for every column).
+  const rate = price.longPrompt && promptTokensOf(tokens) > price.longPrompt.above ? price.longPrompt.price : price;
+  return {
+    cost: costOf(tokens, price, "request"),
+    cacheReadCost: (tokens.cacheRead * rate.input * cacheReadMultiplierOf(rate)) / 1e6,
+  };
 }
 
 // One transcript file → its requests, deduplicated by request id, since every
@@ -86,7 +83,7 @@ function readRequests(file) {
     }
     if (e.type !== "assistant" || !e.message?.usage) continue;
     const key = e.requestId ?? e.message.id;
-    if (!seen.has(key)) seen.set(key, { model: e.message.model ?? "", usage: e.message.usage, sidechain: !!e.isSidechain, tools: [] });
+    if (!seen.has(key)) seen.set(key, { model: e.message.model ?? "", usage: e.message.usage, at: Date.parse(e.timestamp), sidechain: !!e.isSidechain, tools: [] });
     for (const c of e.message.content ?? []) {
       if (c.type !== "tool_use") continue;
       const kind = classifyTool(c);
@@ -114,8 +111,9 @@ const span = (f, l) => {
 function tally(requests, bucket, agentType, byStep) {
   let w = 0, fresh = 0, out = 0, peak = 0;
   for (const r of requests) {
-    const x = weigh(r.usage, r.model);
-    if (x === null) { totals.unpriced++; continue; }
+    const priced = weigh(r);
+    if (priced === null) { totals.unpriced++; continue; }
+    const x = priced.cost;
     totals.requests++;
     w += x;
     if (byStep) {
@@ -125,9 +123,8 @@ function tally(requests, bucket, agentType, byStep) {
     fresh += (r.usage.input_tokens ?? 0) + (r.usage.cache_creation_input_tokens ?? 0);
     out += r.usage.output_tokens ?? 0;
     if (bucket === "main") {
-      const [, input, , cacheRead] = priceOf(r.model);
-      totals.mainCacheRead += ((r.usage.cache_read_input_tokens ?? 0) * input * cacheRead) / 1e6;
-      if (r.tools.some((t) => t === "read")) totals.mainReadStepCacheRead += ((r.usage.cache_read_input_tokens ?? 0) * input * cacheRead) / 1e6;
+      totals.mainCacheRead += priced.cacheReadCost;
+      if (r.tools.some((t) => t === "read")) totals.mainReadStepCacheRead += priced.cacheReadCost;
       if (r.tools.some((t) => t === "read")) totals.mainReadStepWeight += x;
     }
     if (bucket === "main" && r.tools.length) { totals.mainToolTurns++; if (r.tools.length > 1) totals.mainMultiToolTurns++; if (r.tools.filter((t) => t === "read").length > 1) totals.mainMultiReadTurns++; }
