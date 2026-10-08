@@ -71,6 +71,34 @@ export function nextReviewStep(
   };
 }
 
+/** A status verdict on one branch: approved, or set aside and never marked. */
+export type StatusVerdict =
+  | { kind: "approve" }
+  | { kind: "set-aside"; reason: string; needsFrontier: false };
+
+/**
+ * A review block whose verdict source is `status` judges a branch by how its
+ * run ended, with no model: `completed` is approved, and every other ending is
+ * set aside naming it.
+ *
+ * Never needs-frontier. That mark says a frontier model turned the work down,
+ * and here no model looked: a run that asked for review or failed may have been
+ * stopped by anything — a missing credential, a flaky test — and marking its
+ * tasks would keep a local pass off work nobody judged beyond it. `null` is a
+ * run whose row is gone, which is no verdict on anything either.
+ */
+export function statusVerdict(status: string | null): StatusVerdict {
+  if (status === "completed") return { kind: "approve" };
+  return {
+    kind: "set-aside",
+    reason:
+      status === null
+        ? "its run has been deleted"
+        : `its run ended ${status} rather than completed`,
+    needsFrontier: false,
+  };
+}
+
 /** What becomes of one branch after its fix run settles. */
 export type FixStep =
   | { kind: "review" }

@@ -851,6 +851,84 @@ describe("normalizeWorkflowInput — providers and review blocks", () => {
     );
   });
 
+  it("reads a review block's verdict source, and absent as the frontier review", () => {
+    // Absent is `model`: every review block saved before the field existed was
+    // saved to pay for a review, and any other reading hands on branches
+    // nobody looked at.
+    const finish = { edge: "on-finish" as const };
+    const saved = (extra: Record<string, unknown>) =>
+      value(
+        graph(
+          [node("a"), reviewer("r", extra), merger("m")],
+          [edge("a", "r", finish), edge("r", "m")],
+        ),
+      ).graph.nodes.find((n) => n.id === "r")!;
+    assert.deepEqual(saved({}).verdictSource, { kind: "model" });
+    assert.deepEqual(saved({ verdictSource: null }).verdictSource, { kind: "model" });
+    assert.deepEqual(
+      saved({ verdictSource: { kind: "status" }, fixRounds: 0 }).verdictSource,
+      { kind: "status" },
+    );
+    // Dropped unread on a block that is not a review, whatever it holds.
+    const run = value(graph([node("a", { verdictSource: ["status"] })])).graph.nodes[0];
+    assert.equal(run.verdictSource, null);
+  });
+
+  it("refuses a verdict source it cannot read rather than falling back to one", () => {
+    const refusal = (verdictSource: unknown) =>
+      error(
+        graph(
+          [node("a"), reviewer("r", { verdictSource, fixRounds: 0 })],
+          [edge("a", "r", { edge: "on-finish" })],
+        ),
+      );
+    for (const wrong of ["status", ["status"], 1]) {
+      assert.match(
+        refusal(wrong),
+        /^“R”: "verdictSource" has to be an object when it is given; got /,
+        JSON.stringify(wrong),
+      );
+    }
+    assert.match(
+      refusal({ kind: ["status"] }),
+      /^“R”: "verdictSource.kind" has to be a string when it is given; got /,
+    );
+    assert.match(refusal({ kind: "vibes" }), /a source this app does not have: vibes/);
+    assert.match(refusal({}), /a source this app does not have: \(blank\)/);
+  });
+
+  it("refuses fix rounds on a review block that judges by run status", () => {
+    // Refused rather than coerced to 0: the rounds were billed runs the
+    // operator expected, and there is no review for one to answer.
+    assert.match(
+      error(
+        graph(
+          [node("a"), reviewer("r", { verdictSource: { kind: "status" }, fixRounds: 1 })],
+          [edge("a", "r", { edge: "on-finish" })],
+        ),
+      ),
+      /“R” judges each branch by how its run ended, so there is no review for a fix round to answer/,
+    );
+  });
+
+  it("refuses an on-success link into a review block that judges by run status", () => {
+    // Behind on-success the first run that does not complete blocks the
+    // block, which is the stop the status verdict exists to remove — and a Run
+    // would only find that out a pass in.
+    const status = { verdictSource: { kind: "status" }, fixRounds: 0 };
+    assert.match(
+      error(
+        graph(
+          [node("a"), node("b"), reviewer("r", status), merger("m")],
+          [edge("a", "r", { edge: "on-finish" }), edge("b", "r"), edge("r", "m")],
+        ),
+      ),
+      /“R” judges each branch by how its run ended[^]*on-success link from “B”[^]*Set that link to on-finish/,
+    );
+    // The frontier review keeps either link, as it always has.
+    value(graph([node("a"), reviewer("r"), merger("m")], [edge("a", "r"), edge("r", "m")]));
+  });
+
   it("refuses an agent on a review block and a branch carried through one", () => {
     assert.match(
       error(graph([node("a"), reviewer("r", { agentId: "a-rev" })], [edge("a", "r")])),

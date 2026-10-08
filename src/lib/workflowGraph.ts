@@ -16,7 +16,7 @@ import {
   currentAgentKnowledge,
   type AgentKnowledge,
 } from "./agents";
-import { notStringRefusal } from "./http";
+import { jsonKind, notStringRefusal } from "./http";
 import { chatGuards } from "./settings";
 import { listTemplates } from "./templates";
 import { WORKSPACE_MOUNTS } from "./config";
@@ -28,6 +28,8 @@ import {
   MAX_REVIEW_FIX_ROUNDS,
   MAX_WORKFLOW_NAME,
   MAX_WORKFLOW_NODES,
+  REVIEW_VERDICT_KINDS,
+  type ReviewVerdictSourceDTO,
   boardThresholds,
   type LoopBoardConditionDTO,
   type LoopBoardThresholdDTO,
@@ -268,7 +270,20 @@ export interface WorkflowNode {
    * other kind, and never null on a review block.
    */
   fixRounds: number | null;
+  /**
+   * Where a review block's verdict on each branch comes from. Null on every
+   * other kind, and set on every review block a save produced.
+   *
+   * Optional because a graph saved before the field existed — and every
+   * instance started from one — carries nothing here, and that reads as
+   * `model`: the frontier review those graphs were saved to pay for. A reader
+   * asks `?.kind === "status"` and never the reverse.
+   */
+  verdictSource?: ReviewVerdictSource | null;
 }
+
+/** Where a review block's verdict comes from. See the DTO. */
+export type ReviewVerdictSource = ReviewVerdictSourceDTO;
 
 /** Which tasks a loop counts, and the numbers it stops at. See the DTO. */
 export type LoopBoardCondition = LoopBoardConditionDTO;
@@ -1150,6 +1165,26 @@ function normalizeNode(
       fixRounds = raw;
     }
 
+    // Where a review block's verdict comes from, read on a review block and
+    // dropped unread on every other kind, `promptOverride`'s rule.
+    let verdictSource: ReviewVerdictSource | null = null;
+    if (kind === "review") {
+      const read = normalizeVerdictSource(n.verdictSource, nodeName);
+      if (!read.ok) return read;
+      verdictSource = read.value;
+      // Refused rather than coerced to 0: rounds the operator set are billed
+      // runs they expect, and a status verdict has no review for one to answer.
+      if (verdictSource.kind === "status" && fixRounds !== 0) {
+        return {
+          ok: false,
+          error:
+            `“${nodeName}” judges each branch by how its run ended, so there is ` +
+            "no review for a fix round to answer. Set its fix rounds to 0, or " +
+            "have a frontier model review the branches.",
+        };
+      }
+    }
+
     // Which CLI does the work, on the two kinds whose work is runs. Refused by
     // name anywhere else, on `agentId`'s grounds below: a provider named on a
     // block that starts no run is a choice no process will ever act on. Typed
@@ -1360,8 +1395,11 @@ function normalizeNode(
             ? `“${nodeName}” lands the branches in front of it and starts no agent ` +
               "of its own, so there is nothing for that agent to be. Remove it, or " +
               "put it on the block that does the work."
-            : `“${nodeName}” reviews the branches in front of it with a frontier ` +
-              "model this app chooses, so there is nothing for that agent to be. " +
+            : `“${nodeName}” ${
+                verdictSource?.kind === "status"
+                  ? "judges the branches in front of it by how their runs ended"
+                  : "reviews the branches in front of it with a frontier model this app chooses"
+              }, so there is nothing for that agent to be. ` +
               "Remove it, or put it on the block that does the work.",
       };
     }
@@ -1409,8 +1447,46 @@ function normalizeNode(
           bodyNodeIds,
           provider,
           fixRounds,
+          verdictSource,
     },
   };
+}
+
+/**
+ * A review block's verdict source off the wire, or the sentence refusing it.
+ *
+ * Absent and null are `model`, and have to be: every review block saved before
+ * the field existed was saved to pay for a frontier review, and any other
+ * reading would hand on branches nobody looked at. A bare word is refused
+ * rather than read as the kind it names, so the one shape on the wire is the
+ * one a source with settings of its own will need.
+ */
+function normalizeVerdictSource(
+  raw: unknown,
+  nodeName: string,
+): { ok: true; value: ReviewVerdictSource } | { ok: false; error: string } {
+  if (raw === null || raw === undefined) return { ok: true, value: { kind: "model" } };
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    return {
+      ok: false,
+      error:
+        `“${nodeName}”: "verdictSource" has to be an object when it is given; ` +
+        `got ${jsonKind(raw)}.`,
+    };
+  }
+  const o = raw as Record<string, unknown>;
+  const notString = notStringRefusal("verdictSource.kind", o.kind);
+  if (notString) return { ok: false, error: `“${nodeName}”: ${notString}` };
+  const kind = String(o.kind ?? "").trim();
+  if (!(REVIEW_VERDICT_KINDS as readonly string[]).includes(kind)) {
+    return {
+      ok: false,
+      error:
+        `“${nodeName}” takes its verdict from a source this app does not ` +
+        `have: ${kind || "(blank)"}. It is ${REVIEW_VERDICT_KINDS.join(" or ")}.`,
+    };
+  }
+  return { ok: true, value: kind === "status" ? { kind: "status" } : { kind: "model" } };
 }
 
 /**
@@ -2000,6 +2076,23 @@ function graphRefusal(
         "guards work directly in the folder rather than in a checkout of " +
         "their own."
       );
+    }
+    // A status verdict sets aside a run that did not complete, so it has to be
+    // handed those runs. Behind an on-success link the first one blocks the
+    // whole block instead — the stop this verdict exists to remove — and a Run
+    // would find that out a pass in rather than here.
+    if (node.verdictSource?.kind === "status") {
+      const strict = edges.find(
+        (e) => e.to === node.id && isDependencyEdge(e) && e.edge !== "on-finish",
+      );
+      if (strict) {
+        return (
+          `“${node.name}” judges each branch by how its run ended, so it has ` +
+          `to be handed the runs that did not complete as well. Behind an ` +
+          `on-success link from “${byId.get(strict.from)!.name}”, the first ` +
+          "of them blocks it instead. Set that link to on-finish."
+        );
+      }
     }
   }
 
