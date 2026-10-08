@@ -22,6 +22,7 @@ export default function EditWorkflowPage() {
   const [workflow, setWorkflow] = useState<WorkflowDTO | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [initialBlockId, setInitialBlockId] = useState<string | null>(null);
 
   useEffect(() => {
     fetch(`/api/workflows/${id}`, { cache: "no-store" })
@@ -34,6 +35,10 @@ export default function EditWorkflowPage() {
           throw new Error(data.error ?? `Could not read this workflow (${res.status})`);
         }
         setWorkflow(data.workflow);
+        // Read here, once, with the workflow: `useSearchParams` would put a
+        // Suspense boundary on a page whose whole point is that nothing
+        // re-seeds the form after it has been mounted.
+        setInitialBlockId(new URLSearchParams(window.location.search).get("block"));
       })
       .catch((err: unknown) =>
         setError(err instanceof Error ? err.message : String(err)),
@@ -65,7 +70,7 @@ export default function EditWorkflowPage() {
           <SkeletonText lines={4} />
         </Card>
       ) : workflow ? (
-        <WorkflowEditor workflow={workflow} />
+        <WorkflowEditor workflow={workflow} initialBlockId={initialBlockId} />
       ) : (
         <>
           <div role="alert">{error && <Notice tone="danger">{error}</Notice>}</div>

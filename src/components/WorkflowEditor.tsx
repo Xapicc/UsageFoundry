@@ -386,9 +386,17 @@ function toLinks(workflow: WorkflowDTO): LinkDraft[] {
 
 export function WorkflowEditor({
   workflow,
+  initialBlockId,
 }: {
   /** Null for a new workflow; a saved one is edited in place. */
   workflow: WorkflowDTO | null;
+  /**
+   * The block the page was opened on, from the detail page's block table.
+   * Selection is canvas state and no part of the workflow, so this seeds it
+   * and nothing is saved; an id that names no block opens with nothing
+   * selected, as the editor always did.
+   */
+  initialBlockId?: string | null;
 }) {
   const router = useRouter();
 
@@ -400,7 +408,11 @@ export function WorkflowEditor({
     workflow ? toLinks(workflow) : [],
   );
   const [dragged, setDragged] = useState<Record<string, Point>>({});
-  const [selection, setSelection] = useState<CanvasSelection | null>(null);
+  const [selection, setSelection] = useState<CanvasSelection | null>(() =>
+    initialBlockId && workflow?.nodes.some((n) => n.id === initialBlockId)
+      ? { kind: "block", id: initialBlockId }
+      : null,
+  );
 
   // The workflow-wide limits. Held as strings for the reason the run form's
   // are: "" is how a number input says "off", and `normalizeInstanceBudget`
