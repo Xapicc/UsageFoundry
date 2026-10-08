@@ -206,6 +206,7 @@ export function instanceDTO(instance: WorkflowInstance): WorkflowInstanceDTO {
       bodyNodeIds: snapshot?.bodyNodeIds ?? [],
       maxPasses: snapshot?.kind === "loop" ? snapshot.maxPasses : null,
       maxLoopCostUSD: snapshot?.kind === "loop" ? snapshot.maxLoopCostUSD : null,
+      stopAfterPass: b.stopAfterPass,
       passMember: passMemberIn(instance.graph, b.nodeId),
     };
   });

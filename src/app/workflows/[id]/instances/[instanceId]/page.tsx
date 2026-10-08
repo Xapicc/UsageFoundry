@@ -631,15 +631,69 @@ function LoopCard({
   passes,
   nodeName,
   emphasis,
+  workflowId,
+  instanceId,
+  onChanged,
+  onRefused,
 }: {
   loop: BlockDTO;
   passes: PassRow[];
   nodeName: Map<string, string>;
   emphasis: "primary" | "default";
+  workflowId: string;
+  instanceId: string;
+  /** The instance as the server now records it, after a press that took. */
+  onChanged: (instance: WorkflowInstanceDTO) => void;
+  /** A press the server declined: read the page again rather than wait a poll. */
+  onRefused: () => void;
 }) {
   const runs = passes.flatMap(passRuns);
   const spend = passSpend(runs);
   const waits = loop.waitsFor.map((wait) => fmtInstanceWait(wait, nodeName));
+  const [pressing, setPressing] = useState(false);
+  const [pressError, setPressError] = useState<string | null>(null);
+
+  // Offered while the loop is repeating and a pass exists to stop after. A halt
+  // writes the loop `failed`, so Stop pressed as well removes the control
+  // rather than leaving a button that would be refused.
+  const canAskStop = loop.status === "looping" && passes.length > 0;
+  const stopRequested = loop.stopAfterPass !== null;
+
+  /**
+   * Record the request, or take it back.
+   *
+   * Guarded like `stopAll`: an unguarded rejection out of a handler that sets a
+   * busy flag leaves the button disabled with no cue. A refusal also re-reads the
+   * page, because the usual cause is the pass having settled under the press and
+   * the card is then showing a control for a loop that has ended.
+   */
+  async function ask(stop: boolean) {
+    setPressing(true);
+    setPressError(null);
+    try {
+      const res = await fetch(
+        `/api/workflows/${workflowId}/instances/${instanceId}/stop-after-pass`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ nodeId: loop.nodeId, stop }),
+        },
+      );
+      const data = (await res.json().catch(() => ({}))) as {
+        instance?: WorkflowInstanceDTO;
+        error?: string;
+      };
+      if (!res.ok) {
+        onRefused();
+        throw new Error(data.error ?? `Request failed (${res.status})`);
+      }
+      if (data.instance) onChanged(data.instance);
+    } catch (err) {
+      setPressError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPressing(false);
+    }
+  }
 
   return (
     <Card emphasis={emphasis}>
@@ -650,7 +704,32 @@ function LoopCard({
             started {fmtDateTime(loop.startedAt)}
           </span>
         )}
+        {canAskStop && (
+          <div className="ml-auto flex items-center gap-3">
+            {stopRequested && (
+              <span className="text-sm text-ink-muted">
+                Ends after pass {loop.stopAfterPass}
+              </span>
+            )}
+            <Button
+              size="compact"
+              variant="secondary"
+              busy={pressing}
+              onClick={() => void ask(!stopRequested)}
+            >
+              {stopRequested ? "Keep going" : "Stop after this pass"}
+            </Button>
+          </div>
+        )}
       </div>
+      {canAskStop && stopRequested && (
+        <Hint>The pass in flight finishes and lands; no further pass starts</Hint>
+      )}
+      {pressError && (
+        <Notice tone="danger" live className="mt-3">
+          {pressError}
+        </Notice>
+      )}
 
       {passes.length === 0 ? (
         <Empty>
@@ -781,7 +860,8 @@ function LoopCard({
 
       <Hint>
         Stops when every run of a pass reports the work complete, a pass does
-        not complete or does not land, or one of its limits is reached
+        not complete or does not land, one of its limits is reached, or you ask
+        it to stop after a pass
       </Hint>
     </Card>
   );
@@ -1479,6 +1559,10 @@ export default function WorkflowInstancePage() {
             emphasis={
               savedRuns.length === 0 && index === 0 ? "primary" : "default"
             }
+            workflowId={id}
+            instanceId={instanceId}
+            onChanged={setInstance}
+            onRefused={() => void load()}
           />
         </Fragment>
       ))}

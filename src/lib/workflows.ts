@@ -1173,6 +1173,14 @@ export interface LoopPassInput {
    * happens rather than here.
    */
   boardCounts: LoopBoardCounts | null;
+  /**
+   * The pass the operator asked the loop to end after, or null for no request.
+   *
+   * Required rather than optional: a caller that forgot it would typecheck and
+   * read as "keep going", which is the one answer that spends another whole
+   * pass the operator had refused.
+   */
+  stopAfterPass: number | null;
 }
 
 /** Why a loop stopped, in a word the caller can branch on. */
@@ -1182,7 +1190,8 @@ export type LoopStopCode =
   | "passes"
   | "cost"
   | "empty"
-  | "tasks";
+  | "tasks"
+  | "requested";
 
 export type LoopDecision =
   /** Create pass `pass`. Nothing else has to be true for it to go ahead. */
@@ -1252,7 +1261,16 @@ export type LoopDecision =
  *      would run every loop with a review in it to its pass cap.
  *      It outranks the two caps, so a loop that got there on its last pass says
  *      it finished rather than that it ran out.
- *   5. **The board condition**, below the agent's own word and above the caps.
+ *   5. **The operator's request to end after this pass**, below everything that
+ *      is a fact about the pass and above everything that is a limit. Below the
+ *      failures and `done` because those say how the pass went and this says
+ *      only that nobody wants another: a pass that did not land, reported as a
+ *      stop the operator asked for, would be `emitted` instead of `failed` and
+ *      start an `on-success` successor on work that never arrived. Above the
+ *      board and the caps because it is the more specific sentence — the
+ *      operator pressed it, and a loop that was also at its cap would otherwise
+ *      tell them it ran out.
+ *   6. **The board condition**, below the agent's own word and above the caps.
  *      An agent that said the work is done outranks a board that has not caught
  *      up with it; a board that is clear is the loop *finishing* rather than
  *      running out, so it must not be reported as a cap. It is also the one
@@ -1260,7 +1278,7 @@ export type LoopDecision =
  *      pass that ended, where this is a fact about the board at this moment, so
  *      a loop pointed at a backlog that is already clear starts no run at all —
  *      which is most of what the condition is for.
- *   6. **The caps.** The pass cap before the spend cap: it is the one a person
+ *   7. **The caps.** The pass cap before the spend cap: it is the one a person
  *      always set, and the one that has to hold when nothing else does.
  */
 /**
@@ -1401,6 +1419,17 @@ export function planLoopPass(input: LoopPassInput): LoopDecision {
         reason: `“${input.blockName}” reported the work complete on pass ${last.pass}.`,
       };
     }
+
+    // `>=` rather than `===`: a request recorded for pass 2 that is read when
+    // pass 3 is the latest — a pick-up reopened a later pass — still means "no
+    // more than this", and an exact match would let the loop run on for ever.
+    if (input.stopAfterPass !== null && last.pass >= input.stopAfterPass) {
+      return {
+        kind: "stop",
+        code: "requested",
+        reason: `“${input.blockName}” stopped after pass ${input.stopAfterPass}, as the operator asked.`,
+      };
+    }
   }
 
   const board = input.stopWhenTasks;
@@ -1467,7 +1496,10 @@ export function planLoopPass(input: LoopPassInput): LoopDecision {
  * that failed, or one withheld after a loop that finished.
  *
  * Running out of passes or of money is `emitted`: the passes that happened
- * completed, and "it did not get there in time" is what the caps are for. A
+ * completed, and "it did not get there in time" is what the caps are for. So is
+ * an operator's "stop after this pass" (`requested`): the pass it let finish was
+ * judged complete before that rung is reached, and the blocks behind the loop
+ * proceed per their edges exactly as after a pass cap. A
  * failed pass and a pass that produced nothing are `failed`, which is the only
  * reading under which `on-success` after a loop means what it says.
  */
@@ -2421,6 +2453,12 @@ export interface WorkflowInstanceBlock {
    * "landed three of three" are different facts and only one needs attention.
    */
   branchesFailed: number;
+  /**
+   * The pass a loop block was asked to end after, or null for no request and for
+   * every other kind. Recorded by `setLoopStopAfter`, read by `advanceLoop`, and
+   * left on the row after the loop ends as the record of why it did.
+   */
+  stopAfterPass: number | null;
   error: string | null;
 }
 
@@ -2749,6 +2787,123 @@ function loopSpend(instanceId: string, nodeId: string): number {
   return addBlockSpend(members, blocks).spentGuardUSD;
 }
 
+/** The pass a loop was asked to end after, or null for no such request. */
+function loopStopAfter(instanceId: string, nodeId: string): number | null {
+  const row = db()
+    .prepare(
+      "SELECT stop_after_pass AS pass FROM workflow_instance_blocks" +
+        " WHERE instance_id = ? AND node_id = ?",
+    )
+    .get(instanceId, nodeId) as { pass: number | null } | undefined;
+  return row?.pass ?? null;
+}
+
+/** What a press of "Stop after this pass", or of "Keep going", answered. */
+export type LoopStopAfterOutcome =
+  | { ok: true; stopAfterPass: number | null }
+  | { ok: false; status: 404 | 409; error: string };
+
+/**
+ * Why a loop cannot be asked to end after its pass, or null when it can.
+ *
+ * Pure for `haltPlan`'s reason: the cases that matter here are the ones a press
+ * races, and each is a silent wrong answer if missed. A loop already ended has no
+ * pass left to stop after, and recording one would show a request the page can
+ * never act on. A halted instance is refused **whole**, which is what makes Stop
+ * win over this control: the halt has already written the loop `failed`, so
+ * "Keep going" must not read as having revived a loop the operator took down,
+ * and no sentence here may suggest the halt is something less than a halt.
+ *
+ * One condition serves both directions. Undoing the request is allowed exactly
+ * while it can still change what the loop does, and that is the same window in
+ * which making it can.
+ */
+export function loopStopAfterRefusal(input: {
+  instanceStatus: WorkflowInstanceStatus;
+  /** Null when the instance has no loop block by that id. */
+  loop: { name: string; status: BlockStatus } | null;
+  /** The latest pass the loop has opened, or null when it has opened none. */
+  latestPass: number | null;
+}): Extract<LoopStopAfterOutcome, { ok: false }> | null {
+  const { loop, latestPass } = input;
+  if (!loop) {
+    return { ok: false, status: 404, error: "That loop is not part of this workflow run." };
+  }
+  if (!instanceIsOpen(input.instanceStatus)) {
+    return {
+      ok: false,
+      status: 409,
+      error: `This workflow run is ${input.instanceStatus}, so no loop in it will take another pass.`,
+    };
+  }
+  if (loop.status !== "looping") {
+    return {
+      ok: false,
+      status: 409,
+      error: `“${loop.name}” is ${loop.status}, so it has no pass left to stop after.`,
+    };
+  }
+  if (latestPass === null) {
+    return {
+      ok: false,
+      status: 409,
+      error: `“${loop.name}” has not started a pass yet, so there is none to stop after.`,
+    };
+  }
+  return null;
+}
+
+/**
+ * Ask a looping loop to end after the pass it is on, or take the request back.
+ *
+ * **Not a halt, and it must never go through `stopInstance`.** That door closes
+ * the instance before anything is signalled and takes every member down; this
+ * signals nothing and halts nothing — the pass in flight carries on exactly as
+ * it was, its merge included, and the request is read only when that pass has
+ * settled, by `planLoopPass`. A halt pressed as well wins without this knowing:
+ * it writes the loop `failed`, `settleLoop` is latched on `looping`, and the
+ * refusal above keeps the page from offering either press on a halted run.
+ *
+ * Recorded as the pass **number** rather than as a flag, so a request made on
+ * pass 2 cannot be satisfied by a pass 3 that a pick-up later reopens as the
+ * latest — see the `>=` in `planLoopPass`.
+ *
+ * Advances afterwards, `resumeLoop`'s reason in the other direction: a press
+ * that arrives while the latest pass has already settled (the fleet hold keeps a
+ * loop `looping` between passes) must take effect now, not at the next terminal
+ * run anywhere.
+ */
+export function setLoopStopAfter(
+  instanceId: string,
+  loopNodeId: string,
+  stop: boolean,
+): LoopStopAfterOutcome {
+  const instance = getInstance(instanceId);
+  if (!instance) return { ok: false, status: 404, error: "No such workflow run." };
+
+  const loop = instance.blocks.find((b) => b.nodeId === loopNodeId && b.kind === "loop");
+  const latestPass = loop ? (loopPasses(instanceId, loopNodeId).at(-1)?.pass ?? null) : null;
+  const refusal = loopStopAfterRefusal({
+    instanceStatus: instance.status,
+    loop: loop ? { name: loop.nodeName, status: loop.status } : null,
+    latestPass,
+  });
+  if (refusal) return refusal;
+
+  // No `await` between the read above and this write, so the loop cannot have
+  // settled in between — the same single-turn property `stepPass` relies on.
+  const value = stop ? latestPass : null;
+  db()
+    .prepare(
+      "UPDATE workflow_instance_blocks SET stop_after_pass = ?" +
+        " WHERE instance_id = ? AND node_id = ? AND kind = 'loop'",
+    )
+    .run(value, instanceId, loopNodeId);
+
+  advanceInstances();
+  return { ok: true, stopAfterPass: value };
+}
+
 /** A board condition read, or why this app could not read one. */
 export type LoopBoardReading =
   | { ok: true; counts: LoopBoardCounts | null }
@@ -2961,6 +3116,7 @@ export function blocksOf(instanceId: string): WorkflowInstanceBlock[] {
               cost_usd AS costUSD, cost_unreported AS unreported,
               tokens, emitted_specs AS specs, error,
               merge_batch_id AS batchId, reply, notes,
+              stop_after_pass AS stopAfterPass,
               -- Read back off the queue's own rows rather than counted into the
               -- block as it went: those rows carry git's answer for each branch,
               -- and a copy on the block would be a second thing to keep in step
@@ -5997,6 +6153,7 @@ function advanceLoop(
       spentGuardUSD: loopSpend(instanceId, nodeId),
       stopWhenTasks: node.stopWhenTasks,
       boardCounts: board.counts,
+      stopAfterPass: loopStopAfter(instanceId, nodeId),
     });
 
     if (decision.kind === "stop") {

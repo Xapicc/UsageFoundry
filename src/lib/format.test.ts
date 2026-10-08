@@ -418,6 +418,7 @@ const passBlock = (
   bodyNodeIds: [],
   maxPasses: null,
   maxLoopCostUSD: null,
+  stopAfterPass: null,
   passMember,
   ...over,
 });

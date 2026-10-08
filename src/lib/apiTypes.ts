@@ -2776,6 +2776,12 @@ export interface WorkflowInstanceBlockDTO {
    */
   maxPasses: number | null;
   maxLoopCostUSD: number | null;
+  /**
+   * The pass this loop was asked to end after, or null for no request. Set by
+   * "Stop after this pass" and cleared by "Keep going"; left on a loop that has
+   * ended, where the stop sentence says whether it was what ended it.
+   */
+  stopAfterPass: number | null;
   /** Which pass this ledger row is a member of — see `PassMemberDTO`. */
   passMember: PassMemberDTO | null;
 }

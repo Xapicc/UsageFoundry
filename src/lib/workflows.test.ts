@@ -21,6 +21,8 @@ import {
   haltPlan,
   instanceStatus,
   loopBody,
+  loopStopAfterRefusal,
+  loopStopStatus,
   mergeBlockOutcome,
   queuedBranchOutcome,
   normalizeWorkflowInput,
@@ -4896,6 +4898,7 @@ function loopOf(
     // this line is the loop as it behaved before the board could end one.
     stopWhenTasks: null,
     boardCounts: null,
+    stopAfterPass: null,
     ...extra,
   });
 }
@@ -5360,6 +5363,146 @@ describe("planLoopPass — the board condition", () => {
     assert.deepEqual(
       loopOf([], { ...boardOf(0), boardCounts: null }),
       { kind: "pass", pass: 1 },
+    );
+  });
+});
+
+describe("planLoopPass — an operator's request to stop after a pass", () => {
+  it("waits for the pass in flight, which carries on as it was", () => {
+    // The whole point of the control: the request is read only once the pass has
+    // settled, so its merge still lands. A decision that stopped here would be
+    // `stopInstance` by another name.
+    for (const status of ["waiting", "queued", "running", "paused"] as const) {
+      assert.deepEqual(
+        loopOf([pass(1, status)], { stopAfterPass: 1 }),
+        { kind: "wait" },
+        status,
+      );
+    }
+  });
+
+  it("ends the loop once that pass settled, as a terminus and in the operator's words", () => {
+    const d = loopOf([pass(1, "completed")], { stopAfterPass: 1 });
+    assert.equal(d.kind === "stop" && d.code, "requested");
+    assert.match(
+      d.kind === "stop" ? d.reason : "",
+      /“Chip away at it” stopped after pass 1, as the operator asked\./,
+    );
+    // `emitted`, so an `on-success` block behind the loop proceeds as after a
+    // pass cap. `failed` here would withhold it from a pass that went well.
+    assert.equal(loopStopStatus("requested"), "emitted");
+  });
+
+  it("takes the next pass when the request names a later one", () => {
+    assert.deepEqual(
+      loopOf([pass(1, "completed")], { stopAfterPass: 2 }),
+      { kind: "pass", pass: 2 },
+    );
+  });
+
+  it("takes no pass beyond the one named, even when the latest is a later one", () => {
+    // A pick-up can reopen a later pass as the latest while a request recorded
+    // for an earlier one stands; `===` would read that as no request at all.
+    const d = loopOf([pass(1, "completed"), pass(2, "completed")], {
+      stopAfterPass: 1,
+    });
+    assert.equal(d.kind === "stop" && d.code, "requested");
+    assert.match(d.kind === "stop" ? d.reason : "", /after pass 1,/);
+  });
+
+  it("still says a pass failed when it did, rather than that the operator stopped it", () => {
+    // A stop the operator asked for is `emitted`; a pass that did not finish
+    // must stay `failed`, or an `on-success` successor starts on work that never
+    // arrived.
+    const failed = loopOf([pass(1, "failed")], { stopAfterPass: 1 });
+    assert.equal(failed.kind === "stop" && failed.code, "failed");
+
+    const empty = loopOf([{ pass: 1, members: [] }], { stopAfterPass: 1 });
+    assert.equal(empty.kind === "stop" && empty.code, "empty");
+
+    const unlanded = loopOf(
+      [
+        {
+          pass: 1,
+          members: [
+            runMember("body", "completed"),
+            blockMember("merge", "merge", "failed", { error: "conflict in a.txt" }),
+          ],
+        },
+      ],
+      { stopAfterPass: 1 },
+    );
+    assert.equal(unlanded.kind === "stop" && unlanded.code, "failed");
+    assert.match(unlanded.kind === "stop" ? unlanded.reason : "", /did not land/);
+  });
+
+  it("still says the work is complete when the agents said so", () => {
+    const d = loopOf([pass(1, "completed", { done: true })], { stopAfterPass: 1 });
+    assert.equal(d.kind === "stop" && d.code, "done");
+  });
+
+  it("is the sentence given when the pass cap or a clear board would also have ended the loop", () => {
+    const atCap = loopOf(
+      [pass(1, "completed"), pass(2, "completed"), pass(3, "completed")],
+      { stopAfterPass: 3 },
+    );
+    assert.equal(atCap.kind === "stop" && atCap.code, "requested");
+
+    const clearBoard = loopOf([pass(1, "completed")], {
+      ...boardOf(0),
+      stopAfterPass: 1,
+    });
+    assert.equal(clearBoard.kind === "stop" && clearBoard.code, "requested");
+  });
+});
+
+describe("loopStopAfterRefusal — when the control cannot be pressed", () => {
+  const looping = { name: "Chip away", status: "looping" } as const;
+
+  it("answers a loop that is still repeating, in both directions", () => {
+    assert.equal(
+      loopStopAfterRefusal({ instanceStatus: "started", loop: looping, latestPass: 2 }),
+      null,
+    );
+  });
+
+  it("refuses everything once Stop has halted the instance, so Stop wins", () => {
+    // `stopInstance` has already written the loop `failed`, but the instance's
+    // own word is what the refusal reads first: "Keep going" on a halted run
+    // must not read as having revived a loop the operator took down.
+    for (const instanceStatus of ["stopping", "stopped", "failed"] as const) {
+      const refusal = loopStopAfterRefusal({
+        instanceStatus,
+        loop: looping,
+        latestPass: 1,
+      });
+      assert.equal(refusal?.status, 409, instanceStatus);
+      assert.match(refusal?.error ?? "", new RegExp(`is ${instanceStatus}`));
+    }
+  });
+
+  it("refuses a loop that has already ended, whichever way", () => {
+    for (const status of ["emitted", "failed", "blocked", "waiting"] as const) {
+      const refusal = loopStopAfterRefusal({
+        instanceStatus: "started",
+        loop: { name: "Chip away", status },
+        latestPass: 1,
+      });
+      assert.equal(refusal?.status, 409, status);
+      assert.match(refusal?.error ?? "", new RegExp(`is ${status}`));
+    }
+  });
+
+  it("refuses a loop that has opened no pass, and a block that is no loop here", () => {
+    assert.equal(
+      loopStopAfterRefusal({ instanceStatus: "started", loop: looping, latestPass: null })
+        ?.status,
+      409,
+    );
+    assert.equal(
+      loopStopAfterRefusal({ instanceStatus: "started", loop: null, latestPass: null })
+        ?.status,
+      404,
     );
   });
 });
