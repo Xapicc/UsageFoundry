@@ -100,6 +100,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - A review block hands on the branches a frontier model approved, and nothing it set aside.
 - A set-aside branch marks its tasks needs-frontier, and only when a frontier model turned it down.
 - A review block may take its verdict from each run's status instead of a model, and then it bills nothing and marks nothing.
+- A review block may take its verdict from a verify command saved on it, and then exit 0 is the whole of an approval.
 - Its fix runs are the instance's runs and its reviews' cost is the block's.
 - A full assist queue is waited out at both doors a review passes, because the first is a check and not a claim.
 - It is one async function per block, the merge block's shape.

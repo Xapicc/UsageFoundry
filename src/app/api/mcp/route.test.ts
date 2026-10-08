@@ -1631,6 +1631,47 @@ test("propose_workflow refuses a deliver block, which publishes, and writes no c
   assert.equal(proposals(), 0, "and wrote no card");
 });
 
+test("propose_workflow refuses a review block whose verdict is a verify command, and writes no card", async () => {
+  // The command is a program this app spawns in every branch's checkout with
+  // nobody looking, and the card shows a review block as "no agent", so the
+  // person approving it would never read it. Only the workflow editor saves one.
+  const { token, proposals } = proposingChat();
+  const templateId = isolatingTemplate();
+  const propose = (verdictSource: unknown) =>
+    callTool(token, "propose_workflow", {
+      name: `Checked ${randomUUID()}`,
+      blocks: [
+        { id: "a", name: "Build", templateId, mountId: MOUNT, folder: "RepoOne", task: "Do a thing." },
+        {
+          id: "check",
+          name: "Run the tests",
+          kind: "review",
+          fixRounds: 0,
+          verdictSource,
+          dependsOn: [{ id: "a", edge: "on-finish" }],
+        },
+      ],
+    });
+
+  const command = await propose({ kind: "command", command: "npm test" });
+  assert.equal(command.isError, true, "propose_workflow refuses it");
+  assert.match(command.text, /“Run the tests” judges branches by a verify command, and only a person may save one/);
+  assert.match(command.text, /workflow editor/);
+  assert.equal(proposals(), 0, "and wrote no card");
+
+  // Asked of the graph as normalized, so a spelling the normalizer reads as a
+  // command is refused as one.
+  const spaced = await propose({ kind: " command ", command: "npm test" });
+  assert.equal(spaced.isError, true, spaced.text);
+  assert.match(spaced.text, /only a person may save one/);
+  assert.equal(proposals(), 0);
+
+  // The same block judging by run status is a card like any other.
+  const status = await propose({ kind: "status" });
+  assert.equal(status.isError, false, status.text);
+  assert.equal(proposals(), 1);
+});
+
 test("ask_operator refuses a question too long to be answered, and asks nothing", async () => {
   const chatId = chat.createChat().id;
   const token = chat.mintCapability({ kind: "chat", chatId });

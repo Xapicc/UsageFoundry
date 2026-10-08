@@ -1478,7 +1478,19 @@ export default function WorkflowInstancePage() {
                                     </span>
                                   )}
                                   {item.note && (
-                                    <span className="text-ink-muted"> — {item.note}</span>
+                                    <span className="text-ink-muted">
+                                      {" "}
+                                      — {item.note.split("\n", 1)[0]}
+                                    </span>
+                                  )}
+                                  {/* A verify command's output, on the lines
+                                      after its ending: kept as it printed,
+                                      and scrolled rather than let to push the
+                                      table wide. */}
+                                  {item.note?.includes("\n") && (
+                                    <pre className="mono mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-md border border-line bg-inset p-2 text-2xs leading-relaxed text-ink-muted">
+                                      {item.note.slice(item.note.indexOf("\n") + 1)}
+                                    </pre>
                                   )}
                                 </li>
                               ))}

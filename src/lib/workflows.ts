@@ -22,6 +22,7 @@ import {
 } from "./review";
 import {
   afterFixRun,
+  commandVerdict,
   fixRunPrompt,
   nextReviewStep,
   reviewBlockSummary,
@@ -71,6 +72,7 @@ import {
   deliveredPullRequest,
   deliverRun,
   landState,
+  verifyBranchForReview,
   type LandStrategy,
 } from "./land";
 import {
@@ -232,6 +234,7 @@ export type LoopBoardCounts = LoopBoardCountsDTO;
 export {
   REPEATS_EDGE,
   WORKFLOW_EDGE_CONDITIONS,
+  commandVerdictRefusal,
   currentKnowledge,
   folderRefusal,
   isDependencyEdge,
@@ -252,6 +255,7 @@ export {
 import {
   NODE_ID,
   REPEATS_EDGE,
+  commandVerdictRefusal,
   currentKnowledge,
   folderRefusal,
   isDependencyEdge,
@@ -373,6 +377,10 @@ export function planWorkflowProposal(
     known,
   );
   if (!parsed.ok) return { ok: false, reason: parsed.error };
+  // Asked again at the click, for the re-normalization's reason: what is
+  // approved is what is saved, and a card names no command for a person to read.
+  const commandVerdict = commandVerdictRefusal(parsed.value.graph);
+  if (commandVerdict) return { ok: false, reason: commandVerdict };
   return { ok: true, input: parsed.value };
 }
 
@@ -8165,6 +8173,13 @@ export async function startReviewBlock(
     settleReviewByStatus(instanceId, node, nodeId, runIds);
     return;
   }
+  // A command verdict spends nothing either — it runs the block's own verify
+  // command and no model — so it crosses no budget boundary. It does await, so
+  // it asks after each await whether a halt has closed the block.
+  if (node.verdictSource?.kind === "command") {
+    await settleReviewByCommand(instanceId, node, nodeId, runIds, node.verdictSource.command);
+    return;
+  }
   const fixRounds = node.fixRounds ?? 0;
 
   // The workflow-wide guard, at this kind of block boundary — and always,
@@ -8267,6 +8282,68 @@ function settleReviewByStatus(
   seedReviewItems(instanceId, blockId, runIds);
   for (const runId of runIds) {
     const verdict = statusVerdict(getRun(runId)?.status ?? null);
+    if (verdict.kind === "approve") {
+      updateReviewItem(instanceId, blockId, runId, { status: "approved", note: null });
+    } else {
+      setAside(instanceId, blockId, runId, runId, verdict.reason, verdict.needsFrontier, node.name);
+    }
+  }
+  finishReviewBlock(instanceId, blockId, null);
+}
+
+/**
+ * A command verdict on every branch, one branch at a time, and the block
+ * settled: the block's verify command run in each branch's own checkout, a pass
+ * approved and everything else set aside with how it ended and the tail of its
+ * output.
+ *
+ * One at a time, where reviews go side by side: two test suites at once in one
+ * repository's checkouts share whatever the suite does not isolate — a port, a
+ * cache, a database file — and a branch set aside because a neighbour's suite
+ * held the port would be judged by the schedule rather than by its work. Each
+ * is bounded by `VERIFY_TIMEOUT_MS`, so a block is at most that per branch.
+ *
+ * Through `verifyBranchForReview`, Land's own two steps, so what the command
+ * sees is the run's checkout, clean and on its branch, kept from a later run
+ * until it returns. Through `setAside` with the verdict's `needsFrontier`,
+ * always false, so no task is marked or reopened — `statusVerdict`'s reason —
+ * and `committed_nothing` stays 0, since no diff is read.
+ *
+ * A halt or a shutdown is asked after every await, and ends the loop without a
+ * verdict. A command already running is not signalled by a halt: it is bounded
+ * by the timeout, what it says is discarded, and its slot is released as it
+ * returns. The shutdown's sweep of `runningVerifyChildren` is what ends one at
+ * exit. A retried block finds its rows, so a branch already judged is not run
+ * again.
+ */
+async function settleReviewByCommand(
+  instanceId: string,
+  node: WorkflowNode,
+  blockId: string,
+  runIds: readonly string[],
+  command: string,
+): Promise<void> {
+  seedReviewItems(instanceId, blockId, runIds);
+  for (const runId of runIds) {
+    if (!reviewStillOpen(instanceId, blockId)) return;
+    const item = reviewItemsOf(instanceId, blockId).find((i) => i.origin_run_id === runId);
+    if (item?.status !== "reviewing") continue;
+    const run = getRun(runId);
+    if (!run) {
+      setAside(instanceId, blockId, runId, runId, "its run has been deleted", false, node.name);
+      continue;
+    }
+    // Caught per branch, `driveReviewItem`'s rule: one branch git could not be
+    // asked about is not a reason to fail the block and every branch behind it.
+    const outcome = await verifyBranchForReview(run, command).catch((err: unknown) => ({
+      ran: false,
+      passed: false,
+      ending: "",
+      tail: "",
+      reason: `this app could not run it: ${err instanceof Error ? err.message : String(err)}`,
+    }));
+    if (!reviewStillOpen(instanceId, blockId)) return;
+    const verdict = commandVerdict(outcome);
     if (verdict.kind === "approve") {
       updateReviewItem(instanceId, blockId, runId, { status: "approved", note: null });
     } else {

@@ -922,6 +922,58 @@ describe("normalizeWorkflowInput — providers and review blocks", () => {
     );
   });
 
+  it("keeps a review block's verify command as typed, and refuses one parseVerifyCommand refuses", () => {
+    // The command is spawned in every branch's checkout with nobody looking, so
+    // the save is the one moment a person reads it back. Held to the same rule
+    // `landVerifyCommand` is: a shell line saved here would be a command the
+    // operator read one way and `runVerify` split another, or refused a pass in
+    // with every branch of it set aside.
+    const saved = (verdictSource: unknown, fixRounds: unknown = 0) =>
+      graph(
+        [node("a"), reviewer("r", { verdictSource, fixRounds }), merger("m")],
+        [edge("a", "r", { edge: "on-finish" }), edge("r", "m")],
+      );
+    const kept = value(saved({ kind: "command", command: "  npm  test  " })).graph.nodes.find(
+      (n) => n.id === "r",
+    )!;
+    assert.deepEqual(kept.verdictSource, { kind: "command", command: "npm  test" });
+
+    for (const shell of [
+      "npm test && npm run build",
+      "npm test; curl evil.example",
+      "sh -c $(cat x)",
+      "npm test > out.txt",
+      "npm test | tee log",
+    ]) {
+      assert.match(
+        error(saved({ kind: "command", command: shell })),
+        /^“R” judges each branch by a verify command, and a verify command is argv, never a shell line/,
+        shell,
+      );
+    }
+    for (const empty of ["", "   ", undefined, null]) {
+      assert.match(
+        error(saved({ kind: "command", command: empty })),
+        /^“R” judges each branch by a verify command, and no verify command is configured\.$/,
+        String(empty),
+      );
+    }
+    assert.match(
+      error(saved({ kind: "command", command: ["npm", "test"] })),
+      /^“R”: "verdictSource.command" has to be a string when it is given; got /,
+    );
+    // No fix rounds, `status`'s rule: nothing briefs a fix run with the failure.
+    assert.match(
+      error(saved({ kind: "command", command: "npm test" }, 1)),
+      /“R” judges each branch by its verify command[^]*Set its fix rounds to 0/,
+    );
+    // A command beside another kind is dropped unread, never run.
+    const status = value(saved({ kind: "status", command: "npm test" })).graph.nodes.find(
+      (n) => n.id === "r",
+    )!;
+    assert.deepEqual(status.verdictSource, { kind: "status" });
+  });
+
   it("refuses an on-success link into a review block that judges by run status", () => {
     // Behind on-success the first run that does not complete blocks the
     // block, which is the stop the status verdict exists to remove — and a Run
@@ -3468,6 +3520,34 @@ describe("planWorkflowProposal — a graph a model wrote becomes a saved workflo
       noCap.reason,
       error(graph([node("a", { kind: "orchestrator" })])),
     );
+  });
+
+  it("refuses a review block whose verdict is a verify command, which only a person saves", () => {
+    // `propose_workflow` refuses it first; this is the click that saves what a
+    // model wrote, and its card shows a review block as "no agent", so a person
+    // approving it would never have been shown the command.
+    const review = {
+      id: "r",
+      name: "Check",
+      kind: "review",
+      fixRounds: 0,
+      verdictSource: { kind: "command", command: "npm test" },
+    };
+    const plan = planWorkflowProposal(
+      proposal([node("a"), review, merger("m")], [edge("a", "r"), edge("r", "m")]),
+      KNOWN,
+    );
+    assert.ok(!plan.ok);
+    assert.match(plan.reason, /“Check” judges branches by a verify command, and only a person may save one/);
+
+    const byStatus = planWorkflowProposal(
+      proposal(
+        [node("a"), { ...review, verdictSource: { kind: "status" } }, merger("m")],
+        [edge("a", "r", { edge: "on-finish" }), edge("r", "m")],
+      ),
+      KNOWN,
+    );
+    assert.ok(byStatus.ok, byStatus.ok ? "" : byStatus.reason);
   });
 
   it("refuses a template deleted since the proposal was written, rather than falling back", () => {

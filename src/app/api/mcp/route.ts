@@ -49,6 +49,7 @@ import {
 } from "../../../lib/dreamingLedger";
 import { resolveKnowledgeRoot } from "../../../lib/knowledge";
 import {
+  commandVerdictRefusal,
   currentKnowledge,
   emitBlockRuns,
   emittedModelWork,
@@ -3106,6 +3107,12 @@ function proposeWorkflow(args: Record<string, unknown>, chatId: string) {
     known,
   );
   if (!parsed.ok) return text(parsed.error, true);
+
+  // Refused by name, `deliver`'s way above but asked of the normalized graph:
+  // a review block's verify command is a program this app runs in every
+  // branch's checkout, and only a person saves one. See `commandVerdictRefusal`.
+  const commandVerdict = commandVerdictRefusal(parsed.value.graph);
+  if (commandVerdict) return text(commandVerdict, true);
 
   const missing = folderRefusal(parsed.value.graph);
   if (missing) return text(missing, true);

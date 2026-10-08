@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   afterFixRun,
+  commandVerdict,
   fixRunPrompt,
   nextReviewStep,
   reviewBlockSummary,
@@ -133,6 +134,88 @@ describe("statusVerdict", () => {
   });
 });
 
+/**
+ * A review block whose verdict is a verify command saved on it. Silent both
+ * ways: anything but a pass read as one hands the merge a branch nothing
+ * checked — a timeout and a command that never ran are the two that look most
+ * like one — and a failure that drops its output sets a branch aside with
+ * nothing on the page saying what failed.
+ */
+describe("commandVerdict", () => {
+  const ran = { ran: true, passed: false, reason: "Land's sentence, never shown here." };
+
+  it("approves only a pass", () => {
+    assert.deepEqual(commandVerdict({ ...ran, passed: true, ending: "", tail: "ok" }), {
+      kind: "approve",
+    });
+  });
+
+  it("sets aside the pass `landVerdict` gives a blank command, which never ran", () => {
+    // Unconfigured is a pass at Land — no gate was asked for. Here it would be
+    // a branch handed on with nothing run against it.
+    assert.deepEqual(commandVerdict({ ran: false, passed: true, ending: "", tail: "", reason: "" }), {
+      kind: "set-aside",
+      reason: "it could not be verified: the block has no verify command to run",
+      needsFrontier: false,
+    });
+  });
+
+  it("sets a failing command aside with how it ended, and its output on the lines after", () => {
+    assert.deepEqual(
+      commandVerdict({ ...ran, ending: "exited 1", tail: "  2 tests failed\nsee above  " }),
+      {
+        kind: "set-aside",
+        reason: "its verify command exited 1\n2 tests failed\nsee above",
+        needsFrontier: false,
+      },
+    );
+    assert.deepEqual(commandVerdict({ ...ran, ending: "was killed by SIGTERM", tail: "boom" }), {
+      kind: "set-aside",
+      reason: "its verify command was killed by SIGTERM\nboom",
+      needsFrontier: false,
+    });
+  });
+
+  it("sets a timeout aside the same way, carrying what it printed before it was killed", () => {
+    const verdict = commandVerdict({
+      ...ran,
+      ending: "did not finish in time and was killed after 15 minutes",
+      tail: "running 412 tests",
+    });
+    assert.deepEqual(verdict, {
+      kind: "set-aside",
+      reason:
+        "its verify command did not finish in time and was killed after 15 minutes\nrunning 412 tests",
+      needsFrontier: false,
+    });
+  });
+
+  it("says so when the command printed nothing, rather than leaving a bare ending", () => {
+    assert.deepEqual(commandVerdict({ ...ran, ending: "exited 2", tail: "" }), {
+      kind: "set-aside",
+      reason: "its verify command exited 2, and printed nothing",
+      needsFrontier: false,
+    });
+  });
+
+  it("sets aside a command that never ran, with why, rather than reading it as a pass", () => {
+    assert.deepEqual(
+      commandVerdict({
+        ran: false,
+        passed: false,
+        ending: "",
+        tail: "",
+        reason: "A verify command is configured, but /w/slot no longer holds uf/x.",
+      }),
+      {
+        kind: "set-aside",
+        reason: "it could not be verified: A verify command is configured, but /w/slot no longer holds uf/x.",
+        needsFrontier: false,
+      },
+    );
+  });
+});
+
 describe("fixRunPrompt and reviewBlockSummary", () => {
   it("keeps the original brief first and the review under its own heading", () => {
     const prompt = fixRunPrompt("Do the task.", "## Risks\nThe default hides a bug.", 1, 2);
@@ -153,6 +236,17 @@ describe("fixRunPrompt and reviewBlockSummary", () => {
         { branch: "b", status: "set-aside", note: "still rejected after 2 fix round(s)" },
       ]),
       "Approved 1 of 2 branch(es); set aside b — still rejected after 2 fix round(s).",
+    );
+  });
+
+  it("names a set-aside branch by its note's first line, leaving a command's output to its row", () => {
+    // A verify command's tail is up to `VERIFY_TAIL_BYTES` a branch; carried
+    // into the block's one-paragraph note it buries the count it is there for.
+    assert.equal(
+      reviewBlockSummary([
+        { branch: "a", status: "set-aside", note: "its verify command exited 1\nFAIL x.test.ts\n1 failed" },
+      ]),
+      "Approved 0 of 1 branch(es); set aside a — its verify command exited 1.",
     );
   });
 });
