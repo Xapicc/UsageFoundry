@@ -143,6 +143,25 @@
   marker file where a real install has `node_modules`, and the later run's Land
   card was not looked at while its slot was switched.
 
+- **How often a batch of runs conflicts at landing, by batch size (2026-10-08,
+  git 2.39.5, main at `72f26f92`):** `python3 scripts/batch-landing-conflicts.py`
+  read every landing out of the target branches' reflogs, each run's base and
+  start out of its branch's reflog or its first transcript line, and recomputed
+  every `Merge branch '<target>' into uf/…` with `git merge-tree --write-tree`;
+  runs on one base commit starting within 45 minutes of each other are one batch.
+  The inferred bases agree with the branch reflog 204 of 206 and 193 of 193 times.
+  Since 2026-09-08, 18 batches of exactly 10 landed 179 of 180 runs, and 42 of
+  those landings (23%) first needed a conflicting back-merge — 17 of 103 (17%)
+  in batches of 1–5, 16 of 59 (27%) of 6–9. The rate climbs with the landings
+  the target took while a run worked: 0 of 128 at none, 5 of 26 at one, 20 of
+  65 at two or three, 29 of 84 at four to six, 21 of 47 at seven to ten. 45 of
+  the 76 conflicted landings conflicted in `docs/verification.md`. Caveat: a
+  batch is inferred, so a fan-out and runs a person started together off one
+  commit look alike; the split was checked at 20 and 90 minutes only (batches
+  of 10: 24%, 23%); the 212 runs older than any surviving ref or transcript are
+  grouped by base alone and left out of every rate here; and no batch above 11
+  exists, so a wider fan-out's rate is extrapolated, not measured.
+
 ## Not yet verified by hand
 
 - **The Land verify field was never saved**, so its check covers the form, not
