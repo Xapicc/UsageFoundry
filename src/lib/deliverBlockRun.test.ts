@@ -20,6 +20,13 @@ import { after, before, beforeEach, describe, it } from "node:test";
  * is not pushed again**, the Land card's own rule, because a second push would
  * update that pull request and then be refused by GitHub's "already exists".
  *
+ * A fourth, further down, is the retry: **a second try after a first that
+ * failed on one branch pushes only what the first missed**. That is the whole
+ * ground for offering the pick-up at all, and it holds only because
+ * `deliverBranch` asks `deliveredPullRequest` ahead of the push; a retry that
+ * pushed every branch again would update each pull request's branch and then be
+ * refused by GitHub, and nothing else would notice.
+ *
  * The pure half — what the outcome of several branches reads as — is pinned in
  * `workflows.test.ts`. This is the join those cannot reach: a real instance
  * row, the scheduler's claim, `deliverRun`'s own gates and the run's row.
@@ -129,12 +136,15 @@ beforeEach(() => {
   opened = [];
 });
 
-interface Scene {
+interface Branch {
   runId: string;
   repo: string;
   slot: string;
   branch: string;
   remote: string;
+}
+
+interface Scene extends Branch {
   instanceId: string;
 }
 
@@ -165,9 +175,12 @@ function graphNode(id: string, name: string, kind: "run" | "deliver") {
 /**
  * A finished run with one commit on its isolated branch, the operator's
  * checkout on `main`, `origin` reading as GitHub while pushing to a bare
- * repository — and a workflow instance with a deliver block waiting behind it.
+ * repository.
+ *
+ * The commit's file names the branch, so a verify command can refuse one branch
+ * and pass another from the tree it is run in.
  */
-function scene(name: string, opts: { commits?: boolean } = {}): Scene {
+function branchScene(name: string, opts: { commits?: boolean } = {}): Branch {
   const repo = path.join(root, MOUNT_DIR, name);
   fs.mkdirSync(repo);
   git(repo, "init", "-q", "-b", "main");
@@ -193,7 +206,7 @@ function scene(name: string, opts: { commits?: boolean } = {}): Scene {
   );
   git(repo, "worktree", "add", "-q", "-b", branch, slot);
   if (opts.commits !== false) {
-    fs.writeFileSync(path.join(slot, "shared.txt"), "branch\n");
+    fs.writeFileSync(path.join(slot, "shared.txt"), `branch ${name}\n`);
     git(slot, "commit", "-qam", "the run's work");
   }
 
@@ -207,10 +220,28 @@ function scene(name: string, opts: { commits?: boolean } = {}): Scene {
      VALUES (?, ?, 'do the thing', 'completed', '{}', 1, 1, ?, ?, 'worktree', ?, ?, ?, ?, ?, 'main')`,
   ).run(runId, repo, now, now, repo, slot, slot, branch, base);
 
+  return { runId, repo, slot, branch, remote };
+}
+
+/** A workflow instance with a deliver block `ship` waiting behind the given builds. */
+function instanceFor(
+  name: string,
+  builds: ReadonlyArray<{ id: string; branch: Branch }>,
+): string {
+  const now = Date.now();
+  const db = dbMod.db();
   const instanceId = `inst-${name}`;
   const graph = JSON.stringify({
-    nodes: [graphNode("build", "Build it", "run"), graphNode("ship", "Open the PR", "deliver")],
-    edges: [{ from: "build", to: "ship", edge: "on-success", continueBranch: false }],
+    nodes: [
+      ...builds.map((b) => graphNode(b.id, `Build ${b.id}`, "run")),
+      graphNode("ship", "Open the PR", "deliver"),
+    ],
+    edges: builds.map((b) => ({
+      from: b.id,
+      to: "ship",
+      edge: "on-success",
+      continueBranch: false,
+    })),
   });
   db.prepare(
     "INSERT INTO workflows (id, name, graph, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
@@ -219,27 +250,34 @@ function scene(name: string, opts: { commits?: boolean } = {}): Scene {
     `INSERT INTO workflow_instances (id, workflow_id, workflow_name, graph, created_at, status)
      VALUES (?, ?, ?, ?, ?, 'started')`,
   ).run(instanceId, `wf-${name}`, name, graph, now);
-  db.prepare(
-    "INSERT INTO workflow_instance_runs (instance_id, node_id, node_name, position, run_id)" +
-      " VALUES (?, 'build', 'Build it', 0, ?)",
-  ).run(instanceId, runId);
+  builds.forEach((b, position) => {
+    db.prepare(
+      "INSERT INTO workflow_instance_runs (instance_id, node_id, node_name, position, run_id)" +
+        " VALUES (?, ?, ?, ?, ?)",
+    ).run(instanceId, b.id, `Build ${b.id}`, position, b.branch.runId);
+  });
   db.prepare(
     "INSERT INTO workflow_instance_blocks (instance_id, node_id, node_name, position, kind, status)" +
-      " VALUES (?, 'ship', 'Open the PR', 1, 'deliver', 'waiting')",
-  ).run(instanceId);
+      " VALUES (?, 'ship', 'Open the PR', ?, 'deliver', 'waiting')",
+  ).run(instanceId, builds.length);
+  return instanceId;
+}
 
-  return { runId, repo, slot, branch, remote, instanceId };
+/** One branch and the instance whose deliver block waits behind it. */
+function scene(name: string, opts: { commits?: boolean } = {}): Scene {
+  const branch = branchScene(name, opts);
+  return { ...branch, instanceId: instanceFor(name, [{ id: "build", branch }]) };
 }
 
 /** The branch as the remote has it, or null when nothing was pushed. */
-function remoteTip(s: Scene): string | null {
+function remoteTip(s: Branch): string | null {
   const refs = git(s.remote, "for-each-ref", "--format=%(refname) %(objectname)").trim();
   const line = refs.split("\n").find((l) => l.startsWith(`refs/heads/${s.branch} `));
   return line ? line.split(" ")[1] : null;
 }
 
 /** Press the scheduler and wait for the deliver block to leave `waiting`/`thinking`. */
-async function settleBlock(s: Scene) {
+async function settleBlock(s: Pick<Scene, "instanceId">) {
   workflows.advanceInstances();
   const deadline = Date.now() + 20_000;
   for (;;) {
@@ -314,5 +352,170 @@ describe("a deliver block against a real repository", () => {
     assert.match(block.error ?? "", /Delivered 0 of 1 branch\(es\)\. Not delivered: uf\/verify — /);
     assert.equal(remoteTip(s), null);
     assert.deepEqual(opened, []);
+  });
+});
+
+/**
+ * Two branches behind one deliver block, with a verify command that refuses
+ * whichever branch is listed in the returned file.
+ *
+ * The command reads the commit's own file, which names its branch, because the
+ * check runs in the run's own tree and nothing else it can see tells the two
+ * apart.
+ */
+function twoBranchScene(name: string) {
+  const a = branchScene(`${name}-a`);
+  const b = branchScene(`${name}-b`);
+  const instanceId = instanceFor(name, [
+    { id: "build-a", branch: a },
+    { id: "build-b", branch: b },
+  ]);
+  const denyList = path.join(root, `${name}-deny.txt`);
+  const verify = path.join(root, `${name}-verify.js`);
+  fs.writeFileSync(
+    verify,
+    'const fs = require("node:fs");\n' +
+      'const denied = fs.readFileSync(process.argv[2], "utf8").split("\\n");\n' +
+      'process.exit(denied.includes(fs.readFileSync("shared.txt", "utf8").trim()) ? 1 : 0);\n',
+  );
+  settings.saveSettings({ landVerifyCommand: `${process.execPath} ${verify} ${denyList}` });
+  return {
+    a,
+    b,
+    instanceId,
+    deny: (...branches: Branch[]) =>
+      fs.writeFileSync(
+        denyList,
+        branches.map((x) => fs.readFileSync(path.join(x.slot, "shared.txt"), "utf8").trim()).join("\n"),
+      ),
+  };
+}
+
+const shipBlock = (instanceId: string) =>
+  workflows.blocksOf(instanceId).find((x) => x.nodeId === "ship")!;
+
+describe("retrying a deliver block that failed", () => {
+  it("pushes only the branch the first try missed, and the note still names both pull requests", async () => {
+    const s = twoBranchScene("retry");
+    s.deny(s.a);
+
+    const first = await settleBlock({ instanceId: s.instanceId });
+    assert.equal(first.status, "failed");
+    assert.match(first.error ?? "", /Delivered 1 of 2 branch\(es\)\./);
+    // The failed branch did not stop the one after it.
+    assert.deepEqual(opened, [{ head: s.b.branch, base: "main" }]);
+    assert.equal(remoteTip(s.a), null);
+    const bTip = remoteTip(s.b);
+    assert.notEqual(bTip, null);
+
+    const offered = workflows.pickUpsOf(workflows.getInstance(s.instanceId)!);
+    assert.deepEqual(
+      offered.map((p) => ({
+        kind: p.kind,
+        nodeId: "nodeId" in p ? p.nodeId : null,
+        retryRefusal: "retryRefusal" in p ? p.retryRefusal : "n/a",
+      })),
+      [{ kind: "deliver", nodeId: "ship", retryRefusal: null }],
+      "a failed deliver block is offered, as a failed merge block is, and nothing else is",
+    );
+
+    // What was wrong has been put right: the verify command passes both now.
+    s.deny();
+    assert.deepEqual(workflows.retryDeliverBlock(s.instanceId, "ship"), { ok: true });
+    const second = await settleBlock({ instanceId: s.instanceId });
+
+    assert.equal(second.status, "emitted", second.error ?? "");
+    assert.deepEqual(
+      opened,
+      [
+        { head: s.b.branch, base: "main" },
+        { head: s.a.branch, base: "main" },
+      ],
+      "the branch that already had a pull request was not opened a second time",
+    );
+    assert.equal(remoteTip(s.b), bTip, "and was not pushed again");
+    assert.notEqual(remoteTip(s.a), null);
+    // The retry's note replaces the first try's, so the first try's pull
+    // request has to be in it or the instance page loses its address.
+    assert.match(second.error ?? "", /Delivered 1 branch\(es\): .*\/pull\/72/);
+    assert.match(second.error ?? "", new RegExp(`${s.b.branch} — it already has pull request #71`));
+    assert.deepEqual(
+      workflows.pickUpsOf(workflows.getInstance(s.instanceId)!),
+      [],
+      "nothing is holding the workflow up once the retry has delivered",
+    );
+  });
+
+  it("fails again, and offers the retry again, while the branch is still refused", async () => {
+    const s = twoBranchScene("again");
+    s.deny(s.a);
+    assert.equal((await settleBlock({ instanceId: s.instanceId })).status, "failed");
+
+    assert.deepEqual(workflows.retryDeliverBlock(s.instanceId, "ship"), { ok: true });
+    const second = await settleBlock({ instanceId: s.instanceId });
+
+    assert.equal(second.status, "failed");
+    assert.match(second.error ?? "", /Not delivered: .*uf\/again-a/);
+    assert.equal(opened.length, 1, "the refused branch was asked again and refused again");
+    assert.equal(workflows.pickUpsOf(workflows.getInstance(s.instanceId)!).length, 1);
+  });
+
+  it("refuses once a block behind it has started, in the sentence the list gives", () => {
+    const s = twoBranchScene("started");
+    const db = dbMod.db();
+    const after = branchScene("started-after");
+    const row = db
+      .prepare("SELECT graph FROM workflow_instances WHERE id = ?")
+      .get(s.instanceId) as { graph: string };
+    const graph = JSON.parse(row.graph) as {
+      nodes: unknown[];
+      edges: unknown[];
+    };
+    graph.nodes.push(graphNode("after", "Then this", "run"));
+    graph.edges.push({ from: "ship", to: "after", edge: "on-finish", continueBranch: false });
+    db.prepare("UPDATE workflow_instances SET graph = ? WHERE id = ?").run(
+      JSON.stringify(graph),
+      s.instanceId,
+    );
+    db.prepare(
+      "INSERT INTO workflow_instance_runs (instance_id, node_id, node_name, position, run_id)" +
+        " VALUES (?, 'after', 'Then this', 3, ?)",
+    ).run(s.instanceId, after.runId);
+    db.prepare(
+      "UPDATE workflow_instance_blocks SET status='failed', error='x' WHERE instance_id=? AND node_id='ship'",
+    ).run(s.instanceId);
+
+    const refusal = workflows.retryDeliverBlock(s.instanceId, "ship");
+
+    assert.equal(refusal.ok, false);
+    assert.equal(!refusal.ok && refusal.status, 409);
+    assert.match(
+      !refusal.ok ? refusal.error : "",
+      /“Then this” has already started after “Open the PR” failed, so retrying it now would push work/,
+    );
+    assert.equal(shipBlock(s.instanceId).status, "failed", "nothing was written");
+    const offered = workflows.pickUpsOf(workflows.getInstance(s.instanceId)!);
+    assert.equal(offered.length, 1);
+    assert.equal("retryRefusal" in offered[0] && offered[0].retryRefusal, "“Then this” has already started after it failed.");
+  });
+
+  it("refuses a block that is not failed, and a block of another kind", () => {
+    const s = twoBranchScene("refuse");
+
+    const waiting = workflows.retryDeliverBlock(s.instanceId, "ship");
+    assert.equal(waiting.ok, false);
+    assert.match(
+      !waiting.ok ? waiting.error : "",
+      /“Open the PR” is waiting, so there is no failed delivery to retry\./,
+    );
+    assert.equal(shipBlock(s.instanceId).status, "waiting");
+
+    const notABlock = workflows.retryDeliverBlock(s.instanceId, "build-a");
+    assert.equal(!notABlock.ok && notABlock.status, 404);
+    assert.equal(
+      workflows.retryMergeBlock(s.instanceId, "ship").ok,
+      false,
+      "the merge door does not open a deliver block, so a stale button cannot cross them",
+    );
   });
 });

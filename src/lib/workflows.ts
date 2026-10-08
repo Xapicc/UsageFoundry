@@ -5412,11 +5412,16 @@ export type PickUp =
       leaveBehindRefusal: string | null;
     }
   | {
-      kind: "merge";
+      /**
+       * A merge or deliver block that ended `failed`. One member for both
+       * because the door is one: `retryExitBlock` takes either back to `waiting`
+       * under the same two guards, and the page words each press by `kind`.
+       */
+      kind: "merge" | "deliver";
       nodeId: string;
       nodeName: string;
       error: string | null;
-      /** Why `retryMergeBlock` would refuse it, or null when it would not. */
+      /** Why `retryMergeBlock` or `retryDeliverBlock` would refuse it, or null when it would not. */
       retryRefusal: string | null;
     }
   | {
@@ -5443,8 +5448,9 @@ export type PickUp =
 
 /**
  * What is holding this workflow run up — each run whose ending wrote off
- * something behind it, each merge block that failed and each orchestrator block
- * whose deciding turn failed — for the page to offer one at a time.
+ * something behind it, each merge or deliver block that failed and each
+ * orchestrator block whose deciding turn failed — for the page to offer one at
+ * a time.
  *
  * Answered here rather than on the page, because "did this ending write
  * anything off" is the revive's own reachability and the refusals are the
@@ -5508,12 +5514,12 @@ export function pickUpsOf(instance: WorkflowInstance): PickUp[] {
     });
   }
   for (const block of instance.blocks) {
-    if (block.kind !== "merge" || block.status !== "failed") continue;
+    if ((block.kind !== "merge" && block.kind !== "deliver") || block.status !== "failed") continue;
     const pass = passMemberIn(instance.graph, block.nodeId);
     if (pass && stoppedPasses.get(pass.loopNodeId) !== pass.pass) continue;
     const started = pass ? null : startedBehind(instance, block.nodeId);
     out.push({
-      kind: "merge",
+      kind: block.kind,
       nodeId: block.nodeId,
       nodeName: block.nodeName,
       error: block.error,
@@ -5546,7 +5552,7 @@ export function pickUpsOf(instance: WorkflowInstance): PickUp[] {
     const named = out.some((p) => {
       const id = p.kind === "run"
         ? instance.nodes.find((n) => n.runId === p.runId)?.nodeId
-        : p.kind === "merge" || p.kind === "orchestrator" ? p.nodeId : undefined;
+        : p.kind === "loop" ? undefined : p.nodeId;
       const member = id ? passMemberIn(instance.graph, id) : null;
       return member?.loopNodeId === loop.nodeId && member.pass === pass;
     });
@@ -5767,28 +5773,72 @@ export function leaveRunBehind(instanceId: string, runId: string): PickUpOutcome
  * a run left behind since the failure is not landed now.
  */
 export function retryMergeBlock(instanceId: string, nodeId: string): PickUpOutcome {
+  return retryExitBlock(instanceId, nodeId, "merge");
+}
+
+/**
+ * Run a deliver block that failed again, pushing whatever of its branches has
+ * no pull request yet.
+ *
+ * Safe to repeat for a reason of delivery's own: `deliverBranch` asks
+ * `deliveredPullRequest` before anything else, so a branch the first try opened
+ * a pull request for is skipped — not pushed again, which GitHub would refuse as
+ * "already exists" after updating the branch — and the second try pushes only
+ * what the first missed. The way through a failure that was not about the
+ * branch (a run working in the folder, a held `landing` claim, a token set since,
+ * a verify gate the operator has fixed) is then one press.
+ *
+ * The runs it delivers are resolved again from its edges, as a merge retry's
+ * are, so a run left behind since the failure is not delivered now. The block's
+ * note is rewritten by the second try, and still names every pull request: a
+ * branch the first try opened one for is reported as skipped with its address.
+ */
+export function retryDeliverBlock(instanceId: string, nodeId: string): PickUpOutcome {
+  return retryExitBlock(instanceId, nodeId, "deliver");
+}
+
+/**
+ * The two exits' retry, written once: a failed merge or deliver block back to
+ * `waiting`, under the guards both share. Neither is restated per kind because
+ * the guards are about the graph around the block and not about what it does —
+ * whether anything behind it has started, and whether the loop pass it sits in
+ * can be taken back — and a copy that drifted would offer a press the list
+ * refuses or refuse one it offers. A deliver block cannot be in a section, so
+ * the pass arm is unreachable for it today; it is kept rather than special-cased
+ * so lifting that rule does not need this to be remembered.
+ */
+function retryExitBlock(
+  instanceId: string,
+  nodeId: string,
+  kind: "merge" | "deliver",
+): PickUpOutcome {
   const opened = openInstanceFor(instanceId);
   if ("refusal" in opened) return opened.refusal;
   const { instance } = opened;
 
-  const block = instance.blocks.find((b) => b.nodeId === nodeId && b.kind === "merge");
+  const block = instance.blocks.find((b) => b.nodeId === nodeId && b.kind === kind);
   if (!block) {
-    return { ok: false, status: 404, error: "That merge block is not part of this workflow run." };
+    return { ok: false, status: 404, error: `That ${kind} block is not part of this workflow run.` };
   }
   if (block.status !== "failed") {
     return {
       ok: false,
       status: 409,
-      error: `“${block.nodeName}” is ${block.status}, so there is no failed merge to retry.`,
+      error: `“${block.nodeName}” is ${block.status}, so there is no failed ${
+        kind === "merge" ? "merge" : "delivery"
+      } to retry.`,
     };
   }
 
   const pass = passMemberIn(instance.graph, nodeId);
+  const started = pass ? null : startedBehind(instance, nodeId);
   const refusal = pass
     ? loopPassRefusal(instance, pass.loopNodeId, pass.pass)
-    : startedBehind(instance, nodeId) === null
+    : started === null
       ? null
-      : `“${startedBehind(instance, nodeId)}” has already started after “${block.nodeName}” failed, so retrying it now would land work behind a block that has moved on.`;
+      : `“${started}” has already started after “${block.nodeName}” failed, so retrying it now would ${
+          kind === "merge" ? "land" : "push"
+        } work behind a block that has moved on.`;
   if (refusal) return { ok: false, status: 409, error: refusal };
 
   db().transaction(() => {
