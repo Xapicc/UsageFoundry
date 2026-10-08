@@ -99,6 +99,44 @@ export function statusVerdict(status: string | null): StatusVerdict {
   };
 }
 
+/** A command verdict on one branch: approved, or set aside and never marked. */
+export type CommandVerdict =
+  | { kind: "approve" }
+  | { kind: "set-aside"; reason: string; needsFrontier: false };
+
+/**
+ * A review block whose verdict source is `command` judges a branch by its
+ * verify command: a pass is approved, and everything else is set aside.
+ *
+ * Everything else includes a timeout and a command that never ran — a slot a
+ * later run took over, uncommitted edits, a branch that moved under it — for
+ * `landVerdict`'s reason: "could not check" read as a pass hands on a branch
+ * nothing looked at. A command that ran says how it ended on the first line and
+ * carries the tail of what it printed on the lines after it, so the instance
+ * page can show the failure and the block's note can stay one line a branch.
+ *
+ * Never needs-frontier, `statusVerdict`'s reason: no model judged the work, and
+ * a red test suite is not evidence a local model cannot do the task.
+ */
+export function commandVerdict(outcome: {
+  passed: boolean;
+  /** How a command that ran ended — see `VerifyOutcome` — or `""`. */
+  ending: string;
+  tail: string;
+  /** Why it could not run, read when `ending` is `""`. */
+  reason: string;
+}): CommandVerdict {
+  if (outcome.passed) return { kind: "approve" };
+  const tail = outcome.tail.trim();
+  return {
+    kind: "set-aside",
+    reason: outcome.ending
+      ? `its verify command ${outcome.ending}` + (tail ? `\n${tail}` : ", and printed nothing")
+      : `it could not be verified: ${outcome.reason}`,
+    needsFrontier: false,
+  };
+}
+
 /** What becomes of one branch after its fix run settles. */
 export type FixStep =
   | { kind: "review" }
@@ -166,6 +204,15 @@ export function fixRunPrompt(
   ].join("\n");
 }
 
+/**
+ * A branch's note as the block's summary names it: the first line, because a
+ * verify command's output follows that line on lines of its own and is on the
+ * branch's own row of the instance page.
+ */
+function firstLine(note: string | null): string | null {
+  return note === null ? null : note.split("\n", 1)[0];
+}
+
 /** How a finished review block describes itself, for its row and its page. */
 export function reviewBlockSummary(
   items: readonly { branch: string; status: string; note: string | null }[],
@@ -176,7 +223,7 @@ export function reviewBlockSummary(
   if (aside.length === 0) return `Approved all ${approved} branch(es).`;
   return (
     `Approved ${approved} of ${items.length} branch(es); set aside ` +
-    aside.map((i) => `${i.branch} — ${i.note ?? "no reason recorded"}`).join("; ") +
+    aside.map((i) => `${i.branch} — ${firstLine(i.note) ?? "no reason recorded"}`).join("; ") +
     "."
   );
 }

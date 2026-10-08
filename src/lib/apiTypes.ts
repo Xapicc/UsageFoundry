@@ -2240,18 +2240,27 @@ export const MAX_REVIEW_FIX_ROUNDS = 3;
  * Where a review block's verdict on each branch comes from. `model` is the
  * frontier review, billed per branch. `status` reads how each run ended: a
  * `completed` one is approved and any other ending is set aside, with no model
- * and no spend.
+ * and no spend. `command` runs a verify command saved on the block in each
+ * branch's own checkout: exit 0 approves, and anything else — a timeout
+ * included — sets the branch aside with the tail of its output.
  *
  * An object keyed on `kind` rather than a bare word, so a source that carries a
- * setting of its own — a saved command to run — is one more member here rather
+ * setting of its own — `command`'s argv line — is one more member here rather
  * than a second field beside this one that every reader has to pair with it.
+ *
+ * `command` is a person's to save and nobody else's: it is a program this app
+ * runs, and `propose_workflow` refuses a graph carrying one by name.
  */
-export type ReviewVerdictSourceDTO = { kind: "model" } | { kind: "status" };
+export type ReviewVerdictSourceDTO =
+  | { kind: "model" }
+  | { kind: "status" }
+  | { kind: "command"; command: string };
 
 /** Every `ReviewVerdictSourceDTO` kind, in the order the editor offers them. */
 export const REVIEW_VERDICT_KINDS: readonly ReviewVerdictSourceDTO["kind"][] = [
   "model",
   "status",
+  "command",
 ];
 
 /** How a branch is put onto its target. `settings.landStrategy`'s vocabulary. */

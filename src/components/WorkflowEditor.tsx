@@ -291,6 +291,7 @@ const DEFAULT_FIX_ROUNDS = "1";
 const VERDICT_LABEL: Record<ReviewVerdictSourceDTO["kind"], string> = {
   model: "A frontier review",
   status: "How each run ended",
+  command: "A verify command",
 };
 
 /** The width a control takes in the inspector's rows. See `ui/Field`'s note:
