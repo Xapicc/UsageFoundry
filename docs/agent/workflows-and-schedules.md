@@ -28,6 +28,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - A workflow instance is halted through one door, and the door is closed before anything is signalled.
 - Four of an instance's six readings are derived, and `started` is not a word for a press of Run that is over.
 - A stuck workflow run is picked up one named obstacle at a time, and never through a halt.
+- The page that presses Run states the refusal to press it again before it is pressed, and the instance it links is found in both halves of the graph.
 
 ## [The instance budget and the instance total](workflows-and-schedules/instance-budget.md)
 

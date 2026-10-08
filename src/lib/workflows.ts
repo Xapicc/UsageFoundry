@@ -943,6 +943,15 @@ function normalizeSpec(
 ): SpecNormalization {
   const e = (entry ?? {}) as Record<string, unknown>;
   const where = `Run ${index + 1}`;
+  // Asked before the `String(…)` that reads each one, which turned `{…}` into a
+  // task of "[object Object]" and `["reviewer"]` into the agent inside the
+  // list — a run started as something the turn did not write, by a block
+  // nobody reads. Absent and null are still absent: each is judged below for
+  // what it always was.
+  for (const field of ["id", "title", "task", "folder", "agent"]) {
+    const notString = notStringRefusal(field, e[field]);
+    if (notString) return { ok: false, reason: `${where}: ${notString}` };
+  }
     const id = String(e.id ?? "").trim();
     if (!NODE_ID.test(id)) {
       return {
@@ -3251,6 +3260,39 @@ export function getInstance(id: string): WorkflowInstance | null {
   return row ? rowToInstance(row) : null;
 }
 
+/** Which workflow, press of Run and block a run belongs to. */
+export interface RunWorkflowOrigin {
+  workflowId: string;
+  workflowName: string;
+  instanceId: string;
+  nodeName: string;
+}
+
+/**
+ * The press of Run and the block a run was made for, or null for every run that
+ * is no member of an instance — and for a member whose workflow has since been
+ * deleted, because the instance goes with it and a link to it would be a 404.
+ *
+ * Read off the membership row rather than `runs.origin_ref`, which holds an
+ * instance id, a schedule id or a node id depending on `origin`: a run a
+ * schedule fired and a run an orchestrator block emitted are both members, and
+ * only this row says of which instance. One indexed lookup on `run_id`, and the
+ * run's own route is its one caller — the runs list would pay it a row, so it
+ * draws no link. Provenance, never authority: nothing decides on the answer.
+ */
+export function workflowOriginOf(runId: string): RunWorkflowOrigin | null {
+  const row = db()
+    .prepare(
+      `SELECT i.workflow_id AS workflowId, i.workflow_name AS workflowName,
+              i.id AS instanceId, w.node_name AS nodeName
+         FROM workflow_instance_runs w
+         JOIN workflow_instances i ON i.id = w.instance_id
+        WHERE w.run_id = ?`,
+    )
+    .get(runId) as RunWorkflowOrigin | undefined;
+  return row ?? null;
+}
+
 /**
  * Runs this workflow started that have not finished.
  *
@@ -3305,6 +3347,53 @@ export function liveBlocksOf(workflowId: string): number {
     )
     .get(workflowId, ...LIVE_BLOCK_STATUSES) as { n: number };
   return row.n;
+}
+
+/**
+ * The press of Run that `startWorkflow` is refusing a second one on account of,
+ * or null when nothing from this workflow is going.
+ *
+ * Asked of both halves at once rather than composed from `liveRunsOf` and
+ * `liveBlocksOf`, because the instance a person needs to be sent to is not
+ * always the one with a live run: a block still deciding, or a loop between two
+ * passes, keeps the refusal standing with no run in flight anywhere, and a
+ * lookup over runs alone would answer null — a page that says it cannot be
+ * started again and names nothing to open. It reads the same two status lists
+ * the counts do, so the three cannot disagree about what "going" means.
+ *
+ * One answer, though the gate above is meant to leave at most one instance
+ * going. Rows written before that gate existed can say otherwise, and the
+ * newest is the one worth opening: it is the press whose runs are still being
+ * created.
+ */
+export function liveInstanceIdOf(workflowId: string): string | null {
+  const row = db()
+    .prepare(
+      `SELECT i.id AS id
+         FROM workflow_instances i
+        WHERE i.workflow_id = ?
+          AND (
+            EXISTS (
+              SELECT 1
+                FROM workflow_instance_runs w
+                JOIN runs r ON r.id = w.run_id
+               WHERE w.instance_id = i.id
+                 AND r.status IN (${LIVE_STATUSES.map(() => "?").join(",")})
+            )
+            OR EXISTS (
+              SELECT 1
+                FROM workflow_instance_blocks b
+               WHERE b.instance_id = i.id
+                 AND b.status IN (${LIVE_BLOCK_STATUSES.map(() => "?").join(",")})
+            )
+          )
+        ORDER BY i.created_at DESC, i.id DESC
+        LIMIT 1`,
+    )
+    .get(workflowId, ...LIVE_STATUSES, ...LIVE_BLOCK_STATUSES) as
+    | { id: string }
+    | undefined;
+  return row?.id ?? null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -6529,7 +6618,10 @@ async function startBlockTurn(instanceId: string, nodeId: string): Promise<void>
       // `emitBlockRuns`' own check describe one list.
       listAgents(),
     ),
-    cwd: safeFolder(node),
+    // Named and `--add-dir`ed, never stood in: in a repository the CLI's own
+    // startup `git status` runs filters a work cycle can plant (board task
+    // `7764bc65`).
+    folder: safeFolder(node),
     // What this deciding turn *is*, not a specialist it may call on: the node's
     // agent is selected with `--agent`, so the saved prompt is the turn's own.
     // Everything bounding this child — its tool surface, its capability token,

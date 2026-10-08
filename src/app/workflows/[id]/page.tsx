@@ -10,7 +10,6 @@ import type {
   WorkflowInstanceDTO,
 } from "@/lib/apiTypes";
 import { boardThresholds } from "@/lib/apiTypes";
-import type { BadgeTone } from "@/lib/format";
 import {
   EDGE_CHIP_LABEL,
   fmtBoardThresholds,
@@ -18,6 +17,9 @@ import {
   fmtPct,
   fmtUSD,
   guardBadge,
+  INSTANCE_OUTCOME_LABEL,
+  INSTANCE_OUTCOME_TONE,
+  instanceOutcomeDetail,
   pollFailureMessage,
 } from "@/lib/format";
 import { worstCaseRuns } from "@/lib/canvasGraph";
@@ -42,64 +44,6 @@ import { WorkflowSchedule } from "@/components/WorkflowSchedule";
 
 const POLL_MS = 10_000;
 
-type InstanceStatus = WorkflowInstanceDTO["status"];
-
-/**
- * What one press of Run is called on the page.
- *
- * "working" rather than "started", which is what this said for every unhalted
- * instance — a graph that finished an hour ago, one whose tail was written off
- * and one with an agent spending in it right now all read `started` and all
- * wore the same green badge. The word an operator acts on is whether anything
- * is still going, so that is the word.
- */
-const OUTCOME_LABEL: Record<InstanceStatus, string> = {
-  started: "working",
-  finished: "finished",
-  blocked: "blocked",
-  failed: "not started",
-  stopping: "stopping",
-  stopped: "stopped",
-};
-
-const OUTCOME_TONE: Record<InstanceStatus, BadgeTone> = {
-  started: "accent",
-  finished: "ok",
-  blocked: "warn",
-  failed: "danger",
-  stopping: "warn",
-  stopped: "warn",
-};
-
-/**
- * The clause after the badge, or nothing.
- *
- * `finished` has none on purpose: the badge is the whole fact, and the Runs
- * column beside it already carries the count. Every other reading leaves a
- * question the badge cannot answer — how much is still going, how much never
- * ran, who stopped it.
- */
-function outcomeDetail(inst: WorkflowInstanceDTO): string | null {
-  switch (inst.status) {
-    case "started":
-      return `${inst.liveRunCount} block(s) working`;
-    case "blocked":
-      return `${inst.blockedCount} block(s) never ran`;
-    case "failed":
-      return inst.error;
-    case "stopping":
-      return `${inst.liveRunCount} block(s) still finishing`;
-    case "stopped":
-      return inst.stopCause === "guard"
-        ? "by its budget guard"
-        : inst.stopCause === "fleet"
-          ? "with everything in flight"
-          : "by you";
-    case "finished":
-      return null;
-  }
-}
-
 /**
  * A limit's value at the right edge of its row.
  *
@@ -116,12 +60,18 @@ function LimitValue({ set, children }: { set: boolean; children: ReactNode }) {
   );
 }
 
+/** What Run's `aria-describedby` points at while an earlier press is live. */
+const LIVE_NOTICE_ID = "workflow-live-notice";
+
 export default function WorkflowPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
   const router = useRouter();
 
   const [workflow, setWorkflow] = useState<WorkflowDTO | null>(null);
+  // False until a read says otherwise: the notice it gates is an addition to a
+  // page that works, and a poll that has not answered yet is not a hold.
+  const [newWorkPaused, setNewWorkPaused] = useState(false);
   const [instances, setInstances] = useState<WorkflowInstanceDTO[]>([]);
   // What the poll asks for, and what came back. The second is the server's own
   // reading of the first — it clamps an offset past the end — so the readout and
@@ -159,6 +109,7 @@ export default function WorkflowPage() {
       });
       const data = (await res.json().catch(() => ({}))) as {
         workflow?: WorkflowDTO;
+        newWorkPaused?: boolean;
         instances?: WorkflowInstanceDTO[];
         total?: number;
         offset?: number;
@@ -173,6 +124,7 @@ export default function WorkflowPage() {
         return;
       }
       setWorkflow(data.workflow);
+      setNewWorkPaused(data.newWorkPaused === true);
       setInstances(data.instances ?? []);
       // No pager rather than one that steps by a guess: a payload missing either
       // figure cannot say where this page sits or how far the next one is.
@@ -336,6 +288,8 @@ export default function WorkflowPage() {
     );
   }
 
+  const runIsRefused = (workflow.liveRunCount ?? 0) > 0;
+
   return (
     <>
       <div className="mb-6">
@@ -358,10 +312,15 @@ export default function WorkflowPage() {
               than Duplicate beside it. The sheet behind it is unchanged and is
               still what actually confirms. */}
           <ButtonRow>
+            {/* Off while an earlier press is still going, with the notice below
+                as its stated reason. The refusal itself stays `startWorkflow`'s:
+                this reads the same fact a poll earlier, so the 400 is left for
+                the press that races it. */}
             <Button
               onClick={() => act("run", `/api/workflows/${id}/run`, "POST")}
               busy={busy === "run"}
-              disabled={busy !== null}
+              disabled={busy !== null || runIsRefused}
+              aria-describedby={runIsRefused ? LIVE_NOTICE_ID : undefined}
             >
               Run
             </Button>
@@ -427,11 +386,29 @@ export default function WorkflowPage() {
         themselves are untouched.
       </Sheet>
 
-      {(workflow.liveRunCount ?? 0) > 0 && (
-        <Notice tone="info">
-          {workflow.liveRunCount} run(s) from this workflow have not finished. It
-          cannot be started again until they do.
+      {/* Held rather than refused, so Run stays pressable: the runs are
+          recorded and wait in the queue, which is the one thing the operator
+          cannot see from here without this. The wording is the dashboard's. */}
+      {newWorkPaused && (
+        <Notice tone="warn">
+          <strong>New work is held.</strong> Run records the runs, and they wait
+          in the queue until the hold is lifted.{" "}
+          <Link href="/runs">Resume it on the runs page</Link>.
         </Notice>
+      )}
+
+      {runIsRefused && (
+        <div id={LIVE_NOTICE_ID}>
+          <Notice tone="info">
+            {workflow.liveRunCount} run(s) from this workflow have not finished, so
+            it cannot be started again until they do.{" "}
+            {workflow.liveInstanceId && (
+              <Link href={`/workflows/${id}/instances/${workflow.liveInstanceId}`}>
+                Open the one still going
+              </Link>
+            )}
+          </Notice>
+        </div>
       )}
 
       {/* Above the blocks, because it is the one thing on this page that bounds
@@ -472,6 +449,7 @@ export default function WorkflowPage() {
       <WorkflowSchedule
         workflowId={id}
         schedule={workflow.schedule ?? null}
+        newWorkPaused={newWorkPaused}
         onChanged={load}
       />
 
@@ -743,10 +721,10 @@ export default function WorkflowPage() {
                         labelPlacement="above"
                         className="align-top text-ink-muted"
                       >
-                        <Badge tone={OUTCOME_TONE[inst.status]}>
-                          {OUTCOME_LABEL[inst.status]}
+                        <Badge tone={INSTANCE_OUTCOME_TONE[inst.status]}>
+                          {INSTANCE_OUTCOME_LABEL[inst.status]}
                         </Badge>{" "}
-                        {outcomeDetail(inst)}
+                        {instanceOutcomeDetail(inst)}
                       </Td>
                       <Td num label="Runs" className="align-top text-ink-muted">
                         {inst.nodes.length}

@@ -274,6 +274,14 @@ export interface LandState {
    * well as Land, like `certification`.
    */
   seeded: SeededRead | null;
+  /**
+   * Why a resolution of this branch's conflict is refused before it is bought,
+   * or null. Set only beside a conflict, so `blocked` is that conflict or a
+   * refusal ahead of it: a branch carrying a seeded file, which `landRun`
+   * refuses whatever a resolution does. `startResolution` refuses on it and the
+   * card withholds Resolve on it, so the two give one sentence.
+   */
+  resolveBlocked: string | null;
   landedAt: number | null;
   landedInto: string | null;
   landedStrategy: string | null;
@@ -579,6 +587,7 @@ export async function landState(
     blocked: null,
     certification: NOT_REQUIRED,
     seeded: null,
+    resolveBlocked: null,
     landedAt: run.landed_at,
     landedInto: run.landed_into,
     landedStrategy: run.landed_strategy,
@@ -610,7 +619,8 @@ export async function landState(
   // Read alongside the checkout rather than behind a landable branch: a run
   // that could not commit has *nothing* on its branch, which is exactly the
   // state this answers, and the card has to be able to say so.
-  const pending = await pendingWork(run);
+  const slot = await slotState(run);
+  const pending = pendingWork(run, slot);
   const target = await targetOf(run, repoRoot, checkout);
   // Both refusals below still leave the branch purgeable, and the Purge sheet
   // states this figure as what goes — so it is counted from where the run
@@ -717,6 +727,13 @@ export async function landState(
     checkout,
     pending,
     seeded,
+    // The merge queue's `planItem` makes the same decision for a queued row.
+    // Taking the file out rewrites the history a resolution is bought against,
+    // and its commits change nothing about the file.
+    resolveBlocked:
+      preview.outcome === "conflict"
+        ? seededRefusal(seeded, { branch, target: target.branch, exit: "land" })
+        : null,
   };
   return {
     ...state,
@@ -736,6 +753,11 @@ export async function landState(
         target: target.branch,
         exit: "land",
       }) ??
+      // The gate's refusals that need no command run, which a press met only
+      // after the card had drawn Land. Off the slot read above, so the card's
+      // poll pays nothing for it. Ahead of the review, because finishing a
+      // rebase or committing what is there moves the tip.
+      verifyTreeRefusal(run, slot) ??
       certificationRefusal(state.certification, "land"),
   };
 }
@@ -1934,11 +1956,22 @@ export async function landRun(
         const unwound = await unwind(folder, strategy, true);
         const why = commit.stderr.split("\n")[0] || "unknown error";
         const what = strategy === "squash" ? "squash" : "merge";
+        if (unwound !== "restored") {
+          return {
+            ok: false,
+            reason: `The ${what} could not be committed and could not be rolled back, so it is still staged in your checkout — look at git status there before anything else: ${why}`,
+          };
+        }
+        // The same cause as a merge refused at the lock, so the same sentence:
+        // which git step met the other process is not the operator's business,
+        // and only `lockRefusal` says a lock left by a crashed git is theirs to
+        // remove. Asked once the tree is proved restored, `mergeRefusal`'s rule.
+        const lock = heldLock(commit.stderr);
         return {
           ok: false,
-          reason: unwound === "restored"
-            ? `The ${what} could not be committed and was rolled back: ${why}`
-            : `The ${what} could not be committed and could not be rolled back, so it is still staged in your checkout — look at git status there before anything else: ${why}`,
+          reason: lock
+            ? lockRefusal(lock)
+            : `The ${what} could not be committed and was rolled back: ${why}`,
         };
       }
     }
@@ -2172,8 +2205,9 @@ function mergeRefusal(
  * the same contention as "Unable to write index.", which a full disk or a
  * read-only `.git` also print, so that one keeps the plain refusal rather than
  * telling the operator to wait out a process that is not there. A held ref
- * lock refuses a fast-forward only after it has written the tree, so "nothing
- * was merged" is true of it only because `mergeRefusal` asks this once
+ * lock refuses a fast-forward only after it has written the tree, and a squash
+ * at its commit after staging it, so "nothing was merged" is true of either
+ * only because `mergeRefusal` and `landRun`'s refused commit ask this once
  * `unwind` has proved the checkout restored.
  */
 function heldLock(stderr: string): string | null {
@@ -2770,6 +2804,9 @@ async function startResolution(
           : `${state.branch} does not conflict with ${state.target}, so there is nothing to resolve.`,
     };
   }
+  // Before the spawn, because a resolution is billed and `landRun` refuses the
+  // branch it leaves on the file it still carries.
+  if (state.resolveBlocked) return { ok: false, reason: state.resolveBlocked };
 
   const refusal = await assistRefusal();
   if (refusal) return { ok: false, reason: refusal };
@@ -3530,8 +3567,7 @@ async function slotState(run: RunRow): Promise<SlotState> {
 }
 
 /** What the land card shows about uncommitted work, or nothing to show. */
-async function pendingWork(run: RunRow): Promise<PendingWork | null> {
-  const slot = await slotState(run);
+function pendingWork(run: RunRow, slot: SlotState): PendingWork | null {
   if (!slot.path) return null;
   // A slot mid-operation is detached, so the branch comparison below would drop
   // it, and it is still this run's — the state is the news, whatever is in it.
@@ -3693,7 +3729,11 @@ export function verifyTreeVerdict(s: {
 
 /** `verifyTreeVerdict` against the slot as it stands now. */
 async function verifyTree(run: RunRow): Promise<VerifyTree> {
-  const slot = await slotState(run);
+  return verifyTreeIn(run, await slotState(run));
+}
+
+/** `verifyTreeVerdict` against a slot already read. */
+function verifyTreeIn(run: RunRow, slot: SlotState): VerifyTree {
   return verifyTreeVerdict({
     slotPath: slot.path,
     checkedOutBranch: slot.checkedOutBranch,
@@ -3702,6 +3742,19 @@ async function verifyTree(run: RunRow): Promise<VerifyTree> {
     detached: slot.detached,
     uncommitted: slot.readable ? slot.files.map((f) => f.path) : null,
   });
+}
+
+/**
+ * Why the verify gate would refuse before running anything, for `landState`
+ * to say before Land is pressed — or null, always with no command configured.
+ *
+ * `landRun` still asks `verifyTree` of a fresh read before the command runs;
+ * this is the same verdict off the read the card's poll already makes.
+ */
+function verifyTreeRefusal(run: RunRow, slot: SlotState): string | null {
+  if (!getSettings().landVerifyCommand.trim()) return null;
+  const tree = verifyTreeIn(run, slot);
+  return tree.ok ? null : tree.reason;
 }
 
 /**

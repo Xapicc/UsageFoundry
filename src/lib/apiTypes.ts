@@ -1547,6 +1547,20 @@ export interface RunDTO {
    */
   haltedWorkflow?: string | null;
   /**
+   * The press of Run and the block this run was made for, or null for a run
+   * that belongs to no workflow instance — including one whose workflow has
+   * been deleted, which takes its instances with it. Mirrors `RunWorkflowOrigin`
+   * in `workflows.ts`.
+   *
+   * Provenance beside `origin`, and like `tasks` it is resolved by the run's
+   * own route only: the runs list draws no link and would pay a join a row on a
+   * list polled every four seconds. A run that belongs to a workflow also
+   * carries `origin` = `workflow`, `orchestrator-block` or `schedule`; this is
+   * the half `origin_ref` cannot give, since that holds an instance id, a
+   * schedule id or a node id depending on which.
+   */
+  workflowOrigin?: RunWorkflowOriginDTO | null;
+  /**
    * The specialised agent this run was started with, or null for the ordinary
    * run. The run's own frozen copy, so it still names the agent it was given
    * after that agent has been renamed or deleted.
@@ -1583,6 +1597,63 @@ export interface RunDTO {
   stackRequests?: StackRequestDTO[];
   /** When an operator last picked this run up again. Never rewrites `origin`. */
   reopened_at?: number | null;
+  /**
+   * What this run's start read of its repository's git directory, and what
+   * its end found changed there. Null for a run that worked outside a
+   * repository, or whose start predates the check. The run's own page only.
+   */
+  gitDir?: GitDirDTO | null;
+}
+
+/** Why a git configuration key is watched: what makes the operator's own git run it. */
+export type GitDirCommandClassDTO =
+  | "fsmonitor"
+  | "hooks-path"
+  | "attribute-driver"
+  | "external-diff"
+  | "remote"
+  | "signing"
+  | "interactive"
+  | "alias"
+  | "include";
+
+export type GitDirChangeDTO = "added" | "removed" | "changed";
+
+export type GitDirFindingDTO =
+  | {
+      kind: "config";
+      commandClass: GitDirCommandClassDTO;
+      key: string;
+      change: GitDirChangeDTO;
+      /** Every value the key has at the end, in git's order; empty when removed. */
+      now: Array<{ scope: "local" | "worktree"; origin: string; shown: string | null }>;
+    }
+  | { kind: "hook"; name: string; change: GitDirChangeDTO; executable: boolean }
+  | { kind: "attributes"; change: GitDirChangeDTO; driverLines: string[] };
+
+/**
+ * A run's end, compared with its start. `concurrentRunIds` is every other run
+ * of this app that worked in the same repository in that time; it can never
+ * include the operator, the chat or anything outside this app.
+ */
+export type GitDirReportDTO =
+  | { state: "unchanged"; commonDir: string; since: number; checkedAt: number }
+  | {
+      state: "changed";
+      commonDir: string;
+      since: number;
+      checkedAt: number;
+      findings: GitDirFindingDTO[];
+      concurrentRunIds: string[];
+    }
+  | { state: "unreadable"; commonDir: string | null; reason: string; checkedAt: number };
+
+export interface GitDirDTO {
+  /** When the start read it. */
+  since: number;
+  commonDir: string | null;
+  /** Null until the run's end has compared; a run still going has none. */
+  report: GitDirReportDTO | null;
 }
 
 /**
@@ -1828,6 +1899,14 @@ export type LiveFrameDTO =
   | { kind: "event"; runId: string; event: RunEventDTO }
   | { kind: "tools"; runId: string; tools: RunToolActivityDTO[] }
   | { kind: "leave"; runId: string };
+
+/** Mirrors `RunWorkflowOrigin` in `workflows.ts`. */
+export interface RunWorkflowOriginDTO {
+  workflowId: string;
+  workflowName: string;
+  instanceId: string;
+  nodeName: string;
+}
 
 /** Mirrors `RunOrigin` in `orchestrator.ts`; see the column note in `db.ts`. */
 export type RunOriginDTO =
@@ -2464,6 +2543,12 @@ export interface WorkflowDTO {
   updatedAt: number;
   /** Runs from this workflow that have not finished. Empty on most reads. */
   liveRunCount?: number;
+  /**
+   * The press of Run that is the reason it cannot be started again, or null.
+   * Null exactly when `liveRunCount` is 0: a block still deciding counts there
+   * and is named here, though it has started no run.
+   */
+  liveInstanceId?: string | null;
   /** When it was last started, or null if it never has been. */
   lastRunAt?: number | null;
   /** Null when nothing starts this workflow but a person. */
@@ -2500,6 +2585,20 @@ export type WorkflowListItemDTO = Omit<
 };
 
 /**
+ * One thing an instance member starts after, and on what condition.
+ *
+ * `edge` is the condition the saved link carries — `RunDependencyDTO.edge`'s two
+ * answers — and null for a wait with no link behind it: the orchestrator block
+ * that decided on a run, or the loop that created the entry of a pass. The page
+ * words it and never decides on it; whether the condition is met is
+ * `edgeSatisfied`'s, in the run loop.
+ */
+export interface WorkflowInstanceWaitDTO {
+  nodeId: string;
+  edge: "on-success" | "on-finish" | null;
+}
+
+/**
  * One block of an instance, and what became of its run.
  *
  * `run` is null when the run row has gone — the mapping is a historical record
@@ -2533,8 +2632,8 @@ export interface WorkflowInstanceNodeDTO {
      */
     spentUSD: number | null;
   } | null;
-  /** Node ids this block was told to start after, from the instance's graph. */
-  waitsFor: string[];
+  /** What this block was told to start after, from the instance's graph. */
+  waitsFor: WorkflowInstanceWaitDTO[];
   /**
    * The orchestrator block that decided on this run, or null for a block of the
    * saved graph. Nobody approved the runs this names — see the orchestrator
@@ -2659,7 +2758,7 @@ export interface WorkflowInstanceBlockDTO {
    */
   reviewItems: ReviewItemDTO[];
   error: string | null;
-  waitsFor: string[];
+  waitsFor: WorkflowInstanceWaitDTO[];
   /**
    * The section this loop repeats, in the order a pass creates it.
    *
@@ -3169,6 +3268,11 @@ export interface LandStateDTO {
   pending: PendingWorkDTO | null;
   /** Why landing is refused right now. Null means it is offered. */
   blocked: string | null;
+  /**
+   * Why a resolution of the conflict is refused before it is bought — the
+   * branch carries a file seeding copied in. Null when Resolve may be offered.
+   */
+  resolveBlocked: string | null;
   landedAt: number | null;
   landedInto: string | null;
   landedStrategy: string | null;

@@ -79,6 +79,7 @@ import { RunDiff } from "@/components/RunDiff";
 import { RunActivity } from "@/components/RunActivity";
 import { RunHandoff } from "@/components/RunHandoff";
 import { RunLand } from "@/components/RunLand";
+import { RunGitDirNotice } from "@/components/RunGitDirNotice";
 import { RunOutput } from "@/components/RunOutput";
 import { RunReview } from "@/components/RunReview";
 import { RunTaskComments } from "@/components/RunTaskComments";
@@ -1507,8 +1508,21 @@ export default function RunDetail({
             this is the first question — and it was answerable only by joining
             three tables, none of which survived deleting the chat or workflow
             it came from. Picking a run up again is a separate act and says so
-            separately, because it does not change where the run came from. */}
-        {fmtRunOrigin(run.origin)}
+            separately, because it does not change where the run came from.
+            A workflow member links to its press of Run, which is the trip the
+            instance page's pick-up card already makes the other way. */}
+        {run.workflowOrigin ? (
+          <>
+            <Link
+              href={`/workflows/${run.workflowOrigin.workflowId}/instances/${run.workflowOrigin.instanceId}`}
+            >
+              {fmtRunOrigin(run.origin)}
+            </Link>{" "}
+            ({run.workflowOrigin.workflowName}, block {run.workflowOrigin.nodeName})
+          </>
+        ) : (
+          fmtRunOrigin(run.origin)
+        )}
         {run.reopened_at ? ` · picked up again ${fmtRelative(run.reopened_at, nowTick)}` : ""}
         {/* The board rows this run was started for. Beside the origin because
             they answer the second half of the same question — that line says
@@ -1665,6 +1679,14 @@ export default function RunDetail({
                 on its own — start “{haltedWith}” again to do this work.
               </p>
             )}
+            {/* In the state block because it is part of how the run ended: what
+                it left in the repository's git directory, which nothing in the
+                pane's branch or diff shows. */}
+            <RunGitDirNotice
+              gitDir={run.gitDir}
+              settled={!ACTIVE_STATUSES.has(run.status)}
+              placement="inspector"
+            />
 
             {/* Where the run says it is being held back, next to the Resume
                 button that still works. The chip in the heading is the glance;

@@ -1,13 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type {
   ScheduleOutcomeCodeDTO,
   ScheduleSpecDTO,
   WorkflowScheduleDTO,
 } from "@/lib/apiTypes";
-import { fmtDateTime, fmtRelative, type BadgeTone } from "@/lib/format";
+import {
+  fmtDateTime,
+  fmtInstantWithZone,
+  fmtRelative,
+  type BadgeTone,
+} from "@/lib/format";
 import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonRow } from "@/components/ui/Button";
 import { Card, CardTitle } from "@/components/ui/Card";
@@ -99,6 +104,21 @@ function hoursOf(value: string): number | null {
     : null;
 }
 
+/**
+ * The zone names this browser knows, for the zone field's suggestions.
+ *
+ * `Intl.supportedValuesOf` leaves out `UTC` — the field's own fallback — so it
+ * is added, and a runtime without the function suggests nothing and leaves a
+ * plain text box, which is what the field was before. Suggestions only: the
+ * server's `isTimeZone` is the check that holds, and it refuses a name rather
+ * than replacing it.
+ */
+function timeZoneChoices(): string[] {
+  if (typeof Intl.supportedValuesOf !== "function") return [];
+  const names = Intl.supportedValuesOf("timeZone");
+  return names.includes("UTC") ? names : ["UTC", ...names];
+}
+
 type Draft = {
   kind: ScheduleSpecDTO["kind"];
   hours: string;
@@ -122,10 +142,18 @@ function draftOf(schedule: WorkflowScheduleDTO | null, browserZone: string): Dra
 export function WorkflowSchedule({
   workflowId,
   schedule,
+  newWorkPaused,
   onChanged,
 }: {
   workflowId: string;
   schedule: WorkflowScheduleDTO | null;
+  /**
+   * The install-wide hold. A held install starts nothing, so a "Next start"
+   * beside it names an occurrence that will be recorded as missed — and looks,
+   * from the only page that owns the schedule, exactly like a schedule that
+   * stopped working.
+   */
+  newWorkPaused: boolean;
   /** Reload the workflow, so the card redraws off the server's own answer. */
   onChanged: () => void | Promise<void>;
 }) {
@@ -138,6 +166,9 @@ export function WorkflowSchedule({
   }, []);
 
   const [editing, setEditing] = useState(false);
+  // Read when the editor opens rather than on every render: about four hundred
+  // names, and the card redraws on every ten-second poll.
+  const zoneChoices = useMemo(() => (editing ? timeZoneChoices() : []), [editing]);
   const [draft, setDraft] = useState<Draft>(() => draftOf(schedule, "UTC"));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -251,7 +282,10 @@ export function WorkflowSchedule({
               {/* The absolute instant, not "in about an hour": a schedule an
                   operator cannot verify at a glance is one they will not trust
                   with an unattended agent. The relative form is beside it
-                  rather than instead of it. */}
+                  rather than instead of it. Read in the schedule's own zone and
+                  naming it, because the words in the row above say "09:00
+                  (Europe/Berlin)" and an instant on the browser's clock checks
+                  them only for a reader who happens to sit in that zone. */}
               <ListRow label={schedule.paused ? "Would next start" : "Next start"}>
                 {schedule.nextFireAt === null ? (
                   // Never a stand-in instant: the refusal below says why.
@@ -259,7 +293,7 @@ export function WorkflowSchedule({
                 ) : (
                   <>
                     <span className="mono text-ink">
-                      {fmtDateTime(schedule.nextFireAt)}
+                      {fmtInstantWithZone(schedule.nextFireAt, schedule.timeZone)}
                     </span>
                     <span className="text-xs text-ink-muted">
                       {fmtRelative(schedule.nextFireAt)}
@@ -300,6 +334,17 @@ export function WorkflowSchedule({
                   What it started
                 </Link>
               </div>
+            )}
+
+            {/* Not for a paused schedule, which would not start either way and
+                already says so: the hold is a second reason only for one that
+                is switched on. */}
+            {newWorkPaused && !schedule.paused && (
+              <Notice tone="warn" className="mt-4">
+                New work is held, so the next start will be recorded as missed
+                and not made up afterwards.{" "}
+                <Link href="/runs">Resume it on the runs page</Link>.
+              </Notice>
             )}
 
             {schedule.refusal && (
@@ -471,11 +516,17 @@ export function WorkflowSchedule({
                   <div className="w-52 max-md:w-full">
                     <Input
                       id="sched-tz"
+                      list="sched-tz-options"
                       value={draft.timeZone}
                       onChange={(e) =>
                         setDraft({ ...draft, timeZone: e.target.value })
                       }
                     />
+                    <datalist id="sched-tz-options">
+                      {zoneChoices.map((zone) => (
+                        <option key={zone} value={zone} />
+                      ))}
+                    </datalist>
                   </div>
                 </ListRow>
               )}

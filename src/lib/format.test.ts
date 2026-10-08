@@ -5,9 +5,16 @@ import {
   EDGE_OPTION_LABEL,
   fmtCycleInFlight,
   fmtCycles,
+  fmtDateTimeInZone,
+  fmtInstanceWait,
+  fmtInstantWithZone,
   fmtLiveCycle,
   fmtTokens,
   guardBadge,
+  INSTANCE_OUTCOME_LABEL,
+  INSTANCE_OUTCOME_TONE,
+  instanceCanMove,
+  instanceOutcomeDetail,
   landingSummary,
   passRuns,
   passesOf,
@@ -773,4 +780,173 @@ test("between cycles a tile counts what finished rather than claiming one open",
     fmtLiveCycle(liveRun({ active_iteration: null, max_iterations: 0 })),
     "3 work cycles done",
   );
+});
+
+/**
+ * A schedule's instant is read in the schedule's zone, not the reader's.
+ *
+ * "Next start" printed in the browser's zone beside "Every day at 09:00
+ * (Europe/Berlin)" and the two agree only when the operator happens to sit in
+ * the schedule's zone — an hour out, in a form that looks like a schedule that
+ * is wrong, or looks right for the one reader who cannot tell. Both
+ * ways are silent and well formed, and the first reading to a person in another
+ * zone is a reason to switch off a schedule that is correct.
+ */
+const SEVENTH_JULY_0700Z = Date.UTC(2026, 6, 7, 7, 0);
+
+test("fmtInstantWithZone reads the instant on the schedule's own clock and names the zone", () => {
+  assert.equal(
+    fmtInstantWithZone(SEVENTH_JULY_0700Z, "Europe/Berlin"),
+    "7 Jul 2026, 09:00 (Europe/Berlin)",
+  );
+  assert.equal(
+    fmtInstantWithZone(SEVENTH_JULY_0700Z, "America/Los_Angeles"),
+    "7 Jul 2026, 00:00 (America/Los_Angeles)",
+  );
+});
+
+test("fmtInstantWithZone follows the zone's own offset on either side of a clock change", () => {
+  // 08:00Z is 09:00 in Berlin in January and 10:00 in July: a fixed offset,
+  // or the reader's, gets one of the two wrong.
+  assert.equal(
+    fmtInstantWithZone(Date.UTC(2026, 0, 15, 8, 0), "Europe/Berlin"),
+    "15 Jan 2026, 09:00 (Europe/Berlin)",
+  );
+  assert.equal(
+    fmtInstantWithZone(Date.UTC(2026, 6, 15, 8, 0), "Europe/Berlin"),
+    "15 Jul 2026, 10:00 (Europe/Berlin)",
+  );
+});
+
+test("fmtInstantWithZone does not depend on the zone the reader is in", () => {
+  const before = process.env.TZ;
+  try {
+    const answers = ["Asia/Tokyo", "America/Sao_Paulo"].map((reader) => {
+      process.env.TZ = reader;
+      return fmtInstantWithZone(SEVENTH_JULY_0700Z, "Europe/Berlin");
+    });
+    assert.deepEqual(answers, [
+      "7 Jul 2026, 09:00 (Europe/Berlin)",
+      "7 Jul 2026, 09:00 (Europe/Berlin)",
+    ]);
+  } finally {
+    if (before === undefined) delete process.env.TZ;
+    else process.env.TZ = before;
+  }
+});
+
+test("fmtInstantWithZone names the zone it really used when it does not know the schedule's", () => {
+  // The server accepted this name against its own ICU; a browser a base image
+  // away may not know it, and throwing from render takes the whole page down.
+  // Reading it in the reader's zone is fine only if it says so — an instant
+  // labelled with a zone it was not read in is the defect this exists to end.
+  const own = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const text = fmtInstantWithZone(SEVENTH_JULY_0700Z, "Mars/Olympus_Mons");
+  assert.ok(text.endsWith(`(${own})`), text);
+  assert.ok(!text.includes("Mars"), text);
+});
+
+test("fmtDateTimeInZone refuses a zone the runtime does not know rather than inventing one", () => {
+  assert.throws(() => fmtDateTimeInZone(SEVENTH_JULY_0700Z, "Mars/Olympus_Mons"), RangeError);
+});
+
+/**
+ * A wait as the instance page words it. The condition is the chip's own phrase,
+ * so the page that shows an instance and the one that shows its workflow cannot
+ * word one link two ways, and a wait with no edge behind it is the bare name:
+ * "(either way)" on the block that decided a run would be a rule nobody saved.
+ */
+test("fmtInstanceWait states the condition the link carries, in the chip's words", () => {
+  const names = new Map([["build", "Build"]]);
+  assert.equal(
+    fmtInstanceWait({ nodeId: "build", edge: "on-success" }, names),
+    `Build (${EDGE_CHIP_LABEL["on-success"]})`,
+  );
+  assert.equal(
+    fmtInstanceWait({ nodeId: "build", edge: "on-finish" }, names),
+    `Build (${EDGE_CHIP_LABEL["on-finish"]})`,
+  );
+});
+
+test("fmtInstanceWait claims no condition for a wait with no edge, and falls back to the id", () => {
+  const names = new Map([["decide", "Decide"]]);
+  assert.equal(fmtInstanceWait({ nodeId: "decide", edge: null }, names), "Decide");
+  assert.equal(
+    fmtInstanceWait({ nodeId: "gone", edge: "on-success" }, names),
+    `gone (${EDGE_CHIP_LABEL["on-success"]})`,
+  );
+});
+
+/**
+ * Whether the instance page keeps asking. The page polled for ever, including
+ * for a halted instance, which nothing moves: a halt is refused every pick-up
+ * ("never through a halt") and a rolled-back instance never had a member. The
+ * other four can still move, and two of them are the surprising ones — `finished`
+ * and `blocked` are *derived* readings, and a pick-up on a member turns either
+ * back into `started`, so a page that stood down for them would show a resumed
+ * run as finished until somebody reloaded. Each reading is asserted by name
+ * rather than by a count, so the week a seventh is added this fails by naming it.
+ */
+test("instanceCanMove stands down for a halted or rolled-back instance and no other", () => {
+  const moves: Record<keyof typeof INSTANCE_OUTCOME_LABEL, boolean> = {
+    started: true,
+    finished: true,
+    blocked: true,
+    stopping: true,
+    stopped: false,
+    failed: false,
+  };
+  for (const [status, expected] of Object.entries(moves)) {
+    assert.equal(
+      instanceCanMove(status as keyof typeof moves),
+      expected,
+      `${status} should ${expected ? "keep" : "stand down"} the poll`,
+    );
+  }
+});
+
+test("every reading of an instance has a word and a tone", () => {
+  const readings = Object.keys(INSTANCE_OUTCOME_LABEL).sort();
+  assert.deepEqual(readings, [
+    "blocked",
+    "failed",
+    "finished",
+    "started",
+    "stopped",
+    "stopping",
+  ]);
+  assert.deepEqual(Object.keys(INSTANCE_OUTCOME_TONE).sort(), readings);
+  // "started" is the stored word for an unhalted row, and the page used to show
+  // it for a graph that finished an hour ago: the label is what an operator reads.
+  assert.equal(INSTANCE_OUTCOME_LABEL.started, "working");
+});
+
+test("instanceOutcomeDetail says what the badge cannot, and nothing for finished", () => {
+  const base = { liveRunCount: 0, blockedCount: 0, error: null, stopCause: null } as const;
+  assert.equal(
+    instanceOutcomeDetail({ ...base, status: "started", liveRunCount: 2 }),
+    "2 block(s) working",
+  );
+  assert.equal(
+    instanceOutcomeDetail({ ...base, status: "blocked", blockedCount: 3 }),
+    "3 block(s) never ran",
+  );
+  assert.equal(
+    instanceOutcomeDetail({ ...base, status: "stopping", liveRunCount: 1 }),
+    "1 block(s) still finishing",
+  );
+  assert.equal(instanceOutcomeDetail({ ...base, status: "stopped" }), "by you");
+  assert.equal(
+    instanceOutcomeDetail({ ...base, status: "stopped", stopCause: "guard" }),
+    "by its budget guard",
+  );
+  assert.equal(
+    instanceOutcomeDetail({ ...base, status: "stopped", stopCause: "fleet" }),
+    "with everything in flight",
+  );
+  assert.equal(
+    instanceOutcomeDetail({ ...base, status: "failed", error: "no folder" }),
+    "no folder",
+  );
+  assert.equal(instanceOutcomeDetail({ ...base, status: "finished" }), null);
 });

@@ -383,7 +383,7 @@ describe("landing past a squash while another process holds the target's ref loc
   // lock; the undo — `merge --abort` for a merge, `reset --merge` for a squash
   // — restores the tree and exits 1 on the same lock.
   for (const strategy of ["merge", "squash"] as const) {
-    it(`says a ${strategy} refused at its commit was rolled back`, async () => {
+    it(`says a ${strategy} refused at its commit met another git process`, async () => {
       const name = `ref-lock-${strategy}`;
       const c = await squashedLinkA(name);
       const b = linkB(name, c);
@@ -394,7 +394,10 @@ describe("landing past a squash while another process holds the target's ref loc
       const landed = await land.landRun(b, strategy);
 
       assert.equal(landed.ok, false, "landed through a held ref lock");
-      assert.match(landed.ok ? "" : landed.reason, /^The \w+ could not be committed and was rolled back: /);
+      // `lockRefusal`'s sentence, as a merge refused by the same lock gets.
+      const reason = landed.ok ? "" : landed.reason;
+      assert.match(reason, /^Another git process was using your checkout/);
+      assert.ok(reason.includes(`${lock} was left behind`), reason);
       assert.equal(git(c.repo, "rev-parse", "main").trim(), before);
       assert.equal(git(c.repo, "status", "--porcelain"), "", "the land was left staged");
       assert.equal(fs.existsSync(path.join(c.repo, ".git", "MERGE_HEAD")), false);

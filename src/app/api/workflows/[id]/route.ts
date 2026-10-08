@@ -12,6 +12,7 @@ import {
 } from "../../../../lib/workflows";
 import { instanceDTO, workflowDTO } from "../dto";
 import { auditMutation } from "../../../../lib/requestLog";
+import { newWorkPaused } from "../../../../lib/settings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,6 +48,11 @@ export async function GET(req: Request, ctx: Ctx) {
   });
   return NextResponse.json({
     workflow: workflowDTO(workflow),
+    // The install-wide hold, beside the workflow rather than inside its DTO: it
+    // is a fact about the install that this page needs in order to say what a
+    // press of Run, or the next occurrence of a schedule, is about to meet. The
+    // list reads `workflowDTO` too and has no use for it.
+    newWorkPaused: newWorkPaused(),
     instances: page.instances.map(instanceDTO),
     total: page.total,
     offset: page.offset,
