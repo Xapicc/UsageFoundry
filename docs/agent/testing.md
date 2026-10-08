@@ -119,7 +119,7 @@ Twenty-two are renderings rather than functions — every `*.test.tsx` in the tr
 
 | Test file | Also in |
 |---|---|
-| `contextPruning.test.ts` | [ceiling], [stacks] |
+| `contextPruning.test.ts` | [ceiling], [stacks], [pricing] |
 | `intakeFilter.test.ts` |  |
 | `pruneStatement.test.ts` |  |
 | `pruneTranscript.test.ts` |  |

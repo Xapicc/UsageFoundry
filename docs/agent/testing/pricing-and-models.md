@@ -88,7 +88,7 @@ observed time-dependence through the only entry that had any, and with the table
 flat there is nothing either can assert that is not a restatement of the code.
 The rule they protected is not gone — `resolvePrice`'s note and `metering.md`
 both say a new dated rate goes in that shape and turns over at a UTC midnight —
-and a case for each comes back with the next one. Sonnet 5.5's dated cache read (below) is that next one, and only its pricing cases exist so far: the two consumer-side tests above are still not back.
+and a case for each comes back with the next one. Sonnet 5.5's dated cache read (below) is that next one, and both are back: the same two names, rewritten over Sonnet 5.5's cut.
 
 **A point release the table has no row for earned its own block, because a bare
 `startsWith` gave it its predecessor's row.** `claude-sonnet-5` is a string
@@ -139,6 +139,37 @@ returns a whole second price whose typo would show nowhere else. The first
 Sonnet 5.5 block was rewritten, not weakened: it now asks for the price at an
 instant before the cut, and its `[1m]`/snapshot case expects the 0.05× row that
 a call with no instant gets.
+
+The two consumer-side tests came back with it, each over fixed instants and each
+asserting both sides of the cut, because a one-sided assertion passes on a lookup
+that read the wall clock, whichever side of the cut the clock is on.
+`windows.test.ts`'s *prices each turn at the rate in force on the day it ran*
+puts five Sonnet 5.5 turns, one agent each, across the cut, with the last
+millisecond of the 7th and the first of the 8th as the pair: $0.20 and $0.10 for
+a million reads. It fails with `at` dropped from `counterfactualByAgent`'s
+lookup, and with the memo's day part removed or narrowed to three to six days.
+It cannot fail for a 2-, 7- or 14-day bucket, and that is correct rather than a
+gap: 2026-10-08 is day 20,734, a multiple of 14, so those buckets break exactly
+at the cut and the memo is still exact for them. `contextPruning.test.ts`'s
+*prices at the receipt's own date* gives `netReceipt` a Sonnet 5.5 row at two
+instants before the cut and two from it, and expects $0.42 and $0.21 of avoided
+reads for 70,000 tokens over 30 turns; it fails with `at` dropped and with
+`Date.now()` in its place. Both were run against those faults and reverted.
+
+**What those two do not claim is that the saving is priced at the right instant,
+only at the receipt's own, and that is a decision rather than an oversight.** The
+reads a prune avoids happen on the *later* turns, and a receipt dated before the
+cut with turns after it is priced wholly at 0.10×, where its post-cut turns would
+have read at 0.05×. `netFilterSavings` is the same, at the anchor turn's `ts`.
+It stays an approximation: `netReceipt` is handed `turnsAfter` as a count, so
+pricing each turn on its own day means carrying every later turn's timestamp
+through `pricedCuts`, `priceForks` and the filter's anchors, for an error
+confined to receipts whose run was live across one midnight. It runs in one
+direction, overstating a pre-cut prune's saving by at most 2× on its turns past
+the cut, and it is finite: a receipt dated from the cut on is exact. Revisit it
+if another dated rate arrives or a run long enough to make it visible does. Do
+not edit either test to assert the approximation — the receipt's own instant is
+the whole of what they pin.
 
 **Claude Haiku 5.5 earned a block, because its trap is the sum rather than a
 neighbour.** It is the first row priced by each request's prompt length: $0.10
