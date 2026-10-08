@@ -88,6 +88,7 @@ import {
   providerTerminusRefusal,
 } from "./budget";
 import { getLocalSignIn } from "./localProvider";
+import { modelRefusal, type ModelCatalogueEntry } from "./modelCatalogue";
 import { deciderApplies, type DeciderWork, type ModelDecision } from "./modelDecider";
 import {
   agentDefinition,
@@ -565,7 +566,7 @@ export function planNode(
       //
       // Never on a Codex or local run, whose CLI or server knows none of the
       // Claude ids a template holds: Codex runs its own default, and a local
-      // run is given the sign-in's model by `localReady`.
+      // run is given the sign-in's model by `readyToCreate`.
       model: provider === "codex" || provider === "local" ? null : (template?.model ?? null),
       provider,
     },
@@ -573,17 +574,54 @@ export function planNode(
 }
 
 /**
- * A planned run, finished for the local provider: the sign-in's model frozen
- * onto it, or a refusal naming the block when nobody is signed in.
+ * A planned run held to the operator's model list, or a refusal naming the
+ * block.
  *
- * Impure, which is why it is not in `planNode`: the sign-in is a row. Read when
- * the run is created, as the run form's door reads it, so a block created an
- * hour into an instance is refused by name rather than started on nothing.
+ * The run form, `propose_run` and `save_template` refuse a model the list has
+ * switched off; the template door deliberately does not, because a template
+ * outlives the list and the person who could fix it is not standing there. So a
+ * template can hold a model the list has since retired, and a workflow is the
+ * one path that hands it to a run with no form in front of it — a schedule
+ * starts it with no person present at all. This is the refusal the form would
+ * have given, in `modelRefusal`'s own words.
+ *
+ * Only a Claude run is asked. A Codex run's model is the decider's pick, held
+ * to the Codex list when it was made, and a local run's is the sign-in's: neither
+ * is a Claude id, and the Claude list would refuse both. An empty list refuses
+ * nothing, which is `modelRefusal`'s rule and not restated here.
+ *
+ * Pure for `planNode`'s reason: the list is an argument.
  */
-function localReady(
+export function modelOnList(
+  input: Omit<CreateRunInput, "dependsOn" | "origin">,
+  blockName: string,
+  catalogue: readonly ModelCatalogueEntry[],
+): NodePlan {
+  if (input.provider === "codex" || input.provider === "local") {
+    return { ok: true, input };
+  }
+  const refusal = modelRefusal(catalogue, input.model);
+  return refusal
+    ? { ok: false, reason: `“${blockName}”: ${refusal}` }
+    : { ok: true, input };
+}
+
+/**
+ * A planned run, finished by the two checks that read state rather than the
+ * node: the model list, and for the local provider the sign-in, whose model is
+ * frozen onto the run, or a refusal naming the block when nobody is signed in.
+ *
+ * Impure, which is why it is not in `planNode`: the list and the sign-in are
+ * rows. Read when the run is created, as the run form's door reads them, so a
+ * block created an hour into an instance is refused by name rather than
+ * started on a model switched off in between, or on nothing.
+ */
+function readyToCreate(
   input: Omit<CreateRunInput, "dependsOn" | "origin">,
   blockName: string,
 ): NodePlan {
+  const listed = modelOnList(input, blockName, getSettings().modelCatalogue);
+  if (!listed.ok) return listed;
   if (input.provider !== "local") return { ok: true, input };
   const signIn = getLocalSignIn();
   if (!signIn) {
@@ -3992,7 +4030,12 @@ export function startWorkflow(
     if (!plan.ok) return { ok: false, reason: plan.reason };
     // An orchestrator block's plan is only asked for its refusals — its runs
     // are planned again when it emits — so the sign-in is read for run blocks.
-    const ready = node.kind === "run" ? localReady(plan.input, node.name) : plan;
+    // The model list is asked of both, the template's retired model being a
+    // refusal an orchestrator's emitted runs would all hit after a billed turn.
+    const ready =
+      node.kind === "run"
+        ? readyToCreate(plan.input, node.name)
+        : modelOnList(plan.input, node.name, getSettings().modelCatalogue);
     if (!ready.ok) return { ok: false, reason: ready.reason };
     plans.set(node.id, ready.input);
   }
@@ -5960,7 +6003,7 @@ function advanceInstance(instanceId: string): void {
       // starting a run that is quietly not the thing the graph named.
       node.agentId ? getAgent(node.agentId) : null,
     );
-    const ready = plan.ok ? localReady(plan.input, node.name) : plan;
+    const ready = plan.ok ? readyToCreate(plan.input, node.name) : plan;
     if (!ready.ok) {
       upsertBlock(instanceId, node, "blocked", ready.reason);
       continue;
@@ -6897,7 +6940,7 @@ function stepPass(
       // starting a run that is not the thing the graph named.
       node.agentId ? getAgent(node.agentId) : null,
     );
-    const ready = plan.ok ? localReady(plan.input, node.name) : plan;
+    const ready = plan.ok ? readyToCreate(plan.input, node.name) : plan;
     if (!ready.ok) {
       upsertBlock(instanceId, passNode(node, pass, memberId(node.id)), "blocked", ready.reason);
       wrote = true;
@@ -7202,6 +7245,23 @@ async function startBlockTurn(
         error:
           "The runs this block emits go to the local model, and the local " +
           "provider is signed out. Sign in under Settings and start it again.",
+        costUSD: 0,
+      });
+      return;
+    }
+  }
+
+  // And the model its template pins, for the same reason: every run this turn
+  // emits would take it, and each would then be refused at `emitBlockRuns` by a
+  // list that switched it off — a billed decision nothing acts on. A Codex or
+  // local block's runs never take the template's Claude id, so neither is asked.
+  if (node.provider !== "codex" && node.provider !== "local") {
+    const pinned = node.templateId ? getTemplate(node.templateId)?.model : null;
+    const refusal = modelRefusal(getSettings().modelCatalogue, pinned);
+    if (refusal) {
+      settleBlock(instanceId, nodeId, {
+        status: "failed",
+        error: `The runs this block emits would start on its template's model. ${refusal}`,
         costUSD: 0,
       });
       return;
@@ -8936,7 +8996,7 @@ function createEmitted(
       // over the whole live graph regardless, which is what keeps acyclicity a
       // property of the data now that a graph written by a model reaches it;
       // `planEmission` has already refused a cyclic emission by name.
-      const ready = localReady(
+      const ready = readyToCreate(
         planEmittedRun(node, spec, template, defaults, agent),
         node.name,
       );

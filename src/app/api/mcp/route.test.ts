@@ -725,6 +725,58 @@ test("release_task offers needsFrontier to a local run only, and the flag reache
   assert.doesNotMatch(unflagged.note, /needsFrontier/, "the sentence costs tokens when no row needs it");
 });
 
+// The refusal is `readTaskLinks`' and the flag it reads is `localRun`, which a
+// chat's `propose_run` left unset: a local card on a task a frontier review had
+// already turned the local model down on was accepted, and the run claimed it
+// when it started. Pinned on both sides, since a refusal that fired for a Claude
+// card would lock the lane the flag exists to send the task to.
+test("propose_run refuses a local card on a needs-frontier task by name, and a Claude one is not refused", async () => {
+  const { token, proposals } = proposingChat();
+  const templateId = randomUUID();
+  db()
+    .prepare(
+      `INSERT INTO run_templates (id, name, prompt, mount_id, folder, permission_mode,
+         isolate, budget, created_at, updated_at)
+       VALUES (?, ?, 'p', ?, 'RepoOne', 'plan', 0, ?, 0, 0)`,
+    )
+    .run(templateId, `Template ${templateId}`, MOUNT, JSON.stringify({ maxIterations: 3 }));
+  db()
+    .prepare(
+      `INSERT INTO local_provider (id, base_url, token, model, signed_in_at)
+       VALUES (1, 'http://192.168.0.190:1234', NULL, 'qwen3', 0)`,
+    )
+    .run();
+
+  try {
+    const hard = file(HERE, { title: "Beyond the local model, for propose_run" });
+    const flagged = tasks.updateTask(hard.id, { needsFrontier: true }, { kind: "operator" });
+    if (!flagged.ok) throw new Error(`fixture refused: ${flagged.error}`);
+    const propose = (provider: string | null) =>
+      callTool(token, "propose_run", {
+        templateId,
+        title: `For ${provider ?? "claude"} ${randomUUID()}`,
+        task: "Do the thing.",
+        taskIds: [hard.id],
+        ...(provider ? { provider } : {}),
+      });
+
+    const local = await propose("local");
+    assert.equal(local.isError, true, local.text);
+    assert.match(local.text, /needs-frontier/);
+    assert.ok(local.text.includes(hard.title), "refused by name");
+    assert.match(local.text, /Nothing was proposed/);
+    assert.equal(proposals(), 0, "the refusal wrote no card");
+
+    for (const provider of [null, "claude"]) {
+      const accepted = await propose(provider);
+      assert.equal(accepted.isError, false, `${provider ?? "unnamed"}: ${accepted.text}`);
+    }
+    assert.equal(proposals(), 2, "a Claude card on the same task is proposed");
+  } finally {
+    db().prepare("DELETE FROM local_provider").run();
+  }
+});
+
 test("complete_task refuses a task another run closed rather than saying this run did", async () => {
   const reader = seedRun(HERE);
   const other = seedRun(ELSEWHERE);
