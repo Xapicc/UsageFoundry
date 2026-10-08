@@ -19,6 +19,7 @@ import {
   memberSpendReading,
   sumMemberSpend,
   emittedFolderRefusal,
+  gateContinueRefusal,
   haltPlan,
   instanceStatus,
   loopBody,
@@ -139,6 +140,15 @@ function merger(id: string, extra: Record<string, unknown> = {}) {
 /** A deliver block, which holds no setting of its own. */
 function deliverer(id: string, extra: Record<string, unknown> = {}) {
   return node(id, { kind: "deliver", ...extra });
+}
+
+/**
+ * A gate, which carries **nothing**: like a loop it starts no run, and every
+ * field that describes one is refused by name, so a helper built on `node`
+ * would make each case assert against a graph no door accepts.
+ */
+function gater(id: string, extra: Record<string, unknown> = {}) {
+  return { id, name: id.toUpperCase(), kind: "gate", ...extra };
 }
 
 /**
@@ -1671,6 +1681,212 @@ describe("normalizeWorkflowInput — deliver blocks", () => {
  * silent, because the pull request's address is the product of the block and
  * the note is the only place the instance page can read it from.
  */
+describe("normalizeWorkflowInput — gate blocks", () => {
+  it("saves a gate that holds nothing of its own, with every run field empty", () => {
+    const saved = value(
+      graph([node("a"), gater("g"), node("b")], [edge("a", "g"), edge("g", "b")]),
+    );
+    const g = saved.graph.nodes[1];
+    assert.equal(g.kind, "gate");
+    assert.equal(g.templateId, null);
+    assert.equal(g.agentId, null);
+    assert.equal(g.mountId, "");
+    assert.equal(g.folder, "");
+    assert.equal(g.task, "");
+    assert.equal(g.promptOverride, null);
+  });
+
+  it("saves a gate with nothing in front of it, which holds the whole run from the start", () => {
+    assert.equal(value(graph([gater("g"), node("b")], [edge("g", "b")])).graph.nodes[0].kind, "gate");
+  });
+
+  it("refuses by name every field that describes a run it does not start", () => {
+    // Saved, a template or an agent on a gate is a choice no process would act
+    // on; the door that exists to say so out loud is this one.
+    const told: Array<[string, unknown, RegExp]> = [
+      ["task", "Do it", /no task/],
+      ["templateId", "t-iso", /no guards/],
+      ["agentId", "a-rev", /nothing for that agent to be/],
+      ["mountId", "work", /no workspace/],
+      ["folder", "repo", /no folder/],
+      ["promptOverride", "Be brief", /no standing instructions/],
+    ];
+    for (const [key, given, phrase] of told) {
+      const refusal = error(
+        graph([gater("g", { [key]: given }), node("b")], [edge("g", "b")]),
+      );
+      assert.match(refusal, /“G”/, key);
+      assert.match(refusal, phrase, key);
+    }
+  });
+
+  it("refuses a field of the wrong type rather than reading it as empty", () => {
+    // `String(["t-iso"])` is a template id, and `String([])` is nothing told.
+    assert.match(
+      error(graph([gater("g", { templateId: ["t-iso"] }), node("b")], [edge("g", "b")])),
+      /templateId/,
+    );
+  });
+
+  it("refuses a gate with nothing after it, which would stop the run to release nothing", () => {
+    assert.match(
+      error(graph([node("a"), gater("g")], [edge("a", "g")])),
+      /“G” is a gate with nothing after it/,
+    );
+  });
+
+  it("refuses a link that carries a branch into or out of a gate", () => {
+    const into = error(
+      graph(
+        [node("a"), gater("g"), node("b")],
+        [edge("a", "g", { continueBranch: true }), edge("g", "b")],
+      ),
+    );
+    assert.match(into, /“G” only waits for a person/);
+    const out = error(
+      graph(
+        [node("a"), gater("g"), node("b")],
+        [edge("a", "g"), edge("g", "b", { continueBranch: true })],
+      ),
+    );
+    assert.match(out, /“G” only waits for a person/);
+  });
+
+  it("does not let a gate stand for the run in front of a merge, and says what to draw", () => {
+    // A gate hands on no runs, so a merge behind only a gate has nothing to
+    // land. The refusal alone would leave the operator who drew
+    // run → gate → merge to guess which link to add.
+    const refusal = error(
+      graph(
+        [node("a"), gater("g"), merger("m")],
+        [edge("a", "g"), edge("g", "m")],
+      ),
+    );
+    assert.match(refusal, /“M” has no block in front of it whose work it could land/);
+    assert.match(refusal, /link the block that built them straight to “M” as well as to the gate/);
+  });
+
+  it("says the same in front of a deliver block and a review block", () => {
+    const behind: Array<[string, unknown, RegExp]> = [
+      ["d", deliverer("d"), /could push/],
+      ["v", node("v", { kind: "review", fixRounds: 0 }), /could review/],
+    ];
+    for (const [id, block, phrase] of behind) {
+      const refusal = error(
+        graph([node("a"), gater("g"), block], [edge("a", "g"), edge("g", id)]),
+      );
+      assert.match(refusal, phrase, id);
+      assert.match(refusal, /hands on no branches/, id);
+    }
+  });
+
+  it("holds a merge when the run is linked to the merge and to the gate", () => {
+    // The diamond: the merge waits for the gate and still lands the run.
+    const saved = value(
+      graph(
+        [node("a"), gater("g"), merger("m")],
+        [edge("a", "g"), edge("a", "m"), edge("g", "m")],
+      ),
+    );
+    assert.equal(saved.graph.edges.length, 3);
+  });
+
+  it("saves a gate as the entry of a loop's section, which holds every pass", () => {
+    const saved = value(
+      graph(
+        [repeater("l"), gater("lg"), node("la"), merger("lm")],
+        [repeats("l", "lg"), edge("lg", "la"), edge("la", "lm")],
+      ),
+    );
+    assert.deepEqual(saved.graph.nodes[0].bodyNodeIds, ["lg", "la", "lm"]);
+  });
+
+  it("does not let a gate in a section carry a run's branch on to the exit", () => {
+    // The section rule is the one that already asks a run member to hand its
+    // branch to something that lands it; a gate hands on none.
+    const piped = (extraEdges: unknown[]) =>
+      graph(
+        [repeater("l"), node("la"), gater("lg"), node("lb"), merger("lm")],
+        [
+          repeats("l", "la"),
+          edge("la", "lg"),
+          edge("lg", "lb"),
+          edge("lb", "lm"),
+          ...extraEdges,
+        ],
+      );
+    assert.match(error(piped([])), /Nothing lands “LA”'s branch/);
+    assert.equal(value(piped([edge("la", "lm")])).graph.nodes.length, 5);
+  });
+
+  it("can be proposed from a chat, which is the one door that never saw a canvas", () => {
+    const plan = planWorkflowProposal(
+      {
+        title: "Look before landing",
+        graph: JSON.stringify({
+          nodes: [
+            { id: "a", name: "Build", kind: "run", templateId: "t-iso", mountId: "work", folder: "repo", task: "Build it" },
+            { id: "g", name: "Look", kind: "gate" },
+            { id: "m", name: "Land", kind: "merge", mergeStrategy: "merge" },
+          ],
+          edges: [
+            { from: "a", to: "g", edge: "on-success", continueBranch: false },
+            { from: "a", to: "m", edge: "on-success", continueBranch: false },
+            { from: "g", to: "m", edge: "on-finish", continueBranch: false },
+          ],
+        }),
+      },
+      KNOWN,
+    );
+    assert.equal(plan.ok, true, plan.ok ? "" : plan.reason);
+  });
+});
+
+describe("gateContinueRefusal — when Continue cannot be pressed", () => {
+  const held = { name: "Look", status: "waiting", heldAt: 1 } as const;
+
+  it("lets a held gate of an open run through", () => {
+    for (const instanceStatus of ["started", "finished", "blocked"] as const) {
+      assert.equal(gateContinueRefusal({ instanceStatus, gate: held }), null, instanceStatus);
+    }
+  });
+
+  it("answers 404 for a gate the run does not have", () => {
+    const refusal = gateContinueRefusal({ instanceStatus: "started", gate: null });
+    assert.equal(refusal?.status, 404);
+  });
+
+  it("refuses a halted run, whichever way it was halted", () => {
+    for (const instanceStatus of ["stopping", "stopped", "failed"] as const) {
+      const refusal = gateContinueRefusal({ instanceStatus, gate: held });
+      assert.equal(refusal?.status, 409, instanceStatus);
+      assert.match(refusal?.error ?? "", new RegExp(instanceStatus), instanceStatus);
+    }
+  });
+
+  it("tells a gate already let through from one the run has not reached", () => {
+    const through = gateContinueRefusal({
+      instanceStatus: "started",
+      gate: { name: "Look", status: "emitted", heldAt: 1 },
+    });
+    assert.match(through?.error ?? "", /already been let through/);
+    const early = gateContinueRefusal({
+      instanceStatus: "started",
+      gate: { name: "Look", status: "waiting", heldAt: null },
+    });
+    assert.match(early?.error ?? "", /has not reached “Look”/);
+  });
+
+  it("refuses a gate that was written off, and says what it is", () => {
+    const refusal = gateContinueRefusal({
+      instanceStatus: "started",
+      gate: { name: "Look", status: "blocked", heldAt: 1 },
+    });
+    assert.equal(refusal?.status, 409);
+    assert.match(refusal?.error ?? "", /“Look” is blocked/);
+  });
+});
+
 describe("deliverBlockOutcome — what a deliver block reports", () => {
   const delivered = (branch: string, n: number): DeliveryOutcome => ({
     branch,
@@ -3525,6 +3741,18 @@ describe("summarizeProposedGraph — what the approval card has to show", () => 
     assert.equal(push.guardsLabel, "no agent");
     assert.equal(push.folderLabel, null);
     assert.deepEqual(push.after, ["A"]);
+  });
+
+  it("says a gate has no agent and no folder, and what it waits for", () => {
+    const [, hold] = summarizeProposedGraph(
+      value(graph([node("a"), gater("hold"), node("b")], [edge("a", "hold"), edge("hold", "b")])).graph,
+      KNOWN,
+      untemplated,
+    );
+    assert.equal(hold.kind, "gate");
+    assert.equal(hold.guardsLabel, "no agent");
+    assert.equal(hold.folderLabel, null);
+    assert.deepEqual(hold.after, ["A"]);
   });
 
   it("carries the fan-out cap, which is the number the operator is agreeing to", () => {
@@ -5413,6 +5641,115 @@ describe("planInstanceStep — deliver blocks", () => {
   });
 });
 
+describe("planInstanceStep — gate blocks", () => {
+  const gateNode = (id: string, name: string): WorkflowNode =>
+    graphNode(id, name, { kind: "gate", mountId: "", folder: "", task: "" });
+  const mergeNode = (id: string, name: string): WorkflowNode =>
+    graphNode(id, name, { kind: "merge", mountId: "", folder: "", task: "", mergeStrategy: "merge" });
+
+  /**
+   * The diamond a merge is held with: the run is linked to the merge directly,
+   * so the merge lands it, and to the gate, which the merge also waits for.
+   */
+  const HELD: WorkflowGraph = {
+    nodes: [
+      { ...FAN.nodes[1], id: "build", name: "Build" },
+      gateNode("look", "Look first"),
+      mergeNode("land", "Land it"),
+      { ...FAN.nodes[1], id: "after", name: "After" },
+    ],
+    edges: [
+      edge("build", "look"),
+      edge("build", "land"),
+      edge("look", "land"),
+      edge("look", "after"),
+    ],
+  };
+
+  it("reaches a gate once everything in front of it is satisfied, and starts nothing", () => {
+    const step = stepOf(
+      { build: ran("r-build", "completed"), look: decided("waiting"), land: decided("waiting") },
+      HELD,
+    );
+    assert.deepEqual(step.hold, ["look"]);
+    assert.deepEqual(step.merge, [], "the merge is held behind the gate");
+    assert.deepEqual(step.create, [], "and so is the run behind it");
+    assert.deepEqual(step.spawn, []);
+    assert.deepEqual(step.block, []);
+  });
+
+  it("does not reach a gate while a run in front of it is still working", () => {
+    const step = stepOf(
+      { build: ran("r-build", "running", 0), look: decided("waiting"), land: decided("waiting") },
+      HELD,
+    );
+    assert.deepEqual(step.hold, []);
+  });
+
+  it("reaches a gate with nothing in front of it at once", () => {
+    const g: WorkflowGraph = {
+      nodes: [gateNode("look", "Look first"), { ...FAN.nodes[1], id: "after", name: "After" }],
+      edges: [edge("look", "after")],
+    };
+    assert.deepEqual(stepOf({ look: decided("waiting") }, g).hold, ["look"]);
+  });
+
+  it("lists a held gate again on every plan until it is let through", () => {
+    // `holdGate`'s guarded write is what makes the second listing a no-op, and
+    // it can only be a no-op if the planner keeps listing it.
+    const state = { build: ran("r-build", "completed"), look: decided("waiting"), land: decided("waiting") };
+    assert.deepEqual(stepOf(state, HELD).hold, ["look"]);
+    assert.deepEqual(stepOf(state, HELD).hold, ["look"]);
+  });
+
+  it("releases what is behind it when it is let through, handing the merge only the run", () => {
+    const step = stepOf(
+      { build: ran("r-build", "completed"), look: decided("emitted"), land: decided("waiting") },
+      HELD,
+    );
+    assert.deepEqual(step.hold, [], "a gate that was let through is not held again");
+    assert.deepEqual(step.merge, [{ nodeId: "land", runIds: ["r-build"] }]);
+    assert.deepEqual(
+      step.create,
+      [{ nodeId: "after", dependsOn: [] }],
+      "a gate resolved to no run, so nothing behind it waits on one",
+    );
+  });
+
+  it("is satisfied by an on-finish link as well as an on-success one", () => {
+    const g: WorkflowGraph = {
+      nodes: [gateNode("look", "Look first"), { ...FAN.nodes[1], id: "after", name: "After" }],
+      edges: [edge("look", "after", { edge: "on-finish" })],
+    };
+    assert.deepEqual(stepOf({ look: decided("emitted") }, g).create, [
+      { nodeId: "after", dependsOn: [] },
+    ]);
+  });
+
+  it("writes a gate off when a run in front of it ended in a way its link does not accept", () => {
+    const step = stepOf(
+      { build: ran("r-build", "failed"), look: decided("waiting"), land: decided("waiting") },
+      HELD,
+    );
+    assert.deepEqual(step.hold, [], "nobody is asked to continue past work that failed");
+    assert.ok(step.block.some((b) => b.nodeId === "look" && /ended failed/.test(b.reason)));
+  });
+
+  it("blocks what is behind a gate that was taken down, naming the gate", () => {
+    const step = stepOf(
+      {
+        build: ran("r-build", "completed"),
+        look: decided("blocked", [], "Stopped by operator before anyone let it through."),
+        after: decided("waiting"),
+      },
+      HELD,
+    );
+    const after = step.block.find((b) => b.nodeId === "after");
+    assert.match(after?.reason ?? "", /“Look first” never ran/);
+    assert.deepEqual(step.create, []);
+  });
+});
+
 /* ------------------------------------------------------------------ */
 /* What a restart leaves waiting                                        */
 /* ------------------------------------------------------------------ */
@@ -5521,6 +5858,38 @@ describe("bootBlockPlan — which waiting blocks a restart closes out", () => {
     );
     assert.deepEqual(plan.held, ["empty", "finished"]);
     assert.deepEqual(plan.abandoned, []);
+  });
+
+  it("keeps an instance whose gate is held even though no member survived", () => {
+    // A held gate is a wait only a person can end, so the premise the
+    // closing-out rule rests on — that nothing left will ever wake the block —
+    // is false for it.
+    const given = instances(["gated", "started", "completed"]);
+    given[0].holdsGate = true;
+    const plan = bootBlockPlan(given, false);
+    assert.deepEqual(plan.gated, ["gated"]);
+    assert.deepEqual(plan.abandoned, []);
+  });
+
+  it("keeps it whether or not the restart closed out a member, and whether or not new work is held", () => {
+    const [closed] = instances(["closed", "started", "stopped"]);
+    closed.restartClosedMember = true;
+    closed.holdsGate = true;
+    for (const held of [true, false]) {
+      const plan = bootBlockPlan([closed], held);
+      assert.deepEqual(plan.gated, ["closed"], `held: ${held}`);
+      assert.deepEqual(plan.abandoned, [], `held: ${held}`);
+      assert.deepEqual(plan.held, [], `held: ${held}`);
+    }
+  });
+
+  it("names a surviving member before the gate, and does not keep a halted run for its gate", () => {
+    const given = instances(["live", "started", "paused"], ["halted", "stopping", "completed"]);
+    for (const entry of given) entry.holdsGate = true;
+    const plan = bootBlockPlan(given, false);
+    assert.deepEqual(plan.spared, ["live"]);
+    assert.deepEqual(plan.settled, ["halted"]);
+    assert.deepEqual(plan.gated, []);
   });
 
   it("still closes out an instance whose member a restart closed out, held or not", () => {
