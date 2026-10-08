@@ -271,8 +271,14 @@ the instance page names every pull request it opened.
 
 What follows it follows it on its condition: *only if it completes* waits until
 every branch is delivered or had nothing to deliver, *once it finishes* runs
-either way. A deliver block that failed cannot be retried from the instance page
-yet; deliver the branches it missed from their Land cards.
+either way. A deliver block that failed is listed under *What is holding this
+up* on the instance page, with **Retry delivery**. It pushes the branches that
+have no pull request yet and skips the rest, so pressing it never opens one
+twice, and it is offered only while nothing behind the block has started.
+
+It does not wait for a folder that a land or a run is holding. That branch
+fails with the reason, and Retry delivery is the way back in once the folder is
+free.
 
 It has the merge block's two limits. It has no checkout of its own, so it
 cannot be at either end of a branch hand-over, and it needs at least one block

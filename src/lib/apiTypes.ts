@@ -2958,7 +2958,8 @@ export type WorkflowPickUpDTO =
       leaveBehindRefusal: string | null;
     }
   | {
-      kind: "merge";
+      /** A merge or deliver block that failed; the page words the press by `kind`. */
+      kind: "merge" | "deliver";
       nodeId: string;
       nodeName: string;
       error: string | null;
