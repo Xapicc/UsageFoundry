@@ -200,13 +200,16 @@ describe("the cache read rate is a property of the model", () => {
     assert.equal(resolvePrice("claude-opus-4-8", { speed: "fast" })?.output, 50);
   });
 
-  it("resolves claude-sonnet-5-5 to its own row, at the default cache read rate", () => {
-    // The page's figures, read rather than carried over from either neighbour:
-    // Sonnet 5's $2/$10, and a cache hit at $0.20/MTok — the same dollar figure
-    // as Opus 5.5's, which is the trap. Copy the sibling point release's 0.05×
-    // and a million reads cost $0.10; it is 0.10× of a $2 input, so they cost
-    // $0.20, asserted in dollars so that either mistake shows.
-    const sonnet55 = resolvePrice("claude-sonnet-5-5");
+  it("resolves claude-sonnet-5-5 to its own row, at the default cache read rate before the cut", () => {
+    // The page's figures as launched, read rather than carried over from either
+    // neighbour: Sonnet 5's $2/$10, and a cache hit at $0.20/MTok — the same
+    // dollar figure as Opus 5.5's, which is the trap. Copy the sibling point
+    // release's 0.05× and a million reads cost $0.10; it is 0.10× of a $2 input,
+    // so they cost $0.20, asserted in dollars so that either mistake shows. That
+    // was the whole story until the 2026-10-07 cut, and a turn dated before it
+    // still prices this way (the block below pins where it turns over).
+    const before = Date.UTC(2026, 9, 7, 12);
+    const sonnet55 = resolvePrice("claude-sonnet-5-5", { at: before });
     assert.ok(sonnet55);
     assert.deepEqual(sonnet55, { input: 2, output: 10 });
     assert.equal(cacheReadMultiplierOf(sonnet55), CACHE_READ_MULTIPLIER);
@@ -214,7 +217,10 @@ describe("the cache read rate is a property of the model", () => {
 
     // Fast mode is offered on Opus 5.5, Opus 5 and Opus 4.8 only, so there is
     // no fast row to replace the base one, and a fast request prices at it.
-    assert.deepEqual(resolvePrice("claude-sonnet-5-5", { speed: "fast" }), sonnet55);
+    assert.deepEqual(
+      resolvePrice("claude-sonnet-5-5", { at: before, speed: "fast" }),
+      sonnet55,
+    );
   });
 
   it("keeps Sonnet 5.5's row through [1m], a snapshot and a provider prefix", () => {
@@ -227,7 +233,11 @@ describe("the cache read rate is a property of the model", () => {
       "us.anthropic.claude-sonnet-5-5",
       "claude-sonnet-5-5@20260928",
     ]) {
-      assert.deepEqual(resolvePrice(id), { input: 2, output: 10 }, id);
+      assert.deepEqual(
+        resolvePrice(id),
+        { input: 2, output: 10, cacheReadMultiplier: 0.05 },
+        id,
+      );
     }
   });
 
@@ -238,6 +248,129 @@ describe("the cache read rate is a property of the model", () => {
     // ceiling. 0.10× on a $10 input is dearer than 0.025× on one.
     assert.equal(cacheReadMultiplierOf(UNKNOWN_MODEL_PRICE), CACHE_READ_MULTIPLIER);
     assert.equal(costOf(MTOK, UNKNOWN_MODEL_PRICE), 1);
+  });
+});
+
+/**
+ * Claude Sonnet 5.5's cache read, which Anthropic cut after launch.
+ *
+ * Release notes, October 7, 2026: "We've lowered the price of prompt cache reads
+ * on Claude Sonnet 5.5 from $0.20 USD to $0.10 USD per million tokens: 0.05x the
+ * base input price instead of 0.1x. Cache writes and all other prices are
+ * unchanged." Turns before the cut were billed at 0.10×, so the rate is dated
+ * rather than corrected: a flat 0.05× would halve the read term of every Sonnet
+ * 5.5 turn from launch (2026-09-28) up to it, on the line nobody can check, and
+ * a flat 0.10× overstates every turn after. The cutover is the UTC midnight
+ * after the note's date because the note names no time of day, and an unknown
+ * rate takes the dearer shape.
+ *
+ * The instants are fixed rather than relative for the reason the Sonnet 5 block
+ * below gives: a `Date.now()` here would be a test that changes its own answer.
+ */
+describe("claude-sonnet-5-5's cache read turns over at 2026-10-08T00:00:00Z", () => {
+  const READS = { ...ZERO_TOKENS, cacheRead: 1_000_000 };
+  const CUT = Date.UTC(2026, 9, 8);
+  const PRE_CUT = [
+    ["launch", Date.UTC(2026, 8, 28)],
+    ["the day of the release note, near its end", Date.UTC(2026, 9, 7, 23, 59, 59, 999)],
+    ["one millisecond before the cut", CUT - 1],
+  ] as [string, number][];
+  const POST_CUT = [
+    ["the cutover itself", CUT],
+    ["one millisecond after it", CUT + 1],
+    ["well past it", Date.UTC(2027, 0, 15, 12)],
+  ] as [string, number][];
+
+  it("charges a million cache reads $0.20 before the cut and $0.10 at or after it", () => {
+    for (const [what, at] of PRE_CUT) {
+      const price = resolvePrice("claude-sonnet-5-5", { at });
+      assert.ok(price, what);
+      assert.equal(costOf(READS, price), 0.2, what);
+      assert.equal(guardCostOf(READS, price), 0.2, what);
+    }
+    for (const [what, at] of POST_CUT) {
+      const price = resolvePrice("claude-sonnet-5-5", { at });
+      assert.ok(price, what);
+      assert.equal(costOf(READS, price), 0.1, what);
+      assert.equal(guardCostOf(READS, price), 0.1, what);
+    }
+  });
+
+  it("gives the turn exactly at the cutover the new rate, and the millisecond before the old", () => {
+    // The boundary is `<`, not `<=`: a turn stamped 00:00:00.000Z on the 8th is
+    // after the cut. An off-by-one here is a single millisecond wide and would
+    // never show in any fixture that picks a comfortable instant.
+    const atCut = resolvePrice("claude-sonnet-5-5", { at: CUT });
+    const beforeCut = resolvePrice("claude-sonnet-5-5", { at: CUT - 1 });
+    assert.ok(atCut && beforeCut);
+    assert.equal(cacheReadMultiplierOf(atCut), 0.05);
+    assert.equal(cacheReadMultiplierOf(beforeCut), CACHE_READ_MULTIPLIER);
+  });
+
+  it("gives a caller that names no instant the new rate", () => {
+    // `chatStream.ts` prices a turn happening now with no `at`. Reading a missing
+    // instant as "the beginning of time" would hand it the launch-day rate, and
+    // the guard would over-charge every live chat turn by 2× on its reads.
+    const now = resolvePrice("claude-sonnet-5-5");
+    assert.ok(now);
+    assert.equal(cacheReadMultiplierOf(now), 0.05);
+    assert.equal(costOf(READS, now), 0.1);
+    assert.deepEqual(resolvePrice("claude-sonnet-5-5", {}), now);
+    assert.deepEqual(resolvePrice("claude-sonnet-5-5", { at: undefined }), now);
+    // Fast mode has no Sonnet 5.5 row, so a fast request falls to the same price.
+    assert.deepEqual(resolvePrice("claude-sonnet-5-5", { speed: "fast" }), now);
+    assert.deepEqual(resolvePrice("claude-sonnet-5-5", { at: CUT + 1, speed: "fast" }), now);
+  });
+
+  it("follows the same dates through [1m], a snapshot and both provider spellings", () => {
+    // Every door onto the one entry. The dated branch is keyed on the table key
+    // `resolvePrice` matched, not on the spelling the caller used, so a Bedrock-
+    // or Vertex-served Sonnet 5.5 on the 5th of October must not get today's rate.
+    for (const id of [
+      "claude-sonnet-5-5[1m]",
+      "claude-sonnet-5-5-20260928",
+      "us.anthropic.claude-sonnet-5-5",
+      "claude-sonnet-5-5@20260928",
+    ]) {
+      for (const [what, at] of PRE_CUT) {
+        const price = resolvePrice(id, { at });
+        assert.ok(price, `${id} ${what}`);
+        assert.equal(costOf(READS, price), 0.2, `${id} ${what}`);
+      }
+      for (const [what, at] of POST_CUT) {
+        const price = resolvePrice(id, { at });
+        assert.ok(price, `${id} ${what}`);
+        assert.equal(costOf(READS, price), 0.1, `${id} ${what}`);
+      }
+      assert.equal(costOf(READS, resolvePrice(id)), 0.1, `${id} with no instant`);
+    }
+  });
+
+  it("changes nothing but the cache read: input, output and both cache writes cost the same either side", () => {
+    // "Cache writes and all other prices are unchanged." The dated branch returns
+    // a whole second price, so a typo in it would show as a wrong input or write
+    // rate on exactly the turns before the cut, which no other case prices.
+    const before = resolvePrice("claude-sonnet-5-5", { at: CUT - 1 });
+    const after = resolvePrice("claude-sonnet-5-5", { at: CUT });
+    assert.ok(before && after);
+    assert.notDeepEqual(before, after);
+
+    const MTOK = 1_000_000;
+    for (const [what, tokens, usd] of [
+      ["input", { ...ZERO_TOKENS, input: MTOK }, 2],
+      ["output", { ...ZERO_TOKENS, output: MTOK }, 10],
+      ["5m cache write", { ...ZERO_TOKENS, cacheWrite5m: MTOK }, 2.5],
+      ["1h cache write", { ...ZERO_TOKENS, cacheWrite1h: MTOK }, 4],
+      ["unattributed cache write", { ...ZERO_TOKENS, cacheWriteUnattributed: MTOK }, 2.5],
+    ] as [string, typeof ZERO_TOKENS, number][]) {
+      assert.equal(costOf(tokens, before), usd, `${what} before`);
+      assert.equal(costOf(tokens, after), usd, `${what} after`);
+    }
+    // The guard prices the unattributed write at the 1h class, and that is the
+    // same on both sides too.
+    const unattributed = { ...ZERO_TOKENS, cacheWriteUnattributed: MTOK };
+    assert.equal(guardCostOf(unattributed, before), 4);
+    assert.equal(guardCostOf(unattributed, after), 4);
   });
 });
 

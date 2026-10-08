@@ -100,12 +100,22 @@ const PRICES: Record<string, ModelPrice> = {
   // here is deleted rather than expired — restoring it from memory would
   // overstate every Sonnet 5 run by 50% on a figure the budget guard acts on.
   //
-  // `claude-sonnet-5-5` is the first point release that departs from its
-  // predecessor on no column, the cache read included ($0.20/MTok, the default
-  // 0.10x of $2). It still takes a row of its own rather than a looser
-  // `DECORATION_ONLY`, because "the same as Sonnet 5" was read off the pricing
-  // page and is not something the table could have inferred.
-  "claude-sonnet-5-5": { input: 2, output: 10 },
+  // `claude-sonnet-5-5` matches Sonnet 5 on input and output, and takes a row of
+  // its own rather than a looser `DECORATION_ONLY` because "the same as Sonnet
+  // 5" was read off the pricing page and is not something the table could have
+  // inferred. Its cache read is the one column that moved, and it moved *after*
+  // launch. The release notes, under October 7, 2026: "We've lowered the price
+  // of prompt cache reads on Claude Sonnet 5.5 from $0.20 USD to $0.10 USD per
+  // million tokens: 0.05x the base input price instead of 0.1x. Cache writes
+  // and all other prices are unchanged."
+  //
+  // This row is the rate from the cut on, and what a call naming no instant (a
+  // turn happening now) gets. A turn dated before `SONNET_5_5_CACHE_READ_CUT_AT`
+  // gets `SONNET_5_5_BEFORE_CACHE_READ_CUT` in `resolvePrice`, because those
+  // turns really were billed at 0.10x ($0.20/MTok): repricing them at 0.05x
+  // would halve the read term, on the line nobody can check and ~98% of this
+  // workload. Fast mode is still offered on the three Opus rows only.
+  "claude-sonnet-5-5": { input: 2, output: 10, cacheReadMultiplier: 0.05 },
   "claude-sonnet-5": { input: 2, output: 10 },
   "claude-sonnet-4-6": { input: 3, output: 15 },
   "claude-sonnet-4-5": { input: 3, output: 15 },
@@ -221,21 +231,41 @@ function canonicalModelId(model: string): string {
 }
 
 /**
+ * The first instant Claude Sonnet 5.5 is priced at the 0.05x cache read rate:
+ * 2026-10-08T00:00:00Z.
+ *
+ * The release note that announced the cut is dated October 7, 2026 and, like the
+ * pricing page, names no time of day, so a turn on the 7th has a rate this table
+ * cannot know. An unknown rate takes the dearest plausible shape here
+ * (`UNKNOWN_MODEL_PRICE`, `guardCostOf`), so all of the 7th keeps the 0.10x it
+ * launched at and the cut starts at the UTC midnight after it: at worst a day's
+ * cache reads overstated by 2x, never understated. It is also a UTC midnight,
+ * which `windows.ts`'s per-day price memo requires of every dated rate.
+ */
+const SONNET_5_5_CACHE_READ_CUT_AT = Date.UTC(2026, 9, 8);
+
+/** Claude Sonnet 5.5 before `SONNET_5_5_CACHE_READ_CUT_AT`: the default 0.10x read. */
+const SONNET_5_5_BEFORE_CACHE_READ_CUT: ModelPrice = { input: 2, output: 10 };
+
+/**
  * Resolve pricing for a model string at a point in time.
  *
  * Returns null for unknown models rather than guessing — an unpriced model
  * should surface as "unknown" in the UI, not silently contribute $0 and make
  * a budget look safer than it is.
  *
- * **`at` reads no entry today.** The only rate that ever varied with it was
- * Claude Sonnet 5's introductory $2/$10, and Anthropic cancelled the rise to
- * $3/$15 rather than letting it land, so the ramp is gone and every entry is
- * flat in time. It stays on the signature because the callers that pass one are
- * repricing turns that already ran, and "what did this cost" is a question about
- * the day it happened rather than about today — `metering.md` writes that down
- * as the shape a future dated rate takes, and `windows.ts`'s per-day memo key
- * assumes it (a rate turning over anywhere but a UTC midnight would make that
- * memo wrong for the turns either side). A new dated rate branches here.
+ * **`at` is read by one entry: Claude Sonnet 5.5's cache read rate**, which
+ * fell from 0.10x to 0.05x at `SONNET_5_5_CACHE_READ_CUT_AT`. A caller that
+ * names no instant is pricing a turn happening now and gets the current rate.
+ * Every other entry is flat in time: Claude Sonnet 5's introductory $2/$10 was
+ * the earlier dated rate, and Anthropic cancelled the rise to $3/$15 rather than
+ * letting it land, so that ramp is deleted. `at` is what the callers that
+ * reprice turns that already ran pass, because "what did this cost" is a
+ * question about the day it happened rather than about today — `metering.md`
+ * writes that down as the shape a dated rate takes, and `windows.ts`'s per-day
+ * memo key assumes it (a rate turning over anywhere but a UTC midnight would
+ * make that memo wrong for the turns either side). A new dated rate branches
+ * here.
  */
 export function resolvePrice(
   model: string | undefined,
@@ -251,6 +281,13 @@ export function resolvePrice(
 
   if (opts.speed === "fast" && FAST_MODE_PRICES[key]) {
     return FAST_MODE_PRICES[key];
+  }
+  if (
+    key === "claude-sonnet-5-5" &&
+    opts.at !== undefined &&
+    opts.at < SONNET_5_5_CACHE_READ_CUT_AT
+  ) {
+    return SONNET_5_5_BEFORE_CACHE_READ_CUT;
   }
   return PRICES[key];
 }

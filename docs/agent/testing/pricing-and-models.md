@@ -88,7 +88,7 @@ observed time-dependence through the only entry that had any, and with the table
 flat there is nothing either can assert that is not a restatement of the code.
 The rule they protected is not gone — `resolvePrice`'s note and `metering.md`
 both say a new dated rate goes in that shape and turns over at a UTC midnight —
-and a case for each comes back with the next one.
+and a case for each comes back with the next one. Sonnet 5.5's dated cache read (below) is that next one, and only its pricing cases exist so far: the two consumer-side tests above are still not back.
 
 **A point release the table has no row for earned its own block, because a bare
 `startsWith` gave it its predecessor's row.** `claude-sonnet-5` is a string
@@ -121,6 +121,24 @@ the base row because the page offers fast mode on the three Opus rows only. The
 second runs `[1m]`, a snapshot and both provider decorations onto it; the pinned
 CLI names no `claude-sonnet-5-5[1m]`, but a newer CLI's or a transcript's would
 price there.
+
+**Sonnet 5.5's cache read was cut after launch, so it earned a third block, and
+it is the dated rate the two above were deleted for lack of.** It shipped at the
+default 0.10× and Anthropic lowered it to 0.05× on 2026-10-07, so the cases pin a
+date and not a value: a million reads cost $0.20 at three instants before
+`2026-10-08T00:00:00Z` and $0.10 at three from it, the guard's charge agrees
+with the shown one on both sides, and the cutover millisecond itself takes the
+new rate (the boundary is `<`, and an off-by-one there is one millisecond wide).
+The call that names no `at` takes the new rate too — `chatStream.ts` prices a
+turn happening now, and reading a missing instant as the beginning of time would
+over-charge every live chat turn's reads by 2×. The `[1m]`, snapshot, Bedrock and
+`@date` spellings follow the same dates, because the branch is keyed on the table
+key and a Bedrock-served turn on the 5th must not get today's rate. And input,
+output and both cache writes cost the same either side, since the dated branch
+returns a whole second price whose typo would show nowhere else. The first
+Sonnet 5.5 block was rewritten, not weakened: it now asks for the price at an
+instant before the cut, and its `[1m]`/snapshot case expects the 0.05× row that
+a call with no instant gets.
 
 **Claude Opus 4 and Sonnet 4 under their dated ids earned a block, because the
 table keyed them only as the alias spellings.** `claude-opus-4-0` and

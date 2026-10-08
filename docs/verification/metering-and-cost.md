@@ -21,6 +21,23 @@
   Sonnet 5.5 a 1M window. Caveat: this is the published list price. It has not
   been compared with any billed or CLI-reported figure for a Sonnet 5.5 turn.
 
+- **Claude Sonnet 5.5's cache read price was cut from $0.20 to $0.10 per MTok,
+  read off the release notes and the pricing page, not measured, 2026-10-08**
+  (`platform.claude.com/docs/en/release-notes/overview.md` and
+  `platform.claude.com/docs/en/about-claude/pricing.md`, both fetched with
+  `curl` that day). The release notes, under October 7, 2026: "We've lowered the
+  price of prompt cache reads on Claude Sonnet 5.5 from $0.20 USD to $0.10 USD
+  per million tokens: 0.05x the base input price instead of 0.1x. Cache writes
+  and all other prices are unchanged." The pricing page agrees: the row reads
+  `$2 / MTok | $2.50 / MTok | $4 / MTok | $0.10 / MTok | $10 / MTok`, footnote 2
+  puts Opus 5.5 and Sonnet 5.5 at 0.05x, and the fast-mode table still lists
+  Opus 5.5, Opus 5 and Opus 4.8 only. The entry above was true when written and
+  stays: turns from launch up to the cut were billed at $0.20. `pricing.ts` now
+  dates the rate, 0.10x before `2026-10-08T00:00:00Z` and 0.05x from it. Neither
+  page names a time of day for the cut, so the cutover is the UTC midnight after
+  the note's date, the choice that errs dear. Caveat: published prices, compared
+  with no billed or CLI-reported figure; the time of day is open below.
+
 - **Dedup verified:** 99 → 31 records.
 
 - **Dedup keeps each turn's highest-output line, 40,885 turns / 1,011 files,
@@ -132,6 +149,16 @@
   `cycleSpendOf` banks each resumed work cycle's increase on this reading.
 
 ## Not yet verified by hand
+
+- **The instant Sonnet 5.5's cache read price fell is a choice, not a reading.**
+  Anthropic dates the cut 2026-10-07 and names no time, so `pricing.ts` switches
+  at the UTC midnight after it, and a turn on the 7th is priced at the old,
+  dearer $0.20. If the cut took effect earlier that day, those turns are
+  overstated by up to 2x on their reads. Settle it by summing Sonnet 5.5
+  `cache_read_input_tokens` from `~/.claude/projects/*/*.jsonl` per UTC hour on
+  2026-10-07 and 2026-10-08 and dividing the Console's hourly Sonnet 5.5 cache
+  read cost for the same hours by it: the hour the quotient drops from $0.20 to
+  $0.10 per MTok is the cutover.
 
 - **No real resumed chat turn has been compared with its transcript.** The
   entry above is read, not run, and `chat_turn_spend` now banks each resumed
