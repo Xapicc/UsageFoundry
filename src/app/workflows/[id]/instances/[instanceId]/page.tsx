@@ -599,13 +599,18 @@ function PickUpCard({
                 key={p.nodeId}
                 label={<span className="font-medium text-ink">{p.nodeName}</span>}
                 description={
-                  p.retryRefusal ??
-                  p.error ??
-                  (p.kind === "merge"
-                    ? "The merge failed"
-                    : p.kind === "deliver"
-                      ? "The delivery failed"
-                      : "The turn failed")
+                  // A deliver block's note names the pull requests it opened, and
+                  // a URL has no break opportunity: without `anywhere` the row
+                  // runs under its button at phone width.
+                  <span className="[overflow-wrap:anywhere]">
+                    {p.retryRefusal ??
+                      p.error ??
+                      (p.kind === "merge"
+                        ? "The merge failed"
+                        : p.kind === "deliver"
+                          ? "The delivery failed"
+                          : "The turn failed")}
+                  </span>
                 }
               >
                 {p.retryRefusal === null && (
