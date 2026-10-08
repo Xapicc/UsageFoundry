@@ -449,6 +449,7 @@ export default function WorkflowPage() {
       <WorkflowSchedule
         workflowId={id}
         schedule={workflow.schedule ?? null}
+        refusal={workflow.scheduleRefusal}
         newWorkPaused={newWorkPaused}
         onChanged={load}
       />
@@ -703,6 +704,9 @@ export default function WorkflowPage() {
                     <Th scope="col" className="min-w-[180px]">
                       Started
                     </Th>
+                    <Th scope="col" className="min-w-[96px]">
+                      Started by
+                    </Th>
                     <Th scope="col" className="w-full">
                       Outcome
                     </Th>
@@ -710,6 +714,9 @@ export default function WorkflowPage() {
                         in here too, and they are not in the saved graph. */}
                     <Th scope="col" num className="min-w-[88px]">
                       Runs
+                    </Th>
+                    <Th scope="col" num className="min-w-[96px]">
+                      Spent
                     </Th>
                   </tr>
                 </THead>
@@ -726,6 +733,12 @@ export default function WorkflowPage() {
                           {fmtDateTime(inst.createdAt)}
                         </Link>
                       </Td>
+                      <Td
+                        label="Started by"
+                        className="whitespace-nowrap align-top text-ink-muted"
+                      >
+                        {inst.origin === "schedule" ? "schedule" : "you"}
+                      </Td>
                       {/* Above the value: a badge plus a clause naming how many
                           blocks never ran is a sentence, not a reading. */}
                       <Td
@@ -740,6 +753,23 @@ export default function WorkflowPage() {
                       </Td>
                       <Td num label="Runs" className="align-top text-ink-muted">
                         {inst.nodes.length}
+                      </Td>
+                      {/* Each row is its own reading and nothing sums them: a
+                          column of presses is not a bill, and a total under it
+                          would claim one. The figure is the measured floor, so a
+                          press that is still working shows what has been
+                          reported so far (its Outcome says it is working), and
+                          one with a block that reported no cost says that
+                          rather than passing the rest off as the whole. */}
+                      <Td
+                        num
+                        label="Spent"
+                        className="whitespace-nowrap align-top text-ink-muted"
+                      >
+                        {fmtUSD(inst.spentUSD)}
+                        {inst.spentUnmeasured > 0 && (
+                          <div className="text-xs">reported so far</div>
+                        )}
                       </Td>
                     </Tr>
                   ))}

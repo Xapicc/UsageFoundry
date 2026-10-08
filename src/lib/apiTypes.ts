@@ -2577,6 +2577,16 @@ export interface WorkflowDTO {
   lastRunAt?: number | null;
   /** Null when nothing starts this workflow but a person. */
   schedule?: WorkflowScheduleDTO | null;
+  /**
+   * Why a schedule on this workflow would be refused as things stand, or null.
+   *
+   * The server's own `scheduleRefusal(workflow)`, sent so the schedule card can
+   * say so before it offers a form that would only be answered with it — and so
+   * the browser decides nothing about it. A reading and never the gate: the same
+   * check runs again when a schedule is saved and at every fire. Distinct from
+   * `schedule.refusal`, which is about a schedule that already exists.
+   */
+  scheduleRefusal: string | null;
 }
 
 /**
@@ -2602,11 +2612,25 @@ export interface WorkflowDTO {
  */
 export type WorkflowListItemDTO = Omit<
   WorkflowDTO,
-  "nodes" | "edges" | "instanceBudget"
+  "nodes" | "edges" | "instanceBudget" | "scheduleRefusal"
 > & {
   /** How many blocks the saved graph holds. Both lists print exactly this. */
   nodeCount: number;
+  /**
+   * The newest press of Run, null if there has never been one.
+   *
+   * Three fields rather than an instance: the list links it and names how it
+   * ended, and nothing else. `status` is the derived reading
+   * `WorkflowInstanceDTO.status` explains — read and shown here, never acted on.
+   */
+  lastInstance: WorkflowLastInstanceDTO | null;
 };
+
+export interface WorkflowLastInstanceDTO {
+  id: string;
+  createdAt: number;
+  status: WorkflowInstanceDTO["status"];
+}
 
 /**
  * One thing an instance member starts after, and on what condition.
@@ -2873,6 +2897,12 @@ export interface WorkflowInstanceDTO {
     | "stopping"
     | "stopped";
   error: string | null;
+  /**
+   * Who pressed Run: a schedule firing with nobody present, or a person. An
+   * instance stored with no origin predates the column, when only a person
+   * could press it, and reads `workflow`.
+   */
+  origin: "workflow" | "schedule";
   /** When the halt closed the door — not when the last child died. */
   stoppedAt: number | null;
   /**

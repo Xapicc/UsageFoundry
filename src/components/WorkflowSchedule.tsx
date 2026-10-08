@@ -8,13 +8,12 @@ import type {
   WorkflowScheduleDTO,
 } from "@/lib/apiTypes";
 import {
-  fmtDateTime,
   fmtInstantWithZone,
   fmtRelative,
   type BadgeTone,
 } from "@/lib/format";
 import { Badge } from "@/components/ui/Badge";
-import { Button, ButtonRow } from "@/components/ui/Button";
+import { Button, ButtonLink, ButtonRow } from "@/components/ui/Button";
 import { Card, CardTitle } from "@/components/ui/Card";
 import { Input, Select } from "@/components/ui/Field";
 import { ListGroup, ListRow } from "@/components/ui/List";
@@ -142,11 +141,19 @@ function draftOf(schedule: WorkflowScheduleDTO | null, browserZone: string): Dra
 export function WorkflowSchedule({
   workflowId,
   schedule,
+  refusal,
   newWorkPaused,
   onChanged,
 }: {
   workflowId: string;
   schedule: WorkflowScheduleDTO | null;
+  /**
+   * Why a schedule on this workflow would be refused, in the server's own
+   * words (`WorkflowDTO.scheduleRefusal`), or null. Said instead of the form
+   * rather than after it is filled in; the browser works none of it out, and the
+   * server asks again at the save and at every fire.
+   */
+  refusal: string | null;
   /**
    * The install-wide hold. A held install starts nothing, so a "Next start"
    * beside it names an occurrence that will be recorded as missed — and looks,
@@ -258,10 +265,27 @@ export function WorkflowSchedule({
             <div className="text-sm text-ink-muted">
               Nothing starts this workflow but you.
             </div>
-            <Button variant="secondary" size="compact" onClick={openEditor}>
-              Add schedule
-            </Button>
+            {refusal === null ? (
+              <Button variant="secondary" size="compact" onClick={openEditor}>
+                Add schedule
+              </Button>
+            ) : (
+              // The limits the sentence points at are edited in the editor, not
+              // on this page, which only shows them.
+              <ButtonLink
+                href={`/workflows/${workflowId}/edit`}
+                variant="secondary"
+                size="compact"
+              >
+                Edit workflow
+              </ButtonLink>
+            )}
           </div>
+        )}
+        {!schedule && !editing && refusal !== null && (
+          <Notice tone="warn" className="mt-4">
+            {refusal}
+          </Notice>
         )}
 
         {schedule && !editing && (
@@ -310,16 +334,25 @@ export function WorkflowSchedule({
                   <Badge tone={OUTCOME[schedule.lastCode].tone}>
                     {OUTCOME[schedule.lastCode].label}
                   </Badge>
+                  {/* The occurrence is the schedule's, so it is on the schedule's
+                      clock and names it, as "Next start" does. */}
                   {schedule.lastFireAt !== null && (
                     <span className="mono text-ink">
-                      {fmtDateTime(schedule.lastFireAt)}
+                      {fmtInstantWithZone(schedule.lastFireAt, schedule.timeZone)}
                     </span>
                   )}
                   {/* Fifty identical rows are a log nobody reads; one row with
-                      a count is a fact somebody acts on. */}
+                      a count is a fact somebody acts on. `streakSince` is when
+                      the outcome was recorded rather than an occurrence, and
+                      it is on the schedule's clock all the same: it is a few
+                      characters from an instant that is, and `lastReason`
+                      under them names the same zone, so on the reader's clock
+                      with no label it would be a second, unmarked clock in one
+                      row for anyone who sits in another zone. */}
                   {schedule.streak > 1 && schedule.streakSince !== null && (
                     <span className="text-xs tabular-nums text-ink-muted">
-                      ×{schedule.streak} since {fmtDateTime(schedule.streakSince)}
+                      ×{schedule.streak} since{" "}
+                      {fmtInstantWithZone(schedule.streakSince, schedule.timeZone)}
                     </span>
                   )}
                 </ListRow>
