@@ -80,6 +80,21 @@
   and a refusal with no switch, or after switching back, still showed. Caveat:
   the POST answers were stubbed, not the routes'.
 
+- **A thread opened while New chat's POST was out stays open, and a refusal
+  does not follow the operator to another thread, in Chromium on the standalone
+  build, 2026-10-08.** Two seeded threads with the page on the newer; New chat's
+  POST held by `page.route` and then continued unstubbed, so the thread was
+  really created, while the other thread's row was clicked. At `750d0462` the
+  new empty thread replaced the clicked one and stayed through the next poll; a
+  send refusal stayed under the thread opened from the list and under the one
+  New chat opened, and an answer refusal showed under a question that arrived
+  in the new thread. At `c254926f` the clicked thread stayed open through the
+  release and the next poll with three threads in the database, none of the
+  refusals showed, and the draft was kept; with no click the new thread still
+  opened. Caveat: the two refusals were stubbed at the route, and re-clicking
+  the thread already open during the POST was not driven — the ref does not move
+  for it, so the new thread opens over it.
+
 ## Not yet verified by hand
 
 - **Whether the shipped chat leaves files alone when a fix is one edit away
