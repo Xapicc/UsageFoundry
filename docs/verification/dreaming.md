@@ -64,3 +64,19 @@
   run_id FROM dreaming_nights ORDER BY night` and `SELECT origin, started_at
   FROM runs WHERE origin_ref LIKE 'dreaming:%'` in `usagefoundry.db`, then
   compare each night with the data directory's restart times.
+
+- **`repairDreamingNotePaths` has not been run against a real ledger**: it
+  re-derives `note_path` once per install for rows attached while the parser
+  kept the last line of an item's report, which in the 19 transcripts read on
+  2026-10-08 was a hub for 45 of 49 multi-file items. It was written without
+  `/data` readable, so the number of live rows holding a hub, and what they hold,
+  are unknown, and it has been exercised only on seeded rows in
+  `dreamingLedger.test.ts`. Settle, from a shell that can read `DATA_DIR`,
+  before and after one boot of the build that carries it: `SELECT signature,
+  note_path FROM dreaming_notes WHERE note_path LIKE '%MOC.md' OR note_path LIKE
+  '%Standing Failures%'` in `usagefoundry.db` should return rows before and none
+  after, `SELECT value FROM settings WHERE key = 'dreaming.notePathsRederivedAt'`
+  should hold an instant after, and the boot log should say how many notes it
+  repointed. Rows still listing a hub afterwards belong to a run whose events
+  retention has deleted, or whose report never listed the note first, and are
+  the ones to `forgetNote` or fix by hand.

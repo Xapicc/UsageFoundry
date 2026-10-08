@@ -337,6 +337,79 @@ describe("reconcileDreamingNotes", () => {
   });
 });
 
+/**
+ * The one-off that repairs rows attached while the parser kept an item's last
+ * line, which is a hub. Its decision is pinned purely in `dreaming.test.ts`;
+ * these are the parts only a database shows: that it reads the run's final
+ * report, that it never runs a second time, and that a run that has not
+ * finished is not read.
+ */
+describe("repairDreamingNotePaths", () => {
+  let runs: typeof import("./dreamingRun");
+
+  before(async () => {
+    runs = await import("./dreamingRun");
+  });
+
+  beforeEach(() => {
+    dbMod
+      .db()
+      .exec(
+        "DELETE FROM run_events; DELETE FROM runs; DELETE FROM settings WHERE key = 'dreaming.notePathsRederivedAt';",
+      );
+  });
+
+  const runWithReport = (id: string, status: string, report: string | null) => {
+    const at = Date.now();
+    dbMod
+      .db()
+      .prepare(
+        `INSERT INTO runs (id, folder, prompt, status, budget, created_at, origin, origin_ref)
+         VALUES (?, '/vault', 'p', ?, '{}', ?, 'form', 'dreaming:2026-09-02')`,
+      )
+      .run(id, status, at);
+    if (report === null) return;
+    dbMod
+      .db()
+      .prepare("INSERT INTO run_events (run_id, ts, kind, payload) VALUES (?, ?, 'assistant', ?)")
+      .run(id, at, JSON.stringify({ text: report }));
+  };
+
+  const paths = () =>
+    Object.fromEntries(ledger.listNotes().map((n) => [n.signature, n.notePath]));
+
+  const HUB = "Hubs/Standing Failures.md";
+  const report = `NOTE 1 created Notes/New.md\nNOTE 1 edited ${HUB}`;
+
+  it("points a row holding the hub at the note, and does it once", () => {
+    runWithReport("run-1", "completed", report);
+    ledger.claimSignatures("2026-09-02", "run-1", [rollup("sig-a", 2)]);
+    ledger.recordNotePath("sig-a", HUB);
+
+    assert.equal(runs.repairDreamingNotePaths(), 1);
+    assert.deepEqual(paths(), { "sig-a": "Notes/New.md" });
+
+    // A second boot must not read the run again: put the hub back and it stays.
+    ledger.recordNotePath("sig-a", HUB);
+    assert.equal(runs.repairDreamingNotePaths(), 0);
+    assert.deepEqual(paths(), { "sig-a": HUB });
+  });
+
+  it("leaves rows alone whose run is gone, unfinished or silent", () => {
+    runWithReport("run-live", "running", report);
+    runWithReport("run-silent", "completed", null);
+    ledger.claimSignatures("2026-09-02", "run-live", [rollup("sig-live", 2)]);
+    ledger.claimSignatures("2026-09-03", "run-silent", [rollup("sig-silent", 2)]);
+    ledger.claimSignatures("2026-09-04", "run-gone", [rollup("sig-gone", 2)]);
+    for (const signature of ["sig-live", "sig-silent", "sig-gone"]) {
+      ledger.recordNotePath(signature, HUB);
+    }
+
+    assert.equal(runs.repairDreamingNotePaths(), 0);
+    assert.deepEqual(paths(), { "sig-live": HUB, "sig-silent": HUB, "sig-gone": HUB });
+  });
+});
+
 describe("liveDreamingRun", () => {
   let runs: typeof import("./dreamingRun");
 
