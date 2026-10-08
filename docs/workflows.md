@@ -249,7 +249,7 @@ because nothing it was given has been judged.
 
 **It spends, and the spend is the block's.** Each review is billed separately from
 any run's own spend, as the button's is, and lands on the block rather than on a
-run or a dashboard meter. It counts against the workflow's own limit, which is
+run. It counts against the workflow's own limit, which is
 checked when the block starts. A fix run is an ordinary run of the instance, so
 *Stop all* takes it down and the workflow-wide limits cover it. In a loop's
 section the review's worst case is its fix rounds for every branch a pass can
