@@ -16,7 +16,10 @@ the branches the blocks in front of it left behind, optionally paying Claude to
 reconcile a conflict; it too has [a section](#a-block-that-lands-the-work). Its
 sibling, a **deliver block**, [pushes those branches and opens a pull
 request for each](#a-block-that-delivers-the-work) instead of touching your
-checkout.
+checkout. A **review block** [judges each branch before it goes
+on](#a-block-that-reviews-the-work). A **loop block** is not like the others: it
+[repeats a section](#a-region-that-repeats) of the graph and starts no run of its
+own.
 
 ## What a block holds, and what it does not
 
@@ -223,13 +226,52 @@ bound the spend: a schedule presses Run with nobody there to look at what is
 being published. And the chat cannot draft one; add it in the editor, where its
 effect is stated beside it.
 
+## A block that reviews the work
+
+A **review block** sits between the blocks that leave branches and whatever uses
+them, and decides which of those branches go on. It holds no task. For each
+branch its incoming links resolve to, it asks for the review that the *Review*
+button on a run's page asks for ([review and land](review-and-land.md)) — Claude,
+read-only, and always asked for a verdict — and acts on the answer:
+
+- **Approved:** the branch is handed on.
+- **Rejected:** a fix run continues the same branch, briefed with the review, under
+  the guards of the run it continues and never wider ones.
+- **Still not approved** after the block's **fix rounds** (0 to 3, required, set
+  when you save the graph): the branch is set aside, left as it was and not
+  handed on.
+
+**Setting everything aside is not a failure.** The block is satisfied with
+nothing to hand on, so a merge block behind it reports that there was no branch
+to land and a loop carries on. What does fail it is a review that never
+finished, such as a restart in the middle of one, and that blocks what follows,
+because nothing it was given has been judged.
+
+**It spends, and the spend is the block's.** Each review is billed separately from
+any run's own spend, as the button's is, and lands on the block rather than on a
+run or a dashboard meter. It counts against the workflow's own limit, which is
+checked when the block starts. A fix run is an ordinary run of the instance, so
+*Stop all* takes it down and the workflow-wide limits cover it. In a loop's
+section the review's worst case is its fix rounds for every branch a pass can
+cut, which the 60-run bound below counts.
+
+**A block can read each run's status instead of asking a model.** Then nothing is
+billed and no fix run starts: a run that completed is approved and every other
+ending is set aside, with a sentence naming it. That needs zero fix rounds and
+every incoming link set to *once it finishes*, both refused when you save the
+graph, because behind *only if it completes* the first run that did not complete
+would block the whole block instead.
+
+Like a merge block it needs at least one block in front of it that runs
+something, and each of those has to work in a checkout of its own, since a review
+is judged against the branch tip it was shown.
+
 ## A region that repeats
 
 Some work does not fit in one run. "Work through the failing tests until they
 pass" is a real task and an agent given one work cycle for it stops half way,
-`completed`, with the job undone. A **loop block** is the fourth kind, and it is
-not a block that does work: it is a **frame round a section of the workflow that
-repeats**. Put a frame round some blocks and every one of them runs again on
+`completed`, with the job undone. A **loop block** is not a block that does
+work: it is a **frame round a section of the workflow that repeats**. Put a frame round some blocks and every one of them runs again on
 every **pass**.
 
 > A pass is not a work cycle. A work cycle is one invocation of Claude Code
@@ -457,7 +499,7 @@ Three things are refused, each naming the block to fix:
   once, or once per pass — and only one of them is what anybody meant. The canvas
   says this one as you draw it rather than waiting for Save.
 
-**A section holds run blocks, orchestrator blocks and merge blocks.** A loop
+**A section holds run blocks, orchestrator blocks, review blocks and merge blocks.** A loop
 inside a loop is left out, and it is refused by name: one pass cap multiplying
 another is a number nobody can work out from the two they typed. Repeat one
 section, not a section that repeats. A deliver block is left out too, for a
@@ -616,7 +658,8 @@ run says so rather than reading as approval.
 A workflow that can be saved but never started fails weeks away from the form
 that caused it, so both moments check the same things: a name, at least one
 block, a task on every block that runs one — every block but a merge block, a
-deliver block and a loop that repeats a section, none of which is sent one — a
+deliver block, a review block and a loop that repeats a section, none of which
+is sent one — a
 template that
 exists, a workspace that is
 mounted and a folder that resolves inside it, a condition on every link, no
