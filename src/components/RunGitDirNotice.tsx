@@ -241,7 +241,7 @@ export function RunGitDirNotice({
     return (
       <p className="mt-1 text-xs text-ink-muted">
         No setting, hook or attributes line your own git runs a command from changed in{" "}
-        <span className="mono">{report.commonDir}</span> while this run worked.
+        <span className="mono break-all">{report.commonDir}</span> while this run worked.
       </p>
     );
   }

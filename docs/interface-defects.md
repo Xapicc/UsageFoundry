@@ -273,3 +273,13 @@ nothing about it.
   rendering the new states over a 68-character hyphen-free path in a
   standalone build; fixed with `break-all` on both. The run page's muted
   "nothing changed" line has the same span and is board task `386f64c8`.
+- **2026-10-08, board task `386f64c8`, class B, arguably D.** The run page's
+  muted "nothing changed" line in `RunGitDirNotice` set the git directory as a
+  `mono` span with no `break-all`, the one span `a7f84588` left behind. A
+  68-character hyphen-free path measured 414px wide in a 290px paragraph at
+  390px, and `AppShell` clips, so `scrollWidth` stayed equal to `clientWidth`
+  and only `smoke-pages`' no-box-wider-than-its-parent check could see it.
+  Class B because an unbreakable path in a bounded box is in the markup;
+  arguably D because whether it overflows is the width's to say. Found by
+  rendering the `unchanged` state over a long path; fixed with `break-all`.
+  `RunGitDirNotice.test.tsx` does not pin classes, so no case was added.
