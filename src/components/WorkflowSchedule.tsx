@@ -8,7 +8,6 @@ import type {
   WorkflowScheduleDTO,
 } from "@/lib/apiTypes";
 import {
-  fmtDateTime,
   fmtInstantWithZone,
   fmtRelative,
   type BadgeTone,
@@ -310,16 +309,25 @@ export function WorkflowSchedule({
                   <Badge tone={OUTCOME[schedule.lastCode].tone}>
                     {OUTCOME[schedule.lastCode].label}
                   </Badge>
+                  {/* The occurrence is the schedule's, so it is on the schedule's
+                      clock and names it, as "Next start" does. */}
                   {schedule.lastFireAt !== null && (
                     <span className="mono text-ink">
-                      {fmtDateTime(schedule.lastFireAt)}
+                      {fmtInstantWithZone(schedule.lastFireAt, schedule.timeZone)}
                     </span>
                   )}
                   {/* Fifty identical rows are a log nobody reads; one row with
-                      a count is a fact somebody acts on. */}
+                      a count is a fact somebody acts on. `streakSince` is when
+                      the outcome was recorded rather than an occurrence, and
+                      it is on the schedule's clock all the same: it is a few
+                      characters from an instant that is, and `lastReason`
+                      under them names the same zone, so on the reader's clock
+                      with no label it would be a second, unmarked clock in one
+                      row for anyone who sits in another zone. */}
                   {schedule.streak > 1 && schedule.streakSince !== null && (
                     <span className="text-xs tabular-nums text-ink-muted">
-                      ×{schedule.streak} since {fmtDateTime(schedule.streakSince)}
+                      ×{schedule.streak} since{" "}
+                      {fmtInstantWithZone(schedule.streakSince, schedule.timeZone)}
                     </span>
                   )}
                 </ListRow>
