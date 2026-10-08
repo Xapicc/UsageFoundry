@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { WorkflowListItemDTO } from "@/lib/apiTypes";
 import {
   fmtDateTime,
+  fmtInstantWithZone,
   INSTANCE_OUTCOME_LABEL,
   INSTANCE_OUTCOME_TONE,
   pollFailureMessage,
@@ -147,7 +148,7 @@ export default function WorkflowsPage() {
                             ? " · paused"
                             : w.schedule.nextFireAt === null
                               ? " · next start unknown"
-                              : ` · next ${fmtDateTime(w.schedule.nextFireAt)}`}
+                              : ` · next ${fmtInstantWithZone(w.schedule.nextFireAt, w.schedule.timeZone)}`}
                         </div>
                       )}
                     </Td>

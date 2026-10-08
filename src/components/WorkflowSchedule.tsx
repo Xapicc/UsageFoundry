@@ -403,6 +403,18 @@ export function WorkflowSchedule({
               >
                 Change
               </Button>
+              {/* The refusal above tells the reader to set a limit, and the
+                  limits are edited in the editor, not on this page, which only
+                  shows them. */}
+              {schedule.refusal && (
+                <ButtonLink
+                  href={`/workflows/${workflowId}/edit`}
+                  variant="secondary"
+                  size="compact"
+                >
+                  Edit workflow
+                </ButtonLink>
+              )}
               <Button
                 variant="ghost"
                 size="compact"
