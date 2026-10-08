@@ -123,7 +123,7 @@ test("a hook in core.hooksPath's directory is drawn in both places, with the dir
   for (const placement of ["inspector", "land"] as const) {
     assert.match(
       render(gitDir(report), placement),
-      /<code>pre-commit<\/code> in <span[^>]*>\/workspace\/repo\/\.husky\/_<\/span>, the directory <code>core\.hooksPath<\/code>/,
+      /<code>pre-commit<\/code> changed in <span[^>]*>\/workspace\/repo\/\.husky\/_<\/span>, the directory <code>core\.hooksPath<\/code>/,
       placement,
     );
   }

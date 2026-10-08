@@ -111,7 +111,8 @@ function HooksPathRow({
   if (entry === ".") {
     return (
       <li>
-        {where}, was {CHANGE_WORD[finding.change]} itself
+        The directory <code>core.hooksPath</code> has git run hooks from,{" "}
+        <span className="mono break-all">{dir}</span>, was itself {CHANGE_WORD[finding.change]}
       </li>
     );
   }
@@ -120,7 +121,7 @@ function HooksPathRow({
   }
   return (
     <li>
-      <code>{entry}</code> in {where}, {CHANGE_WORD[finding.change]}
+      <code>{entry}</code> {CHANGE_WORD[finding.change]} in {where}
       {finding.change !== "removed" &&
         (finding.executable
           ? " — git runs it on the command it is named for, and any hook there can run it"
@@ -223,7 +224,8 @@ export function RunGitDirNotice({
       <Notice tone="warn" className="mt-3">
         <p>
           <strong>Part of where your own git runs hooks from was not checked.</strong> Nothing
-          this app did read in <span className="mono">{report.commonDir}</span> changed between{" "}
+          this app did read in <span className="mono break-all">{report.commonDir}</span> changed
+          between{" "}
           {fmtDateTime(report.since)} and {fmtDateTime(report.checkedAt)}.
         </p>
         <NotRead notRead={report.notRead} />
@@ -258,8 +260,8 @@ export function RunGitDirNotice({
     <Notice tone="warn" className="mt-3">
       <p>
         <strong>
-          <span className="mono">{report.commonDir}</span> changed where your own git runs commands
-          from
+          <span className="mono break-all">{report.commonDir}</span> changed where your own git runs
+          commands from
         </strong>{" "}
         between {fmtDateTime(report.since)} and {fmtDateTime(report.checkedAt)}. None of it is in
         the branch, its diff or Land.

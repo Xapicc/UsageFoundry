@@ -301,7 +301,11 @@ async function readHooksPath(
       : unread("which is outside every configured folder and does not exist in the container");
   }
   if (!(await insideAMount(located.real))) {
-    return unread(`which resolves to ${located.real}, outside every configured folder`);
+    return unread(
+      located.real === candidate
+        ? "which is outside every configured folder"
+        : `which resolves to ${located.real}, outside every configured folder`,
+    );
   }
   return {
     hooks: await readHookDir(located.real, `${HOOKS_PATH_PREFIX}${located.real}/`),
