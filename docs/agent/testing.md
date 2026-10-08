@@ -146,9 +146,7 @@ Twenty-two are renderings rather than functions — every `*.test.tsx` in the tr
 | Test file | Also in |
 |---|---|
 | `bootBlocks.test.ts` | [harnesses] |
-| `canvasGraph.test.ts` | [stacks] |
 | `src/app/api/workflows/dto.test.ts` |  |
-| `format.test.ts` | [tasks], [stacks] |
 | `haltedMembers.test.ts` |  |
 | `instanceReading.test.ts` |  |
 | `runWorkflowOrigin.test.ts` |  |
@@ -156,6 +154,13 @@ Twenty-two are renderings rather than functions — every `*.test.tsx` in the tr
 | `schedulePut.test.ts` |  |
 | `src/app/api/workflows/[id]/route.test.ts` |  |
 | `src/app/api/workflows/[id]/schedule/route.test.ts` |  |
+
+## [Workflow canvas ordering and page formatting](testing/workflow-canvas-and-formatting.md)
+
+| Test file | Also in |
+|---|---|
+| `canvasGraph.test.ts` | [stacks] |
+| `format.test.ts` | [tasks], [stacks] |
 
 ## [Gate blocks](testing/workflow-gates.md)
 
