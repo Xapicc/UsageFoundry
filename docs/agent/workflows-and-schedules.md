@@ -24,7 +24,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - A gate hands on no runs, and that is the cost the diagram pays.
 - Whether a chat may propose one: yes.
 
-## [Orchestrator blocks and merge blocks](workflows-and-schedules/orchestrator-and-merge-blocks.md)
+## [Orchestrator blocks](workflows-and-schedules/orchestrator-and-merge-blocks.md)
 
 - A block can decide what runs next, and those runs start with no approval — because the approval moved to the graph rather than disappearing.
 - The model is the one thing on an emitted run nobody saved and nobody reads, and that is now allowed.
@@ -33,8 +33,12 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - A deciding turn that failed is also started again inside the press of Run, up to a limit a person saved on the block — and by a different mechanism, which is why the two are not one.
 - `taskIds` on an emitted spec is not a sixth field on the list `emit_runs` refuses to grow, and it is not on the node at all.
 - Acyclicity stops being a property of who wrote the graph, so it is checked as a property of the data.
+
+## [Merge blocks and deliver blocks](workflows-and-schedules/merge-and-deliver-blocks.md)
+
 - A block can land what the blocks in front of it built, and every protection that made `land.ts` safe stays where it is.
 - A block can publish what the blocks in front of it built, and it removes the person, so two doors stay shut.
+- A branch refused because a land or a run holds its checkout is failed, not waited for, and that was decided.
 
 ## [Halting, status and pick-ups of a workflow instance](workflows-and-schedules/instance-lifecycle.md)
 
