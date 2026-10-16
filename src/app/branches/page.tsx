@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -10,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import type {
   BranchInventoryDTO,
   BranchSummaryDTO,
@@ -730,7 +732,27 @@ function SkeletonRows() {
   );
 }
 
-export default function Branches() {
+/**
+ * `?repo=` opens the page narrowed to one repository, which is how the project
+ * manager links a run's branch here. `useSearchParams` and its Suspense
+ * boundary for `/runs`' reason, and a key so that the sidebar's Branches — a
+ * navigation to this same route, which keeps the page mounted — puts the
+ * narrowing back to what the address says instead of leaving the last one.
+ */
+export default function BranchesPage() {
+  return (
+    <Suspense>
+      <BranchesAt />
+    </Suspense>
+  );
+}
+
+function BranchesAt() {
+  const askedRepo = useSearchParams().get("repo") ?? "";
+  return <Branches key={askedRepo} askedRepo={askedRepo} />;
+}
+
+function Branches({ askedRepo }: { askedRepo: string }) {
   const [data, setData] = useState<BranchInventoryDTO | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
@@ -766,7 +788,7 @@ export default function Branches() {
   // Which slice of the inventory is being asked for. Held here rather than read
   // back off the answer so pressing Next twice in a row is two pages forward
   // and not two requests for the same one.
-  const [repo, setRepo] = useState<string>("");
+  const [repo, setRepo] = useState<string>(askedRepo);
   const [offset, setOffset] = useState(0);
 
   /** Which inventory read is allowed to write; see `load`. */
@@ -1102,6 +1124,12 @@ export default function Branches() {
                 }}
               >
                 <option value="">All repositories</option>
+                {/* A repository the address named and the answer does not
+                    list — no branch-bearing run there yet, or the answer not
+                    in — is still the value, so it needs an option to be. */}
+                {repo && !(data?.repos ?? []).some((r) => r.repoRoot === repo) && (
+                  <option value={repo}>{repo}</option>
+                )}
                 {(data?.repos ?? []).map((r) => (
                   <option key={r.repoRoot} value={r.repoRoot}>
                     {r.repoLabel} ({r.branches})
