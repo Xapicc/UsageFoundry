@@ -3837,6 +3837,13 @@ export interface ProjectUpstreamDTO {
   github: string | null;
 }
 
+/** One commit, as the Push sheet names it. */
+export interface ProjectCommitDTO {
+  sha: string;
+  /** The subject line, cut to 200 characters. */
+  subject: string;
+}
+
 /** A local branch not merged into the current one, of the kind no run recorded. */
 export interface ProjectBranchDTO {
   branch: string;
@@ -3888,6 +3895,12 @@ export interface ProjectDTO {
   behind: number | null;
   /** Newest `FETCH_HEAD` mtime of this checkout and its repository, epoch ms; null for never. */
   fetchedAt: number | null;
+  /**
+   * The commits `head` has that the upstream's local ref lacks, newest first,
+   * at most `MAX_UNPUSHED_LISTED` of `ahead`. Empty when nothing is ahead or
+   * ahead is unknown; `ahead - unpushed.length` is how many were left out.
+   */
+  unpushed: ProjectCommitDTO[];
   /** Where this repository's GitHub credential would come from. Never the token. */
   credential: "repository" | "install" | "none";
   /** Something holding the checkout, which Push refuses on: a land or delivery, or a run. */

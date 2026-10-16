@@ -223,6 +223,7 @@ describe("Push sends what was shown, as a fast-forward, and nothing else", () =>
     assert.equal(before.behind, 0);
     assert.equal(before.uncommitted, 1);
     assert.deepEqual(before.push, { possible: true, code: null, reason: null });
+    assert.deepEqual(before.unpushed, [{ sha, subject: "a.txt" }]);
 
     const pushed = await projects.pushProject(s.ref, shownAt(sha));
 
@@ -513,6 +514,30 @@ describe("the inventory lists every git folder and every unmerged branch", () =>
       undone.runBranches.map((b) => b.branch).sort(),
       ["uf/open-1", "uf/squashed-2"],
     );
+  });
+
+  it("names the newest unpushed commits up to the cap, and counts the rest in ahead", async () => {
+    const s = scene("many-ahead");
+    const over = projects.MAX_UNPUSHED_LISTED + 2;
+    const shas = Array.from({ length: over }, (_, i) => commit(s.repo, `m${i}.txt`, `${i}\n`, `change ${i}`));
+    // A commit on a branch the push does not send, which must not be listed.
+    git(s.repo, "switch", "-q", "-c", "elsewhere");
+    commit(s.repo, "elsewhere.txt", "x\n");
+    git(s.repo, "switch", "-q", "main");
+
+    const row = await project(s);
+    assert.equal(row.ahead, over);
+    assert.deepEqual(
+      row.unpushed,
+      shas
+        .slice(-projects.MAX_UNPUSHED_LISTED)
+        .reverse()
+        .map((sha) => ({ sha, subject: `change ${shas.indexOf(sha)}` })),
+    );
+
+    // Level with its upstream, nothing is listed.
+    git(s.repo, "push", "-q", "origin", "main");
+    assert.deepEqual((await project(s)).unpushed, []);
   });
 
   it("reads the upstream of a branch with no commits, and lets it fetch", async () => {

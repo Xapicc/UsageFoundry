@@ -25,6 +25,7 @@ import {
 import { scanWorkspace } from "./workspace";
 import type {
   ProjectBranchDTO,
+  ProjectCommitDTO,
   ProjectDTO,
   ProjectFetchRefusalDTO,
   ProjectInventoryDTO,
@@ -81,11 +82,18 @@ import type {
  */
 
 /**
- * Projects one request reads git for. Each is six git children at most, run
+ * Projects one request reads git for. Each is seven git children at most, run
  * one after another inside its worker, so this bounds the request's children
- * at `MAX_PROJECTS * 6` whatever the mounts hold; `offset` moves which ones.
+ * at `MAX_PROJECTS * 7` whatever the mounts hold; `offset` moves which ones.
  */
 export const MAX_PROJECTS = 60;
+
+/**
+ * Commits a row names out of those its branch is ahead by, newest first. The
+ * Push sheet says how many it left out, so a cap here costs a list, never a
+ * count; a checkout hundreds ahead still costs one child that stops early.
+ */
+export const MAX_UNPUSHED_LISTED = 10;
 
 /**
  * Unmerged branches one request examines, across every project on the page.
@@ -186,6 +194,17 @@ interface UnmergedRef {
   tipAt: number;
 }
 
+/** `%H%x00%s`, one commit per line, the subject cut to 200 characters. */
+function parseCommits(raw: string): ProjectCommitDTO[] {
+  const out: ProjectCommitDTO[] = [];
+  for (const line of raw.split("\n")) {
+    const [sha, subject] = line.split("\0");
+    if (!sha || subject === undefined) continue;
+    out.push({ sha, subject: subject.slice(0, 200) });
+  }
+  return out;
+}
+
 /** `%(refname)%00%(objectname)%00%(committerdate:unix)`, one per line. */
 function parseUnmerged(raw: string): UnmergedRef[] {
   const out: UnmergedRef[] = [];
@@ -265,6 +284,7 @@ interface CheckoutRead {
   behind: number | null;
   fetchedAt: number | null;
   unmerged: UnmergedRef[];
+  unpushed: ProjectCommitDTO[];
 }
 
 const UNREAD: Omit<CheckoutRead, "error"> = {
@@ -277,6 +297,7 @@ const UNREAD: Omit<CheckoutRead, "error"> = {
   behind: null,
   fetchedAt: null,
   unmerged: [],
+  unpushed: [],
 };
 
 function failed(error: string): CheckoutRead {
@@ -374,6 +395,24 @@ async function readCheckout(dir: string, withBranches: boolean): Promise<Checkou
     unmerged = parseUnmerged(refs.stdout);
   }
 
+  let unpushed: ProjectCommitDTO[] = [];
+  // What the Push sheet names, counted from the sha this read saw rather than
+  // from HEAD, so the list is about the commit the row shows and a press sends.
+  // `@{upstream}` rather than the status's short name, which a local branch
+  // called `origin/main` would make ambiguous.
+  if (withBranches && s.head && s.branch && upstream && (s.ahead ?? 0) > 0) {
+    const log = await git(dir, [
+      "log",
+      "--no-show-signature",
+      `--max-count=${MAX_UNPUSHED_LISTED}`,
+      "--format=%H%x00%s",
+      s.head,
+      `^${s.branch}@{upstream}`,
+    ]);
+    if (!log.ok) return failed(gitFailureLine(log.stderr));
+    unpushed = parseCommits(log.stdout);
+  }
+
   return {
     error: null,
     branch: s.branch,
@@ -388,6 +427,7 @@ async function readCheckout(dir: string, withBranches: boolean): Promise<Checkou
     behind: upstream ? s.behind : null,
     fetchedAt,
     unmerged,
+    unpushed,
   };
 }
 
@@ -990,6 +1030,7 @@ function projectDTO(
     ahead: read.ahead,
     behind: read.behind,
     fetchedAt: read.fetchedAt,
+    unpushed: read.unpushed,
     credential: facts.credential.scope,
     holder: facts.holder,
     runBranches,
