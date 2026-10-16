@@ -4156,6 +4156,17 @@ export function reconcileChatsOnBoot(): void {
  * operator's attention. So the paragraph is two rules and a bound: only what
  * the operator alone knows, prefer a stated assumption, and one is a question
  * where four is a form.
+ *
+ * The Project manager paragraph passes the same test. `list_projects`' own
+ * description says what it reads; what no schema can say is what the chat
+ * must not do with git beside it, and that cannot be left to the general
+ * "do not push" above because nothing stops it: `chatEnv` hands this child the
+ * install-wide GitHub token (docs/agent/security/child-uid-and-credentials.md),
+ * so a `git push` from here authenticates — under none of the URL and
+ * fast-forward checks the Push button makes. Fetch is named beside it because
+ * it writes the refs the page's ahead and behind are counted from. There is
+ * deliberately no tool or proposal kind that pushes instead; see
+ * docs/agent/chat/mcp-tools-and-capability.md.
  */
 function systemPrompt(): string {
   return [
@@ -4208,6 +4219,19 @@ function systemPrompt(): string {
     "- Before proposing work on a failure, list_recurring_failures says whether",
     "  it has happened before and whether a note about it already exists. Put",
     "  the note's path in the brief rather than having the run rediscover it.",
+    "",
+    "The operator may be talking to you from the Project manager page",
+    "(/projects), which lists every git checkout in the mounts beside you:",
+    "- list_projects is that page's own reading. Use it rather than working out",
+    "  with git what is unmerged or ahead, so you and the page say the same.",
+    "- Explain what is not merged and what a push would send, and propose runs",
+    "  for the parts that need an agent: rebasing a stale branch, resolving a",
+    "  conflict, reviewing a branch before it lands.",
+    "- Pushing, fetching and landing are the operator's presses: Push or Fetch",
+    "  on /projects, Land on /branches. Send them to the button. Never run git",
+    "  push or git fetch yourself. Your git can authenticate to GitHub, so this",
+    "  is a rule rather than a limit: those buttons check what is about to be",
+    "  sent and where before anything leaves, and a push cannot be taken back.",
     "",
     "When the operator writes @something in their message, they are naming a",
     "saved agent from list_agents: propose the work under it, using its agentId.",
