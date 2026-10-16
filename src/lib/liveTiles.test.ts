@@ -33,6 +33,7 @@ const join = (runId: string, events: RunEventDTO[], dropped = 0): LiveFrameDTO =
   events,
   dropped,
   tools: [],
+  subagents: { running: [], finished: 0 },
 });
 
 describe("a connection opening", () => {
@@ -115,6 +116,38 @@ describe("live frames", () => {
     const state = applyLiveFrame(opened, { kind: "tools", runId: "a", tools });
     assert.deepEqual(state.tiles[0].tools, tools);
     assert.deepEqual(applyLiveFrame(state, { kind: "tools", runId: "a", tools: [] }).tiles[0].tools, []);
+  });
+
+  it("take the sub-agent roster from the join and replace it whole", () => {
+    // A page opened mid-run has no tail to rebuild a roster from, so the join
+    // is the only way it learns of a sub-agent that started before it opened.
+    const subagents = {
+      running: [
+        {
+          toolUseId: "agent-1",
+          agentType: "general-purpose",
+          description: "Look around",
+          background: true,
+          startedAt: 1,
+        },
+      ],
+      finished: 2,
+    };
+    const joined = applyLiveFrame(opened, {
+      kind: "join",
+      runId: "a",
+      events: [],
+      dropped: 0,
+      tools: [],
+      subagents,
+    });
+    assert.deepEqual(joined.tiles[0].subagents, subagents);
+    const after = applyLiveFrame(joined, {
+      kind: "subagents",
+      runId: "a",
+      subagents: { running: [], finished: 3 },
+    });
+    assert.deepEqual(after.tiles[0].subagents, { running: [], finished: 3 });
   });
 
   it("remove a tile when its run leaves, and only that tile", () => {

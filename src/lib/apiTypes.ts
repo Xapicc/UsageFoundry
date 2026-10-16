@@ -1914,6 +1914,43 @@ export interface LiveCountsDTO {
 }
 
 /**
+ * One sub-agent a running work cycle has started and not yet seen end, as
+ * `liveSubagents.ts` folds it out of the CLI's stream.
+ *
+ * **Live only**, on `RunToolActivityDTO`'s grounds: held in the server's memory
+ * for the length of one cycle and never written to `run_events`.
+ */
+export interface LiveSubagentDTO {
+  /** The `Agent` call's own block id — the same for a foreground and a background one. */
+  toolUseId: string;
+  /** `subagent_type` off the call. Null when the call was not seen. */
+  agentType: string | null;
+  /** The call's own `description`, or the task's. Null when neither was seen. */
+  description: string | null;
+  /**
+   * Started with `run_in_background`, or moved there by the CLI. Its
+   * `tool_result` came back at once and is not its end.
+   */
+  background: boolean;
+  /**
+   * When the call was seen being made, when the CLI said its task started, or
+   * what a heartbeat's own elapsed figure dates it to. **Null when none of those
+   * was seen**, never when this process first heard of it: a duration measured
+   * from a late sighting is smaller than the truth and drawn where a measured
+   * one would be.
+   */
+  startedAt: number | null;
+}
+
+/** A tile's sub-agent roster: what is running, and how many ended this cycle. */
+export interface LiveSubagentsDTO {
+  /** Longest-running first; undated ones last. */
+  running: LiveSubagentDTO[];
+  /** Ran and ended in the cycle in flight. Back to 0 when the next one starts. */
+  finished: number;
+}
+
+/**
  * One frame of `/api/runs/live/stream`.
  *
  * No frame carries an SSE `id:` — the route's docblock says why a reconnect
@@ -1931,10 +1968,12 @@ export type LiveFrameDTO =
       /** Older events the tail does not hold, by either cap. */
       dropped: number;
       tools: RunToolActivityDTO[];
+      subagents: LiveSubagentsDTO;
     }
   | { kind: "ready"; runIds: string[] }
   | { kind: "event"; runId: string; event: RunEventDTO }
   | { kind: "tools"; runId: string; tools: RunToolActivityDTO[] }
+  | { kind: "subagents"; runId: string; subagents: LiveSubagentsDTO }
   | { kind: "leave"; runId: string };
 
 /** Mirrors `RunWorkflowOrigin` in `workflows.ts`. */

@@ -2,6 +2,7 @@ import {
   LIVE_TAIL_EVENTS,
   type LiveCountsDTO,
   type LiveFrameDTO,
+  type LiveSubagentsDTO,
   type RunEventDTO,
   type RunToolActivityDTO,
 } from "./apiTypes";
@@ -25,6 +26,7 @@ export interface LiveTile {
   /** Older events of this run the tail does not hold. */
   dropped: number;
   tools: RunToolActivityDTO[];
+  subagents: LiveSubagentsDTO;
 }
 
 export interface LiveState {
@@ -48,6 +50,7 @@ export function applyLiveFrame(state: LiveState, frame: LiveFrameDTO): LiveState
         events: frame.events,
         dropped: frame.dropped,
         tools: frame.tools,
+        subagents: frame.subagents,
       };
       const at = state.tiles.findIndex((t) => t.runId === frame.runId);
       return {
@@ -77,6 +80,9 @@ export function applyLiveFrame(state: LiveState, frame: LiveFrameDTO): LiveState
 
     case "tools":
       return withTile(state, frame.runId, (t) => ({ ...t, tools: frame.tools }));
+
+    case "subagents":
+      return withTile(state, frame.runId, (t) => ({ ...t, subagents: frame.subagents }));
 
     case "leave":
       return {

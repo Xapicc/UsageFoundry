@@ -15,6 +15,7 @@ import {
 import { ContextOccupancy } from "@/components/ContextOccupancy";
 import { LiveRunFigures } from "@/components/LiveRunFigures";
 import { LiveRunPruning } from "@/components/LiveRunPruning";
+import { LiveSubagents } from "@/components/LiveSubagents";
 import { Meter } from "@/components/Meter";
 import { RunActivity } from "@/components/RunActivity";
 import { Card, Empty, SkeletonText } from "@/components/ui/Card";
@@ -25,12 +26,14 @@ const PINNED_PX = 40;
 
 /**
  * One running run on `/runs/live`: who it is, its money, its context, what
- * pruning has done for it and the tail of its log.
+ * pruning has done for it, the sub-agents it has running and the tail of its
+ * log.
  *
  * The log half comes from the page's one stream and is here from the first
- * frame; the figures half is `run`, from the page's poll, and is null until
- * that answers. Every line is `describeEvent` into `LogLine`, the run page's
- * own path, and the open tool calls are the run page's `RunActivity`.
+ * frame, and so does the sub-agent roster; the figures half is `run`, from the
+ * page's poll, and is null until that answers. Every line is `describeEvent`
+ * into `LogLine`, the run page's own path, and the open tool calls are the run
+ * page's `RunActivity`.
  */
 export function LiveRunTile({
   tile,
@@ -144,6 +147,8 @@ export function LiveRunTile({
           <LiveRunPruning pruning={run.pruning} />
         </>
       )}
+
+      <LiveSubagents subagents={tile.subagents} now={now} />
 
       <Log
         ref={logRef}

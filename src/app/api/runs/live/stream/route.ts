@@ -4,7 +4,9 @@
 import {
   activeRuns,
   runEvents,
+  subagentActivity,
   subscribeAll,
+  subscribeSubagentActivity,
   subscribeToolActivity,
   toolActivity,
   type PersistedRunEvent,
@@ -48,8 +50,10 @@ const RECONCILE_MS = 15_000;
  * What it carries, every frame a `LiveFrameDTO`: on connect, the strip's
  * counts, then each running run's tail as one `join` frame, then `ready` naming
  * them all; after that, each followed run's events as they are written, its
- * open tool calls, `join` and `leave` as runs start and stop running, and the
- * counts again whenever a status moves.
+ * open tool calls and its sub-agent roster, `join` and `leave` as runs start
+ * and stop running, and the counts again whenever a status moves. The roster
+ * rides `join` whole for the open calls' reason: a page opened mid-run has no
+ * tail long enough to rebuild it from, which is why it is the server's.
  *
  * **No frame carries an `id:`, and a reconnect replaces each tail rather than
  * resuming it.** The per-run route's `Last-Event-ID` works because one run's
@@ -90,7 +94,7 @@ export async function GET(req: Request) {
       const sizeOf = (e: PersistedRunEvent) =>
         encoder.encode(JSON.stringify(e)).byteLength;
 
-      /** Followed runs, each with its tool-activity unsubscribe. */
+      /** Followed runs, each with its live-only unsubscribes. */
       const following = new Map<string, () => void>();
       let counts: LiveCountsDTO | null = null;
 
@@ -107,11 +111,18 @@ export async function GET(req: Request) {
           events: kept,
           dropped: history.dropped + droppedForBytes,
           tools: toolActivity(runId),
+          subagents: subagentActivity(runId),
         });
-        following.set(
-          runId,
-          subscribeToolActivity(runId, (tools) => send({ kind: "tools", runId, tools })),
+        const offTools = subscribeToolActivity(runId, (tools) =>
+          send({ kind: "tools", runId, tools }),
         );
+        const offSubagents = subscribeSubagentActivity(runId, (subagents) =>
+          send({ kind: "subagents", runId, subagents }),
+        );
+        following.set(runId, () => {
+          offTools();
+          offSubagents();
+        });
       };
 
       const leave = (runId: string) => {
@@ -182,7 +193,7 @@ export async function GET(req: Request) {
         clearInterval(heartbeat);
         if (pending !== null) clearImmediate(pending);
         unsubscribe();
-        for (const unsubscribeTools of following.values()) unsubscribeTools();
+        for (const unsubscribeLive of following.values()) unsubscribeLive();
         following.clear();
         try {
           controller.close();

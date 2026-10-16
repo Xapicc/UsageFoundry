@@ -258,3 +258,60 @@ describe("a work cycle's wait for its background tasks", () => {
     assert.match((await spawnWith(null)).stderrTail, /ceiling=unset\b/);
   });
 });
+
+/**
+ * That a cycle killed with a sub-agent running takes the sub-agent off
+ * `/runs/live` with it.
+ *
+ * Here and not beside `foldSubagentEvent`'s cases for the ceiling's reason: the
+ * fold is pure and pinned in `liveSubagents.test.ts`, and what this pins is the
+ * one line in `runIteration`'s `finish` that sweeps it. A killed cycle never
+ * sends the `task_notification` that would otherwise end the row, so without
+ * that line the tile counts a background agent up against a process that is
+ * gone, for as long as the server lives. The child is the silent stub above
+ * with two of the CLI's own lines in front of it — the `Agent` call and the
+ * `task_started` 2.1.280 answers it with — and the deadline is what kills it.
+ */
+describe("a work cycle killed with a sub-agent running", () => {
+  const OPENS_A_SUBAGENT = [
+    "-e",
+    "const line = (o) => process.stdout.write(JSON.stringify(o) + '\\n');" +
+      "line({ type: 'assistant', parent_tool_use_id: null, session_id: 's', message: { content: [" +
+      "{ type: 'tool_use', id: 'toolu_bg', name: 'Agent', input: { description: 'Look around'," +
+      " prompt: 'p', subagent_type: 'general-purpose' } }] } });" +
+      "line({ type: 'system', subtype: 'task_started', task_id: 't1', tool_use_id: 'toolu_bg'," +
+      " description: 'Look around', subagent_type: 'general-purpose', is_backgrounded: true," +
+      " task_type: 'local_agent', session_id: 's' });" +
+      "setTimeout(() => process.exit(9), 30000);",
+  ];
+
+  it("clears the roster when the cycle ends", { timeout: 20_000 }, async () => {
+    const id = insertRun();
+    const published: number[] = [];
+    const off = orchestrator.subscribeSubagentActivity(id, (s) =>
+      published.push(s.running.length),
+    );
+    try {
+      const res = await orchestrator.runIteration(
+        id,
+        workspace,
+        OPENS_A_SUBAGENT,
+        orchestrator.selectCycleAdapter(null),
+        false,
+        SILENCE_MS,
+        () => {},
+      );
+      assert.equal(res.exitCode, -1, "the deadline, not the stub, ended the cycle");
+    } finally {
+      off();
+    }
+
+    assert.equal(published[0], 1, "the sub-agent was never on the roster to clear");
+    assert.equal(
+      published.at(-1),
+      0,
+      "the cycle ended and the roster still said a sub-agent was running",
+    );
+    assert.deepEqual(orchestrator.subagentActivity(id), { running: [], finished: 0 });
+  });
+});

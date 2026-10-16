@@ -201,6 +201,7 @@ import {
   type QueueBlockerDTO,
   type RunDependencyDTO,
   type RunProviderDTO,
+  type LiveSubagentsDTO,
   type RunEventDTO,
   type RunTaskDTO,
   type RunToolActivityDTO,
@@ -213,6 +214,12 @@ import {
   stoppedTasksNotice,
 } from "./backgroundWork";
 import { TASK_LIFECYCLE_MESSAGES } from "./runTasks";
+import {
+  NO_SUBAGENTS,
+  foldSubagentEvent,
+  subagentSummary,
+  type SubagentFold,
+} from "./liveSubagents";
 import { recordGitDirBaseline, settleGitDirWatch } from "./gitDirRead";
 import {
   STDERR_TAIL_LIMIT,
@@ -8205,6 +8212,10 @@ export function runIteration(
       // that line is whatever the child had not terminated with a newline, and
       // a heartbeat there would re-open a call nothing would ever close.
       clearToolProgress(runId);
+      // The same sweep for the same reason: a killed cycle sends no
+      // `task_notification`, and the CLI that would have sent it took its
+      // sub-agents with it.
+      clearSubagents(runId);
       result.exitCode = code ?? -1;
       // The last message the CLI wrote, for a CLI that was asked to write one.
       // It outranks whatever the stream reported for the same reason `buildArgs`
@@ -9577,6 +9588,62 @@ function publishToolActivity(runId: string): void {
   bus.emit(`${runId}:tools`, toolActivity(runId));
 }
 
+/**
+ * The sub-agents each running cycle has started and not seen end, per run.
+ *
+ * `liveTools`' design for `liveTools`' reasons — in memory, never a row, on a
+ * bus topic of its own, cleared whole by `finish()` — and a separate map rather
+ * than more entries in that one, because the two sets answer different
+ * questions about different spans: an open call leaves the strip at its
+ * `tool_result`, and a background sub-agent's `tool_result` is its launch. The
+ * fold and the reasons it is not read off `run_events` are `liveSubagents.ts`'s.
+ *
+ * Nothing here outlives the cycle that produced it, and nothing has to: in
+ * `-p` mode the CLI holds its process open while a background agent runs and
+ * kills the lot when it exits, so a sub-agent cannot be running in a cycle
+ * whose child is gone.
+ *
+ * A new `globalThis` key rather than a second shape under `__ufLiveToolsV1`,
+ * which a dev hot reload would hand back with the old shape.
+ */
+const liveSubagents = ((globalThis as unknown as {
+  __ufLiveSubagentsV1?: Map<string, SubagentFold>;
+}).__ufLiveSubagentsV1 ??= new Map<string, SubagentFold>());
+
+/** Fold one stream line in, and tell whoever is watching if it moved anything. */
+function noteSubagentEvent(runId: string, ev: Record<string, unknown>): void {
+  const before = liveSubagents.get(runId) ?? NO_SUBAGENTS;
+  const after = foldSubagentEvent(before, ev, Date.now());
+  if (after === before) return;
+  liveSubagents.set(runId, after);
+  publishSubagentActivity(runId);
+}
+
+/** The cycle is over, and so is everything it had running. */
+function clearSubagents(runId: string): void {
+  if (!liveSubagents.delete(runId)) return;
+  publishSubagentActivity(runId);
+}
+
+/** What `/runs/live` draws for this run's sub-agents right now. */
+export function subagentActivity(runId: string): LiveSubagentsDTO {
+  return subagentSummary(liveSubagents.get(runId) ?? NO_SUBAGENTS);
+}
+
+/** `subscribeToolActivity`'s door for the sub-agent roster. */
+export function subscribeSubagentActivity(
+  runId: string,
+  fn: (subagents: LiveSubagentsDTO) => void,
+): () => void {
+  const topic = `${runId}:subagents`;
+  bus.on(topic, fn);
+  return () => void bus.off(topic, fn);
+}
+
+function publishSubagentActivity(runId: string): void {
+  bus.emit(`${runId}:subagents`, subagentActivity(runId));
+}
+
 /** Interpret one line of Claude Code's `stream-json` output. */
 function handleStreamLine(
   runId: string,
@@ -9608,6 +9675,12 @@ function handleStreamLine(
     acc.sessionId = ev.session_id;
     onSession(ev.session_id);
   }
+
+  // Ahead of every branch, because four of them return and each carries part
+  // of a sub-agent's life: the `tool_use` that opens it, the `tool_result`
+  // that ends a foreground one, the heartbeat, and the `system:task_*` events
+  // that are the only word that a background one has ended.
+  noteSubagentEvent(runId, ev);
 
   if (type === "assistant") {
     const message = ev.message as
