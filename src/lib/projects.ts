@@ -1,0 +1,1154 @@
+import fs from "node:fs";
+import path from "node:path";
+import { githubTokenFor, type GithubTokenScope } from "./config";
+import { db } from "./db";
+import { parseRemote } from "./delivery";
+import { git } from "./git";
+import { jsonKind } from "./http";
+import {
+  branchOwnerOf,
+  chainRuns,
+  checkoutHolder,
+  checkoutOperation,
+  claimLanding,
+  gitFailureLine,
+  isLandedTip,
+  mapWithLimit,
+} from "./land";
+import {
+  githubEnv,
+  isShuttingDown,
+  resolveWorkspaceFolder,
+  trackLand,
+  type RunRow,
+} from "./orchestrator";
+import { scanWorkspace } from "./workspace";
+import type {
+  ProjectBranchDTO,
+  ProjectDTO,
+  ProjectFetchRefusalDTO,
+  ProjectInventoryDTO,
+  ProjectOperationDTO,
+  ProjectPushRefusalDTO,
+  ProjectRunBranchDTO,
+  ProjectUpstreamDTO,
+  WorkspaceFolderDTO,
+} from "./apiTypes";
+
+/**
+ * The operator's own checkouts, as opposed to the branches runs produced.
+ *
+ * `/branches` lists `uf/*` refs off the `runs` table, and Deliver pushes one of
+ * them. Neither says anything about the branch the operator stands on in each
+ * project, and Land moves that branch forward on every press without anything
+ * here ever sending it on — so it piles up ahead of its remote, a hundred and
+ * eighty commits in this repository when this was written. This module is the
+ * missing reading and the one push it implies.
+ *
+ * **Push sends the current branch to its configured upstream, and nothing
+ * else.** Never a run's branch (that is Deliver's, with its pull request), never
+ * a ref the operator was not shown, never forced, never a deletion, and never a
+ * new or changed upstream: the remote is somebody's, and an app asked to send a
+ * branch on must not quietly rewrite one. What it sends is the commit the page
+ * showed, named by its sha (`planPush` refuses when HEAD has moved off it), so a
+ * commit made between the read and the press stays home.
+ *
+ * **There is no verify gate here, deliberately.** Land and Deliver run
+ * `landVerifyCommand` because they are where a run's work *enters* the
+ * operator's branch or leaves as a proposal to merge. The commits this pushes
+ * are already on the operator's branch: either Land put them there, having run
+ * that gate in front of the merge, or the operator committed them by hand,
+ * which no gate here was ever asked to judge. Running the command again would
+ * check, in the operator's own checkout, a tree that may hold uncommitted work
+ * the push does not carry — `verifyTreeVerdict`'s reason for refusing such a
+ * tree — and would make a push of hand-made commits wait on a check nobody
+ * configured for them.
+ *
+ * **The credential is the repository's, on Deliver's path.** `githubTokenFor`
+ * off the checkout, so a repository configured to get none refuses rather than
+ * falling through to the install-wide token; handed to `git()` through
+ * `githubEnv` and the `env` option, the same as `deliverRun`, with `gitArgs`'
+ * `-c` flags keeping hooks and `core.fsmonitor` off. Push and Fetch are the
+ * second and third git calls in this app that carry one, and both are a press.
+ *
+ * Not polled: every project is several git children and nothing here changes
+ * on its own. Fetch is the one thing that moves `ahead`/`behind`, and it is a
+ * press too, never a loop.
+ */
+
+/**
+ * Projects one request reads git for. Each is six git children at most, run
+ * one after another inside its worker, so this bounds the request's children
+ * at `MAX_PROJECTS * 6` whatever the mounts hold; `offset` moves which ones.
+ */
+export const MAX_PROJECTS = 60;
+
+/**
+ * Unmerged branches one request examines, across every project on the page.
+ *
+ * Each is one `rev-list --count`, plus one `merge-base --is-ancestor` per
+ * squash its run's chain recorded at that exact tip, which is usually none.
+ * A branch over the cap is counted in `branchesNotRead` rather than listed:
+ * listing it would mean saying whether it is landed without having asked.
+ */
+export const MAX_BRANCH_READS = 120;
+
+/**
+ * Git children in flight at once, for `branchInventory`'s reason: this app is
+ * also running agents, and forking every read at once to save a wave is not a
+ * trade worth making.
+ */
+const PROJECT_GIT_CONCURRENCY = 8;
+
+/**
+ * The push and the fetch run with no clock, for `NO_CLOCK`'s reason in
+ * `land.ts`: a killed git reads as one that refused, so a push that was merely
+ * slow would be reported as not sent when it may have been.
+ */
+const NO_CLOCK = { timeoutMs: 0 } as const;
+
+/* ------------------------------------------------------------------ */
+/* Reading a checkout                                                  */
+/* ------------------------------------------------------------------ */
+
+/** What `git status --porcelain=v2 --branch -z` says, as `parseBranchStatus` reads it. */
+export interface BranchStatus {
+  /** `branch.oid`; null on a branch with no commits yet. */
+  head: string | null;
+  /** `branch.head`; null when HEAD is detached. */
+  branch: string | null;
+  /** `branch.upstream`: the short name of the ref ahead and behind count against. */
+  upstream: string | null;
+  /** `branch.ab`. Both null with no upstream, or when its ref is missing. */
+  ahead: number | null;
+  behind: number | null;
+  /** Changed, unmerged and untracked entries. */
+  uncommitted: number;
+}
+
+/**
+ * Parse `git status --porcelain=v2 --branch -z`.
+ *
+ * One child for the branch, its upstream, ahead/behind as of the last fetch and
+ * the uncommitted count, rather than four. A rename or copy (`2 `) carries its
+ * source path in the *next* field, and consuming it is not optional: left in
+ * the stream it is counted as a change of its own, and a source path that
+ * happens to begin `1 ` or `? ` would be read as one — `parseStatusZ`'s trap in
+ * the other format. The caller must not trim the output, for the same reason.
+ */
+export function parseBranchStatus(raw: string): BranchStatus {
+  const out: BranchStatus = {
+    head: null,
+    branch: null,
+    upstream: null,
+    ahead: null,
+    behind: null,
+    uncommitted: 0,
+  };
+  const fields = raw.split("\0");
+  for (let i = 0; i < fields.length; i++) {
+    const field = fields[i];
+    if (field.startsWith("# ")) {
+      const space = field.indexOf(" ", 2);
+      if (space < 0) continue;
+      const key = field.slice(2, space);
+      const value = field.slice(space + 1);
+      if (key === "branch.oid") out.head = value === "(initial)" ? null : value;
+      else if (key === "branch.head") out.branch = value === "(detached)" ? null : value;
+      else if (key === "branch.upstream") out.upstream = value;
+      else if (key === "branch.ab") {
+        const m = /^\+(\d+) -(\d+)$/.exec(value);
+        if (m) {
+          out.ahead = Number(m[1]);
+          out.behind = Number(m[2]);
+        }
+      }
+      continue;
+    }
+    if (field.startsWith("1 ") || field.startsWith("u ") || field.startsWith("? ")) {
+      out.uncommitted++;
+    } else if (field.startsWith("2 ")) {
+      out.uncommitted++;
+      i++;
+    }
+  }
+  return out;
+}
+
+/** A local branch `for-each-ref --no-merged` listed. */
+interface UnmergedRef {
+  branch: string;
+  tip: string;
+  tipAt: number;
+}
+
+/** `%(refname)%00%(objectname)%00%(committerdate:unix)`, one per line. */
+function parseUnmerged(raw: string): UnmergedRef[] {
+  const out: UnmergedRef[] = [];
+  for (const line of raw.split("\n")) {
+    const [ref, tip, at] = line.split("\0");
+    if (!ref?.startsWith("refs/heads/") || !tip) continue;
+    out.push({ branch: ref.slice("refs/heads/".length), tip, tipAt: Number(at) * 1000 });
+  }
+  return out;
+}
+
+/** The current branch's upstream, as far as git configures one. */
+interface Upstream {
+  remote: string;
+  remoteRef: string;
+  short: string;
+  /** Where a fetch of `remote` goes, `insteadOf` applied. */
+  url: string | null;
+  /**
+   * Where a push to `remote` goes: `pushurl` and `pushInsteadOf` applied, which
+   * `url` does not show. Read apart because it is the one the credential is
+   * sent along with, and a repository's own config can point it elsewhere.
+   */
+  pushUrl: string | null;
+}
+
+/** One checkout's state, or why git could not give it. */
+interface CheckoutRead {
+  error: string | null;
+  branch: string | null;
+  head: string | null;
+  operation: ProjectOperationDTO | null;
+  uncommitted: number | null;
+  upstream: Upstream | null;
+  ahead: number | null;
+  behind: number | null;
+  fetchedAt: number | null;
+  unmerged: UnmergedRef[];
+}
+
+const UNREAD: Omit<CheckoutRead, "error"> = {
+  branch: null,
+  head: null,
+  operation: null,
+  uncommitted: null,
+  upstream: null,
+  ahead: null,
+  behind: null,
+  fetchedAt: null,
+  unmerged: [],
+};
+
+function failed(error: string): CheckoutRead {
+  return { ...UNREAD, error: error || "git could not read this checkout." };
+}
+
+/** `FETCH_HEAD`'s mtime in `dir`, or null when no fetch has written one there. */
+function fetchedIn(dir: string): number | null {
+  try {
+    return fs.statSync(path.join(dir, "FETCH_HEAD")).mtimeMs;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+}
+
+/**
+ * Everything a project row and both verdicts need, from one checkout.
+ *
+ * Its children run one after another, so a project costs one git child in
+ * flight however many it needs. Any read that fails makes the whole checkout an
+ * error rather than a half-filled row, because a row with a branch and no
+ * upstream reads as "no upstream", which is a different sentence from "could
+ * not tell".
+ *
+ * `FETCH_HEAD` is per checkout — a fetch in a linked worktree writes it under
+ * `worktrees/<id>` (measured against git 2.39) — while the remote-tracking refs
+ * ahead/behind count against are the repository's. So "last fetched" is the
+ * newer of this checkout's and the repository's own, which covers the common
+ * case of fetching from the main checkout; a fetch from a third worktree of the
+ * same repository moves the refs without moving either.
+ */
+async function readCheckout(dir: string, withBranches: boolean): Promise<CheckoutRead> {
+  const dirs = await git(dir, ["rev-parse", "--absolute-git-dir", "--git-common-dir"]);
+  if (!dirs.ok) return failed(gitFailureLine(dirs.stderr));
+  const [gitDir, commonDir] = dirs.stdout.split("\n").map((line) => path.resolve(dir, line));
+  if (!gitDir || !commonDir) return failed("git did not name this checkout's git directory.");
+
+  let operation: ProjectOperationDTO | null;
+  let fetchedAt: number | null;
+  try {
+    operation = checkoutOperation(gitDir);
+    const times = [fetchedIn(gitDir), fetchedIn(commonDir)].filter(
+      (t): t is number => t !== null,
+    );
+    fetchedAt = times.length ? Math.round(Math.max(...times)) : null;
+  } catch (err) {
+    return failed(
+      `Could not read its git directory: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  const status = await git(dir, ["status", "--porcelain=v2", "--branch", "-z"], { trim: false });
+  if (!status.ok) return failed(gitFailureLine(status.stderr));
+  const s = parseBranchStatus(status.stdout);
+
+  let upstream: Upstream | null = null;
+  if (s.branch && s.upstream) {
+    const up = await git(dir, [
+      "for-each-ref",
+      "--format=%(upstream:remotename)%00%(upstream:remoteref)",
+      `refs/heads/${s.branch}`,
+    ]);
+    if (!up.ok) return failed(gitFailureLine(up.stderr));
+    const [remote, remoteRef] = (up.stdout.split("\n")[0] ?? "").split("\0");
+    if (remote && remoteRef) {
+      // A remote git cannot name a URL for is still an upstream; the verdicts
+      // read the null as "not a GitHub remote" and say which remote it was.
+      // Read without the credential's environment, which only ever rewrites
+      // an SSH GitHub URL to https and so cannot change either verdict.
+      const urlOf = async (args: string[]) =>
+        remote === "." ? null : await git(dir, args).then((r) => (r.ok ? r.stdout : null));
+      upstream = {
+        remote,
+        remoteRef,
+        short: s.upstream,
+        url: await urlOf(["remote", "get-url", remote]),
+        pushUrl: await urlOf(["remote", "get-url", "--push", remote]),
+      };
+    }
+  }
+
+  let unmerged: UnmergedRef[] = [];
+  // A branch with no commits has no HEAD to measure against, and git refuses
+  // `--no-merged HEAD` there; nothing can be unmerged into it either.
+  if (withBranches && s.head) {
+    const refs = await git(dir, [
+      "for-each-ref",
+      "--no-merged",
+      s.head,
+      "--sort=-committerdate",
+      "--format=%(refname)%00%(objectname)%00%(committerdate:unix)",
+      "refs/heads/",
+    ]);
+    if (!refs.ok) return failed(gitFailureLine(refs.stderr));
+    unmerged = parseUnmerged(refs.stdout);
+  }
+
+  return {
+    error: null,
+    branch: s.branch,
+    head: s.head,
+    operation,
+    uncommitted: s.uncommitted,
+    upstream,
+    // Ahead and behind come only with an upstream this read could name: the
+    // status's own pair is about the same ref, and a pair with no upstream
+    // beside it would be a count against nothing the row shows.
+    ahead: upstream ? s.ahead : null,
+    behind: upstream ? s.behind : null,
+    fetchedAt,
+    unmerged,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Deciding                                                            */
+/* ------------------------------------------------------------------ */
+
+/** Everything `planPush` and `planFetch` decide from. Pure data, read beforehand. */
+export interface CheckoutFacts {
+  error: string | null;
+  branch: string | null;
+  head: string | null;
+  operation: ProjectOperationDTO | null;
+  upstream: Upstream | null;
+  ahead: number | null;
+  behind: number | null;
+  /** `githubTokenFor`'s answer for the checkout, without the token. */
+  credential: { scope: GithubTokenScope; key: string | null };
+  /** `checkoutHolder`'s answer. */
+  holder: { landing: boolean; runId: string | null };
+}
+
+export type PushPlan =
+  | {
+      ok: true;
+      branch: string;
+      sha: string;
+      remote: string;
+      remoteRef: string;
+      github: { owner: string; repo: string };
+    }
+  | { ok: false; code: ProjectPushRefusalDTO; reason: string };
+
+export type FetchPlan =
+  | { ok: true; remote: string; github: { owner: string; repo: string } }
+  | { ok: false; code: ProjectFetchRefusalDTO; reason: string };
+
+/** What ends each operation, for the sentence refusing a push under one. */
+const OPERATION_ENDED_BY: Record<ProjectOperationDTO, string> = {
+  merge: "git merge --continue or git merge --abort",
+  rebase: "git rebase --continue or git rebase --abort",
+  bisect: "git bisect reset",
+};
+
+const short = (sha: string) => sha.slice(0, 8);
+
+/**
+ * The refusals Push and Fetch share: conditions of the checkout and the
+ * install, not of the press, each said in the words of the door asking.
+ */
+function standingRefusal(
+  f: CheckoutFacts,
+  door: "push" | "fetch",
+):
+  | { code: "detached" | "no-upstream" | "not-github" | "no-credential"; reason: string }
+  | { ok: true; upstream: Upstream; github: { owner: string; repo: string } } {
+  const nothing = door === "push" ? "Nothing was pushed" : "Nothing was fetched";
+  if (!f.branch) {
+    return {
+      code: "detached",
+      reason: `HEAD is detached, so there is no current branch and no upstream. ${nothing}.`,
+    };
+  }
+  if (!f.upstream) {
+    return {
+      code: "no-upstream",
+      reason:
+        `${f.branch} has no upstream configured. ${nothing}: this never creates or changes ` +
+        "one, so set it by hand (git branch --set-upstream-to) if that is what you want.",
+    };
+  }
+  if (f.upstream.remote === ".") {
+    return {
+      code: "not-github",
+      reason: `${f.branch} tracks the local branch ${f.upstream.short}, not a remote. ${nothing}.`,
+    };
+  }
+  // The URL this door's git will actually reach, so a `pushurl` or a
+  // `pushInsteadOf` pointing a GitHub remote's pushes elsewhere refuses here
+  // rather than taking the credential with it.
+  const url = door === "push" ? f.upstream.pushUrl : f.upstream.url;
+  const github = url ? parseRemote(url) : null;
+  if (!github) {
+    return {
+      code: "not-github",
+      reason:
+        `\`${url ?? f.upstream.remote}\` is not a GitHub remote, and GitHub is the only ` +
+        `host this app holds a credential for. ${nothing}; it can still be done by hand.`,
+    };
+  }
+  if (f.credential.scope === "none") {
+    return {
+      code: "no-credential",
+      reason:
+        f.credential.key !== null
+          ? `This repository's entry in UF_GITHUB_TOKENS (${f.credential.key}) gives it no ` +
+            "credential, and the install-wide token is deliberately not used in its place. " +
+            `${nothing}. Both are read at boot.`
+          : "There is no GitHub credential for this repository: UF_GITHUB_TOKEN is unset and " +
+            `no entry in UF_GITHUB_TOKENS names it. ${nothing}. Both are read at boot.`,
+    };
+  }
+  return { ok: true, upstream: f.upstream, github };
+}
+
+/**
+ * Whether Push may send this checkout's branch, and exactly what it sends.
+ *
+ * The one decision, asked by the inventory for each row's button with `shown`
+ * null and by the endpoint with what the operator was shown, so the two cannot
+ * disagree about whether a push is possible or why not. Every refusal is one
+ * made before the remote is touched. What it does not pre-empt is the remote
+ * itself: ahead and behind are as of the last fetch, and a remote that moved
+ * since refuses the non-fast-forward on its own.
+ *
+ * The order is what each sentence assumes. Moved comes first after an
+ * unreadable checkout, because every later reason describes a state the
+ * operator was not shown. An operation comes before a detached HEAD, because a
+ * rebase or bisect detaches it and "detached" alone would hide the command
+ * that ends it. Behind comes before ahead, because a branch that has diverged
+ * is both and the remote would refuse it.
+ *
+ * Uncommitted paths refuse nothing: a push carries commits, and the response
+ * says what it left behind instead.
+ */
+export function planPush(
+  f: CheckoutFacts,
+  shown: { branch: string; sha: string } | null,
+): PushPlan {
+  if (f.error !== null) {
+    return {
+      ok: false,
+      code: "unreadable",
+      reason: `Could not read this checkout, so nothing was pushed: ${f.error}`,
+    };
+  }
+  if (shown && (shown.branch !== f.branch || shown.sha !== f.head)) {
+    return {
+      ok: false,
+      code: "moved",
+      reason:
+        `HEAD is no longer ${shown.branch} at ${short(shown.sha)}: it is ` +
+        `${f.branch ? `${f.branch} at ${f.head ? short(f.head) : "no commit"}` : `detached at ${f.head ? short(f.head) : "no commit"}`}. ` +
+        "Nothing was pushed, because a push sends what was on screen and nothing else.",
+    };
+  }
+  if (f.operation) {
+    return {
+      ok: false,
+      code: "operation",
+      reason:
+        `A ${f.operation} is in progress in this checkout. Nothing was pushed; ` +
+        `end it first (${OPERATION_ENDED_BY[f.operation]}).`,
+    };
+  }
+  const standing = standingRefusal(f, "push");
+  if (!("ok" in standing)) return { ok: false, ...standing };
+  const { upstream, github } = standing;
+  const branch = f.branch!;
+
+  if (f.holder.landing) {
+    return {
+      ok: false,
+      code: "busy",
+      reason:
+        "A land, a delivery or another push is working in this checkout. Nothing was pushed; " +
+        "press again once it has finished.",
+    };
+  }
+  if (f.holder.runId) {
+    return {
+      ok: false,
+      code: "busy",
+      reason:
+        `Run ${short(f.holder.runId)} is working in this folder. Nothing was pushed; ` +
+        "press again once it has finished.",
+    };
+  }
+  if (!f.head) {
+    return { ok: false, code: "nothing-to-push", reason: `${branch} has no commits yet.` };
+  }
+  if (f.ahead === null || f.behind === null) {
+    return {
+      ok: false,
+      code: "uncounted",
+      reason:
+        `Could not count ${branch} against ${upstream.short}: its local ref is missing, ` +
+        "which is what an upstream never fetched, or deleted on the remote, looks like. " +
+        "Nothing was pushed; fetch first.",
+    };
+  }
+  if (f.behind > 0) {
+    return {
+      ok: false,
+      code: "behind",
+      reason:
+        `${branch} is ${f.behind} commit${f.behind === 1 ? "" : "s"} behind ${upstream.short} ` +
+        "as of the last fetch. Nothing was pushed: pull or rebase by hand first, because " +
+        "this only ever sends a fast-forward.",
+    };
+  }
+  if (f.ahead === 0) {
+    return {
+      ok: false,
+      code: "nothing-to-push",
+      reason: `${branch} has nothing ${upstream.short} lacks as of the last fetch.`,
+    };
+  }
+  return {
+    ok: true,
+    branch,
+    sha: f.head,
+    remote: upstream.remote,
+    remoteRef: upstream.remoteRef,
+    github,
+  };
+}
+
+/**
+ * Whether Fetch may fetch this checkout's upstream remote.
+ *
+ * Push's standing refusals and nothing else: a fetch writes remote-tracking
+ * refs and `FETCH_HEAD`, never the working tree, the index or HEAD, so an
+ * operation in progress, a land in flight or a branch behind its remote are no
+ * reason to refuse one. A GitHub remote and a credential are still required,
+ * and not as a formality: `githubEnv` is what rewrites an SSH GitHub remote to
+ * https, so without it the fetch would go over ssh, where this container holds
+ * no key and the program git runs is whatever the repository's own
+ * `core.sshCommand` names.
+ */
+export function planFetch(f: CheckoutFacts): FetchPlan {
+  if (f.error !== null) {
+    return {
+      ok: false,
+      code: "unreadable",
+      reason: `Could not read this checkout, so nothing was fetched: ${f.error}`,
+    };
+  }
+  const standing = standingRefusal(f, "fetch");
+  if (!("ok" in standing)) return { ok: false, ...standing };
+  return { ok: true, remote: standing.upstream.remote, github: standing.github };
+}
+
+/* ------------------------------------------------------------------ */
+/* Choosing what one request reads                                     */
+/* ------------------------------------------------------------------ */
+
+/** The slice of the git folders one request reads, and what it says about the rest. */
+export interface ProjectPage<T> {
+  examined: T[];
+  total: number;
+  offset: number;
+  limit: number;
+  notShown: number;
+}
+
+/**
+ * Which projects this request reads, `selectBranchCandidates`' rule over a
+ * folder list: a limit that is missing or unreadable is the default page, an
+ * offset past the end is clamped, and `total` counts every git folder so
+ * `notShown` is derived from what exists rather than from the page.
+ */
+export function selectProjectPage<T>(
+  folders: readonly T[],
+  query: { offset?: number; limit?: number } = {},
+): ProjectPage<T> {
+  const asked = Math.floor(Number(query.limit));
+  const limit = Number.isFinite(asked) && asked > 0 ? Math.min(MAX_PROJECTS, asked) : MAX_PROJECTS;
+  const offset = Math.min(
+    Math.max(0, Math.floor(Number(query.offset) || 0)),
+    Math.max(0, folders.length - 1),
+  );
+  const examined = folders.slice(offset, offset + limit);
+  return {
+    examined,
+    total: folders.length,
+    offset,
+    limit,
+    notShown: folders.length - examined.length,
+  };
+}
+
+/**
+ * Which unmerged branches get read, as `[project, branch]` index pairs.
+ *
+ * `selectProbeTargets`' discipline: decided in one synchronous pass before any
+ * read is dispatched, because the reads run under a pool and a counter tested
+ * across awaits caps nothing. Taken round-robin across projects — every
+ * project's newest branch, then every project's second — rather than in page
+ * order, so one repository holding hundreds of stale branches cannot spend the
+ * whole cap and leave every project after it reading "not read".
+ */
+export function selectBranchReads(
+  counts: readonly number[],
+  limit: number,
+): Array<[number, number]> {
+  const picked: Array<[number, number]> = [];
+  const deepest = Math.max(0, ...counts);
+  for (let depth = 0; depth < deepest && picked.length < limit; depth++) {
+    for (let p = 0; p < counts.length && picked.length < limit; p++) {
+      if (depth < counts[p]) picked.push([p, depth]);
+    }
+  }
+  return picked;
+}
+
+/* ------------------------------------------------------------------ */
+/* The inventory                                                       */
+/* ------------------------------------------------------------------ */
+
+/** A git folder this request reads, resolved inside its mount. */
+interface ProjectTarget {
+  folder: WorkspaceFolderDTO;
+  /** Null when the folder no longer resolves inside its mount; `error` says why. */
+  dir: string | null;
+  error: string | null;
+}
+
+function targetOf(folder: WorkspaceFolderDTO): ProjectTarget {
+  try {
+    return { folder, dir: resolveWorkspaceFolder(folder.path, folder.mountId), error: null };
+  } catch (err) {
+    return { folder, dir: null, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+function factsOf(dir: string | null, read: CheckoutRead): CheckoutFacts {
+  const credential = githubTokenFor(dir);
+  return {
+    error: read.error,
+    branch: read.branch,
+    head: read.head,
+    operation: read.operation,
+    upstream: read.upstream,
+    ahead: read.ahead,
+    behind: read.behind,
+    credential: { scope: credential.scope, key: credential.key },
+    holder: dir ? checkoutHolder(dir) : { landing: false, runId: null },
+  };
+}
+
+/** The newest run that recorded each of these branches in this repository. */
+function runsOn(repoRoot: string, branches: readonly string[]): Map<string, RunRow> {
+  const found = new Map<string, RunRow>();
+  if (branches.length === 0) return found;
+  const rows = db()
+    .prepare(
+      `SELECT * FROM runs
+        WHERE repo_root = ? AND isolation = 'worktree'
+          AND worktree_branch IN (${branches.map(() => "?").join(",")})
+        ORDER BY created_at DESC`,
+    )
+    .all(repoRoot, ...branches) as RunRow[];
+  for (const run of rows) {
+    if (!found.has(run.worktree_branch!)) found.set(run.worktree_branch!, run);
+  }
+  return found;
+}
+
+/** One unmerged branch, with what its read needs. */
+interface BranchRow {
+  ref: UnmergedRef;
+  /** The run that owns it and its chain, when a run recorded it here. */
+  run: { owner: RunRow; chain: RunRow[] } | null;
+}
+
+/**
+ * One branch's read: whether a squash landed it into the current branch, and
+ * how many commits it has that the current branch lacks.
+ *
+ * A squash is landed work git cannot see, so `--no-merged` lists a
+ * squash-landed `uf/*` branch for ever; `isLandedTip` is the existing rule for
+ * it (the tip unmoved, the squash's commit still in the target) and is asked
+ * here with the current branch as the target, which is the branch `--no-merged`
+ * was measured against. A merge-landed branch never reaches this: its tip is an
+ * ancestor, so `--no-merged` already left it out.
+ *
+ * Counted from the shas this request read rather than the names, so the count
+ * is about the tip the row shows.
+ */
+async function readBranch(
+  dir: string,
+  current: { branch: string | null; head: string },
+  row: BranchRow,
+): Promise<{ landed: boolean; ahead: number | null }> {
+  if (row.run && (await isLandedTip(dir, current.branch, row.run.chain, row.ref.tip, {}))) {
+    return { landed: true, ahead: null };
+  }
+  const count = await git(dir, ["rev-list", "--count", `${current.head}..${row.ref.tip}`]);
+  const ahead = count.ok ? Number.parseInt(count.stdout, 10) : NaN;
+  return { landed: false, ahead: Number.isFinite(ahead) ? ahead : null };
+}
+
+function branchRows(dir: string, unmerged: readonly UnmergedRef[]): BranchRow[] {
+  const runs = runsOn(dir, unmerged.map((u) => u.branch));
+  return unmerged.map((ref) => {
+    const newest = runs.get(ref.branch);
+    if (!newest) return { ref, run: null };
+    const chain = chainRuns(newest);
+    const ownerId = branchOwnerOf(newest);
+    return { ref, run: { owner: chain.find((r) => r.id === ownerId) ?? newest, chain } };
+  });
+}
+
+function upstreamDTO(upstream: Upstream | null): ProjectUpstreamDTO | null {
+  if (!upstream) return null;
+  const github = upstream.url ? parseRemote(upstream.url) : null;
+  return {
+    ...upstream,
+    github: github ? `${github.owner}/${github.repo}` : null,
+  };
+}
+
+/** A project's row, from its read and whichever of its branches were read. */
+function projectDTO(
+  target: ProjectTarget,
+  read: CheckoutRead,
+  branches: ReadonlyArray<{ row: BranchRow; answer: { landed: boolean; ahead: number | null } }>,
+  branchesNotRead: number,
+): ProjectDTO {
+  const facts = factsOf(target.dir, read);
+  const push = planPush(facts, null);
+  const fetch = planFetch(facts);
+
+  const runBranches: ProjectRunBranchDTO[] = [];
+  const otherBranches: ProjectBranchDTO[] = [];
+  for (const { row, answer } of branches) {
+    if (answer.landed) continue;
+    const base = { ...row.ref, ahead: answer.ahead };
+    if (!row.run) {
+      otherBranches.push(base);
+      continue;
+    }
+    const owner = row.run.owner;
+    runBranches.push({
+      ...base,
+      runId: owner.id,
+      runStatus: owner.status,
+      target: owner.worktree_base_branch,
+      task: owner.prompt.split("\n")[0].slice(0, 200),
+    });
+  }
+
+  return {
+    mountId: target.folder.mountId,
+    folder: target.folder.path,
+    name: target.folder.name,
+    path: target.dir ?? "",
+    error: read.error,
+    branch: read.branch,
+    head: read.head,
+    detached: read.error === null && read.branch === null,
+    operation: read.operation,
+    uncommitted: read.uncommitted,
+    upstream: upstreamDTO(read.upstream),
+    ahead: read.ahead,
+    behind: read.behind,
+    fetchedAt: read.fetchedAt,
+    credential: facts.credential.scope,
+    holder: facts.holder,
+    runBranches,
+    otherBranches,
+    branchesNotRead,
+    push: push.ok
+      ? { possible: true, code: null, reason: null }
+      : { possible: false, code: push.code, reason: push.reason },
+    fetch: fetch.ok
+      ? { possible: true, code: null, reason: null }
+      : { possible: false, code: fetch.code, reason: fetch.reason },
+  };
+}
+
+/**
+ * Read a set of projects in full, under one branch cap.
+ *
+ * Three passes, `branchInventory`'s shape. The checkouts are read under the
+ * pool. Then, synchronously and before any branch read is dispatched,
+ * `selectBranchReads` decides which unmerged branches this request pays for.
+ * Then those are read under the pool. A folder that does not resolve, or whose
+ * git fails, is a row with its error, never a missing one and never a failed
+ * request.
+ */
+async function readProjects(targets: readonly ProjectTarget[]): Promise<ProjectDTO[]> {
+  const reads = await mapWithLimit(targets, PROJECT_GIT_CONCURRENCY, (t) =>
+    t.dir ? readCheckout(t.dir, true) : Promise.resolve(failed(t.error ?? "")),
+  );
+
+  const picks = selectBranchReads(
+    reads.map((r) => r.unmerged.length),
+    MAX_BRANCH_READS,
+  );
+  const pickedPer = targets.map(() => 0);
+  for (const [p] of picks) pickedPer[p]++;
+
+  // Joined to their runs only for the branches picked, and in the order
+  // `--sort=-committerdate` gave, which `selectBranchReads` picked a prefix of.
+  const rows = targets.map((t, p) =>
+    t.dir ? branchRows(t.dir, reads[p].unmerged.slice(0, pickedPer[p])) : [],
+  );
+  const answers = await mapWithLimit(picks, PROJECT_GIT_CONCURRENCY, ([p, i]) =>
+    readBranch(targets[p].dir!, { branch: reads[p].branch, head: reads[p].head! }, rows[p][i]),
+  );
+
+  const byProject = targets.map(
+    () => [] as Array<{ row: BranchRow; answer: { landed: boolean; ahead: number | null } }>,
+  );
+  picks.forEach(([p, i], k) => byProject[p].push({ row: rows[p][i], answer: answers[k] }));
+  for (const list of byProject) list.sort((a, b) => b.row.ref.tipAt - a.row.ref.tipAt);
+
+  return targets.map((t, p) =>
+    projectDTO(t, reads[p], byProject[p], reads[p].unmerged.length - pickedPer[p]),
+  );
+}
+
+/**
+ * Every git folder `scanWorkspace` finds, a page of them read.
+ *
+ * The folder walk is the picker's own, so the two cannot disagree about what a
+ * project is. Mount roots are never projects, because the walk never lists one.
+ */
+export async function projectInventory(
+  query: { offset?: number; limit?: number } = {},
+): Promise<ProjectInventoryDTO> {
+  const scan = await scanWorkspace();
+  const page = selectProjectPage(
+    scan.folders.filter((f) => f.isGitRepo),
+    query,
+  );
+  return {
+    projects: await readProjects(page.examined.map(targetOf)),
+    mounts: scan.mounts,
+    total: page.total,
+    offset: page.offset,
+    limit: page.limit,
+    notShown: page.notShown,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* The two presses                                                     */
+/* ------------------------------------------------------------------ */
+
+/** A project named on the wire, before anything about it is trusted. */
+export interface ProjectRef {
+  mountId: string;
+  folder: string;
+}
+
+const SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
+/**
+ * The fields every press names its project by, or the sentence refusing them.
+ *
+ * Checked before anything runs, `readDeliveryFields`' rule: a cast that failed
+ * late failed after the remote had been touched.
+ */
+function requiredStrings<K extends string>(
+  raw: Record<string, unknown>,
+  keys: readonly K[],
+  nothing: string,
+): { ok: true; value: Record<K, string> } | { ok: false; error: string } {
+  const value = {} as Record<K, string>;
+  for (const key of keys) {
+    const field = raw[key];
+    if (typeof field !== "string" || field.trim() === "") {
+      return {
+        ok: false,
+        error: `"${key}" has to be a non-empty string; got ${jsonKind(field)}. ${nothing}`,
+      };
+    }
+    value[key] = field;
+  }
+  return { ok: true, value };
+}
+
+/** A Fetch body: `{ mountId, folder }`. */
+export function readFetchFields(
+  raw: Record<string, unknown>,
+): { ok: true; value: ProjectRef } | { ok: false; error: string } {
+  return requiredStrings(raw, ["mountId", "folder"], "Nothing was fetched.");
+}
+
+/**
+ * A Push body: the project, and the branch and commit the operator was shown.
+ * The sha is checked for shape because it is compared with HEAD and then
+ * handed to git as what the push sends, and anything that is not a commit id
+ * has no business reaching either.
+ */
+export function readPushFields(
+  raw: Record<string, unknown>,
+): { ok: true; value: ProjectRef & { branch: string; sha: string } } | { ok: false; error: string } {
+  const read = requiredStrings(raw, ["mountId", "folder", "branch", "sha"], "Nothing was pushed.");
+  if (read.ok && !SHA.test(read.value.sha)) {
+    return { ok: false, error: '"sha" has to be a full commit id in lowercase hex. Nothing was pushed.' };
+  }
+  return read;
+}
+
+/** A project resolved inside its mount, or the 404 sentence. */
+function resolveProject(ref: ProjectRef): { ok: true; target: ProjectTarget } | { ok: false; reason: string } {
+  let dir: string;
+  try {
+    dir = resolveWorkspaceFolder(ref.folder, ref.mountId);
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+  }
+  // `scanWorkspace`'s own test of a git folder, so these doors act on exactly
+  // what the inventory lists and never on a directory inside a repository.
+  if (!fs.existsSync(path.join(dir, ".git"))) {
+    return { ok: false, reason: `${ref.folder} is not a git folder.` };
+  }
+  return {
+    ok: true,
+    target: {
+      folder: { mountId: ref.mountId, path: ref.folder, name: path.basename(dir), isGitRepo: true },
+      dir,
+      error: null,
+    },
+  };
+}
+
+export type PressOutcome<T> =
+  | ({ ok: true; project: ProjectDTO } & T)
+  | {
+      ok: false;
+      status: 404 | 409;
+      reason: string;
+      code?: ProjectPushRefusalDTO | ProjectFetchRefusalDTO;
+      project?: ProjectDTO;
+    }
+  | { ok: false; status: 502; reason: string; code: "remote"; project: ProjectDTO };
+
+/** One project's row as it stands now, for a press's answer. */
+async function projectNow(target: ProjectTarget): Promise<ProjectDTO> {
+  return (await readProjects([target]))[0];
+}
+
+/**
+ * Shut-down refusal, read where nothing awaits before the push's spawn, as
+ * `deliverRun` reads it: before it nothing has left the machine.
+ */
+const PUSH_SHUTDOWN_REFUSAL =
+  "The server is shutting down, so nothing was pushed. Try again once it has restarted.";
+
+/**
+ * Push the checkout's current branch to its upstream: the commit the operator
+ * was shown, as an ordinary fast-forward.
+ *
+ * Takes `landing` for the checkout first, `deliverRun`'s claim, so no land,
+ * delivery or second push starts in it while this one decides and sends; when
+ * something already holds it, the read still runs and `planPush` states the
+ * refusal in its order, so one function says every no. The decision is made on
+ * a fresh read with nothing awaited between it and the push's spawn.
+ *
+ * `<sha>:<upstream ref>` rather than the branch's name, so what leaves is the
+ * commit `planPush` compared against what was shown, whatever HEAD does after.
+ * `--no-follow-tags` and `--recurse-submodules=check` overrule the two configs
+ * that would make one push carry more than that branch (`push.followTags`,
+ * `push.recurseSubmodules=on-demand`). No `--set-upstream`, so `.git/config` is
+ * not written.
+ */
+export async function pushProject(
+  ref: ProjectRef,
+  shown: { branch: string; sha: string },
+): Promise<PressOutcome<PushSent>> {
+  const resolved = resolveProject(ref);
+  if (!resolved.ok) return { ok: false, status: 404, reason: resolved.reason };
+  const { target } = resolved;
+
+  const release = claimLanding(target.dir!);
+  let sent: Awaited<ReturnType<typeof sendBranch>>;
+  try {
+    sent = await sendBranch(target.dir!, shown, release !== null);
+  } finally {
+    release?.();
+  }
+  // Read once the claim is let go, or the row would report this push's own
+  // claim as something holding the checkout.
+  if (sent.ok === null) return { ok: false, status: 409, reason: sent.reason };
+  const project = await projectNow(target);
+  if (!sent.ok) {
+    return sent.code === "remote"
+      ? { ok: false, status: 502, code: "remote", reason: sent.reason, project }
+      : { ok: false, status: 409, code: sent.code, reason: sent.reason, project };
+  }
+  return { ok: true, ...sent.value, project };
+}
+
+/** What a push that went out reports, beside the project as it now stands. */
+interface PushSent {
+  branch: string;
+  sha: string;
+  remote: string;
+  remoteRef: string;
+  github: string;
+  uncommitted: number | null;
+  note: string | null;
+}
+
+/**
+ * The decision and the push, inside the claim. `ok: null` is a refusal that
+ * read nothing worth showing back, which only the shutdown is.
+ */
+async function sendBranch(
+  dir: string,
+  shown: { branch: string; sha: string },
+  claimed: boolean,
+): Promise<
+  | { ok: true; value: PushSent }
+  | { ok: false; code: ProjectPushRefusalDTO | "remote"; reason: string }
+  | { ok: null; reason: string }
+> {
+  const read = await readCheckout(dir, false);
+  const facts = factsOf(dir, read);
+  // Once this press holds `landing`, the holder `checkoutHolder` reports is
+  // this press; what `planPush` is asked is whether anybody else held it.
+  if (claimed) facts.holder = { ...facts.holder, landing: false };
+  const plan = planPush(facts, shown);
+  if (!plan.ok) return { ok: false, code: plan.code, reason: plan.reason };
+  if (isShuttingDown()) return { ok: null, reason: PUSH_SHUTDOWN_REFUSAL };
+
+  const untrack = trackLand();
+  let push: Awaited<ReturnType<typeof git>>;
+  try {
+    push = await git(
+      dir,
+      ["push", "--no-follow-tags", "--recurse-submodules=check", plan.remote, `${plan.sha}:${plan.remoteRef}`],
+      { ...NO_CLOCK, env: githubEnv(githubTokenFor(dir).token) },
+    );
+  } finally {
+    untrack();
+  }
+  if (!push.ok) {
+    return {
+      ok: false,
+      code: "remote",
+      reason:
+        `${plan.remote} refused the push: ${gitFailureLine(push.stderr) || "git gave no reason"}. ` +
+        "If the remote has moved since the last fetch, fetch, then pull or rebase by hand.",
+    };
+  }
+  const left = read.uncommitted;
+  return {
+    ok: true,
+    value: {
+      branch: plan.branch,
+      sha: plan.sha,
+      remote: plan.remote,
+      remoteRef: plan.remoteRef,
+      github: `${plan.github.owner}/${plan.github.repo}`,
+      uncommitted: left,
+      note:
+        left === null
+          ? "Whether the checkout holds uncommitted work could not be read; a push sends commits only."
+          : left > 0
+            ? `${left} uncommitted path${left === 1 ? " was" : "s were"} not included: a push sends commits only.`
+            : null,
+    },
+  };
+}
+
+/**
+ * Fetch the checkout's upstream remote: a plain fetch, from a press only.
+ *
+ * `--no-prune` because a fetch is asked to bring news, not to delete
+ * remote-tracking refs, and `fetch.prune` in the operator's config would
+ * otherwise turn this into one that does. `--recurse-submodules=no` so it
+ * fetches the one remote named and no submodule's, whose remotes need not be
+ * GitHub. It takes no claim: what it writes is remote-tracking refs and
+ * `FETCH_HEAD`, which no land, delivery or push reads to decide anything
+ * written into the checkout.
+ */
+export async function fetchProject(
+  ref: ProjectRef,
+): Promise<PressOutcome<{ remote: string }>> {
+  const resolved = resolveProject(ref);
+  if (!resolved.ok) return { ok: false, status: 404, reason: resolved.reason };
+  const { target } = resolved;
+  const dir = target.dir!;
+
+  const read = await readCheckout(dir, false);
+  const plan = planFetch(factsOf(dir, read));
+  if (!plan.ok) {
+    return {
+      ok: false,
+      status: 409,
+      reason: plan.reason,
+      code: plan.code,
+      project: await projectNow(target),
+    };
+  }
+
+  const fetched = await git(dir, ["fetch", "--no-prune", "--recurse-submodules=no", plan.remote], {
+    ...NO_CLOCK,
+    env: githubEnv(githubTokenFor(dir).token),
+  });
+  const project = await projectNow(target);
+  if (!fetched.ok) {
+    return {
+      ok: false,
+      status: 502,
+      code: "remote",
+      reason: `${plan.remote} could not be fetched: ${gitFailureLine(fetched.stderr) || "git gave no reason"}.`,
+      project,
+    };
+  }
+  return { ok: true, remote: plan.remote, project };
+}

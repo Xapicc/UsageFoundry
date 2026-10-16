@@ -1742,6 +1742,39 @@ export function checkoutHeld(folder: string): boolean {
 }
 
 /**
+ * `checkoutHeld`'s two holders, kept apart so a refusal can name the one it
+ * met. For `projects.ts`, whose push of the operator's branch refuses on
+ * either.
+ *
+ * `landing` is compared by overlap rather than by `has`, because the push's
+ * folder is a repository root and a land's is the run's own `folder`, which
+ * may be a directory inside one — the same checkout either way.
+ */
+export function checkoutHolder(folder: string): { landing: boolean; runId: string | null } {
+  const key = conflictKey(folder);
+  return {
+    landing: [...landing].some((held) => overlaps(key, conflictKey(held))),
+    runId: runWorkingIn(folder)?.id ?? null,
+  };
+}
+
+/**
+ * Take `landing` for `folder`, or null when something already holds it.
+ *
+ * The same claim `landRun` and `deliverRun` take, and for a push of the
+ * operator's own branch rather than beside one: the merge queue already waits
+ * on it (`checkoutHeld`), and a second lock would be a second thing for every
+ * door to remember to ask.
+ */
+export function claimLanding(folder: string): (() => void) | null {
+  if (checkoutHolder(folder).landing) return null;
+  landing.add(folder);
+  return () => {
+    landing.delete(folder);
+  };
+}
+
+/**
  * Why the merge must not happen after all, from a read taken immediately
  * before it, or null when it may.
  *
@@ -4746,6 +4779,26 @@ function operationOn(gitDir: string, branch: string): BranchInOperation["operati
 }
 
 /**
+ * What one checkout's git directory is part-way through, whichever branch it
+ * is on, or null.
+ *
+ * `operationOn` asks about one branch because every door above starts from a
+ * run's branch; `projects.ts` starts from the checkout, so it asks the same
+ * files without the name, plus `MERGE_HEAD`, which a merge writes in the same
+ * directory and which none of those doors needs to read this way. Read from
+ * the files rather than through `rev-parse --verify` so a whole inventory
+ * spends no child on it. Throws on anything but absence, for
+ * `worktreeMidOperation`'s reason.
+ */
+export function checkoutOperation(gitDir: string): "merge" | "rebase" | "bisect" | null {
+  if (readIfPresent(() => fs.statSync(path.join(gitDir, "MERGE_HEAD"))) !== null) return "merge";
+  for (const [file, operation] of BRANCH_IN_OPERATION) {
+    if (readIfPresent(() => fs.statSync(path.join(gitDir, file))) !== null) return operation;
+  }
+  return null;
+}
+
+/**
  * `worktreeMidOperation`'s reading of one checkout, for the doors that start
  * from the run's own slot rather than from the registry.
  */
@@ -5571,13 +5624,14 @@ const BRANCH_GIT_CONCURRENCY = 8;
  * Run `fn` over `items` with at most `limit` in flight, results in input order.
  *
  * Deliberately the same worker pool `transcripts.ts` runs its scan through,
- * copied rather than imported because that one is private to its module. A pool
+ * copied rather than imported because that one is private to its module, and
+ * exported for `projects.ts`, whose inventory is bounded the same way. A pool
  * rather than chunked `Promise.all` batches for the same reason it gives: a
  * batch runs at the speed of its slowest member and leaves the other slots
  * idle, and a `git status` costs whatever the checkout it lands on is worth —
  * 140 ms against a 15,082-entry worktree, a few against a small one.
  */
-async function mapWithLimit<T, R>(
+export async function mapWithLimit<T, R>(
   items: readonly T[],
   limit: number,
   fn: (item: T) => Promise<R>,

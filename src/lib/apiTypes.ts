@@ -3771,6 +3771,178 @@ export interface BranchInventoryDTO {
   defaultStrategy: "merge" | "squash";
 }
 
+/* ------------------------------------------------------------------ */
+/* Projects: every git folder in the mounts (`projects.ts`)            */
+/* ------------------------------------------------------------------ */
+
+/** What a checkout is part-way through, read off its git directory's files. */
+export type ProjectOperationDTO = "merge" | "rebase" | "bisect";
+
+/**
+ * Why Push is refused, beside the sentence that says it. `planPush` in
+ * `projects.ts` is the one place each is decided, for the button and the
+ * endpoint alike.
+ */
+export type ProjectPushRefusalDTO =
+  | "unreadable"
+  | "moved"
+  | "operation"
+  | "detached"
+  | "no-upstream"
+  | "not-github"
+  | "no-credential"
+  | "busy"
+  | "uncounted"
+  | "behind"
+  | "nothing-to-push";
+
+/** Why Fetch is refused. `planFetch` decides it. */
+export type ProjectFetchRefusalDTO =
+  | "unreadable"
+  | "detached"
+  | "no-upstream"
+  | "not-github"
+  | "no-credential";
+
+/** Whether a press would act, and if not, why — never something only the press finds out. */
+export interface ProjectVerdictDTO<Code extends string> {
+  possible: boolean;
+  code: Code | null;
+  reason: string | null;
+}
+
+export interface ProjectUpstreamDTO {
+  /** The remote's name, e.g. `origin`; `.` when the upstream is a local branch. */
+  remote: string;
+  /** The branch on that remote a push updates, e.g. `refs/heads/main`. */
+  remoteRef: string;
+  /** The local ref ahead and behind are counted against, e.g. `origin/main`. */
+  short: string;
+  /** `git remote get-url`, or null for a local upstream or a remote git could not name. */
+  url: string | null;
+  /**
+   * `git remote get-url --push`: where a push goes once `pushurl` and
+   * `pushInsteadOf` are applied. Push is decided on this one, Fetch on `url`.
+   */
+  pushUrl: string | null;
+  /** `owner/repo` when `parseRemote` reads `url` as GitHub, else null. */
+  github: string | null;
+}
+
+/** A local branch not merged into the current one, of the kind no run recorded. */
+export interface ProjectBranchDTO {
+  branch: string;
+  tip: string;
+  /** Committer date of the tip, epoch ms. */
+  tipAt: number;
+  /** Commits on it the current branch lacks. Null when git could not count them. */
+  ahead: number | null;
+}
+
+/** A branch a run recorded, not merged into the current one and not squash-landed there. */
+export interface ProjectRunBranchDTO extends ProjectBranchDTO {
+  /** The run that owns the branch: a chain's last link with work on it. */
+  runId: string;
+  runStatus: RunDTO["status"];
+  /** The branch the run was cut to land on, which need not be the current one. */
+  target: string | null;
+  /** The first line of the run's task, cut to 200 characters. */
+  task: string;
+}
+
+export interface ProjectDTO {
+  mountId: string;
+  /** Relative to the mount root, as the folder picker names it. */
+  folder: string;
+  name: string;
+  /** The absolute path git was run in. */
+  path: string;
+  /**
+   * Why this checkout could not be read, or null. A folder whose git fails —
+   * a worktree whose git directory is elsewhere, say — is listed with this
+   * set and every git field below null or empty, never left out.
+   */
+  error: string | null;
+  /** The current branch; null when HEAD is detached or the read failed. */
+  branch: string | null;
+  /** HEAD's commit; null on a branch with no commits yet. Push sends exactly this. */
+  head: string | null;
+  detached: boolean;
+  operation: ProjectOperationDTO | null;
+  /** Changed, unmerged and untracked paths. Null when not read. */
+  uncommitted: number | null;
+  upstream: ProjectUpstreamDTO | null;
+  /**
+   * Against the upstream's local ref, so as of the last fetch rather than as
+   * the remote stands. Null with no upstream or when its ref is missing.
+   */
+  ahead: number | null;
+  behind: number | null;
+  /** Newest `FETCH_HEAD` mtime of this checkout and its repository, epoch ms; null for never. */
+  fetchedAt: number | null;
+  /** Where this repository's GitHub credential would come from. Never the token. */
+  credential: "repository" | "install" | "none";
+  /** Something holding the checkout, which Push refuses on: a land or delivery, or a run. */
+  holder: { landing: boolean; runId: string | null };
+  runBranches: ProjectRunBranchDTO[];
+  otherBranches: ProjectBranchDTO[];
+  /** Unmerged branches over this request's read cap, neither listed nor claimed merged. */
+  branchesNotRead: number;
+  push: ProjectVerdictDTO<ProjectPushRefusalDTO>;
+  fetch: ProjectVerdictDTO<ProjectFetchRefusalDTO>;
+}
+
+export interface ProjectInventoryDTO {
+  projects: ProjectDTO[];
+  /** Every mount, including one that is not there, which holds no projects. */
+  mounts: WorkspaceMountDTO[];
+  /** Git folders across every mount; the page is `offset` and `limit` into them. */
+  total: number;
+  offset: number;
+  limit: number;
+  notShown: number;
+}
+
+/** `POST /api/projects/fetch`. */
+export interface ProjectTargetRequest {
+  mountId: string;
+  /** Relative to the mount root, as `ProjectDTO.folder` names it. */
+  folder: string;
+}
+
+/** `POST /api/projects/push`: the branch and commit the operator was shown. */
+export interface ProjectPushRequest extends ProjectTargetRequest {
+  branch: string;
+  sha: string;
+}
+
+export interface ProjectPushResponse {
+  ok: true;
+  branch: string;
+  sha: string;
+  remote: string;
+  remoteRef: string;
+  github: string;
+  /** Paths left uncommitted in the checkout, which a push does not carry. */
+  uncommitted: number | null;
+  /** Says what was not included, or null when nothing was left out. */
+  note: string | null;
+  project: ProjectDTO;
+}
+
+export interface ProjectFetchResponse {
+  ok: true;
+  remote: string;
+  project: ProjectDTO;
+}
+
+/** Any refusal from those two. `code` and `project` are set when the checkout was read. */
+export interface ProjectRefusalResponse {
+  error: string;
+  code?: ProjectPushRefusalDTO | ProjectFetchRefusalDTO | "remote";
+  project?: ProjectDTO;
+}
+
 export interface RateLimitEntryDTO {
   type: string;
   group_type: string;
