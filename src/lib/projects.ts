@@ -308,8 +308,8 @@ async function readCheckout(dir: string, withBranches: boolean): Promise<Checkou
         remote,
         remoteRef,
         short: s.upstream,
-        url: await urlOf(["remote", "get-url", remote]),
-        pushUrl: await urlOf(["remote", "get-url", "--push", remote]),
+        url: await urlOf(["remote", "get-url", "--end-of-options", remote]),
+        pushUrl: await urlOf(["remote", "get-url", "--push", "--end-of-options", remote]),
       };
     }
   }
@@ -1070,7 +1070,16 @@ async function sendBranch(
   try {
     push = await git(
       dir,
-      ["push", "--no-follow-tags", "--recurse-submodules=check", plan.remote, `${plan.sha}:${plan.remoteRef}`],
+      [
+        "push",
+        "--no-follow-tags",
+        "--recurse-submodules=check",
+        // The remote's name is the repository's own `branch.<name>.remote`, so
+        // it is never let be read as an option.
+        "--end-of-options",
+        plan.remote,
+        `${plan.sha}:${plan.remoteRef}`,
+      ],
       { ...NO_CLOCK, env: githubEnv(githubTokenFor(dir).token) },
     );
   } finally {
@@ -1136,10 +1145,14 @@ export async function fetchProject(
     };
   }
 
-  const fetched = await git(dir, ["fetch", "--no-prune", "--recurse-submodules=no", plan.remote], {
-    ...NO_CLOCK,
-    env: githubEnv(githubTokenFor(dir).token),
-  });
+  const fetched = await git(
+    dir,
+    ["fetch", "--no-prune", "--recurse-submodules=no", "--end-of-options", plan.remote],
+    {
+      ...NO_CLOCK,
+      env: githubEnv(githubTokenFor(dir).token),
+    },
+  );
   const project = await projectNow(target);
   if (!fetched.ok) {
     return {
