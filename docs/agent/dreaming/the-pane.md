@@ -33,13 +33,15 @@ written into a store with no version control, so a list that silently stopped at
 
 **The orchestrator reads both halves through `list_recurring_failures`, and the rules above follow it there.** It is the readout joined to the ledger, and it keeps the pane's disciplines rather than inventing its own: the signature caveat is in the tool description and in the payload, not only on the page; notes and not-yet-written signatures are two lists, and an empty notes list says which kind of nothing it is — Dreaming off, on and not yet written, or a query that matched no note; a note's absolute path is handed over only when `noteStillPresent` answers `true`, because a stored path is what a run reported; and the suppression set is `writtenSignatures()` rather than the capped `listNotes()`. It writes nothing, needs no setting, and works with Dreaming off, which is the readout half's own property.
 
-**The pane is the ninth row, directly under Knowledge, and `Pane.shortcut` is
+**The pane is the tenth row, directly under Knowledge, and `Pane.shortcut` is
 optional because of where that leaves the digits.** It reads as a readout of what
 the install did to itself, which is nearer in kind to the vault than to the two
 configuration panes it used to sit below, and the operator asked for that order
-knowing what it costs. The digit follows the row's position, so Dreaming is ⌘9,
-and **both API account and Settings, the tenth and eleventh rows, carry no
-shortcut at all** — ⌘1…⌘9 is nine digits against eleven rows. Dreaming held ⌘8
+knowing what it costs. The digit follows the row's position, so **Dreaming, API
+account and Settings, the tenth, eleventh and twelfth rows, carry no shortcut
+at all** — ⌘1…⌘9 is nine digits against twelve rows. Project manager going in
+under Branches on 2026-10-16 is what took Dreaming's ⌘9, pushing it past the
+ninth row as Taskboard had pushed API account. Dreaming held ⌘8
 and API account held ⌘9 until Taskboard went in fourth and pushed every row
 beneath it down one (`4bc98a5`): Dreaming's ⌘8 became ⌘9, and API account,
 pushed past the ninth row, lost its digit outright and joined Settings in
@@ -58,5 +60,5 @@ Both readers that put the digit into a string — `Sidebar.tsx`'s
 compile-time obligation rather than a warning in a docblock, and it is why this
 reordering needed no change in either reader. The docblock in `panes.ts` that
 stated the ceiling was itself once wrong about which row sat on it (it said
-Knowledge, which has been eighth since it moved above the two configuration
-panes and is eighth still, with Dreaming under it).
+Knowledge, which was eighth from when it moved above the two configuration
+panes until Project manager went in above it, and is ninth now).

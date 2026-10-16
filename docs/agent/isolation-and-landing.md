@@ -69,6 +69,18 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - Neither has a clock.
 - The wire.
 
+## [Projects: the Project manager page](isolation-and-landing/projects-page.md)
+
+- The page offers Fetch and Push of the current branch, and no door a run's branch has.
+- A refused door shows the server's sentence where its button would be.
+- A press's refusal stays where the button was until the operator asks afresh.
+- The Push sheet states one snapshot and sends exactly it.
+- Read on load, once after each press, and on Refresh — never polled.
+- Rows with something to push sort first, then rows with something unmerged, then the rest — within the page.
+- "No remote" means the repository has none.
+- The list is one column of a grid, and the orchestrator panel is meant to be its second.
+- The pane is the eighth row, directly under Branches, on the operator's ask.
+
 ## [Merge previews and the conflicts map](isolation-and-landing/merge-previews-and-conflict-map.md)
 
 - Finding out whether a merge works must cost the operator nothing. (was line 26)

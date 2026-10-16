@@ -504,6 +504,7 @@ function routes({ runId, workflowId, instanceId, taskId }) {
     "/dreaming",
     "/knowledge",
     "/login",
+    "/projects",
     "/runs",
     "/runs/new",
     "/runs/live",

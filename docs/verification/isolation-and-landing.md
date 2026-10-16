@@ -195,6 +195,16 @@
   module each failed a case. Caveat: never GitHub and never a real credential
   — the stand-in transport asks for none.
 
+- **The Project manager page over seeded checkouts (2026-10-16, git 2.39.5,
+  the standalone build):** eight scratch repositories — ahead with a run's
+  branch, mid-merge, detached, behind, no remote, no upstream, a long branch
+  name, a broken worktree — each row read as built, with no sideways scroll and
+  no clipped box at 390 and 1280 in both skins, folds and the Push sheet open.
+  Through `projectPush.test.ts`' stand-in transport: the remote's branch
+  deleted after the read, the sheet's Push was refused `upstream-gone` in place
+  of the button; restored and Refresh, Push landed the shown sha; Fetch
+  answered. Caveat: never GitHub, as above.
+
 ## Not yet verified by hand
 
 - **The Land verify field was never saved**, so its check covers the form, not
