@@ -1957,7 +1957,9 @@ export interface LiveSubagentsDTO {
  * replaces each tail rather than resuming it. `join` is a run's tail whole, and
  * a client holding a tile for that run replaces it; `ready` closes the replay
  * that opens a connection and names every run that is running, so a tile whose
- * run ended while the connection was down is dropped.
+ * run ended while the connection was down is dropped. `tools` and `subagents`
+ * are live-only sets, each sent whole whenever it changes and each carried by
+ * `join` as well, because neither can be rebuilt from a tail.
  */
 export type LiveFrameDTO =
   | { kind: "counts"; counts: LiveCountsDTO }

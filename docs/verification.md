@@ -34,6 +34,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Budgets and guards | [budgets-and-guards.md](verification/budgets-and-guards.md) |
 | Run lifecycle | [run-lifecycle.md](verification/run-lifecycle.md) |
 | Run lifecycle | [run-lifecycle-background-work.md](verification/run-lifecycle-background-work.md) — a work cycle's wait for background tasks, and what stopping one tells the next cycle |
+| Run lifecycle | [run-lifecycle-live-activity.md](verification/run-lifecycle-live-activity.md) — what a running cycle is inside: the open-call strip and the `/runs/live` sub-agent roster |
 | Context control | [context-control-pruning.md](verification/context-control-pruning.md) — pruning, compaction and the context ceiling |
 | Context control | [context-control-intake-filter.md](verification/context-control-intake-filter.md) — the intake filter and its ledger |
 | Context control | [context-control-occupancy-and-composition.md](verification/context-control-occupancy-and-composition.md) — the occupancy and composition series |

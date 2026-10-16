@@ -50,11 +50,6 @@
   - lines: three `system`, two `assistant`, one each of `rate_limit_event`,
     `user` and `result`
 
-- **The live log's open-tool rows, rendered in isolation, 2026-09-11**:
-  `renderToStaticMarkup` with the built CSS at 1280 and 390, both skins; the
-  `sticky bottom-0` rows sit flush in both scroll states, jump-to-live paints
-  over them, and 390px has no sideways scroll.
-
 - **Every flag `buildArgs` and `sessionAgentArgs` emit is in `claude --help` on
   2.1.260**, checked before the 2026-09-04 bump, so a run will at least start.
 
@@ -191,10 +186,6 @@
 - **No real validation, review or conflict resolution has run since assists
   began streaming (2026-09-09)**, so `logAssistTools`' rows and the `check ›`
   prefix are unexercised.
-
-- **The live log's open-tool rows have never met a real `tool_progress`
-  frame**: arrival, the 30-second restatement and clearing on `tool_result`
-  are untested, and the `aria-live` line was never listened to.
 
 - **Never a real Home Assistant, ntfy topic or other operator receiver.** The
   `docs/install.md` automation was never loaded, so `trigger.json.*`,
