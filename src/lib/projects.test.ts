@@ -80,6 +80,36 @@ describe("planPush", () => {
     assert.equal(refusal(facts({ behind: 1 }), null), "behind");
   });
 
+  it("words every refusal the button shows so it claims no press happened", () => {
+    // The page puts these in place of the button before anything is pressed,
+    // where "nothing was pushed" reports a push nobody asked for.
+    const states: Partial<CheckoutFacts>[] = [
+      { error: "fatal: not a git repository" },
+      { operation: "merge" },
+      { branch: null, operation: "rebase" },
+      { runBranch: { runId: "r1234567" } },
+      { branch: null },
+      { upstream: null },
+      { upstream: { ...facts().upstream!, remote: ".", short: "trunk" } },
+      { upstream: { ...facts().upstream!, pushUrls: ["/srv/git/widgets.git"], urls: ["/srv/git/widgets.git"] } },
+      { upstream: { ...facts().upstream!, pushUrls: ["https://github.com/a/b.git", "https://github.com/c/d.git"] } },
+      { credential: { scope: "none", key: null } },
+      { credential: { scope: "none", key: "widgets" } },
+      { holder: { landing: true, runId: null } },
+      { holder: { landing: false, runId: "r7654321" } },
+      { head: null },
+      { ahead: null, behind: null },
+      { behind: 2 },
+      { ahead: 0 },
+    ];
+    for (const over of states) {
+      for (const plan of [planPush(facts(over), null), planFetch(facts(over))]) {
+        if (plan.ok) continue;
+        assert.doesNotMatch(plan.reason, /nothing was (pushed|fetched)|press again/i, JSON.stringify(over));
+      }
+    }
+  });
+
   it("takes the install-wide token for a repository no entry names", () => {
     assert.equal(planPush(facts({ credential: { scope: "install", key: null } }), shown).ok, true);
   });

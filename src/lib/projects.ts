@@ -541,6 +541,10 @@ function githubDestination(urls: readonly string[]): { ok: true; github: Remote 
 /**
  * The refusals Push and Fetch share: conditions of the checkout and the
  * install, not of the press, each said in the words of the door asking.
+ *
+ * Worded to read the same in place of the button as in answer to a press,
+ * `seededRefusal`'s rule: the page shows these before anything is pressed, so
+ * none of them says "nothing was pushed" about a push nobody asked for.
  */
 function standingRefusal(
   f: CheckoutFacts,
@@ -548,28 +552,27 @@ function standingRefusal(
 ):
   | { code: "detached" | "no-upstream" | "not-github" | "no-credential"; reason: string }
   | { ok: true; upstream: Upstream; github: Remote } {
-  const nothing = door === "push" ? "Nothing was pushed" : "Nothing was fetched";
   if (!f.branch) {
     return {
       code: "detached",
       reason: f.operation
         ? `HEAD is detached by the ${f.operation} in progress, so there is no current branch ` +
-          `to take an upstream from. ${nothing}; end it (${OPERATION_ENDED_BY[f.operation]}) or do it by hand.`
-        : `HEAD is detached, so there is no current branch and no upstream. ${nothing}.`,
+          `to take an upstream from; end it (${OPERATION_ENDED_BY[f.operation]}) or ${door} by hand.`
+        : "HEAD is detached, so there is no current branch and no upstream.",
     };
   }
   if (!f.upstream) {
     return {
       code: "no-upstream",
       reason:
-        `${f.branch} has no upstream configured. ${nothing}: this never creates or changes ` +
-        "one, so set it by hand (git branch --set-upstream-to) if that is what you want.",
+        `${f.branch} has no upstream configured, and this never creates or changes one: ` +
+        "set it by hand (git branch --set-upstream-to) if that is what you want.",
     };
   }
   if (f.upstream.remote === ".") {
     return {
       code: "not-github",
-      reason: `${f.branch} tracks the local branch ${f.upstream.short}, not a remote. ${nothing}.`,
+      reason: `${f.branch} tracks the local branch ${f.upstream.short}, not a remote.`,
     };
   }
   // The URLs this door's git will actually reach, so a `pushurl`, a
@@ -581,7 +584,7 @@ function standingRefusal(
       code: "not-github",
       reason:
         `${f.upstream.remote} pushes to ${urls.length} URLs, and Push sends to one GitHub ` +
-        `repository. ${nothing}; it can still be done by hand.`,
+        "repository; it can still be done by hand.",
     };
   }
   const destination = githubDestination(urls);
@@ -591,7 +594,7 @@ function standingRefusal(
       reason:
         `\`${destination.url ? redactUrl(destination.url) : f.upstream.remote}\` is not an ` +
         "https://github.com/ repository once git's own rewrites are applied, and GitHub is the " +
-        `only host this app holds a credential for. ${nothing}; it can still be done by hand.`,
+        "only host this app holds a credential for; it can still be done by hand.",
     };
   }
   if (f.credential.scope === "none") {
@@ -601,9 +604,9 @@ function standingRefusal(
         f.credential.key !== null
           ? `This repository's entry in UF_GITHUB_TOKENS (${f.credential.key}) gives it no ` +
             "credential, and the install-wide token is deliberately not used in its place. " +
-            `${nothing}. Both are read at boot.`
+            "Both are read at boot."
           : "There is no GitHub credential for this repository: UF_GITHUB_TOKEN is unset and " +
-            `no entry in UF_GITHUB_TOKENS names it. ${nothing}. Both are read at boot.`,
+            "no entry in UF_GITHUB_TOKENS names it. Both are read at boot.",
     };
   }
   return { ok: true, upstream: f.upstream, github: destination.github };
@@ -655,7 +658,7 @@ export function planPush(f: CheckoutFacts, shown: Shown | null, remote?: RemoteT
     return {
       ok: false,
       code: "unreadable",
-      reason: `Could not read this checkout, so nothing was pushed: ${f.error}`,
+      reason: `Could not read this checkout, so it cannot be pushed: ${f.error}`,
     };
   }
   const moved = shown ? movedRefusal(f, shown) : null;
@@ -665,8 +668,8 @@ export function planPush(f: CheckoutFacts, shown: Shown | null, remote?: RemoteT
       ok: false,
       code: "operation",
       reason:
-        `A ${f.operation} is in progress in this checkout. Nothing was pushed; ` +
-        `end it first (${OPERATION_ENDED_BY[f.operation]}).`,
+        `A ${f.operation} is in progress in this checkout; ` +
+        `end it (${OPERATION_ENDED_BY[f.operation]}) before pushing.`,
     };
   }
   if (f.runBranch) {
@@ -675,7 +678,7 @@ export function planPush(f: CheckoutFacts, shown: Shown | null, remote?: RemoteT
       code: "run-branch",
       reason:
         `${f.branch} is ${f.runBranch.runId ? `run ${short(f.runBranch.runId)}'s branch` : "a run's branch"}, ` +
-        "and a run's branch leaves by Deliver, which runs the checks this does not. Nothing was pushed.",
+        "and a run's branch leaves by Deliver, which runs the checks Push does not.",
     };
   }
   const standing = standingRefusal(f, "push");
@@ -689,8 +692,8 @@ export function planPush(f: CheckoutFacts, shown: Shown | null, remote?: RemoteT
       ok: false,
       code: "busy",
       reason:
-        "A land, a delivery or another push is working in this checkout. Nothing was pushed; " +
-        "press again once it has finished.",
+        "A land, a delivery or another push is working in this checkout; " +
+        "push once it has finished.",
     };
   }
   if (f.holder.runId) {
@@ -698,8 +701,8 @@ export function planPush(f: CheckoutFacts, shown: Shown | null, remote?: RemoteT
       ok: false,
       code: "busy",
       reason:
-        `Run ${short(f.holder.runId)} is working in this folder. Nothing was pushed; ` +
-        "press again once it has finished.",
+        `Run ${short(f.holder.runId)} is working in this folder; ` +
+        "push once it has finished.",
     };
   }
   if (!f.head) {
@@ -711,7 +714,7 @@ export function planPush(f: CheckoutFacts, shown: Shown | null, remote?: RemoteT
       code: "uncounted",
       reason:
         `Could not count ${branch} against ${upstream.short}: its local ref is missing, ` +
-        "which is what an upstream never fetched looks like. Nothing was pushed; fetch first.",
+        "which is what an upstream never fetched looks like. Fetch first.",
     };
   }
   if (f.behind > 0) {
@@ -720,7 +723,7 @@ export function planPush(f: CheckoutFacts, shown: Shown | null, remote?: RemoteT
       code: "behind",
       reason:
         `${branch} is ${f.behind} commit${f.behind === 1 ? "" : "s"} behind ${upstream.short} ` +
-        "as of the last fetch. Nothing was pushed: pull or rebase by hand first, because " +
+        "as of the last fetch: pull or rebase by hand first, because " +
         "this only ever sends a fast-forward.",
     };
   }
@@ -786,7 +789,7 @@ export function planFetch(f: CheckoutFacts): FetchPlan {
     return {
       ok: false,
       code: "unreadable",
-      reason: `Could not read this checkout, so nothing was fetched: ${f.error}`,
+      reason: `Could not read this checkout, so it cannot be fetched: ${f.error}`,
     };
   }
   const standing = standingRefusal(f, "fetch");
