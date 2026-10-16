@@ -140,6 +140,18 @@ rejected something unless it asks. `list_recurring_failures` shows the tool
 failures that keep coming back across sessions and the notes the **Dreaming**
 pass wrote about them, so a brief can point a run at what is already known.
 
+**It sits beside the Project manager.** `/projects` shows this same panel beside
+the list of checkouts — the latest conversation, with New chat and a link that
+opens it in Orchestrator — and each row has **Ask the orchestrator**, which writes
+a message naming that project into the composer for you to send. `list_projects`
+gives the chat the page's own reading, so it and the page agree about what is
+unmerged and what a push would send; ahead and behind are as of the last fetch,
+and it says so. It can explain those and propose runs for what needs an agent — a
+rebase, a conflict, a review before landing. It cannot push or fetch: those stay
+the Push and Fetch buttons on `/projects`, and Land on `/branches`, and the chat
+is told to send you there rather than run `git push` itself, which the token in
+its environment would otherwise let it do.
+
 The one tool that is narrower than the rest is `get_run_diff`, which returns
 **patch text** and only for the runs this conversation proposed (for a workflow
 block: the runs of its own instance). A capability token *is* its holder's

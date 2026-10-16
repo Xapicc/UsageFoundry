@@ -78,7 +78,8 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - Read on load, once after each press, and on Refresh — never polled.
 - Rows with something to push sort first, then rows with something unmerged, then the rest — within the page.
 - "No remote" means the repository has none.
-- The list is one column of a grid, and the orchestrator panel is meant to be its second.
+- The orchestrator is the grid's second column from `xl`, and sits under the list below it.
+- "Ask the orchestrator" drafts a message and never sends it.
 - The pane is the eighth row, directly under Branches, on the operator's ask.
 
 ## [Merge previews and the conflicts map](isolation-and-landing/merge-previews-and-conflict-map.md)

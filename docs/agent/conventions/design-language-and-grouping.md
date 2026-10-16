@@ -2,7 +2,7 @@
 
 [← conventions index](../conventions.md)
 
-Read before editing how a page groups, emphasises or names what it shows, `src/components/shell/panes.ts`, or the chat transcript in `src/app/chat/page.tsx`.
+Read before editing how a page groups, emphasises or names what it shows, `src/components/shell/panes.ts`, or the chat transcript in `src/components/ChatPanel.tsx`.
 
 - **Design language.** What the kit already decided, so a page does not decide it again differently.
   - **One thing leads on every screen, and elevation says which.** `Card`'s `emphasis` is the whole mechanism: `primary` (extra padding, `shadow-e2`) for the one card a page exists to show, `default` (`shadow-e1`) for everything the reader came for, `quiet` (flat) for a card that is scaffolding — a form section, a picker, a footnote table. More than one `primary` per screen means none of them is. Hierarchy is said with size, weight, elevation and whitespace; a second border or a colour is not a substitute for any of them.
