@@ -25,6 +25,7 @@ export type IconName =
   | "workflows"
   | "agents"
   | "branches"
+  | "projects"
   | "knowledge"
   | "account"
   | "settings"
@@ -120,6 +121,17 @@ const GLYPH: Record<IconName, ReactElement> = {
       <circle cx="4.75" cy="12" r="1.6" />
       <circle cx="11.25" cy="6.25" r="1.6" />
       <path d="M4.75 5.6v4.8M6.35 4h1.9a3 3 0 0 1 3 3v0" />
+    </>
+  ),
+  // Three layers, one over another: every checkout the mounts hold. Deliberately
+  // not `folder`, which is the chat's "where it runs" for one of them, and not
+  // `branches` in a frame — the row directly above this one in the source list
+  // is `branches`, and two neighbours drawn alike are read rather than seen.
+  projects: (
+    <>
+      <path d="M8 2.6 13.4 5.1 8 7.6 2.6 5.1Z" />
+      <path d="M2.6 8.1 8 10.6 13.4 8.1" />
+      <path d="M2.6 11.1 8 13.6 13.4 11.1" />
     </>
   ),
   // An open book. Deliberately not a notebook — a rounded rect with a spine is

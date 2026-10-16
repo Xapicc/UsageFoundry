@@ -108,7 +108,11 @@ src/lib/
                    merged content of only the first `MAX_CONTENT_FILES`
   review.ts        the on-demand reviewer (a third, deliberate child process)
   land.ts          merge preview, landing, branch deletion, branch inventory,
-                   and the one exit that leaves the machine
+                   and Deliver, the exit a run's branch leaves the machine by
+  projects.ts      the operator's own checkouts across the mounts — branch,
+                   upstream, ahead/behind as of the last fetch, unmerged
+                   branches — and a press each to push the current branch to
+                   its upstream and to fetch that upstream's remote
   repoLock.ts      one repository's worktree registry, one caller at a time —
                    it waits rather than refusing, because the run loop is one
                    of the four callers; `landing` in land.ts is the other
@@ -169,8 +173,8 @@ src/lib/
   stacks.ts        the receipts the boot-time stack applier wrote, typed and
                    validated. A reader: what a stack installs is decided by a
                    file on the host and applied before the server starts
-src/app/api/       usage · account · runs · branches · calibrate · settings ·
-                   folders · chat · mcp · workflows · knowledge · tools
+src/app/api/       usage · account · runs · branches · projects · calibrate ·
+                   settings · folders · chat · mcp · workflows · knowledge · tools
 ```
 
 Transcripts are re-read incrementally: only bytes appended since the last scan

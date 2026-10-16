@@ -95,6 +95,20 @@
   the thread already open during the POST was not driven — the ref does not move
   for it, so the new thread opens over it.
 
+- **The orchestrator panel on `/projects` drafts without sending and hands its
+  thread to `/chat`, in Chromium on the standalone build, 2026-10-16.** Scratch
+  `DATA_DIR`, two git checkouts in one mount, a seeded thread with two pending
+  proposals. At 1280 and 390px both pages loaded with no console error and
+  `scrollWidth` equal to the width, and Ask the orchestrator put `Look at
+  project scratch:acme-web — …` in the composer and focused it with no POST
+  sent. With fourteen more messages the column's thread scrolled in its own box
+  (349 of 2195px shown at 1280, 349 of 1753 at 900) and ended 33px above the
+  composer. With a newer thread made through `POST /api/chat` while `/projects`
+  showed the first, Open in Chat opened `/chat?chat=<first>` on the first;
+  `/chat?chat=` naming no thread opened the latest with no error drawn. Built
+  from `4b379136`'s tree less two comments. Caveat: no turn was sent from
+  either page, so nothing about `/chat` mid-turn was exercised after the move.
+
 ## Not yet verified by hand
 
 - **Whether the shipped chat leaves files alone when a fix is one edit away
@@ -191,3 +205,13 @@
   carrying one has been approved in a browser. Settles by asking the chat for
   a Codex run in a folder whose template has a work-cycle limit, then
   approving it and reading `runs.provider`.
+
+- **No model has called `list_projects` or read the Project manager passage
+  (2026-10-16).** The tool's answer and description are pinned in
+  `route.test.ts`. Unmeasured: whether a turn reaches for it rather than `git`
+  on the passage alone, whether it reports ahead and behind with their as-of,
+  whether a large install's answer stays under the CLI's MCP output cap — 60
+  projects with 120 unmerged branches is *estimated* near 40k tokens, not
+  measured — and whether it declines a `git push` it is asked for. Settling it:
+  on a real install, press Ask the orchestrator on a row that is ahead, send
+  it, then ask the chat to push it, and read the turn's tool calls.

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -1121,6 +1122,81 @@ test("the chat's read tools refuse a non-string filter by name rather than searc
   // Absent and null still mean "not given", which is the whole board.
   const all = await callTool(chatToken, "list_tasks", { mountId: null, folder: null });
   assert.equal(all.isError, false, all.text);
+});
+
+// The chat and the Project manager page are worked side by side, so a second
+// reading of the same checkouts would be two answers to "what is unmerged" and
+// "what would a push send" with nothing saying which is wrong. Pinned on the
+// wire against `projectInventory` itself, because the defect it closes is a
+// handler that reads git its own way, or pages differently, and still returns
+// something plausible.
+test("list_projects answers what the projects page reads, to a chat and nobody else", async () => {
+  const repo = path.join(ws, "RepoGit");
+  fs.mkdirSync(repo);
+  // The operator's own git configuration is not this test's: a default branch
+  // or a hook path there would change what is read.
+  const env = {
+    ...process.env,
+    GIT_AUTHOR_NAME: "t",
+    GIT_AUTHOR_EMAIL: "t@example.com",
+    GIT_COMMITTER_NAME: "t",
+    GIT_COMMITTER_EMAIL: "t@example.com",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+  };
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, env, stdio: "pipe" });
+  git("init", "-q", "-b", "main");
+  fs.writeFileSync(path.join(repo, "a.txt"), "a\n");
+  git("add", "a.txt");
+  git("commit", "-q", "-m", "first");
+  git("checkout", "-q", "-b", "side");
+  fs.writeFileSync(path.join(repo, "b.txt"), "b\n");
+  git("add", "b.txt");
+  git("commit", "-q", "-m", "not merged");
+  git("checkout", "-q", "main");
+
+  const chatToken = chat.mintCapability({ kind: "chat", chatId: randomUUID() });
+  const projects = await import("../../../lib/projects");
+  const listed = await callTool(chatToken, "list_projects", {});
+  assert.equal(listed.isError, false, listed.text);
+  const answered = JSON.parse(listed.text);
+  assert.deepEqual(answered, JSON.parse(JSON.stringify(await projects.projectInventory())));
+  const row = answered.projects.find((p: { folder: string }) => p.folder === "RepoGit");
+  assert.ok(row, "the checkout is listed");
+  assert.equal(row.mountId, MOUNT, "under the mount id list_folders and propose_run take");
+  assert.equal(row.branch, "main");
+  assert.deepEqual(
+    row.otherBranches.map((b: { branch: string }) => b.branch),
+    ["side"],
+    "and what is not merged into it",
+  );
+
+  // Paged the page's way: the same offset and limit read the same slice, and
+  // are clamped where the page's are.
+  const paged = JSON.parse((await callTool(chatToken, "list_projects", { offset: 1, limit: 1 })).text);
+  assert.deepEqual(paged, JSON.parse(JSON.stringify(await projects.projectInventory({ offset: 1, limit: 1 }))));
+
+  // The counts are against the local copy of the upstream, and a model told
+  // nothing about that reports a stale "0 behind" as the remote's state.
+  const listedTools = (await rpc(chatToken, "tools/list")) as {
+    tools: { name: string; description: string }[];
+  };
+  const tool = listedTools.tools.find((t) => t.name === "list_projects");
+  assert.ok(tool, "a chat is offered it");
+  assert.match(tool.description, /as of the\s+last fetch/);
+
+  // Never shared and never a run's: the gate is the list `toolsFor` published.
+  const blockToken = chat.mintCapability({ kind: "block", instanceId: randomUUID(), nodeId: "decide" });
+  const { token: runToken } = seedRun(HERE);
+  for (const [who, token] of [
+    ["block", blockToken],
+    ["run", runToken],
+  ] as const) {
+    assert.ok(!(await toolNames(token)).includes("list_projects"), `a ${who} is not offered it`);
+    const refused = await callTool(token, "list_projects", {});
+    assert.equal(refused.isError, true, `a ${who} is refused it`);
+    assert.match(refused.text, /is not available/);
+  }
 });
 
 test("save_template and propose_run refuse a prompt that is not a string and write nothing", async () => {

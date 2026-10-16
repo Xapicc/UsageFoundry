@@ -97,6 +97,7 @@ import {
   type TaskComment,
 } from "../../../lib/taskComments";
 import { addTaskDep, depsForTask, depsForTasks } from "../../../lib/taskDeps";
+import { MAX_PROJECTS, MAX_UNPUSHED_LISTED, projectInventory } from "../../../lib/projects";
 import { releaseTask } from "../../../lib/taskRelease";
 import type { RunProviderDTO, TaskDepRefDTO } from "../../../lib/apiTypes";
 import { RUN_PROVIDER_LABEL, RUN_PROVIDERS } from "../../../lib/apiTypes";
@@ -1141,6 +1142,50 @@ const CHAT_TOOLS = [
         limit: {
           type: "number",
           description: `How many to return (default 20, at most ${PAST_PROPOSALS_MAX}).`,
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    // The chat's alone, not shared: it is what the operator's Project manager
+    // page reads, and only a chat has an operator beside that page. A block
+    // gets its folder from the graph a person saved and reads it with git.
+    //
+    // There is no tool beside it that pushes or fetches, and none is to be
+    // added — docs/agent/chat/mcp-tools-and-capability.md has why.
+    name: "list_projects",
+    description:
+      "Every git checkout in the workspace mounts, read by the same function " +
+      "as the operator's Project manager page (/projects), so what this calls " +
+      "unmerged or ahead is what that page shows them. Per project: the branch " +
+      "it is on and its HEAD, how many paths are uncommitted, its upstream and " +
+      "how far ahead and behind it that is, the commits a push would send " +
+      `(unpushed, newest first, at most ${MAX_UNPUSHED_LISTED} of ahead), the ` +
+      "local branches not merged into it — runBranches with the run that made " +
+      "each, otherBranches the rest, and branchesNotRead counting the ones " +
+      "this call did not examine, which are neither merged nor unmerged as far " +
+      "as you know — and the page's verdict on its Push and Fetch buttons, " +
+      "with the sentence it shows when one is refused. ahead and behind are " +
+      "counted against the local copy of the upstream, so they are as of the " +
+      "last fetch, not as the remote stands now: fetchedAt is when that was, in " +
+      "epoch milliseconds, and null means never. Say so when you report them. " +
+      "Use it to explain what is unmerged and what a push would send, and to " +
+      "decide which of that needs a run. It reads and changes nothing; Push " +
+      "and Fetch are the operator's buttons on that page. A call reads at most " +
+      `${MAX_PROJECTS} projects, the page's own page; total counts every git ` +
+      "folder and offset reaches the rest. projects[].mountId and folder are " +
+      "the same pair list_folders and propose_run take.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        offset: {
+          type: "number",
+          description: "How many git folders to skip, as the page's Next does. Omit for the first page.",
+        },
+        limit: {
+          type: "number",
+          description: `How many projects to read (default and at most ${MAX_PROJECTS}).`,
         },
       },
       additionalProperties: false,
@@ -2583,6 +2628,22 @@ async function callTool(
 
     case "list_past_proposals":
       return pastProposalsTool(args, chatId!);
+
+    // The page's own function with the page's own paging and nothing in
+    // between, so the chat and /projects cannot disagree about what is
+    // unmerged or ahead. Narrowed `list_folders`' way: a number that is not one
+    // is the first page, which `selectProjectPage` already reads it as.
+    case "list_projects":
+      return text(
+        JSON.stringify(
+          await projectInventory({
+            offset: Number(args.offset) || 0,
+            limit: Number(args.limit) || 0,
+          }),
+          null,
+          1,
+        ),
+      );
 
     case "list_recurring_failures":
       return await recurringFailuresTool(args);

@@ -12,7 +12,7 @@ Each rule is in one topic file under `docs/agent/conventions/`; the lines below 
 - Server-only vs client. `src/lib/apiTypes.ts` holds the DTO mirror of the server types so client components never transitively import `node:fs`.
 - Route handlers that touch SQLite or the filesystem need `export const runtime = "nodejs"` and `export const dynamic = "force-dynamic"`.
 - A body a handler reads fields off goes through `readJsonObject` (`src/lib/http.ts`), not `(await req.json().catch(() => ({}))) as Record<string, unknown>`.
-- Twenty-four routes answer through `jsonMaybeGzipped` (`grep -rl 'jsonMaybeGzipped(' src/app/api`), and the streaming ones are excluded by name
+- Twenty-five routes answer through `jsonMaybeGzipped` (`grep -rl 'jsonMaybeGzipped(' src/app/api`), and the streaming ones are excluded by name
 - Module state survives dev hot reload via `globalThis` singletons: `__ufDb`, `__ufBus`, `__ufProcs`, `__ufInterrupts`, `__ufTranscriptCacheV2`.
 - Schema changes go in `migrate()` in `db.ts` as idempotent `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` statements, or as an `addColumn` that reads the live schema — there is no …
 - A control that records a request on a running subject is a route of its own beside `stop`, never a mode of it, and the page that presses it re-reads on a refusal.

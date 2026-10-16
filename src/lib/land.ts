@@ -1742,6 +1742,39 @@ export function checkoutHeld(folder: string): boolean {
 }
 
 /**
+ * `checkoutHeld`'s two holders, kept apart so a refusal can name the one it
+ * met. For `projects.ts`, whose push of the operator's branch refuses on
+ * either.
+ *
+ * `landing` is compared by overlap rather than by `has`, because the push's
+ * folder is a repository root and a land's is the run's own `folder`, which
+ * may be a directory inside one — the same checkout either way.
+ */
+export function checkoutHolder(folder: string): { landing: boolean; runId: string | null } {
+  const key = conflictKey(folder);
+  return {
+    landing: [...landing].some((held) => overlaps(key, conflictKey(held))),
+    runId: runWorkingIn(folder)?.id ?? null,
+  };
+}
+
+/**
+ * Take `landing` for `folder`, or null when something already holds it.
+ *
+ * The same claim `landRun` and `deliverRun` take, and for a push of the
+ * operator's own branch rather than beside one: the merge queue already waits
+ * on it (`checkoutHeld`), and a second lock would be a second thing for every
+ * door to remember to ask.
+ */
+export function claimLanding(folder: string): (() => void) | null {
+  if (checkoutHolder(folder).landing) return null;
+  landing.add(folder);
+  return () => {
+    landing.delete(folder);
+  };
+}
+
+/**
  * Why the merge must not happen after all, from a read taken immediately
  * before it, or null when it may.
  *
@@ -4746,6 +4779,26 @@ function operationOn(gitDir: string, branch: string): BranchInOperation["operati
 }
 
 /**
+ * What one checkout's git directory is part-way through, whichever branch it
+ * is on, or null.
+ *
+ * `operationOn` asks about one branch because every door above starts from a
+ * run's branch; `projects.ts` starts from the checkout, so it asks the same
+ * files without the name, plus `MERGE_HEAD`, which a merge writes in the same
+ * directory and which none of those doors needs to read this way. Read from
+ * the files rather than through `rev-parse --verify` so a whole inventory
+ * spends no child on it. Throws on anything but absence, for
+ * `worktreeMidOperation`'s reason.
+ */
+export function checkoutOperation(gitDir: string): "merge" | "rebase" | "bisect" | null {
+  if (readIfPresent(() => fs.statSync(path.join(gitDir, "MERGE_HEAD"))) !== null) return "merge";
+  for (const [file, operation] of BRANCH_IN_OPERATION) {
+    if (readIfPresent(() => fs.statSync(path.join(gitDir, file))) !== null) return operation;
+  }
+  return null;
+}
+
+/**
  * `worktreeMidOperation`'s reading of one checkout, for the doors that start
  * from the run's own slot rather than from the registry.
  */
@@ -5571,13 +5624,14 @@ const BRANCH_GIT_CONCURRENCY = 8;
  * Run `fn` over `items` with at most `limit` in flight, results in input order.
  *
  * Deliberately the same worker pool `transcripts.ts` runs its scan through,
- * copied rather than imported because that one is private to its module. A pool
+ * copied rather than imported because that one is private to its module, and
+ * exported for `projects.ts`, whose inventory is bounded the same way. A pool
  * rather than chunked `Promise.all` batches for the same reason it gives: a
  * batch runs at the speed of its slowest member and leaves the other slots
  * idle, and a `git status` costs whatever the checkout it lands on is worth —
  * 140 ms against a 15,082-entry worktree, a few against a small one.
  */
-async function mapWithLimit<T, R>(
+export async function mapWithLimit<T, R>(
   items: readonly T[],
   limit: number,
   fn: (item: T) => Promise<R>,
@@ -5869,12 +5923,14 @@ export async function branchInventory(
  * different product from one taken by a person, and this app has been careful
  * everywhere else about which of those it is.
  *
- * The push is ordinary and never forced, and it is the **only** git this app
- * runs that carries a credential. `gitEnv()` strips the whole `UF_` namespace,
- * so every other git child reaches a remote unauthenticated — deliberately,
- * for the reason `githubEnv` states — and this one hands the token back through
- * `git()`'s `env` option rather than that withholding being loosened for
- * everybody. Nothing new enters the trust boundary: it is the credential an
+ * The push is ordinary and never forced, and it is one of the few git calls
+ * this app runs that carry a credential — the rest are `projects.ts`' push of
+ * the operator's own branch (an `ls-remote`, then the push) and its fetch,
+ * each also a press. `gitEnv()` strips the whole `UF_` namespace, so every
+ * other git child reaches a remote unauthenticated — deliberately, for the
+ * reason `githubEnv` states — and these hand the token back through `git()`'s
+ * `env` option rather than that withholding being loosened for everybody.
+ * Nothing new enters the trust boundary: it is the credential an
  * agent's own push already gets, chosen by the same `githubTokenFor` rule off
  * the repository. What is new is that the *app* may use it.
  *
@@ -6227,8 +6283,9 @@ async function pushAndOpen(a: {
   //
   // `githubEnv()` explicitly, because `gitEnv()` strips the whole `UF_`
   // namespace and `git()` therefore carries no credential by default — that
-  // withholding is deliberate and documented at `githubEnv`, so this is the
-  // one call that hands it back. Without it the push reaches an https GitHub
+  // withholding is deliberate and documented at `githubEnv`, so this is one of
+  // the few calls that hand it back (`projects.ts` has the rest). Without it
+  // the push reaches an https GitHub
   // remote unauthenticated and, with `GIT_TERMINAL_PROMPT=0`, fails with a
   // message about authentication that names nothing an operator could fix.
   const push = await git(

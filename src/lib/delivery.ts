@@ -32,7 +32,9 @@ import { jsonKind } from "./http";
  * `UF_GITHUB_TOKEN` is documented as the agent's push credential and
  * `githubEnv()` already builds the git config that uses it. Nothing new enters
  * the trust boundary here; what changes is that the *app* can now use a
- * capability its children already had. Which token is `githubTokenFor`'s
+ * capability its children already had. (It is not the only such call any more:
+ * `projects.ts` pushes the operator's own branch and fetches, on the same
+ * path.) Which token is `githubTokenFor`'s
  * answer off the **repository**, so a repository configured to get none
  * refuses here rather than falling through to the install-wide one — and with
  * no credential at all this whole module refuses, which is the honest default
@@ -41,8 +43,12 @@ import { jsonKind } from "./http";
 
 export type Remote = { owner: string; repo: string };
 
-const SSH = /^(?:ssh:\/\/)?git@github\.com[:/]([^/]+)\/(.+?)(?:\.git)?\/?$/;
-const HTTPS = /^https?:\/\/(?:[^@]+@)?github\.com\/([^/]+)\/(.+?)(?:\.git)?\/?$/;
+// Each form exactly as git reads it, because a looser pattern names GitHub for
+// a URL git sends somewhere else: `git@github.com/o/r` (a slash where the
+// colon goes) is a local path, `ssh://git@github.com:o/r` dodges the rewrite to
+// https, and `https://elsewhere/@github.com/o/r` is a request to `elsewhere`.
+const SSH = /^(?:ssh:\/\/git@github\.com\/|git@github\.com:)([^/]+)\/(.+?)(?:\.git)?\/?$/;
+const HTTPS = /^https?:\/\/(?:[^@/?#\s]+@)?github\.com\/([^/]+)\/(.+?)(?:\.git)?\/?$/;
 
 /**
  * Read an owner and repository out of a git remote URL.

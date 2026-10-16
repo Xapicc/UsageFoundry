@@ -13,13 +13,14 @@ saved the graph and pressed Run on it. It never force-pushes, it runs
 the same verify gate Land does against the same `verifyRunBranch` — an operator who
 said "not unless this passes" has said nothing about which exit the work leaves
 by — and with no token for the repository it refuses, which is the honest
-default for a feature that publishes. **The credential is passed explicitly and
-is the only git call in this app that carries one.** `gitEnv()` strips the whole
+default for a feature that publishes. **The credential is passed explicitly, to
+this call and to the project view's `ls-remote`, push and fetch, and to no other
+git this app runs** ([projects-push-and-fetch.md](projects-push-and-fetch.md)). `gitEnv()` strips the whole
 `UF_` namespace, so `git()` reaches every remote unauthenticated by default and
 that withholding is deliberate — `githubEnv`'s docstring gives the reason, which
 is that a git child is the one child here that executes repository-controlled
 code. `deliverRun` hands it back through `git()`'s `env` option, which exists
-for this one caller; without it the push fails against an https GitHub remote
+for these callers; without it the push fails against an https GitHub remote
 with a `GIT_TERMINAL_PROMPT=0` authentication error naming nothing an operator
 could fix. *Which* token is `githubTokenFor(repo_root ?? folder)` — the
 repository's, not the checkout's, on the run loop's own rule — and the same one

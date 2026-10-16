@@ -4,7 +4,7 @@
 > load into a session. Each paragraph records a correctness or safety decision
 > whose violation is silent — nothing throws, nothing fails to typecheck.
 > **Read before editing src/lib/chat.ts, src/lib/chatThread.ts,
-> src/app/chat/page.tsx's question surface, src/app/api/mcp/.**
+> src/components/ChatPanel.tsx's question surface, src/app/api/mcp/.**
 
 The paragraphs themselves live in `docs/agent/chat/`, one topic file per heading below. Find the rule by its lead claim and open the file its heading links to.
 
@@ -38,6 +38,8 @@ The paragraphs themselves live in `docs/agent/chat/`, one topic file per heading
 ## [The chat's MCP tools and its capability](chat/mcp-tools-and-capability.md)
 
 - Two read tools reach past this thread, and neither can move anything.
+- `list_projects` is the Project manager page's own reading, and it is the chat's alone.
+- The chat can read a project and cannot push or fetch one, and there is deliberately no tool or proposal kind that would.
 - The chat's tools run in this process, and that is a correctness requirement rather than a convenience.
 - The chat's child authenticates with a capability, never with `UF_AUTH_TOKEN`.
 

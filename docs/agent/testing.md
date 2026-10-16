@@ -221,7 +221,7 @@ Units that are about no test file in the tree:
 
 | Test file | Also in |
 |---|---|
-| `src/app/api/mcp/route.test.ts` |  |
+| `src/app/api/mcp/route.test.ts` | [delivery] |
 | `taskComments.test.ts` |  |
 | `taskDepGraph.test.ts` |  |
 | `taskDeps.test.ts` |  |
@@ -259,13 +259,15 @@ Units that are about no test file in the tree:
 |---|---|
 | `landGate.test.ts` |  |
 
-## [Deliver](testing/delivery.md)
+## [Deliver, and Push of the operator's branch](testing/delivery.md)
 
 | Test file | Also in |
 |---|---|
 | `deliverBlockRun.test.ts` |  |
 | `deliverRun.test.ts` |  |
 | `delivery.test.ts` |  |
+| `projectPush.test.ts` |  |
+| `projects.test.ts` |  |
 
 ## [The merge queue](testing/merge-queue.md)
 
@@ -546,3 +548,4 @@ It prints nothing as this is written. Whoever owns a file it names owes that fil
 [stacks]: testing/stacks-and-tool-inventory.md
 [harnesses]: testing/test-harnesses.md
 [decider]: testing/model-decider.md
+[delivery]: testing/delivery.md

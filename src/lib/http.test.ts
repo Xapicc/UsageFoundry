@@ -76,8 +76,10 @@ describe("the chat routes and the chat poll opt out of the HTTP cache", () => {
     });
   }
 
+  // The poll lives in the panel `/chat` and `/projects` both render, not in
+  // either page.
   it("the chat page polls with cache: no-store, like every other poller", () => {
-    assert.match(src("app", "chat", "page.tsx"), /fetch\([^)]*"\/api\/chat"[^)]*cache:\s*"no-store"/);
+    assert.match(src("components", "ChatPanel.tsx"), /fetch\([^)]*"\/api\/chat"[^)]*cache:\s*"no-store"/);
   });
 });
 

@@ -54,6 +54,20 @@ describe("parseRemote reads both spellings and refuses the rest", () => {
       assert.equal(parseRemote(url), null, url);
     }
   });
+
+  it("returns null for a URL that names GitHub and sends git somewhere else", () => {
+    // Each was read as acme/widget before, and each is a URL git takes to a
+    // place that is not GitHub: a local path, an ssh URL the https rewrite does
+    // not match, and a request to the host before the `@`.
+    for (const url of [
+      "git@github.com/acme/widget.git",
+      "ssh://git@github.com:acme/widget.git",
+      "https://elsewhere.example/@github.com/acme/widget.git",
+      "https://elsewhere.example?@github.com/acme/widget.git",
+    ]) {
+      assert.equal(parseRemote(url), null, url);
+    }
+  });
 });
 
 describe("planDelivery refuses before anything leaves the machine", () => {
