@@ -162,6 +162,32 @@
   grouped by base alone and left out of every rate here; and no batch above 11
   exists, so a wider fan-out's rate is extrapolated, not measured.
 
+- **The project inventory against this container's `/workspace`, read-only
+  (2026-10-16, git 2.39.5, branch at `0556150f`):** `projectInventory()` from
+  `.test-build` under `env -i`, a scratch `DATA_DIR` and no token read 24 git
+  folders of the mount's 29 entries in 446 ms, with no fetch and no push. The
+  ahead counts match the brief's own reading of local refs (UsageFoundry 180,
+  UsageFoundryWeb 31, InvestmentManager 27, gh-layer10 18, VisualMerge 11,
+  WinnowWeb 8, RDPsd, winnow and VibeHub 1); Dockrac, FoundryCode and
+  actualFreeCash each listed their one unmerged branch with a count; and
+  `UsageFoundry-local-offload` was a row reading `fatal: not a git repository:
+  /Users/…`, not a missing one. Every Push verdict refused, `no-credential` or
+  `no-upstream`. Caveat: no `runs` table (the real one is under `/data`, which
+  a run cannot read), so nothing was joined to a run and the squash exclusion
+  was not met on real data — `projectPush.test.ts` has it.
+
+- **Push and Fetch against scratch bare repositories (2026-10-16, git 2.39.5):**
+  `projectPush.test.ts` drives `pushProject` and `fetchProject` against bare
+  repositories under `$TMPDIR`. A fast-forward push lands the sha shown and
+  nothing else — not an untracked file, not an annotated tag under
+  `push.followTags=true` — and leaves `.git/config` byte-identical. Refused,
+  with the remote's `main` unmoved each time: behind, after a fetch showed
+  behind 1; HEAD moved, or switched to another branch at the same sha;
+  mid-merge; under a held `landing` claim, then pushed once it was let go; and a
+  `pushurl` pointing elsewhere. Four mutations of the compiled module each
+  failed a case. Caveat: never GitHub and never a real credential; the remote
+  is a local path, which asks the helper for nothing.
+
 ## Not yet verified by hand
 
 - **The Land verify field was never saved**, so its check covers the form, not
@@ -245,3 +271,10 @@
   slots were reused, set `landVerifyCommand` to `npm test`, open the earlier
   run's `/runs/[id]`, read the hint, press Land, and confirm the later run's
   branch is back in the slot (`git -C <slot> branch --show-current`).
+
+- **Push and Fetch have never reached GitHub.** The credential helper on these
+  two calls, and a remote refusing a non-fast-forward (the 502), are unseen;
+  every remote so far was a local path. Settle on a host with a token scoped to
+  a throwaway repository: commit, `POST /api/projects/push` with the row's
+  `branch` and `head`, then push a commit to the remote from elsewhere and press
+  Push again before and after `POST /api/projects/fetch`.

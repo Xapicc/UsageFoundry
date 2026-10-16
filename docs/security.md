@@ -422,10 +422,14 @@ on may do nothing whatever. `docs/verification.md` carries what would settle it.
 - `UF_GITHUB_TOKEN` is handed to the agent's work cycles and to nothing else.
   The reviewer does not get it (it cannot write), and neither does the git this
   app runs itself — `worktree add` and `merge` execute hooks the repository
-  controls — with one exception: Deliver's `git push`, the only git this app
-  runs that reaches the network, is handed the repository's token for that call
-  alone, on a person's press. It publishes the run's branch, and refuses one
-  whose history carries a file seeding copied in from your checkout. The
+  controls — with three exceptions, the only git this app runs that reaches the
+  network, each handed the repository's token for that call alone on a
+  person's press. Deliver's `git push` publishes a run's branch, and refuses
+  one whose history carries a file seeding copied in from your checkout. The
+  project view's push sends your checkout's current branch to its configured
+  upstream as a fast-forward, and only the commit the page showed; its fetch
+  fetches that upstream's remote. Both refuse a remote that is not GitHub, and
+  the push refuses one whose push URL points somewhere else. The
   credential helper is scoped to `https://github.com`, so another host asking
   for credentials gets none.
 - *Which* token a work cycle gets is chosen from the repository it is working

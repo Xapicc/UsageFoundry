@@ -50,6 +50,23 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - The Land card offers it once, and states every refusal instead of discovering one. (was lines 149–165)
 - A branch whose history carries a file seeding copied in leaves by neither exit, and the handoff card offers no merge command for it.
 
+## [Projects: the inventory, Push and Fetch](isolation-and-landing/projects-push-and-fetch.md)
+
+- A project is a git folder the picker's walk finds, and every one is listed — read, refused with its error, or counted as not on this page.
+- What one request reads is decided before any of it is read, and the cap is on the page.
+- Ahead and behind are as of the last fetch, and the row says when that was.
+- A mid-operation checkout is read off its git directory's files, the way the run-branch doors read one.
+- An unmerged branch is one `--no-merged` lists against HEAD, less any squash `isLandedTip` says landed in the current branch.
+- Push sends the commit the page showed, to the current branch's configured upstream, and nothing else.
+- One function decides every refusal, for the button and for the press.
+- Push takes `landing`, and refuses on anybody else's.
+- There is no verify gate in front of Push, and that is a decision.
+- Uncommitted work never blocks a push, and the answer says it stayed home.
+- The credential is the repository's, and it goes where the push URL says.
+- Fetch is a press, plain, and asks for what the credential path needs.
+- Neither has a clock.
+- The wire.
+
 ## [Merge previews and the conflicts map](isolation-and-landing/merge-previews-and-conflict-map.md)
 
 - Finding out whether a merge works must cost the operator nothing. (was line 26)

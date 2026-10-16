@@ -14,7 +14,7 @@ Each paragraph is in one topic file under `docs/agent/architecture/`; the lines 
 
 ## [The module map](architecture/module-map.md)
 
-- The subscription pipeline: a fenced module map, one entry per module: `transcripts.ts`, `pricing.ts`, `settings.ts`, `planUsage.ts`, `windows.ts`, `budget.ts`, `orchestrator.ts`, `git.ts`, `diff.ts`, `review.ts`, `land.ts`, `mergeQueue.ts`, `templates.ts`, `toolComposition.ts`, `intakeFilter.ts`, `agents.ts`, `workflows.ts`, `schedules.ts`, `canvasGraph.ts`, `unsavedWork.ts`, `chat.ts`, `repoSpend.ts`, `fleet.ts`, `workspace.ts`, `tasks.ts`, `cycles.ts`, `ops.ts`, `requestLog.ts`, `retention.ts`, `health.ts`, `status.ts`, `db.ts`.
+- The subscription pipeline: a fenced module map, one entry per module: `transcripts.ts`, `pricing.ts`, `settings.ts`, `planUsage.ts`, `windows.ts`, `budget.ts`, `orchestrator.ts`, `git.ts`, `diff.ts`, `review.ts`, `land.ts`, `projects.ts`, `mergeQueue.ts`, `templates.ts`, `toolComposition.ts`, `intakeFilter.ts`, `agents.ts`, `workflows.ts`, `schedules.ts`, `canvasGraph.ts`, `unsavedWork.ts`, `chat.ts`, `repoSpend.ts`, `fleet.ts`, `workspace.ts`, `tasks.ts`, `cycles.ts`, `ops.ts`, `requestLog.ts`, `retention.ts`, `health.ts`, `status.ts`, `db.ts`.
 
 ## [The module map: tools, stacks and plugins](architecture/module-map-agent-tooling.md)
 

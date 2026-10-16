@@ -21,6 +21,9 @@ git.ts          the one way this app runs git — argv only, env scrubbed
 diff.ts         <base>...<branch> as a rendered, budgeted file list + patches
 review.ts       one-shot Claude calls outside the loop: review, conflict resolve
 land.ts         merge preview, AI conflict resolution, landing, deletion, inventory
+projects.ts     every git folder in the mounts: its branch, upstream, ahead/behind
+                as of the last fetch and unmerged branches; and the push of its
+                current branch and the fetch of its upstream, each a press
 mergeQueue.ts   several branches landed one after another — rows in merge_queue,
                 one worker per repository (that Set is the mutual exclusion),
                 and nothing on the path carrying a clock

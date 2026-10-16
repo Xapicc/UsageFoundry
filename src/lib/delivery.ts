@@ -32,7 +32,9 @@ import { jsonKind } from "./http";
  * `UF_GITHUB_TOKEN` is documented as the agent's push credential and
  * `githubEnv()` already builds the git config that uses it. Nothing new enters
  * the trust boundary here; what changes is that the *app* can now use a
- * capability its children already had. Which token is `githubTokenFor`'s
+ * capability its children already had. (It is not the only such call any more:
+ * `projects.ts` pushes the operator's own branch and fetches, on the same
+ * path.) Which token is `githubTokenFor`'s
  * answer off the **repository**, so a repository configured to get none
  * refuses here rather than falling through to the install-wide one — and with
  * no credential at all this whole module refuses, which is the honest default

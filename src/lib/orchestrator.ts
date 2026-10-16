@@ -7604,7 +7604,9 @@ const GITHUB_CREDENTIAL_HELPER =
  * nothing to authenticate. Same for `gitEnv()` in `git.ts`: hooks are off there
  * and `core.fsmonitor` is cleared, but a `.gitattributes` driver is still
  * repository-controlled code in a child this app never reads the output of,
- * and none of what this app runs git for touches the network. That withholding
+ * and almost none of what this app runs git for touches the network — the
+ * three calls that do (Deliver's push, and `projects.ts`' push and fetch) are
+ * each handed the token back for that call alone. That withholding
  * is by namespace rather than by remembering, so a *second* credential shape is
  * covered by it with no change: `UF_GITHUB_TOKENS` leaves those children the
  * same way `UF_GITHUB_TOKEN` does.

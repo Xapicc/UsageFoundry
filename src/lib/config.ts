@@ -429,9 +429,11 @@ export const ADMIN_API_KEY = optionalEnv("ANTHROPIC_ADMIN_KEY");
  * by all of them. Named this way it reaches exactly one place, because
  * `githubEnv()` puts it there on purpose.
  *
- * Nothing this app itself does with git touches the network, so it never needs
- * the token: it is the agent's `git push`, `gh pr create` and `gh issue view`
- * that fail without one.
+ * Almost nothing this app itself does with git touches the network: the three
+ * exceptions are presses — Deliver's push, and the project view's push and
+ * fetch — and each hands the token to that one call through `githubEnv`. It is
+ * the agent's `git push`, `gh pr create` and `gh issue view` that otherwise
+ * fail without one.
  */
 export const GITHUB_TOKEN = optionalEnv("UF_GITHUB_TOKEN");
 
