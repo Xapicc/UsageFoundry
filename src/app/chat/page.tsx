@@ -9,10 +9,12 @@ import { ChatPanel } from "@/components/ChatPanel";
  * `?chat=<id>` opens that thread rather than the latest, which is how the
  * panel on `/projects` hands over the conversation it showed. Read off
  * `window.location` once the page has mounted rather than through
- * `useSearchParams`, whose Suspense boundary would cost this page its
- * prerendered first paint — and without the parameter nothing here differs
- * from the page it always was. It is read, never written: opening another
- * thread or a new one leaves the address alone, as it always did.
+ * `useSearchParams`, which would put the page behind a Suspense boundary
+ * purely to read one optional parameter — `/runs/new`'s trade at its `?from=`.
+ * Once is right here where `/runs` needs the hook: the page keeps the thread
+ * it is on when its own address is navigated to, as it always did, and
+ * without the parameter nothing here differs from the page it always was. It
+ * is read, never written: opening another thread leaves the address alone.
  */
 export default function ChatPage() {
   const [openChatId, setOpenChatId] = useState<string | null>(null);

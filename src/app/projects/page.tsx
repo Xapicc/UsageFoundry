@@ -20,6 +20,7 @@ import {
   shortId,
 } from "@/lib/format";
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
+import { ChatPanel } from "@/components/ChatPanel";
 import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonRow } from "@/components/ui/Button";
 import { Card, CardTitle, Empty, SkeletonText } from "@/components/ui/Card";
@@ -48,6 +49,13 @@ import { Sheet } from "@/components/ui/Sheet";
  * the page never offers a press the server would refuse for a reason it could
  * already see; what only the press can find out — the remote's own answer — is
  * drawn in the same place once it comes back.
+ *
+ * The orchestrator beside the list is `/chat`'s own panel, in its column
+ * layout. "Ask the orchestrator" drafts a message naming the row and never
+ * sends it: a turn is spend, and what the chat is asked is the operator's to
+ * read first. The chat reads this list through `list_projects`, which is
+ * `projectInventory` too, so the two cannot disagree about a row — and it can
+ * propose the work a row needs but cannot press either door.
  */
 
 const PRESS_FALLBACK = {
@@ -102,6 +110,9 @@ export default function Projects() {
   // sends it, so a re-read landing while the sheet is open cannot change what
   // is confirmed out from under the operator.
   const [confirming, setConfirming] = useState<ProjectDTO | null>(null);
+  // What "Ask the orchestrator" last put in the panel's composer; a new object
+  // per press, which is what the panel reads as a new request.
+  const [ask, setAsk] = useState<{ text: string } | null>(null);
 
   /** Which inventory read is allowed to write; see `load`. */
   const inventoryRequest = useRef(0);
@@ -249,10 +260,12 @@ export default function Projects() {
       </p>
       <div role="alert">{readError && <Notice tone="danger">{readError}</Notice>}</div>
 
-      {/* One column today. The orchestrator panel goes beside the list at wide
-          widths as a second column of this grid; `min-w-0` is what lets the
-          list's column narrow for it rather than push it off the pane. */}
-      <div className="grid grid-cols-1 gap-5">
+      {/* The orchestrator beside the list from `xl` and under it below, where
+          beside it would leave the list too narrow for a path. `min-w-0` is
+          what lets the list's column narrow for the panel rather than push it
+          off the pane; the panel's column is about `/chat`'s own 360px proposal
+          column plus the room its thread needs to be read in. */}
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_26rem] xl:items-start">
         <div className="min-w-0">
           {missingMounts.length > 0 && (
             <Notice tone="warn" quiet>
@@ -336,12 +349,15 @@ export default function Projects() {
                     answer={answers[keyOf(p)] ?? null}
                     onFetch={() => void press(p, "fetch")}
                     onPush={() => setConfirming(p)}
+                    onAsk={() => setAsk({ text: askAbout(p) })}
                   />
                 ))}
               </ul>
             )}
           </Card>
         </div>
+
+        <ChatPanel layout="column" compose={ask} />
       </div>
 
       {/* Always rendered, never conditionally mounted — see `Sheet`. `danger`,
@@ -369,6 +385,18 @@ export default function Projects() {
         {confirming && <PushSummary p={confirming} />}
       </Sheet>
     </>
+  );
+}
+
+/**
+ * The message "Ask the orchestrator" drafts. It names the project as
+ * `mountId:folder`, the form `list_folders` and `list_projects` both speak, so
+ * the chat finds the row without guessing which mount a bare name is on.
+ */
+function askAbout(p: ProjectDTO): string {
+  return (
+    `Look at project ${p.mountId}:${p.folder} — what is unmerged there, ` +
+    "what would a push send, and does any of it need a run?"
   );
 }
 
@@ -437,6 +465,7 @@ function ProjectRow({
   answer,
   onFetch,
   onPush,
+  onAsk,
 }: {
   p: ProjectDTO;
   mount: string;
@@ -444,6 +473,8 @@ function ProjectRow({
   answer: Answer | null;
   onFetch: () => void;
   onPush: () => void;
+  /** Drafts a message about this project in the panel; never sends one. */
+  onAsk: () => void;
 }) {
   const unmerged = p.runBranches.length + p.otherBranches.length;
   return (
@@ -454,6 +485,11 @@ function ProjectRow({
           {mount} / {p.folder}
         </span>
         {p.operation && <Badge tone="warn">{p.operation} in progress</Badge>}
+        {/* On every row, an unreadable one included: why a checkout cannot be
+            read is a fair thing to ask about. */}
+        <Button variant="ghost" size="compact" className="ml-auto" onClick={onAsk}>
+          Ask the orchestrator
+        </Button>
       </div>
 
       {p.error !== null ? (
