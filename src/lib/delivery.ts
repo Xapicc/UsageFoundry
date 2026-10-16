@@ -43,8 +43,12 @@ import { jsonKind } from "./http";
 
 export type Remote = { owner: string; repo: string };
 
-const SSH = /^(?:ssh:\/\/)?git@github\.com[:/]([^/]+)\/(.+?)(?:\.git)?\/?$/;
-const HTTPS = /^https?:\/\/(?:[^@]+@)?github\.com\/([^/]+)\/(.+?)(?:\.git)?\/?$/;
+// Each form exactly as git reads it, because a looser pattern names GitHub for
+// a URL git sends somewhere else: `git@github.com/o/r` (a slash where the
+// colon goes) is a local path, `ssh://git@github.com:o/r` dodges the rewrite to
+// https, and `https://elsewhere/@github.com/o/r` is a request to `elsewhere`.
+const SSH = /^(?:ssh:\/\/git@github\.com\/|git@github\.com:)([^/]+)\/(.+?)(?:\.git)?\/?$/;
+const HTTPS = /^https?:\/\/(?:[^@/?#\s]+@)?github\.com\/([^/]+)\/(.+?)(?:\.git)?\/?$/;
 
 /**
  * Read an owner and repository out of a git remote URL.

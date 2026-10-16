@@ -5923,13 +5923,14 @@ export async function branchInventory(
  * different product from one taken by a person, and this app has been careful
  * everywhere else about which of those it is.
  *
- * The push is ordinary and never forced, and it is one of three git calls
- * this app runs that carry a credential — the other two are `projects.ts`'
- * push of the operator's own branch and its fetch, each also a press.
- * `gitEnv()` strips the whole `UF_` namespace, so every other git child reaches
- * a remote unauthenticated — deliberately, for the reason `githubEnv` states —
- * and these hand the token back through `git()`'s `env` option rather than that
- * withholding being loosened for everybody. Nothing new enters the trust boundary: it is the credential an
+ * The push is ordinary and never forced, and it is one of the few git calls
+ * this app runs that carry a credential — the rest are `projects.ts`' push of
+ * the operator's own branch (an `ls-remote`, then the push) and its fetch,
+ * each also a press. `gitEnv()` strips the whole `UF_` namespace, so every
+ * other git child reaches a remote unauthenticated — deliberately, for the
+ * reason `githubEnv` states — and these hand the token back through `git()`'s
+ * `env` option rather than that withholding being loosened for everybody.
+ * Nothing new enters the trust boundary: it is the credential an
  * agent's own push already gets, chosen by the same `githubTokenFor` rule off
  * the repository. What is new is that the *app* may use it.
  *
@@ -6283,7 +6284,8 @@ async function pushAndOpen(a: {
   // `githubEnv()` explicitly, because `gitEnv()` strips the whole `UF_`
   // namespace and `git()` therefore carries no credential by default — that
   // withholding is deliberate and documented at `githubEnv`, so this is one of
-  // the three calls that hand it back (`projects.ts` has the other two). Without it the push reaches an https GitHub
+  // the few calls that hand it back (`projects.ts` has the rest). Without it
+  // the push reaches an https GitHub
   // remote unauthenticated and, with `GIT_TERMINAL_PROMPT=0`, fails with a
   // message about authentication that names nothing an operator could fix.
   const push = await git(

@@ -219,9 +219,10 @@ export function git(
      * credential cannot be *left in*; it has to be handed back by a caller
      * that means to, which makes every credentialed git call greppable.
      *
-     * Three callers, the only git this app runs that reaches the network, and
-     * each on a person's press: `deliverRun`'s push of a run's branch, and
-     * `projects.ts`' push of the operator's current branch and its fetch.
+     * The only git this app runs that reaches the network, each on a
+     * person's press: `deliverRun`'s push of a run's branch, and `projects.ts`'
+     * push of the operator's current branch (an `ls-remote`, then the push)
+     * and its fetch.
      * Nothing here overrides the `-c` flags in
      * `gitArgs`: those go on the command line, which outranks `GIT_CONFIG_*`,
      * so hooks and `core.fsmonitor` stay off however this is filled in.

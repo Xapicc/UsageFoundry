@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { githubTokenFor, type GithubTokenScope } from "./config";
 import { db } from "./db";
-import { parseRemote } from "./delivery";
+import { parseRemote, type Remote } from "./delivery";
 import { git } from "./git";
 import { jsonKind } from "./http";
 import {
@@ -68,8 +68,12 @@ import type {
  * off the checkout, so a repository configured to get none refuses rather than
  * falling through to the install-wide token; handed to `git()` through
  * `githubEnv` and the `env` option, the same as `deliverRun`, with `gitArgs`'
- * `-c` flags keeping hooks and `core.fsmonitor` off. Push and Fetch are the
- * second and third git calls in this app that carry one, and both are a press.
+ * `-c` flags keeping hooks and `core.fsmonitor` off. Push (an `ls-remote`, then
+ * the push) and Fetch are the only git besides Deliver's that carries one, and
+ * each is a press. Both are decided on every URL git will use, after every
+ * rewrite, and only `https://github.com/` passes: anything else is a transport
+ * for which git runs a program the repository's config can name, with the
+ * token in its environment.
  *
  * Not polled: every project is several git children and nothing here changes
  * on its own. Fetch is the one thing that moves `ahead`/`behind`, and it is a
@@ -198,14 +202,55 @@ interface Upstream {
   remote: string;
   remoteRef: string;
   short: string;
-  /** Where a fetch of `remote` goes, `insteadOf` applied. */
-  url: string | null;
   /**
-   * Where a push to `remote` goes: `pushurl` and `pushInsteadOf` applied, which
-   * `url` does not show. Read apart because it is the one the credential is
-   * sent along with, and a repository's own config can point it elsewhere.
+   * Every URL a fetch of `remote` may use, as git will use them: the
+   * repository's `insteadOf` and `githubEnv`'s own rewrites applied. Empty for
+   * a local upstream or a remote git could not name a URL for.
    */
-  pushUrl: string | null;
+  urls: string[];
+  /**
+   * Every URL a push to `remote` goes to — git pushes to each — with `pushurl`
+   * and `pushInsteadOf` applied as well, which `urls` does not show. Read apart
+   * because these are what the credential travels with, and a repository's own
+   * config can point them anywhere.
+   */
+  pushUrls: string[];
+}
+
+/**
+ * `githubEnv`'s URL rewrites without the token, for reading where a push or a
+ * fetch will actually go. The rewrites do not depend on the token, so a
+ * placeholder stands in and the real one stays off a call that needs none.
+ */
+function urlReadEnv(): Record<string, string> {
+  return githubEnv("placeholder-not-a-credential");
+}
+
+/**
+ * The upstream's remote and its branch there, read from `for-each-ref`, or
+ * from the branch's config when the branch has no commits yet: its ref does
+ * not exist, so `for-each-ref` lists nothing, while git still reports the
+ * upstream it is configured with.
+ */
+async function upstreamOf(
+  dir: string,
+  branch: string,
+): Promise<{ ok: true; remote: string; remoteRef: string } | { ok: true; remote: null } | { ok: false; error: string }> {
+  const up = await git(dir, [
+    "for-each-ref",
+    "--format=%(upstream:remotename)%00%(upstream:remoteref)",
+    `refs/heads/${branch}`,
+  ]);
+  if (!up.ok) return { ok: false, error: gitFailureLine(up.stderr) };
+  const [remote, remoteRef] = (up.stdout.split("\n")[0] ?? "").split("\0");
+  if (remote && remoteRef) return { ok: true, remote, remoteRef };
+  if (up.stdout !== "") return { ok: true, remote: null };
+  const [configured, merge] = await Promise.all(
+    ["remote", "merge"].map((key) =>
+      git(dir, ["config", "--get", `branch.${branch}.${key}`]).then((r) => (r.ok ? r.stdout : "")),
+    ),
+  );
+  return configured && merge ? { ok: true, remote: configured, remoteRef: merge } : { ok: true, remote: null };
 }
 
 /** One checkout's state, or why git could not give it. */
@@ -290,26 +335,25 @@ async function readCheckout(dir: string, withBranches: boolean): Promise<Checkou
 
   let upstream: Upstream | null = null;
   if (s.branch && s.upstream) {
-    const up = await git(dir, [
-      "for-each-ref",
-      "--format=%(upstream:remotename)%00%(upstream:remoteref)",
-      `refs/heads/${s.branch}`,
-    ]);
-    if (!up.ok) return failed(gitFailureLine(up.stderr));
-    const [remote, remoteRef] = (up.stdout.split("\n")[0] ?? "").split("\0");
-    if (remote && remoteRef) {
-      // A remote git cannot name a URL for is still an upstream; the verdicts
-      // read the null as "not a GitHub remote" and say which remote it was.
-      // Read without the credential's environment, which only ever rewrites
-      // an SSH GitHub URL to https and so cannot change either verdict.
-      const urlOf = async (args: string[]) =>
-        remote === "." ? null : await git(dir, args).then((r) => (r.ok ? r.stdout : null));
+    const up = await upstreamOf(dir, s.branch);
+    if (!up.ok) return failed(up.error);
+    if (up.remote) {
+      const { remote, remoteRef } = up;
+      // `--all`, because git pushes to every URL a remote has and the first
+      // one alone says nothing about the rest. A remote git cannot name a URL
+      // for is still an upstream, with none, which the verdicts refuse.
+      const urlsOf = async (args: string[]) =>
+        remote === "."
+          ? []
+          : await git(dir, args, { env: urlReadEnv() }).then((r) =>
+              r.ok ? r.stdout.split("\n").filter(Boolean) : [],
+            );
       upstream = {
         remote,
         remoteRef,
         short: s.upstream,
-        url: await urlOf(["remote", "get-url", "--end-of-options", remote]),
-        pushUrl: await urlOf(["remote", "get-url", "--push", "--end-of-options", remote]),
+        urls: await urlsOf(["remote", "get-url", "--all", "--end-of-options", remote]),
+        pushUrls: await urlsOf(["remote", "get-url", "--push", "--all", "--end-of-options", remote]),
       };
     }
   }
@@ -364,6 +408,32 @@ export interface CheckoutFacts {
   credential: { scope: GithubTokenScope; key: string | null };
   /** `checkoutHolder`'s answer. */
   holder: { landing: boolean; runId: string | null };
+  /**
+   * Set when the current branch is a run's: a run in this repository recorded
+   * it (`runId`), or it is in the `uf/` namespace this app names them in and
+   * none here did (`runId` null).
+   */
+  runBranch: { runId: string | null } | null;
+}
+
+/** What the press is told the operator was shown, and is refused unless it still holds. */
+export interface Shown {
+  branch: string;
+  sha: string;
+  /** The upstream's remote and its branch there, as `ProjectUpstreamDTO` named them. */
+  remote: string;
+  remoteRef: string;
+}
+
+/**
+ * What the remote says about the upstream's branch. Read by the press just
+ * before it pushes, never by the inventory, which does not reach a remote.
+ */
+export interface RemoteTip {
+  /** The branch's commit on the remote; null when the remote has no such branch. */
+  sha: string | null;
+  /** That commit is the one being pushed or an ancestor of it. False when this checkout has never seen it. */
+  contained: boolean;
 }
 
 export type PushPlan =
@@ -373,12 +443,14 @@ export type PushPlan =
       sha: string;
       remote: string;
       remoteRef: string;
-      github: { owner: string; repo: string };
+      /** The one URL the push goes to, which the press asks the remote about first. */
+      pushUrl: string;
+      github: Remote;
     }
   | { ok: false; code: ProjectPushRefusalDTO; reason: string };
 
 export type FetchPlan =
-  | { ok: true; remote: string; github: { owner: string; repo: string } }
+  | { ok: true; remote: string; github: Remote }
   | { ok: false; code: ProjectFetchRefusalDTO; reason: string };
 
 /** What ends each operation, for the sentence refusing a push under one. */
@@ -390,6 +462,42 @@ const OPERATION_ENDED_BY: Record<ProjectOperationDTO, string> = {
 
 const short = (sha: string) => sha.slice(0, 8);
 
+/** A remote's branch as a person names it: `main` for `refs/heads/main`. */
+const branchName = (ref: string) => ref.replace(/^refs\/heads\//, "");
+
+/**
+ * A URL with any credentials in it removed, for a sentence or the page.
+ *
+ * `git remote get-url` returns a URL exactly as configured, and
+ * `https://x-access-token:<token>@github.com/…` is a configuration people
+ * write; the browser has no use for the part before the `@`.
+ */
+export function redactUrl(url: string): string {
+  return url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^@/?#]*@/i, "$1");
+}
+
+/**
+ * The GitHub repository these URLs name, or the first that is not one.
+ *
+ * Only `https://github.com/<owner>/<repo>`, read after every rewrite git will
+ * apply — `githubEnv`'s too, which is what turns an SSH GitHub remote into
+ * this form. Anything else is a transport for which git runs a program the
+ * repository's config can name (`core.sshCommand`, a local path's
+ * `uploadpack`/`receivepack`) or a host the credential helper is not keyed to,
+ * and either way the token is in that child's environment. Every URL is held
+ * to it, because git pushes to all of a remote's push URLs.
+ */
+function githubDestination(urls: readonly string[]): { ok: true; github: Remote } | { ok: false; url: string | null } {
+  if (urls.length === 0) return { ok: false, url: null };
+  let first: Remote | null = null;
+  for (const url of urls) {
+    const github = url.startsWith("https://") ? parseRemote(url) : null;
+    if (!github) return { ok: false, url };
+    first ??= github;
+  }
+  return { ok: true, github: first! };
+}
+
 /**
  * The refusals Push and Fetch share: conditions of the checkout and the
  * install, not of the press, each said in the words of the door asking.
@@ -399,12 +507,15 @@ function standingRefusal(
   door: "push" | "fetch",
 ):
   | { code: "detached" | "no-upstream" | "not-github" | "no-credential"; reason: string }
-  | { ok: true; upstream: Upstream; github: { owner: string; repo: string } } {
+  | { ok: true; upstream: Upstream; github: Remote } {
   const nothing = door === "push" ? "Nothing was pushed" : "Nothing was fetched";
   if (!f.branch) {
     return {
       code: "detached",
-      reason: `HEAD is detached, so there is no current branch and no upstream. ${nothing}.`,
+      reason: f.operation
+        ? `HEAD is detached by the ${f.operation} in progress, so there is no current branch ` +
+          `to take an upstream from. ${nothing}; end it (${OPERATION_ENDED_BY[f.operation]}) or do it by hand.`
+        : `HEAD is detached, so there is no current branch and no upstream. ${nothing}.`,
     };
   }
   if (!f.upstream) {
@@ -421,17 +532,26 @@ function standingRefusal(
       reason: `${f.branch} tracks the local branch ${f.upstream.short}, not a remote. ${nothing}.`,
     };
   }
-  // The URL this door's git will actually reach, so a `pushurl` or a
-  // `pushInsteadOf` pointing a GitHub remote's pushes elsewhere refuses here
-  // rather than taking the credential with it.
-  const url = door === "push" ? f.upstream.pushUrl : f.upstream.url;
-  const github = url ? parseRemote(url) : null;
-  if (!github) {
+  // The URLs this door's git will actually reach, so a `pushurl`, a
+  // `pushInsteadOf` or a second URL sending a GitHub remote's pushes elsewhere
+  // refuses here rather than taking the credential with it.
+  const urls = door === "push" ? f.upstream.pushUrls : f.upstream.urls;
+  if (door === "push" && urls.length > 1) {
     return {
       code: "not-github",
       reason:
-        `\`${url ?? f.upstream.remote}\` is not a GitHub remote, and GitHub is the only ` +
-        `host this app holds a credential for. ${nothing}; it can still be done by hand.`,
+        `${f.upstream.remote} pushes to ${urls.length} URLs, and Push sends to one GitHub ` +
+        `repository. ${nothing}; it can still be done by hand.`,
+    };
+  }
+  const destination = githubDestination(urls);
+  if (!destination.ok) {
+    return {
+      code: "not-github",
+      reason:
+        `\`${destination.url ? redactUrl(destination.url) : f.upstream.remote}\` is not an ` +
+        "https://github.com/ repository once git's own rewrites are applied, and GitHub is the " +
+        `only host this app holds a credential for. ${nothing}; it can still be done by hand.`,
     };
   }
   if (f.credential.scope === "none") {
@@ -446,33 +566,51 @@ function standingRefusal(
             `no entry in UF_GITHUB_TOKENS names it. ${nothing}. Both are read at boot.`,
     };
   }
-  return { ok: true, upstream: f.upstream, github };
+  return { ok: true, upstream: f.upstream, github: destination.github };
+}
+
+/** Why what the operator was shown no longer holds, or null when it does. */
+function movedRefusal(f: CheckoutFacts, shown: Shown): string | null {
+  const now = (sha: string | null) => (sha ? short(sha) : "no commit");
+  if (shown.branch !== f.branch || shown.sha !== f.head) {
+    return (
+      `HEAD is no longer ${shown.branch} at ${short(shown.sha)}: it is ` +
+      `${f.branch ? `${f.branch} at ${now(f.head)}` : `detached at ${now(f.head)}`}. ` +
+      "Nothing was pushed, because a push sends what was on screen and nothing else."
+    );
+  }
+  if (f.upstream?.remote !== shown.remote || f.upstream.remoteRef !== shown.remoteRef) {
+    return (
+      `${f.branch}'s upstream is no longer ${branchName(shown.remoteRef)} on ${shown.remote}` +
+      `${f.upstream ? `: it is ${branchName(f.upstream.remoteRef)} on ${f.upstream.remote}` : ""}. ` +
+      "Nothing was pushed, because a push goes where the screen said and nowhere else."
+    );
+  }
+  return null;
 }
 
 /**
  * Whether Push may send this checkout's branch, and exactly what it sends.
  *
- * The one decision, asked by the inventory for each row's button with `shown`
- * null and by the endpoint with what the operator was shown, so the two cannot
- * disagree about whether a push is possible or why not. Every refusal is one
- * made before the remote is touched. What it does not pre-empt is the remote
- * itself: ahead and behind are as of the last fetch, and a remote that moved
- * since refuses the non-fast-forward on its own.
+ * The one decision, asked by the inventory for each row's button with nothing
+ * shown and no remote reading, and twice by the press: with what the operator
+ * was shown before it reaches the remote, then again with what the remote said
+ * about the branch (`remote`), so the button and the endpoint cannot disagree
+ * about anything the button could know. What the remote says only the press
+ * can learn, because the inventory never contacts one.
  *
  * The order is what each sentence assumes. Moved comes first after an
  * unreadable checkout, because every later reason describes a state the
  * operator was not shown. An operation comes before a detached HEAD, because a
  * rebase or bisect detaches it and "detached" alone would hide the command
- * that ends it. Behind comes before ahead, because a branch that has diverged
- * is both and the remote would refuse it.
+ * that ends it. A run's branch is refused before anything about its upstream,
+ * because no upstream would make it this door's. Behind comes before ahead,
+ * because a branch that has diverged is both and the remote would refuse it.
  *
  * Uncommitted paths refuse nothing: a push carries commits, and the response
  * says what it left behind instead.
  */
-export function planPush(
-  f: CheckoutFacts,
-  shown: { branch: string; sha: string } | null,
-): PushPlan {
+export function planPush(f: CheckoutFacts, shown: Shown | null, remote?: RemoteTip): PushPlan {
   if (f.error !== null) {
     return {
       ok: false,
@@ -480,16 +618,8 @@ export function planPush(
       reason: `Could not read this checkout, so nothing was pushed: ${f.error}`,
     };
   }
-  if (shown && (shown.branch !== f.branch || shown.sha !== f.head)) {
-    return {
-      ok: false,
-      code: "moved",
-      reason:
-        `HEAD is no longer ${shown.branch} at ${short(shown.sha)}: it is ` +
-        `${f.branch ? `${f.branch} at ${f.head ? short(f.head) : "no commit"}` : `detached at ${f.head ? short(f.head) : "no commit"}`}. ` +
-        "Nothing was pushed, because a push sends what was on screen and nothing else.",
-    };
-  }
+  const moved = shown ? movedRefusal(f, shown) : null;
+  if (moved) return { ok: false, code: "moved", reason: moved };
   if (f.operation) {
     return {
       ok: false,
@@ -499,10 +629,20 @@ export function planPush(
         `end it first (${OPERATION_ENDED_BY[f.operation]}).`,
     };
   }
+  if (f.runBranch) {
+    return {
+      ok: false,
+      code: "run-branch",
+      reason:
+        `${f.branch} is ${f.runBranch.runId ? `run ${short(f.runBranch.runId)}'s branch` : "a run's branch"}, ` +
+        "and a run's branch leaves by Deliver, which runs the checks this does not. Nothing was pushed.",
+    };
+  }
   const standing = standingRefusal(f, "push");
   if (!("ok" in standing)) return { ok: false, ...standing };
   const { upstream, github } = standing;
   const branch = f.branch!;
+  const theirs = `${branchName(upstream.remoteRef)} on ${upstream.remote}`;
 
   if (f.holder.landing) {
     return {
@@ -531,8 +671,7 @@ export function planPush(
       code: "uncounted",
       reason:
         `Could not count ${branch} against ${upstream.short}: its local ref is missing, ` +
-        "which is what an upstream never fetched, or deleted on the remote, looks like. " +
-        "Nothing was pushed; fetch first.",
+        "which is what an upstream never fetched looks like. Nothing was pushed; fetch first.",
     };
   }
   if (f.behind > 0) {
@@ -552,12 +691,39 @@ export function planPush(
       reason: `${branch} has nothing ${upstream.short} lacks as of the last fetch.`,
     };
   }
+  if (remote) {
+    // The tracking ref is only as fresh as the last fetch, and this module's
+    // own fetch never prunes, so a branch deleted on the remote still counts
+    // as an upstream here — and a plain push would create it again.
+    if (remote.sha === null) {
+      return {
+        ok: false,
+        code: "upstream-gone",
+        reason:
+          `${theirs} no longer exists, and this never creates a branch on a remote. ` +
+          "Nothing was pushed; set a new upstream by hand if one is wanted.",
+      };
+    }
+    if (remote.sha === f.head) {
+      return { ok: false, code: "nothing-to-push", reason: `${theirs} is already at ${short(f.head)}.` };
+    }
+    if (!remote.contained) {
+      return {
+        ok: false,
+        code: "behind",
+        reason:
+          `${theirs} has moved since the last fetch, to ${short(remote.sha)}, which this checkout ` +
+          "has not got. Nothing was pushed; fetch, then pull or rebase by hand.",
+      };
+    }
+  }
   return {
     ok: true,
     branch,
     sha: f.head,
     remote: upstream.remote,
     remoteRef: upstream.remoteRef,
+    pushUrl: upstream.pushUrls[0],
     github,
   };
 }
@@ -566,13 +732,14 @@ export function planPush(
  * Whether Fetch may fetch this checkout's upstream remote.
  *
  * Push's standing refusals and nothing else: a fetch writes remote-tracking
- * refs and `FETCH_HEAD`, never the working tree, the index or HEAD, so an
- * operation in progress, a land in flight or a branch behind its remote are no
- * reason to refuse one. A GitHub remote and a credential are still required,
- * and not as a formality: `githubEnv` is what rewrites an SSH GitHub remote to
- * https, so without it the fetch would go over ssh, where this container holds
- * no key and the program git runs is whatever the repository's own
- * `core.sshCommand` names.
+ * refs and `FETCH_HEAD`, never the working tree, the index or HEAD, so a merge
+ * in progress, a land in flight or a branch behind its remote are no reason to
+ * refuse one. A rebase or bisect does refuse it, as a detached HEAD, because
+ * the upstream to fetch is the current branch's and there is none. A GitHub
+ * https remote and a credential are still required, and not as a formality:
+ * `githubEnv` is what rewrites an SSH GitHub remote to https, and any other
+ * transport runs a program the repository's config can name, with the token in
+ * its environment.
  */
 export function planFetch(f: CheckoutFacts): FetchPlan {
   if (f.error !== null) {
@@ -682,7 +849,23 @@ function factsOf(dir: string | null, read: CheckoutRead): CheckoutFacts {
     behind: read.behind,
     credential: { scope: credential.scope, key: credential.key },
     holder: dir ? checkoutHolder(dir) : { landing: false, runId: null },
+    runBranch: dir && read.branch ? runBranchOf(dir, read.branch) : null,
   };
+}
+
+/**
+ * Whether `branch` is a run's, which Push refuses: Deliver is a run branch's
+ * exit, and it runs the verify gate, the seeded-file refusal and the
+ * certification gate that Push does not. Deliver's `push --set-upstream` gives
+ * the branch an upstream, so an operator who checks a delivered branch out
+ * would otherwise be offered Push on it. The `uf/` name counts on its own,
+ * because a run recorded in another install, or swept from this one, is still
+ * a run's branch.
+ */
+function runBranchOf(dir: string, branch: string): { runId: string | null } | null {
+  const run = runsOn(dir, [branch]).get(branch);
+  if (run) return { runId: run.id };
+  return branch.startsWith("uf/") ? { runId: null } : null;
 }
 
 /** The newest run that recorded each of these branches in this repository. */
@@ -750,9 +933,14 @@ function branchRows(dir: string, unmerged: readonly UnmergedRef[]): BranchRow[] 
 
 function upstreamDTO(upstream: Upstream | null): ProjectUpstreamDTO | null {
   if (!upstream) return null;
-  const github = upstream.url ? parseRemote(upstream.url) : null;
+  const url = upstream.urls[0] ?? null;
+  const github = url?.startsWith("https://") ? parseRemote(url) : null;
   return {
-    ...upstream,
+    remote: upstream.remote,
+    remoteRef: upstream.remoteRef,
+    short: upstream.short,
+    url: url === null ? null : redactUrl(url),
+    pushUrls: upstream.pushUrls.map(redactUrl),
     github: github ? `${github.owner}/${github.repo}` : null,
   };
 }
@@ -927,42 +1115,44 @@ export function readFetchFields(
 }
 
 /**
- * A Push body: the project, and the branch and commit the operator was shown.
- * The sha is checked for shape because it is compared with HEAD and then
- * handed to git as what the push sends, and anything that is not a commit id
- * has no business reaching either.
+ * A Push body: the project, and what the operator was shown — the branch, the
+ * commit, and the upstream's remote and branch, so a push goes to the place the
+ * screen named as well as sending what it named. The sha is checked for shape
+ * because it is compared with HEAD and then handed to git as what the push
+ * sends, and anything that is not a commit id has no business reaching either.
  */
 export function readPushFields(
   raw: Record<string, unknown>,
-): { ok: true; value: ProjectRef & { branch: string; sha: string } } | { ok: false; error: string } {
-  const read = requiredStrings(raw, ["mountId", "folder", "branch", "sha"], "Nothing was pushed.");
+): { ok: true; value: ProjectRef & Shown } | { ok: false; error: string } {
+  const read = requiredStrings(
+    raw,
+    ["mountId", "folder", "branch", "sha", "remote", "remoteRef"],
+    "Nothing was pushed.",
+  );
   if (read.ok && !SHA.test(read.value.sha)) {
     return { ok: false, error: '"sha" has to be a full commit id in lowercase hex. Nothing was pushed.' };
   }
   return read;
 }
 
-/** A project resolved inside its mount, or the 404 sentence. */
-function resolveProject(ref: ProjectRef): { ok: true; target: ProjectTarget } | { ok: false; reason: string } {
-  let dir: string;
-  try {
-    dir = resolveWorkspaceFolder(ref.folder, ref.mountId);
-  } catch (err) {
-    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+/**
+ * A project resolved inside its mount, or the 404 sentence.
+ *
+ * Only a git folder `scanWorkspace` lists, so these doors act on exactly what
+ * the inventory shows: never a slot under `.uf-worktrees`, a `node_modules`, or
+ * a checkout deeper than the walk goes. It costs one walk per press.
+ */
+async function resolveProject(
+  ref: ProjectRef,
+): Promise<{ ok: true; target: ProjectTarget } | { ok: false; reason: string }> {
+  const listed = (await scanWorkspace()).folders.find(
+    (f) => f.isGitRepo && f.mountId === ref.mountId && f.path === ref.folder,
+  );
+  if (!listed) {
+    return { ok: false, reason: `${ref.folder} is not a git folder listed in the ${ref.mountId} mount.` };
   }
-  // `scanWorkspace`'s own test of a git folder, so these doors act on exactly
-  // what the inventory lists and never on a directory inside a repository.
-  if (!fs.existsSync(path.join(dir, ".git"))) {
-    return { ok: false, reason: `${ref.folder} is not a git folder.` };
-  }
-  return {
-    ok: true,
-    target: {
-      folder: { mountId: ref.mountId, path: ref.folder, name: path.basename(dir), isGitRepo: true },
-      dir,
-      error: null,
-    },
-  };
+  const target = targetOf(listed);
+  return target.dir ? { ok: true, target } : { ok: false, reason: target.error ?? "" };
 }
 
 export type PressOutcome<T> =
@@ -995,8 +1185,15 @@ const PUSH_SHUTDOWN_REFUSAL =
  * Takes `landing` for the checkout first, `deliverRun`'s claim, so no land,
  * delivery or second push starts in it while this one decides and sends; when
  * something already holds it, the read still runs and `planPush` states the
- * refusal in its order, so one function says every no. The decision is made on
- * a fresh read with nothing awaited between it and the push's spawn.
+ * refusal in its order, so one function says every no.
+ *
+ * Asks the remote before it pushes, with `ls-remote` on the one push URL, on
+ * the same credential path: the counts are as of the last fetch, and without
+ * this a branch deleted on the remote since would be created again by the push
+ * (this module's fetch never prunes, so the stale tracking ref survives), and a
+ * remote that moved would be found out only by its own refusal. Then the
+ * checkout is read again and `planPush` asked with both, with nothing awaited
+ * between that and the push's spawn.
  *
  * `<sha>:<upstream ref>` rather than the branch's name, so what leaves is the
  * commit `planPush` compared against what was shown, whatever HEAD does after.
@@ -1005,11 +1202,8 @@ const PUSH_SHUTDOWN_REFUSAL =
  * `push.recurseSubmodules=on-demand`). No `--set-upstream`, so `.git/config` is
  * not written.
  */
-export async function pushProject(
-  ref: ProjectRef,
-  shown: { branch: string; sha: string },
-): Promise<PressOutcome<PushSent>> {
-  const resolved = resolveProject(ref);
+export async function pushProject(ref: ProjectRef, shown: Shown): Promise<PressOutcome<PushSent>> {
+  const resolved = await resolveProject(ref);
   if (!resolved.ok) return { ok: false, status: 404, reason: resolved.reason };
   const { target } = resolved;
 
@@ -1043,26 +1237,76 @@ interface PushSent {
   note: string | null;
 }
 
+/** The checkout's facts for a press, with this press's own claim not counted against it. */
+async function factsNow(dir: string, claimed: boolean): Promise<{ read: CheckoutRead; facts: CheckoutFacts }> {
+  const read = await readCheckout(dir, false);
+  const facts = factsOf(dir, read);
+  // Once this press holds `landing`, the holder `checkoutHolder` reports is
+  // this press; what `planPush` is asked is whether anybody else held it.
+  if (claimed) facts.holder = { ...facts.holder, landing: false };
+  return { read, facts };
+}
+
+/**
+ * What the remote has on the branch the push would update, from `ls-remote` on
+ * the push URL. The commit's ancestry is read locally, so one this checkout has
+ * never fetched reads as not contained, which is the honest answer: the push
+ * would not be a fast-forward of anything it can see.
+ */
+async function remoteTipOf(
+  dir: string,
+  plan: Extract<PushPlan, { ok: true }>,
+): Promise<{ ok: true; tip: RemoteTip } | { ok: false; reason: string }> {
+  const listed = await git(dir, ["ls-remote", "--end-of-options", plan.pushUrl, plan.remoteRef], {
+    ...NO_CLOCK,
+    env: githubEnv(githubTokenFor(dir).token),
+  });
+  if (!listed.ok) {
+    return {
+      ok: false,
+      reason:
+        `${plan.remote} could not be asked where ${branchName(plan.remoteRef)} is: ` +
+        `${gitFailureLine(listed.stderr) || "git gave no reason"}. Nothing was pushed.`,
+    };
+  }
+  const line = listed.stdout
+    .split("\n")
+    .map((l) => l.split("\t"))
+    .find(([, ref]) => ref === plan.remoteRef);
+  const sha = line?.[0] ?? null;
+  if (!sha) return { ok: true, tip: { sha: null, contained: false } };
+  const contained =
+    sha === plan.sha || (await git(dir, ["merge-base", "--is-ancestor", sha, plan.sha])).ok;
+  return { ok: true, tip: { sha, contained } };
+}
+
 /**
  * The decision and the push, inside the claim. `ok: null` is a refusal that
  * read nothing worth showing back, which only the shutdown is.
  */
 async function sendBranch(
   dir: string,
-  shown: { branch: string; sha: string },
+  shown: Shown,
   claimed: boolean,
 ): Promise<
   | { ok: true; value: PushSent }
   | { ok: false; code: ProjectPushRefusalDTO | "remote"; reason: string }
   | { ok: null; reason: string }
 > {
-  const read = await readCheckout(dir, false);
-  const facts = factsOf(dir, read);
-  // Once this press holds `landing`, the holder `checkoutHolder` reports is
-  // this press; what `planPush` is asked is whether anybody else held it.
-  if (claimed) facts.holder = { ...facts.holder, landing: false };
-  const plan = planPush(facts, shown);
+  // Everything that can be refused without the remote is, before it is asked.
+  const before = planPush((await factsNow(dir, claimed)).facts, shown);
+  if (!before.ok) return { ok: false, code: before.code, reason: before.reason };
+  const remote = await remoteTipOf(dir, before);
+  if (!remote.ok) return { ok: false, code: "remote", reason: remote.reason };
+
+  const { read, facts } = await factsNow(dir, claimed);
+  const plan = planPush(facts, shown, remote.tip);
   if (!plan.ok) return { ok: false, code: plan.code, reason: plan.reason };
+  // The remote was asked about one commit; a checkout read since that names
+  // another has been refused as moved above, so this holds by construction.
+  if (plan.sha !== before.sha || plan.pushUrl !== before.pushUrl) {
+    return { ok: false, code: "moved", reason: "The checkout changed while the remote was asked. Nothing was pushed." };
+  }
   if (isShuttingDown()) return { ok: null, reason: PUSH_SHUTDOWN_REFUSAL };
 
   const untrack = trackLand();
@@ -1128,7 +1372,7 @@ async function sendBranch(
 export async function fetchProject(
   ref: ProjectRef,
 ): Promise<PressOutcome<{ remote: string }>> {
-  const resolved = resolveProject(ref);
+  const resolved = await resolveProject(ref);
   if (!resolved.ok) return { ok: false, status: 404, reason: resolved.reason };
   const { target } = resolved;
   const dir = target.dir!;

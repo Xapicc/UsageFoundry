@@ -7,9 +7,11 @@ import {
   planFetch,
   planPush,
   readPushFields,
+  redactUrl,
   selectBranchReads,
   selectProjectPage,
   type CheckoutFacts,
+  type Shown,
 } from "./projects";
 
 /**
@@ -39,21 +41,22 @@ function facts(over: Partial<CheckoutFacts> = {}): CheckoutFacts {
       remote: "origin",
       remoteRef: "refs/heads/main",
       short: "origin/main",
-      url: "https://github.com/acme/widgets.git",
-      pushUrl: "https://github.com/acme/widgets.git",
+      urls: ["https://github.com/acme/widgets.git"],
+      pushUrls: ["https://github.com/acme/widgets.git"],
     },
     ahead: 3,
     behind: 0,
     credential: { scope: "repository", key: "widgets" },
     holder: { landing: false, runId: null },
+    runBranch: null,
     ...over,
   };
 }
 
-const shown = { branch: "main", sha: SHA };
+const shown: Shown = { branch: "main", sha: SHA, remote: "origin", remoteRef: "refs/heads/main" };
 
-function refusal(f: CheckoutFacts, s: typeof shown | null = shown): string {
-  const plan = planPush(f, s);
+function refusal(f: CheckoutFacts, s: Shown | null = shown, remote?: Parameters<typeof planPush>[2]): string {
+  const plan = planPush(f, s, remote);
   assert.equal(plan.ok, false, "expected a refusal");
   return (plan as { code: string }).code;
 }
@@ -67,6 +70,7 @@ describe("planPush", () => {
       sha: SHA,
       remote: "origin",
       remoteRef: "refs/heads/main",
+      pushUrl: "https://github.com/acme/widgets.git",
       github: { owner: "acme", repo: "widgets" },
     });
   });
@@ -93,6 +97,14 @@ describe("planPush", () => {
     assert.equal(refusal(facts({ branch: null }), null), "detached");
   });
 
+  it("refuses when the upstream is no longer the one that was shown", () => {
+    const elsewhere = { ...facts().upstream!, remote: "fork" };
+    assert.equal(refusal(facts({ upstream: elsewhere })), "moved");
+    const otherRef = { ...facts().upstream!, remoteRef: "refs/heads/release" };
+    assert.equal(refusal(facts({ upstream: otherRef })), "moved");
+    assert.equal(refusal(facts({ upstream: null })), "moved");
+  });
+
   it("never says moved without a shown state to compare against", () => {
     assert.equal(planPush(facts({ head: OTHER }), null).ok, true);
   });
@@ -107,35 +119,73 @@ describe("planPush", () => {
   }
 
   it("refuses with no upstream, and says it never sets one", () => {
-    const plan = planPush(facts({ upstream: null, ahead: null, behind: null }), shown);
+    const plan = planPush(facts({ upstream: null, ahead: null, behind: null }), null);
     assert.equal((plan as { code: string }).code, "no-upstream");
     assert.match((plan as { reason: string }).reason, /never creates or changes/);
   });
 
   it("refuses an upstream that is a local branch", () => {
-    const upstream = { remote: ".", remoteRef: "refs/heads/dev", short: "dev", url: null, pushUrl: null };
-    assert.equal(refusal(facts({ upstream })), "not-github");
+    const upstream = { remote: ".", remoteRef: "refs/heads/dev", short: "dev", urls: [], pushUrls: [] };
+    assert.equal(refusal(facts({ upstream }), { ...shown, remote: "." , remoteRef: "refs/heads/dev" }), "not-github");
   });
 
   it("refuses a remote that is not GitHub, or that git could not name", () => {
-    const gitlab = { ...facts().upstream!, pushUrl: "git@gitlab.com:acme/widgets.git" };
+    const gitlab = { ...facts().upstream!, pushUrls: ["https://gitlab.com/acme/widgets.git"] };
     assert.equal(refusal(facts({ upstream: gitlab })), "not-github");
-    assert.equal(refusal(facts({ upstream: { ...gitlab, pushUrl: null } })), "not-github");
+    assert.equal(refusal(facts({ upstream: { ...gitlab, pushUrls: [] } })), "not-github");
   });
 
   it("decides on where the push goes, not where a fetch would", () => {
     // A GitHub remote whose pushes a `pushurl` or `pushInsteadOf` sends
     // elsewhere: the credential would travel with the push.
-    const redirected = { ...facts().upstream!, pushUrl: "ssh://elsewhere.example/widgets.git" };
+    const redirected = { ...facts().upstream!, pushUrls: ["ssh://elsewhere.example/widgets.git"] };
     const plan = planPush(facts({ upstream: redirected }), shown);
     assert.equal((plan as { code: string }).code, "not-github");
     assert.match((plan as { reason: string }).reason, /elsewhere\.example/);
     assert.equal(planFetch(facts({ upstream: redirected })).ok, true);
   });
 
-  it("reads an SSH GitHub remote as GitHub", () => {
-    const ssh = { ...facts().upstream!, pushUrl: "git@github.com:acme/widgets.git" };
-    assert.equal(planPush(facts({ upstream: ssh }), shown).ok, true);
+  it("refuses a remote with several push URLs, which git pushes to all of", () => {
+    const two = {
+      ...facts().upstream!,
+      pushUrls: ["https://github.com/acme/widgets.git", "/srv/git/widgets.git"],
+    };
+    assert.equal(refusal(facts({ upstream: two })), "not-github");
+    // A second GitHub URL is refused too: Push asks one remote what it has.
+    const both = { ...two, pushUrls: [two.pushUrls[0], "https://github.com/acme/mirror.git"] };
+    assert.equal(refusal(facts({ upstream: both })), "not-github");
+  });
+
+  it("accepts only an https GitHub URL, as git will use it after the rewrites", () => {
+    // Each of these passed `parseRemote` once, or still does, and each reaches
+    // GitHub by a transport that runs a program the repository can name.
+    for (const url of [
+      "git@github.com:acme/widgets.git",
+      "ssh://git@github.com/acme/widgets.git",
+      "git@github.com/acme/widgets.git",
+      "http://github.com/acme/widgets.git",
+      "https://elsewhere.example/@github.com/acme/widgets.git",
+    ]) {
+      const upstream = { ...facts().upstream!, urls: [url], pushUrls: [url] };
+      assert.equal(refusal(facts({ upstream })), "not-github", url);
+      assert.equal((planFetch(facts({ upstream })) as { code?: string }).code, "not-github", url);
+    }
+  });
+
+  it("names a refused URL without the credentials written into it", () => {
+    const url = "https://x-access-token:ghp_secret@gitlab.com/acme/widgets.git";
+    const plan = planPush(facts({ upstream: { ...facts().upstream!, pushUrls: [url] } }), shown);
+    assert.doesNotMatch((plan as { reason: string }).reason, /ghp_secret|x-access-token/);
+    assert.equal(redactUrl(url), "https://gitlab.com/acme/widgets.git");
+    assert.equal(redactUrl("git@github.com:acme/widgets.git"), "git@github.com:acme/widgets.git");
+  });
+
+  it("refuses a run's branch, which leaves by Deliver", () => {
+    const run = { branch: "uf/widgets-1-abcdef12", runBranch: { runId: "abcdef1234567890" } };
+    const plan = planPush(facts(run), { ...shown, branch: run.branch });
+    assert.equal((plan as { code: string }).code, "run-branch");
+    assert.match((plan as { reason: string }).reason, /run abcdef12's branch.*Deliver/);
+    assert.equal(refusal(facts({ runBranch: { runId: null } }), null), "run-branch");
   });
 
   it("refuses with no credential at all", () => {
@@ -174,6 +224,21 @@ describe("planPush", () => {
 
   it("refuses a branch with no commits yet as nothing to push", () => {
     assert.equal(refusal(facts({ head: null, ahead: null, behind: null }), null), "nothing-to-push");
+  });
+
+  it("refuses, once the remote is asked, a branch deleted there, rather than creating it", () => {
+    assert.equal(refusal(facts(), shown, { sha: null, contained: false }), "upstream-gone");
+  });
+
+  it("refuses, once the remote is asked, a remote that moved past what was fetched", () => {
+    assert.equal(refusal(facts(), shown, { sha: OTHER, contained: false }), "behind");
+    assert.equal(refusal(facts(), shown, { sha: SHA, contained: true }), "nothing-to-push");
+    assert.equal(planPush(facts(), shown, { sha: OTHER, contained: true }).ok, true);
+  });
+
+  it("asks the remote only after everything it can refuse without it", () => {
+    assert.equal(refusal(facts({ behind: 2 }), shown, { sha: null, contained: false }), "behind");
+    assert.equal(refusal(facts({ ahead: 0 }), shown, { sha: null, contained: false }), "nothing-to-push");
   });
 
   it("refuses an unreadable checkout before anything else", () => {
@@ -223,8 +288,15 @@ describe("planFetch", () => {
     });
   });
 
+  it("names the operation when a rebase or bisect is why there is no branch to fetch for", () => {
+    const plan = planFetch(facts({ branch: null, operation: "rebase" }));
+    assert.equal((plan as { code: string }).code, "detached");
+    assert.match((plan as { reason: string }).reason, /rebase in progress.*git rebase --abort/);
+  });
+
   it("is not refused by what refuses a push but writes nothing a fetch touches", () => {
     for (const over of [
+      { runBranch: { runId: "r" } },
       { operation: "merge" as const },
       { holder: { landing: true, runId: "r" } },
       { behind: 5 },
@@ -240,13 +312,13 @@ describe("planFetch", () => {
     assert.equal(code(facts({ error: "x" })), "unreadable");
     assert.equal(code(facts({ branch: null })), "detached");
     assert.equal(code(facts({ upstream: null })), "no-upstream");
-    assert.equal(code(facts({ upstream: { ...facts().upstream!, url: "/srv/git/widgets.git" } })), "not-github");
+    assert.equal(code(facts({ upstream: { ...facts().upstream!, urls: ["/srv/git/widgets.git"] } })), "not-github");
     assert.equal(code(facts({ credential: { scope: "none", key: "widgets" } })), "no-credential");
   });
 });
 
 describe("readPushFields", () => {
-  const body = { mountId: "workspace", folder: "widgets", branch: "main", sha: SHA };
+  const body = { mountId: "workspace", folder: "widgets", ...shown };
 
   it("reads a whole body", () => {
     assert.deepEqual(readPushFields(body), { ok: true, value: body });
@@ -254,6 +326,7 @@ describe("readPushFields", () => {
 
   it("refuses a missing or non-string field, and a sha that is not one", () => {
     assert.equal(readPushFields({ ...body, branch: undefined }).ok, false);
+    assert.equal(readPushFields({ ...body, remoteRef: undefined }).ok, false);
     assert.equal(readPushFields({ ...body, folder: 5 }).ok, false);
     assert.equal(readPushFields({ ...body, sha: "HEAD" }).ok, false);
     assert.equal(readPushFields({ ...body, sha: SHA.toUpperCase() }).ok, false);

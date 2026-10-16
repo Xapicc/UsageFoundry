@@ -15,13 +15,17 @@ import { after, before, beforeEach, describe, it } from "node:test";
  * wrote an upstream into `.git/config`, is invisible until somebody reads the
  * remote — so every scene reads it.
  *
- * The remote is a **local bare repository inside the checkout**, at the
- * relative path `git@github.com/acme/<name>.git`. `parseRemote` reads that as
- * GitHub (its SSH pattern takes a slash where scp syntax has a colon) and git
- * reads it as a local path (no colon at all), and `githubEnv`'s rewrites match
- * neither, so the push and the fetch both reach the bare repository with no
- * `insteadOf` that the push URL check would rightly refuse. Every scene
- * asserts the remote resolves to that directory before it presses.
+ * Every remote is `https://github.com/acme/<name>.git`, written as git will
+ * use it, and **git's https transport is replaced** for this process:
+ * `GIT_EXEC_PATH` names a copy of git's own exec directory whose
+ * `git-remote-https` is a stand-in that answers the remote-helper protocol with
+ * `connect` and hands the connection to the local bare repository
+ * `<root>/remotes/<name>.git`. Nothing reaches GitHub and no credential is ever
+ * asked for, and the URL the decision reads is a real GitHub one. It has to be
+ * done this way: every way of pointing a GitHub-looking URL at a local path
+ * (`insteadOf`, `pushInsteadOf`, a path spelled `git@github.com/…`) is a way the
+ * push check now refuses, because each is how a repository's own config could
+ * send the token somewhere else.
  *
  * The process's own git configuration and credentials are cleared before the
  * first import: an agent's shell carries a `GIT_CONFIG_COUNT` block and a real
@@ -39,6 +43,7 @@ let delivery: typeof import("./delivery");
 let pushRoute: typeof import("../app/api/projects/push/route");
 let root: string;
 let mount: string;
+let remotes: string;
 
 for (const key of Object.keys(process.env)) {
   if (/^(GIT_|GH_|GITHUB_)/.test(key)) delete process.env[key];
@@ -70,6 +75,9 @@ before(async () => {
   root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-projects-")));
   mount = path.join(root, "mount");
   fs.mkdirSync(mount);
+  remotes = path.join(root, "remotes");
+  fs.mkdirSync(remotes);
+  process.env.GIT_EXEC_PATH = standInTransport();
   process.env.DATA_DIR = path.join(root, "data");
   process.env.CLAUDE_HOME = path.join(root, "claude");
   process.env.CLAUDE_CONFIG_DIR = path.join(root, "claude");
@@ -100,6 +108,36 @@ before(async () => {
   pushRoute = await import("../app/api/projects/push/route");
 });
 
+/**
+ * A copy of git's exec directory whose `git-remote-https` serves
+ * `<remotes>/<name>.git` for any `https://…/<name>.git`. See the header.
+ */
+function standInTransport(): string {
+  const real = execFileSync("git", ["--exec-path"], { encoding: "utf8" }).trim();
+  const dir = path.join(root, "git-exec");
+  fs.mkdirSync(dir);
+  for (const entry of fs.readdirSync(real)) {
+    if (entry !== "git-remote-https") fs.symlinkSync(path.join(real, entry), path.join(dir, entry));
+  }
+  fs.writeFileSync(
+    path.join(dir, "git-remote-https"),
+    [
+      "#!/bin/sh",
+      'repo=$(basename "$2" .git)',
+      "while read -r line; do",
+      '  case "$line" in',
+      "    capabilities) printf 'connect\\n\\n' ;;",
+      `    "connect "*) printf '\\n'; exec \${line#connect } "${remotes}/$repo.git" ;;`,
+      "    *) exit 1 ;;",
+      "  esac",
+      "done",
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  return dir;
+}
+
 after(() => {
   const open = (globalThis as { __ufDb?: { close(): void } }).__ufDb;
   open?.close();
@@ -129,23 +167,32 @@ function scene(name: string): Scene {
   git(repo, "add", "-A");
   git(repo, "commit", "-q", "-m", "base");
 
-  const url = `git@github.com/acme/${name}.git`;
-  const remote = path.join(repo, url);
-  fs.mkdirSync(remote, { recursive: true });
-  git(remote, "init", "-q", "--bare");
-  fs.appendFileSync(path.join(repo, ".git", "info", "exclude"), "git@github.com\n");
+  const url = urlOf(name);
+  const remote = path.join(remotes, `${name}.git`);
+  git(root, "init", "-q", "--bare", remote);
   git(repo, "remote", "add", "origin", url);
   git(repo, "push", "-q", "origin", "main:refs/heads/main");
   git(repo, "branch", "-q", "--set-upstream-to=origin/main", "main");
 
-  // The guard every press stands on: the push and the fetch go to the bare
-  // repository, and the URL they are decided on still reads as GitHub.
+  // The guard every press stands on: the URL the decision reads is GitHub's,
+  // and what reached the remote is the bare repository, so the stand-in
+  // transport is what carried it.
   assert.equal(git(repo, "remote", "get-url", "--push", "origin"), url);
   assert.deepEqual(delivery.parseRemote(url), { owner: "acme", repo: name });
-  assert.equal(git(repo, "ls-remote", "--get-url", "origin"), url);
+  assert.equal(git(remote, "rev-parse", "refs/heads/main"), head({ repo } as Scene));
 
   return { name, repo, remote, ref: { mountId: config.WORKSPACE_MOUNTS[0].id, folder: name } };
 }
+
+const urlOf = (name: string) => `https://github.com/acme/${name}.git`;
+
+/** What the page showed for `s` on `branch` at `sha`, as the push route takes it. */
+const shownAt = (sha: string, branch = "main") => ({
+  branch,
+  sha,
+  remote: "origin",
+  remoteRef: `refs/heads/${branch}`,
+});
 
 function commit(repo: string, file: string, content: string, message = file): string {
   fs.writeFileSync(path.join(repo, file), content);
@@ -177,7 +224,7 @@ describe("Push sends what was shown, as a fast-forward, and nothing else", () =>
     assert.equal(before.uncommitted, 1);
     assert.deepEqual(before.push, { possible: true, code: null, reason: null });
 
-    const pushed = await projects.pushProject(s.ref, { branch: "main", sha });
+    const pushed = await projects.pushProject(s.ref, shownAt(sha));
 
     assert.equal(pushed.ok, true, pushed.ok ? "" : pushed.reason);
     assert.equal(remoteMain(s), sha);
@@ -198,7 +245,7 @@ describe("Push sends what was shown, as a fast-forward, and nothing else", () =>
     git(s.repo, "tag", "-a", "-m", "release", "v1", sha);
     git(s.repo, "config", "push.followTags", "true");
 
-    const pushed = await projects.pushProject(s.ref, { branch: "main", sha });
+    const pushed = await projects.pushProject(s.ref, shownAt(sha));
 
     assert.equal(pushed.ok, true, pushed.ok ? "" : pushed.reason);
     assert.equal(remoteMain(s), sha);
@@ -209,7 +256,7 @@ describe("Push sends what was shown, as a fast-forward, and nothing else", () =>
     const s = scene("behind");
     // Somebody else's push, from a second clone.
     const other = path.join(root, "other-behind");
-    git(root, "clone", "-q", "-b", "main", s.remote, other);
+    git(root, "clone", "-q", "-b", "main", urlOf(s.name), other);
     const theirs = commit(other, "theirs.txt", "theirs\n");
     git(other, "push", "-q", "origin", "main");
 
@@ -223,7 +270,7 @@ describe("Push sends what was shown, as a fast-forward, and nothing else", () =>
     assert.ok(fetched.project.fetchedAt !== null && fetched.project.fetchedAt > 0);
 
     const mine = commit(s.repo, "mine.txt", "mine\n");
-    const pushed = await projects.pushProject(s.ref, { branch: "main", sha: mine });
+    const pushed = await projects.pushProject(s.ref, shownAt(mine));
 
     assert.equal(pushed.ok, false);
     assert.equal((pushed as { code: string }).code, "behind");
@@ -236,7 +283,7 @@ describe("Push sends what was shown, as a fast-forward, and nothing else", () =>
     const shown = commit(s.repo, "one.txt", "1\n");
     commit(s.repo, "two.txt", "2\n");
 
-    const pushed = await projects.pushProject(s.ref, { branch: "main", sha: shown });
+    const pushed = await projects.pushProject(s.ref, shownAt(shown));
 
     assert.equal(pushed.ok, false);
     assert.equal((pushed as { code: string }).code, "moved");
@@ -249,7 +296,7 @@ describe("Push sends what was shown, as a fast-forward, and nothing else", () =>
     const sha = commit(s.repo, "one.txt", "1\n");
     git(s.repo, "switch", "-q", "-c", "elsewhere");
 
-    const pushed = await projects.pushProject(s.ref, { branch: "main", sha });
+    const pushed = await projects.pushProject(s.ref, shownAt(sha));
 
     assert.equal((pushed as { code: string }).code, "moved");
     assert.notEqual(remoteMain(s), sha);
@@ -268,7 +315,7 @@ describe("Push sends what was shown, as a fast-forward, and nothing else", () =>
     assert.equal(row.operation, "merge");
     assert.equal(row.push.code, "operation");
 
-    const pushed = await projects.pushProject(s.ref, { branch: "main", sha });
+    const pushed = await projects.pushProject(s.ref, shownAt(sha));
 
     assert.equal((pushed as { code: string }).code, "operation");
     assert.match((pushed as { reason: string }).reason, /merge/);
@@ -281,12 +328,12 @@ describe("Push sends what was shown, as a fast-forward, and nothing else", () =>
     const release = land.claimLanding(s.repo);
     assert.ok(release, "nothing else holds it");
 
-    const refused = await projects.pushProject(s.ref, { branch: "main", sha });
+    const refused = await projects.pushProject(s.ref, shownAt(sha));
     assert.equal((refused as { code: string }).code, "busy");
     assert.notEqual(remoteMain(s), sha);
 
     release!();
-    const pushed = await projects.pushProject(s.ref, { branch: "main", sha });
+    const pushed = await projects.pushProject(s.ref, shownAt(sha));
     assert.equal(pushed.ok, true, pushed.ok ? "" : pushed.reason);
     assert.equal(remoteMain(s), sha);
   });
@@ -298,11 +345,85 @@ describe("Push sends what was shown, as a fast-forward, and nothing else", () =>
     git(root, "init", "-q", "--bare", elsewhere);
     git(s.repo, "remote", "set-url", "--push", "origin", elsewhere);
 
-    const pushed = await projects.pushProject(s.ref, { branch: "main", sha });
+    const pushed = await projects.pushProject(s.ref, shownAt(sha));
 
     assert.equal((pushed as { code: string }).code, "not-github");
     assert.equal(gitMay(elsewhere, "rev-parse", "refs/heads/main"), null);
     assert.notEqual(remoteMain(s), sha);
+  });
+
+  it("refuses a branch deleted on the remote rather than creating it again", async () => {
+    const s = scene("deleted");
+    const sha = commit(s.repo, "d.txt", "d\n");
+    git(s.remote, "update-ref", "-d", "refs/heads/main");
+
+    const row = await project(s);
+    assert.equal(row.push.possible, true, "the stale tracking ref still counts it ahead");
+
+    const pushed = await projects.pushProject(s.ref, shownAt(sha));
+    assert.equal((pushed as { code: string }).code, "upstream-gone");
+    assert.equal(remoteMain(s), null, "nothing was created");
+  });
+
+  it("refuses when the remote moved and nothing has fetched it", async () => {
+    const s = scene("unfetched");
+    const other = path.join(root, "other-unfetched");
+    git(root, "clone", "-q", "-b", "main", urlOf(s.name), other);
+    const theirs = commit(other, "theirs.txt", "theirs\n");
+    git(other, "push", "-q", "origin", "main");
+    const mine = commit(s.repo, "mine.txt", "mine\n");
+
+    assert.equal((await project(s)).push.possible, true, "the counts are as of the last fetch");
+    const pushed = await projects.pushProject(s.ref, shownAt(mine));
+
+    assert.equal((pushed as { code: string }).code, "behind");
+    assert.match((pushed as { reason: string }).reason, /moved since the last fetch/);
+    assert.equal(remoteMain(s), theirs);
+  });
+
+  it("refuses a remote with a second URL, which git would push to as well", async () => {
+    const s = scene("two-urls");
+    const sha = commit(s.repo, "u.txt", "u\n");
+    const second = path.join(root, "second.git");
+    git(root, "init", "-q", "--bare", second);
+    git(s.repo, "config", "--add", "remote.origin.url", second);
+
+    const pushed = await projects.pushProject(s.ref, shownAt(sha));
+
+    assert.equal((pushed as { code: string }).code, "not-github");
+    assert.equal(gitMay(second, "rev-parse", "refs/heads/main"), null);
+    assert.notEqual(remoteMain(s), sha);
+  });
+
+  it("refuses a run's branch even with an upstream, because Deliver is its exit", async () => {
+    const s = scene("run-branch");
+    git(s.repo, "switch", "-q", "-c", "uf/run-branch-1-abcdef12");
+    const sha = commit(s.repo, "r.txt", "r\n");
+    git(s.repo, "push", "-q", "--set-upstream", "origin", "uf/run-branch-1-abcdef12");
+    const more = commit(s.repo, "r2.txt", "r2\n");
+
+    const row = await project(s);
+    assert.equal(row.push.code, "run-branch");
+    const pushed = await projects.pushProject(s.ref, shownAt(more, "uf/run-branch-1-abcdef12"));
+
+    assert.equal((pushed as { code: string }).code, "run-branch");
+    assert.equal(gitMay(s.remote, "rev-parse", "refs/heads/uf/run-branch-1-abcdef12"), sha);
+  });
+
+  it("acts only on a folder the inventory lists", async () => {
+    const hidden = path.join(mount, ".hidden");
+    fs.mkdirSync(hidden);
+    git(hidden, "init", "-q", "-b", "main");
+    const mountId = config.WORKSPACE_MOUNTS[0].id;
+
+    const fetched = await projects.fetchProject({ mountId, folder: ".hidden" });
+    assert.equal((fetched as { status: number }).status, 404);
+    const pushed = await projects.pushProject(
+      { mountId, folder: ".hidden" },
+      shownAt("a".repeat(40)),
+    );
+    assert.equal((pushed as { status: number }).status, 404);
+    fs.rmSync(hidden, { recursive: true });
   });
 
   it("answers a malformed body with a 400 before anything runs", async () => {
@@ -313,13 +434,13 @@ describe("Push sends what was shown, as a fast-forward, and nothing else", () =>
         new Request("http://localhost/api/projects/push", { method: "POST", body }),
       );
 
-    for (const body of ["null", "{}", JSON.stringify({ ...s.ref, branch: "main", sha: "HEAD" })]) {
+    for (const body of ["null", "{}", JSON.stringify({ ...s.ref, ...shownAt(sha), sha: "HEAD" })]) {
       const res = await post(body);
       assert.equal(res.status, 400, body);
     }
     assert.notEqual(remoteMain(s), sha);
 
-    const res = await post(JSON.stringify({ ...s.ref, branch: "main", sha }));
+    const res = await post(JSON.stringify({ ...s.ref, ...shownAt(sha) }));
     assert.equal(res.status, 200);
     assert.equal(remoteMain(s), sha);
   });
@@ -394,6 +515,38 @@ describe("the inventory lists every git folder and every unmerged branch", () =>
     );
   });
 
+  it("reads the upstream of a branch with no commits, and lets it fetch", async () => {
+    const s = scene("seed-for-unborn");
+    const repo = path.join(mount, "unborn");
+    fs.mkdirSync(repo);
+    git(repo, "init", "-q", "-b", "main");
+    git(repo, "remote", "add", "origin", urlOf(s.name));
+    git(repo, "config", "branch.main.remote", "origin");
+    git(repo, "config", "branch.main.merge", "refs/heads/main");
+
+    const inventory = await projects.projectInventory();
+    const row = inventory.projects.find((p) => p.folder === "unborn")!;
+    assert.equal(row.head, null);
+    assert.equal(row.upstream?.remoteRef, "refs/heads/main");
+    assert.equal(row.fetch.possible, true, row.fetch.reason ?? "");
+    assert.equal(row.push.code, "nothing-to-push");
+
+    const fetched = await projects.fetchProject({ ...s.ref, folder: "unborn" });
+    assert.equal(fetched.ok, true, fetched.ok ? "" : fetched.reason);
+    assert.equal(git(repo, "rev-parse", "refs/remotes/origin/main"), remoteMain(s));
+  });
+
+  it("never shows the credentials a remote URL was written with", async () => {
+    const s = scene("secret-url");
+    git(s.repo, "remote", "set-url", "origin", "https://x-access-token:not-a-real-secret@github.com/acme/secret-url.git");
+
+    const row = await project(s);
+    const wire = JSON.stringify(row);
+    assert.doesNotMatch(wire, /not-a-real-secret|x-access-token/);
+    assert.equal(row.upstream?.url, urlOf(s.name));
+    assert.equal(row.upstream?.github, "acme/secret-url");
+  });
+
   it("refuses Fetch and Push without an upstream, and never sets one", async () => {
     const s = scene("no-upstream");
     git(s.repo, "branch", "-q", "--unset-upstream", "main");
@@ -405,8 +558,8 @@ describe("the inventory lists every git folder and every unmerged branch", () =>
     assert.equal(row.push.code, "no-upstream");
     assert.equal(row.fetch.code, "no-upstream");
 
-    const pushed = await projects.pushProject(s.ref, { branch: "main", sha });
-    assert.equal((pushed as { code: string }).code, "no-upstream");
+    const pushed = await projects.pushProject(s.ref, shownAt(sha));
+    assert.equal((pushed as { code: string }).code, "moved", "the upstream on screen is gone");
     assert.equal(gitMay(s.repo, "config", "branch.main.remote"), null);
     assert.notEqual(remoteMain(s), sha);
   });

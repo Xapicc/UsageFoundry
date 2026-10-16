@@ -427,9 +427,12 @@ on may do nothing whatever. `docs/verification.md` carries what would settle it.
   person's press. Deliver's `git push` publishes a run's branch, and refuses
   one whose history carries a file seeding copied in from your checkout. The
   project view's push sends your checkout's current branch to its configured
-  upstream as a fast-forward, and only the commit the page showed; its fetch
-  fetches that upstream's remote. Both refuse a remote that is not GitHub, and
-  the push refuses one whose push URL points somewhere else. The
+  upstream as a fast-forward, and only the commit the page showed, after
+  asking the remote where that branch is; its fetch fetches that upstream's
+  remote. Both refuse unless every URL git would use is an
+  `https://github.com/` one after git's rewrites, because any other transport
+  runs a program your repository's config can name, with the token in its
+  environment. The
   credential helper is scoped to `https://github.com`, so another host asking
   for credentials gets none.
 - *Which* token a work cycle gets is chosen from the repository it is working

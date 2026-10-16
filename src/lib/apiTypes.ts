@@ -3787,6 +3787,7 @@ export type ProjectPushRefusalDTO =
   | "unreadable"
   | "moved"
   | "operation"
+  | "run-branch"
   | "detached"
   | "no-upstream"
   | "not-github"
@@ -3794,7 +3795,9 @@ export type ProjectPushRefusalDTO =
   | "busy"
   | "uncounted"
   | "behind"
-  | "nothing-to-push";
+  | "nothing-to-push"
+  /** Only the press can say this one: it asks the remote, which the inventory never does. */
+  | "upstream-gone";
 
 /** Why Fetch is refused. `planFetch` decides it. */
 export type ProjectFetchRefusalDTO =
@@ -3818,14 +3821,19 @@ export interface ProjectUpstreamDTO {
   remoteRef: string;
   /** The local ref ahead and behind are counted against, e.g. `origin/main`. */
   short: string;
-  /** `git remote get-url`, or null for a local upstream or a remote git could not name. */
+  /**
+   * Where a fetch goes: `git remote get-url`'s first URL once git's rewrites and
+   * `githubEnv`'s are applied, credentials removed. Null for a local upstream
+   * or a remote git could not name a URL for.
+   */
   url: string | null;
   /**
-   * `git remote get-url --push`: where a push goes once `pushurl` and
-   * `pushInsteadOf` are applied. Push is decided on this one, Fetch on `url`.
+   * Every URL a push goes to — `get-url --push --all`, `pushurl` and
+   * `pushInsteadOf` applied, credentials removed. Push is decided on these,
+   * Fetch on every fetch URL.
    */
-  pushUrl: string | null;
-  /** `owner/repo` when `parseRemote` reads `url` as GitHub, else null. */
+  pushUrls: string[];
+  /** `owner/repo` when `url` is an https://github.com/ repository, else null. */
   github: string | null;
 }
 
@@ -3910,10 +3918,15 @@ export interface ProjectTargetRequest {
   folder: string;
 }
 
-/** `POST /api/projects/push`: the branch and commit the operator was shown. */
+/**
+ * `POST /api/projects/push`: what the operator was shown — the row's `branch`,
+ * `head` as `sha`, and its `upstream.remote` and `upstream.remoteRef`.
+ */
 export interface ProjectPushRequest extends ProjectTargetRequest {
   branch: string;
   sha: string;
+  remote: string;
+  remoteRef: string;
 }
 
 export interface ProjectPushResponse {

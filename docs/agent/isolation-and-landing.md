@@ -58,11 +58,13 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - A mid-operation checkout is read off its git directory's files, the way the run-branch doors read one.
 - An unmerged branch is one `--no-merged` lists against HEAD, less any squash `isLandedTip` says landed in the current branch.
 - Push sends the commit the page showed, to the current branch's configured upstream, and nothing else.
+- A run's branch is never Push's, whatever upstream it has.
+- Push asks the remote before it pushes, so a branch deleted there is never made again.
 - One function decides every refusal, for the button and for the press.
 - Push takes `landing`, and refuses on anybody else's.
 - There is no verify gate in front of Push, and that is a decision.
 - Uncommitted work never blocks a push, and the answer says it stayed home.
-- The credential is the repository's, and it goes where the push URL says.
+- The credential is the repository's, and it goes only where every URL git will use is `https://github.com/`.
 - Fetch is a press, plain, and asks for what the credential path needs.
 - Neither has a clock.
 - The wire.

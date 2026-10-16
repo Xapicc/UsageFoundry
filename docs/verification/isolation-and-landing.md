@@ -174,19 +174,26 @@
   /Users/…`, not a missing one. Every Push verdict refused, `no-credential` or
   `no-upstream`. Caveat: no `runs` table (the real one is under `/data`, which
   a run cannot read), so nothing was joined to a run and the squash exclusion
-  was not met on real data — `projectPush.test.ts` has it.
+  was not met on real data — `projectPush.test.ts` has it. Re-run the same day
+  after the URL rule below was tightened (565 ms, same counts): every one of the
+  thirteen GitHub remotes still passed it and was refused only for the missing
+  credential.
 
 - **Push and Fetch against scratch bare repositories (2026-10-16, git 2.39.5):**
-  `projectPush.test.ts` drives `pushProject` and `fetchProject` against bare
-  repositories under `$TMPDIR`. A fast-forward push lands the sha shown and
-  nothing else — not an untracked file, not an annotated tag under
+  `projectPush.test.ts` drives `pushProject` and `fetchProject` at genuine
+  `https://github.com/…` URLs whose transport a stand-in `git-remote-https`
+  hands to bare repositories under `$TMPDIR`. A fast-forward push lands the sha
+  shown and nothing else — not an untracked file, not an annotated tag under
   `push.followTags=true` — and leaves `.git/config` byte-identical. Refused,
-  with the remote's `main` unmoved each time: behind, after a fetch showed
-  behind 1; HEAD moved, or switched to another branch at the same sha;
-  mid-merge; under a held `landing` claim, then pushed once it was let go; and a
-  `pushurl` pointing elsewhere. Four mutations of the compiled module each
-  failed a case. Caveat: never GitHub and never a real credential; the remote
-  is a local path, which asks the helper for nothing.
+  with the remote's `main` unmoved each time: behind after a fetch; the remote
+  moved with nothing fetched; the branch deleted on the remote (not recreated);
+  HEAD moved, or another branch at the same sha; mid-merge; a held `landing`
+  claim, then pushed once let go; a `pushurl` elsewhere; a second
+  `remote.origin.url`; a checked-out `uf/` branch. A review the same day had
+  the token printed through four URL shapes the first version accepted; each
+  is now refused, pinned in `projects.test.ts`. Nine mutations of the compiled
+  module each failed a case. Caveat: never GitHub and never a real credential
+  — the stand-in transport asks for none.
 
 ## Not yet verified by hand
 
