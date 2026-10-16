@@ -561,6 +561,21 @@ describe("the inventory lists every git folder and every unmerged branch", () =>
     assert.equal(git(repo, "rev-parse", "refs/remotes/origin/main"), remoteMain(s));
   });
 
+  it("says a repository has no remote at all, apart from a branch with no upstream", async () => {
+    const repo = path.join(mount, "no-remote");
+    fs.mkdirSync(repo);
+    git(repo, "init", "-q", "-b", "main");
+    commit(repo, "only.txt", "only\n");
+
+    const inventory = await projects.projectInventory();
+    const row = inventory.projects.find((p) => p.folder === "no-remote")!;
+    assert.equal(row.error, null);
+    assert.equal(row.upstream, null);
+    assert.deepEqual(row.remotes, []);
+    // An upstream names the remote, so the list is not read.
+    assert.equal((await project(scene("with-remote"))).remotes, null);
+  });
+
   it("never shows the credentials a remote URL was written with", async () => {
     const s = scene("secret-url");
     git(s.repo, "remote", "set-url", "origin", "https://x-access-token:not-a-real-secret@github.com/acme/secret-url.git");
@@ -579,6 +594,7 @@ describe("the inventory lists every git folder and every unmerged branch", () =>
 
     const row = await project(s);
     assert.equal(row.upstream, null);
+    assert.deepEqual(row.remotes, ["origin"], "a remote is there; only the upstream is missing");
     assert.equal(row.ahead, null);
     assert.equal(row.push.code, "no-upstream");
     assert.equal(row.fetch.code, "no-upstream");

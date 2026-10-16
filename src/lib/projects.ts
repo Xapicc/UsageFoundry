@@ -280,6 +280,7 @@ interface CheckoutRead {
   operation: ProjectOperationDTO | null;
   uncommitted: number | null;
   upstream: Upstream | null;
+  remotes: string[] | null;
   ahead: number | null;
   behind: number | null;
   fetchedAt: number | null;
@@ -293,6 +294,7 @@ const UNREAD: Omit<CheckoutRead, "error"> = {
   operation: null,
   uncommitted: null,
   upstream: null,
+  remotes: null,
   ahead: null,
   behind: null,
   fetchedAt: null,
@@ -379,6 +381,16 @@ async function readCheckout(dir: string, withBranches: boolean): Promise<Checkou
     }
   }
 
+  let remotes: string[] | null = null;
+  // Only when no upstream names a remote, so the row can say "no remote" and
+  // mean it: a repository with none needs one added, where a branch with no
+  // upstream beside an `origin` needs only `--set-upstream-to`.
+  if (!upstream) {
+    const listed = await git(dir, ["remote"]);
+    if (!listed.ok) return failed(gitFailureLine(listed.stderr));
+    remotes = listed.stdout.split("\n").filter(Boolean);
+  }
+
   let unmerged: UnmergedRef[] = [];
   // A branch with no commits has no HEAD to measure against, and git refuses
   // `--no-merged HEAD` there; nothing can be unmerged into it either.
@@ -420,6 +432,7 @@ async function readCheckout(dir: string, withBranches: boolean): Promise<Checkou
     operation,
     uncommitted: s.uncommitted,
     upstream,
+    remotes,
     // Ahead and behind come only with an upstream this read could name: the
     // status's own pair is about the same ref, and a pair with no upstream
     // beside it would be a count against nothing the row shows.
@@ -1030,6 +1043,7 @@ function projectDTO(
     operation: read.operation,
     uncommitted: read.uncommitted,
     upstream: upstreamDTO(read.upstream),
+    remotes: read.remotes,
     ahead: read.ahead,
     behind: read.behind,
     fetchedAt: read.fetchedAt,

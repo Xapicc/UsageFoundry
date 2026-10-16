@@ -3888,6 +3888,13 @@ export interface ProjectDTO {
   uncommitted: number | null;
   upstream: ProjectUpstreamDTO | null;
   /**
+   * The repository's configured remotes, read only when `upstream` is null:
+   * empty is a repository with no remote at all, which is a different fix
+   * from a branch with no upstream beside an `origin`. Null when an upstream
+   * names the remote, or the read failed.
+   */
+  remotes: string[] | null;
+  /**
    * Against the upstream's local ref, so as of the last fetch rather than as
    * the remote stands. Null with no upstream or when its ref is missing.
    */
