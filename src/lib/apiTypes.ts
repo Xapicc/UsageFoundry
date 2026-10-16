@@ -1946,7 +1946,7 @@ export interface LiveSubagentDTO {
 export interface LiveSubagentsDTO {
   /** Longest-running first; undated ones last. */
   running: LiveSubagentDTO[];
-  /** Ran and ended in the cycle in flight. Back to 0 when the next one starts. */
+  /** Ended in the cycle in flight, however they ended. Back to 0 when the next one starts. */
   finished: number;
 }
 

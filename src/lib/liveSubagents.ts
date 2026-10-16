@@ -46,7 +46,7 @@ export interface SubagentFold {
    * nor opens it again.
    */
   readonly ended: ReadonlySet<string>;
-  /** Sub-agents that ran and ended this cycle. */
+  /** Delegations that ended this cycle, a refused launch among them. */
   readonly finished: number;
 }
 
@@ -161,7 +161,8 @@ function onAssistant(
  * background one. The background launch's result comes back at once and says
  * the agent is working, so ending it here would retire every background agent
  * the instant it started — which is the open-call strip's failure this module
- * exists to correct. A launch that came back an error never started anything.
+ * exists to correct. A launch that came back an error has nothing left to
+ * wait for, so it ends here too.
  */
 function onUser(state: SubagentFold, ev: Record<string, unknown>): SubagentFold {
   let next = state;
