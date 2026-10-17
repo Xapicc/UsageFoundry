@@ -141,7 +141,32 @@
   past the notice. Caveat: the reports were injected, so this says nothing
   about what the server reads.
 
+- **A planted signing program or filter driver does not run in this app's own
+  git, git 2.39.5, 2026-10-17, on `9e878484` plus the fix (board task
+  `9f3f9226`).** Through `git()` in a scratch repository: `commit.gpgSign` +
+  `gpg.program` on `commit`, `filter.x.clean` from `.git/info/attributes` on
+  `add -A` and on a stat-dirty working-tree `diff --name-only`, `filter.x.smudge`
+  on `worktree add`, and a case-preserved `filter.Some.Name.clean` each left no
+  marker; on the base all four plants ran, and plain git ran each of them (the
+  control in `git.test.ts`). By hand: a blanked `filter.x.process` ran nothing,
+  and with `filter.x.required=true` the blanked driver made `add` exit 128
+  with "clean filter 'x' failed" and ran nothing. Also measured: mid-merge,
+  `conflictedFiles`' `diff --name-only --diff-filter=U` ran a planted clean
+  filter three times on a stat-dirty file under plain git. Caveat: as uid
+  1000 in an agent worktree, not as root with the uid split on.
+
 ## Not yet verified by hand
+
+- **The signing pins and filter blanking in a booted image, against a land.**
+  Unmeasured: `ensureWorktree`, commitPending and a Land press each running
+  with a planted `gpg.program` and clean/smudge filter in a real mounted
+  repository, as the agent uid through `childCredentials()`. To settle it, in
+  a scratch repository under a mount, start an isolated run whose prompt is
+  to run `git config commit.gpgSign true`, `git config gpg.program "sh -c 'touch /tmp/uf-sign-ran; cat'"`,
+  `git config filter.x.smudge "sh -c 'touch /tmp/uf-smudge-ran; cat'"` and to
+  write `* filter=x` to `.git/info/attributes`. Start a second run in the same
+  repository, land the first, then `docker compose exec usagefoundry ls
+  /tmp/uf-sign-ran /tmp/uf-smudge-ran`: neither should exist.
 
 - **A planted `core.fsmonitor` running in the operator's own git on the
   host.** Inferred from the two entries above and from
