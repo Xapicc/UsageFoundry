@@ -21,6 +21,14 @@ import { after, before, describe, it } from "node:test";
  * The write failure is a trigger refusing inserts into `otlp_requests`, so the
  * read half of the route runs for real and only the write is made to fail — the
  * shape of an I/O error at this layer.
+ *
+ * The last cases are about what a run can post with its own capability, which
+ * is in the work cycle's environment where `Bash`'s `env` prints it. A negative
+ * cost or token count, or a record dated after it arrived, lowered
+ * `telemetrySpendSince` for the cycle in flight — and a future date lowered it
+ * for every later cycle too — so the live guard never tripped and nothing was
+ * logged. They drive the route and read the guard's own figure, because that
+ * figure is what the forgery was aimed at.
  */
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "uf-otlp-route-"));
@@ -29,6 +37,7 @@ process.env.CLAUDE_HOME = path.join(root, "claude");
 process.env.CLAUDE_CONFIG_DIR = path.join(root, "claude-config");
 
 let dbMod: typeof import("../../../../../lib/db");
+let otlp: typeof import("../../../../../lib/otlp");
 let token: string;
 
 before(async () => {
@@ -40,7 +49,7 @@ before(async () => {
       "to run against the real database",
   );
   dbMod = await import("../../../../../lib/db");
-  const otlp = await import("../../../../../lib/otlp");
+  otlp = await import("../../../../../lib/otlp");
   token = otlp.ingestTokenFor("run-ingest");
 });
 
@@ -144,5 +153,78 @@ describe("the ingest route's answer to a batch it read", () => {
     const retry = await post(JSON.stringify(batch("req_dropped")));
     assert.equal(retry.status, 200);
     assert.equal(storedCount("req_dropped"), 1);
+  });
+});
+
+/** One `api_request` record, with the fields a forgery would set. */
+function record(requestId: string, attrs: Record<string, number | string>, tsMs: number) {
+  return {
+    timeUnixNano: String(BigInt(tsMs) * 1_000_000n),
+    body: { stringValue: "claude_code.api_request" },
+    attributes: [
+      { key: "event.name", value: { stringValue: "api_request" } },
+      { key: "request_id", value: { stringValue: requestId } },
+      { key: "model", value: { stringValue: "claude-opus-5" } },
+      ...Object.entries(attrs).map(([key, value]) => ({
+        key,
+        value: typeof value === "number" ? { doubleValue: value } : { intValue: value },
+      })),
+    ],
+  };
+}
+
+const payload = (...logRecords: ReturnType<typeof record>[]) =>
+  JSON.stringify({ resourceLogs: [{ resource: { attributes: [] }, scopeLogs: [{ logRecords }] }] });
+
+describe("a record that would lower the live guard's figure", () => {
+  it("drops a negative cost or token count, and keeps the rest of the batch", async () => {
+    const run = "run-negative";
+    const bearer = otlp.ingestTokenFor(run);
+    const cycleStart = Date.now() - 1000;
+    const now = Date.now();
+
+    const res = await post(
+      payload(
+        record("req_real", { cost_usd: 4, input_tokens: "1000" }, now),
+        record("req_negative_cost", { cost_usd: -1000, input_tokens: "10" }, now),
+        record("req_negative_input", { cost_usd: 1, input_tokens: "-1000000000" }, now),
+        record("req_negative_output", { cost_usd: 1, output_tokens: "-5" }, now),
+        record("req_negative_cache_read", { cost_usd: 1, cache_read_tokens: "-5" }, now),
+        record("req_negative_cache_write", { cost_usd: 1, cache_creation_tokens: "-5" }, now),
+      ),
+      bearer,
+    );
+    assert.equal(res.status, 200);
+    // Skipped rather than refused: the exporter retries a refused batch, and
+    // one bad record would cost the good one beside it on every retry.
+    assert.deepEqual(await res.json(), { partialSuccess: {}, seen: 1, inserted: 1 });
+    assert.deepEqual(otlp.telemetrySpendSince(run, cycleStart), {
+      requests: 1,
+      costUSD: 4,
+      tokens: 1000,
+    });
+  });
+
+  it("counts a record dated in the future in the cycle that received it, and in no later one", async () => {
+    const run = "run-future";
+    const bearer = otlp.ingestTokenFor(run);
+    const cycleStart = Date.now() - 1000;
+
+    const res = await post(
+      payload(record("req_2100", { cost_usd: 2, input_tokens: "500" }, Date.parse("2100-01-01"))),
+      bearer,
+    );
+    assert.equal(res.status, 200);
+    assert.deepEqual(otlp.telemetrySpendSince(run, cycleStart), {
+      requests: 1,
+      costUSD: 2,
+      tokens: 500,
+    });
+    const nextCycle = Date.now() + 60 * 60_000;
+    assert.equal(
+      otlp.telemetrySpendSince(run, nextCycle).requests,
+      0,
+      "a cycle that has not started yet already has records",
+    );
   });
 });

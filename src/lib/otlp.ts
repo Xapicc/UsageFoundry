@@ -296,10 +296,20 @@ function isApiRequest(rec: LogRecord, attrs: Map<string, AnyValue>): boolean {
  * Anything unrecognised is skipped rather than raising: this endpoint is fed
  * by a batch exporter that retries on failure, so rejecting a payload for one
  * odd record would cost the whole batch repeatedly.
+ *
+ * The poster is not trusted to be the exporter. Its capability sits in the work
+ * cycle's environment, where `Bash`'s `env` prints it, and `telemetrySpendSince`
+ * is a plain sum the live run guard, the install limit and the workflow limit
+ * all read. So nothing a record says may *lower* that sum: a negative cost or
+ * token count is dropped, and a timestamp after `receivedAt` is clamped to it.
+ * Clamped rather than dropped, because the clamped record still counts in the
+ * cycle that received it, where a dropped one would understate it. A date in
+ * the past needs no bound: with every figure non-negative it can only leave
+ * spend out of a cycle it was not part of.
  */
 export function parseLogsPayload(
   payload: unknown,
-  fallbackTs = Date.now(),
+  receivedAt = Date.now(),
 ): TelemetryRequest[] {
   const root = (payload ?? {}) as LogsPayload;
   const out: TelemetryRequest[] = [];
@@ -324,22 +334,38 @@ export function parseLogsPayload(
         const requestId = str(attrs.get("request_id"));
         if (!requestId) continue;
 
+        const costUSD = num(attrs.get("cost_usd")) ?? 0;
+        const inputTokens = num(attrs.get("input_tokens")) ?? 0;
+        const outputTokens = num(attrs.get("output_tokens")) ?? 0;
+        const cacheReadTokens = num(attrs.get("cache_read_tokens")) ?? 0;
+        const cacheCreationTokens = num(attrs.get("cache_creation_tokens")) ?? 0;
+        if (
+          costUSD < 0 ||
+          inputTokens < 0 ||
+          outputTokens < 0 ||
+          cacheReadTokens < 0 ||
+          cacheCreationTokens < 0
+        ) {
+          continue;
+        }
+
         const nano = rec.timeUnixNano ?? rec.observedTimeUnixNano;
-        const ts = nano ? Math.round(Number(nano) / 1e6) : fallbackTs;
+        const ts = nano ? Math.round(Number(nano) / 1e6) : receivedAt;
 
         out.push({
           requestId,
-          ts: Number.isFinite(ts) ? ts : fallbackTs,
+          // A future date would put the record in every later cycle's sum.
+          ts: Number.isFinite(ts) ? Math.min(ts, receivedAt) : receivedAt,
           // Stamped by the orchestrator via OTEL_RESOURCE_ATTRIBUTES; absent
           // for the operator's own interactive sessions.
           runId: str(attrs.get("uf.run_id")),
           sessionId: str(attrs.get("session.id")),
           model: str(attrs.get("model")),
-          costUSD: num(attrs.get("cost_usd")) ?? 0,
-          inputTokens: num(attrs.get("input_tokens")) ?? 0,
-          outputTokens: num(attrs.get("output_tokens")) ?? 0,
-          cacheReadTokens: num(attrs.get("cache_read_tokens")) ?? 0,
-          cacheCreationTokens: num(attrs.get("cache_creation_tokens")) ?? 0,
+          costUSD,
+          inputTokens,
+          outputTokens,
+          cacheReadTokens,
+          cacheCreationTokens,
           durationMs: num(attrs.get("duration_ms")),
           querySource: str(attrs.get("query_source")),
           speed: str(attrs.get("speed")),
