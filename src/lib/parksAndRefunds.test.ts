@@ -55,6 +55,12 @@ delete process.env.WORKSPACE_ROOTS;
 // A path that does not exist, so a spawn the stub below fails to catch is a
 // failed test rather than a billed one.
 process.env.CLAUDE_BIN = path.join(tmp, "no-such-claude");
+// A bare name on no PATH, which `config.ts` keeps bare and `spawnCommand` refuses
+// to spawn. Codex's rather than Claude's, because the stub below keys on an
+// absolute `CLAUDE_BIN` and every other case here needs it. `CODEX_HOME` is
+// pinned for what a Codex cycle writes before it gets as far as the spawn.
+process.env.CODEX_BIN = "uf-no-such-codex-on-any-path";
+process.env.CODEX_HOME = path.join(tmp, "codex");
 
 const config = require("./config") as typeof import("./config");
 assert.equal(
@@ -141,8 +147,11 @@ function interruptFor(step: Cycle | undefined): Interrupt | null {
 const childProcess = require("node:child_process") as Record<string, unknown>;
 const realSpawn = childProcess.spawn as (...args: unknown[]) => unknown;
 
+/** Set by the case that needs Node's own argument checks, which the stub below does not repeat. */
+let realSpawnOnly = false;
+
 childProcess.spawn = (command: unknown, ...rest: unknown[]) => {
-  if (command !== config.CLAUDE_BIN) return realSpawn(command, ...rest);
+  if (realSpawnOnly || command !== config.CLAUDE_BIN) return realSpawn(command, ...rest);
   spawned += 1;
   const step = script.shift();
   const stdout = new PassThrough();
@@ -468,5 +477,92 @@ describe("what a work cycle refused before its spawn is charged", () => {
       `the note was cleared although no cycle carried it; iterations now ${row.iterations}`,
     );
     assert.equal(row.iterations, 0);
+  });
+
+  // `CODEX_BIN` did not resolve at boot, so `spawnCommand` throws for it: the
+  // same refusal with no child, and it used to sit below the increment and the
+  // clear. Not asserted on Claude's own `CLAUDE_BIN`, which `config.ts` fixes at
+  // load and the stub needs absolute; both adapters are launched through the same
+  // line.
+  function startUnresolved(folder: string, maxIterations: number): string {
+    fs.mkdirSync(path.join(tmp, "workspace", folder), { recursive: true });
+    script = [];
+    spawned = 0;
+    const run = createRun({
+      folder,
+      mountId: null,
+      prompt: "do the thing",
+      provider: "codex",
+      budget: { maxIterations },
+      origin: "form",
+    });
+    scriptedRun = run.id;
+    return run.id;
+  }
+
+  it("charges no work cycle for a command that did not resolve", async () => {
+    const id = startUnresolved("unresolved-one-cycle", 1);
+    await settled(id);
+    const row = getRun(id)!;
+    assert.equal(row.status, "failed", `the refusal was not reached: ${row.stop_reason}`);
+    assert.match(row.stop_reason ?? "", /CODEX_BIN is `uf-no-such-codex-on-any-path`/);
+    assert.equal(
+      row.iterations,
+      0,
+      `no child existed, yet the row records ${row.iterations} work cycle(s); picking it up as ` +
+        `its stop reason says answers: ${JSON.stringify(reopenRun(id, { maxIterations: 1 }))}`,
+    );
+  });
+
+  it("keeps the pick-up note for the cycle that actually carries it, once the command resolves", async () => {
+    const id = startUnresolved("unresolved-note", 5);
+    await settled(id);
+    const reopened = reopenRun(id, { maxIterations: 5 }, "Also update the README.");
+    assert.equal(reopened.ok, true, JSON.stringify(reopened));
+
+    await settled(id);
+    const row = getRun(id)!;
+    assert.equal(row.status, "failed", `the refusal was not reached: ${row.stop_reason}`);
+    assert.match(row.stop_reason ?? "", /CODEX_BIN is/);
+    assert.equal(
+      row.follow_up,
+      "Also update the README.",
+      `the note was cleared although no cycle carried it; iterations now ${row.iterations}`,
+    );
+    assert.equal(row.iterations, 0);
+  });
+
+  // Node's `spawn` throws on a NUL byte in an argument, and the note is one: it
+  // is appended to the prompt, which is an argument. The stub would take it, so
+  // this one case goes to the real `spawn`, as the cycle would.
+  it("refuses a NUL byte in the pick-up note before it is charged or cleared", async () => {
+    assert.throws(
+      () => (realSpawn as typeof import("node:child_process").spawn)(process.execPath, ["a\0b"]),
+      { code: "ERR_INVALID_ARG_VALUE" },
+      "the premise: Node refuses this argument itself",
+    );
+    const id = start("nul-note", [], { maxIterations: 5 });
+    await settled(id);
+    const before = getRun(id)!;
+    assert.equal(spawned, 1, "the premise: the first cycle ran against the stub");
+
+    const note = "Also update\0 the README.";
+    realSpawnOnly = true;
+    try {
+      const reopened = reopenRun(id, { maxIterations: 5 }, note);
+      assert.equal(reopened.ok, true, JSON.stringify(reopened));
+      await settled(id);
+    } finally {
+      realSpawnOnly = false;
+    }
+    const row = getRun(id)!;
+    assert.equal(row.status, "failed", `the refusal was not reached: ${row.status} ${row.stop_reason}`);
+    assert.match(row.stop_reason ?? "", /NUL byte/);
+    assert.equal(
+      row.iterations,
+      before.iterations,
+      `a cycle was charged for an argument no child could be given: ${row.stop_reason}`,
+    );
+    assert.equal(row.follow_up, note, "the note was cleared although no cycle carried it");
   });
 });

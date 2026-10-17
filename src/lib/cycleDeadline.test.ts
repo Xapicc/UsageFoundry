@@ -71,6 +71,12 @@ const CHATTY = [
 
 let orchestrator: typeof import("./orchestrator");
 let db: typeof import("./db");
+let config: typeof import("./config");
+
+/** The executable `startRun` resolves before the cycle is charged, as `runIteration` is handed it. */
+function launcher(): ReturnType<typeof import("./config").spawnCommand> {
+  return config.spawnCommand(orchestrator.selectCycleAdapter(null).bin, []);
+}
 let root: string;
 let workspace: string;
 let seq = 0;
@@ -115,7 +121,7 @@ before(async () => {
   delete process.env.WORKSPACE_ROOTS;
   process.env.CLAUDE_BIN = process.execPath;
 
-  const config = await import("./config");
+  config = await import("./config");
   assert.equal(
     config.DATA_DIR,
     process.env.DATA_DIR,
@@ -138,6 +144,7 @@ describe("a work cycle that stops producing output", () => {
       workspace,
       HANGS,
       orchestrator.selectCycleAdapter(null),
+      launcher(),
       false,
       SILENCE_MS,
       () => {},
@@ -187,6 +194,7 @@ describe("a work cycle that stops producing output", () => {
       workspace,
       CHATTY,
       orchestrator.selectCycleAdapter(null),
+      launcher(),
       false,
       SILENCE_MS,
       () => {},
@@ -240,6 +248,7 @@ describe("a work cycle's wait for its background tasks", () => {
       workspace,
       REPORTS,
       orchestrator.selectCycleAdapter(null),
+      launcher(),
       false,
       60_000,
       () => {},
@@ -297,6 +306,7 @@ describe("a work cycle killed with a sub-agent running", () => {
         workspace,
         OPENS_A_SUBAGENT,
         orchestrator.selectCycleAdapter(null),
+        launcher(),
         false,
         SILENCE_MS,
         () => {},

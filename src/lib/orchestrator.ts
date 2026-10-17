@@ -8062,9 +8062,10 @@ const CODEX_ADAPTER: CycleAdapter = Object.freeze({
 /**
  * The adapter this work cycle is spawned through.
  *
- * Called once per cycle, immediately above the argv it decides, because that is
- * the one place a run could ever be spawned as something other than Claude Code
- * — and the three fields have to be chosen together for `CycleAdapter`'s reason.
+ * Called once per cycle, above the refusals that precede the charge and the argv
+ * it decides, because that is the one place a run could ever be spawned as
+ * something other than Claude Code — and the three fields have to be chosen
+ * together for `CycleAdapter`'s reason.
  * Every cycle of every run reaches this, including a resumed one: an adapter
  * chosen once per *run* would be a choice a restart could not reproduce.
  *
@@ -8144,6 +8145,11 @@ export function runIteration(
   // read one provider's stdout with another's parser, and every symptom of that
   // is a cycle that reported nothing.
   adapter: CycleAdapter,
+  // `spawnCommand(adapter.bin, [])`, resolved by the caller before the cycle is
+  // charged: it throws for an executable that did not resolve, and a throw out
+  // of this function is a cycle already counted. Required so that a caller
+  // cannot put the lookup back below the charge by leaving it out.
+  launcher: ReturnType<typeof spawnCommand>,
   telemetryRequired: boolean,
   silenceMs: number,
   onSession: (sessionId: string) => void,
@@ -8234,8 +8240,7 @@ export function runIteration(
       ...agentGitEnv(githubToken, excludes.path),
       ...(backgroundWaitMs === null ? {} : { [BACKGROUND_WAIT_ENV]: backgroundWaitMs }),
     });
-    const cli = spawnCommand(adapter.bin, args);
-    const child: AgentProcess = spawn(cli.command, cli.args, {
+    const child: AgentProcess = spawn(launcher.command, [...launcher.args, ...args], {
       cwd,
       env: local ? localCycleEnv(env, local.signIn, local.model) : env,
       // The uid `childEnv`'s strip only means something against: same process,
@@ -11805,6 +11810,41 @@ export async function startRun(id: string): Promise<void> {
         local = { signIn, model: run.model ?? signIn.model };
       }
 
+      // The executable, resolved here and handed to `runIteration`. `spawnCommand`
+      // throws for a `CLAUDE_BIN` or `CODEX_BIN` that resolved to nothing at boot,
+      // and thrown from inside `runIteration` that arrived below the increment and
+      // the clear: a cycle charged and a note consumed for a child that never
+      // existed. Resolved with no argv, so `runIteration` puts the cycle's own
+      // after it and the PATH rule stays `spawnCommand`'s.
+      //
+      // The adapter is chosen here for the same reason and is the one binding the
+      // cycle is built and read with: the executable, the flags and the parser of
+      // what comes back are one choice, and splitting them is how a cycle ends up
+      // spawned as one CLI and read as another.
+      const adapter = selectCycleAdapter(run.provider);
+      const launcher = spawnCommand(adapter.bin, []);
+
+      // Node's `spawn` throws on a NUL byte in any argument. The argv is not
+      // built until after the increment, so the texts `nextPrompt` joins into its
+      // one prompt argument are read here, where a refusal still charges nothing
+      // and leaves the note on the row to be replaced.
+      const nulText = (
+        [
+          ["The task", run.prompt],
+          ["The message this cycle would carry", followUp],
+          ["The check's pushback", pendingPushback],
+          ["The isolation preamble", run.isolation === "worktree" ? settings.isolationPreamble : null],
+          ["The continued-work prompt", settings.continuedWorkPrompt],
+          ["The continuation prompt", settings.continuationPrompt],
+          ["The done-pushback prompt", settings.donePushbackPrompt],
+        ] as const
+      ).find(([, text]) => text?.includes("\0"));
+      if (nulText) {
+        throw new Error(
+          `Refusing to spawn a work cycle: ${nulText[0]} contains a NUL byte, which a process argument cannot carry. Replace it and reopen the run.`,
+        );
+      }
+
       // Read before the increment below: what the next prompt needs to know is
       // how much this run had already been charged for *before* the cycle it is
       // about to open, which is what says whether opening with the task again
@@ -12079,15 +12119,9 @@ export async function startRun(id: string): Promise<void> {
         );
       }
 
-      // Once per cycle, and directly above the argv it decides. The executable,
-      // the flags and the parser of what comes back are one choice; splitting
-      // them across the loop is how a cycle ends up spawned as one CLI and read
-      // as another, which reports as a cycle that said nothing.
-      //
-      // Read off the row rather than off anything in this segment's own state,
-      // so a run picked up after a restart is spawned as what it was created as.
-      const adapter = selectCycleAdapter(run.provider);
-
+      // `adapter` is the one chosen above, off the row rather than off anything
+      // in this segment's own state, so a run picked up after a restart is
+      // spawned as what it was created as.
       const args = adapter.buildArgs({
         prompt,
         model: local ? local.model : run.model,
@@ -12259,6 +12293,7 @@ export async function startRun(id: string): Promise<void> {
           workDir,
           args,
           adapter,
+          launcher,
           liveSpendTelemetry,
           // Off the same `settings` read the prompts come from, so it is fixed
           // for this stretch of work rather than moving under a cycle already
