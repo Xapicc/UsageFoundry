@@ -56,8 +56,8 @@ Phase 0 and Phase 2 of `proposals/ContinuousImprovement/`, because
   to null at 390 px, they read "Ending: unknown" and "ending unknown". No
   console error. The warning was in each stored row's `output` and in no
   logged line, measured at `4388e6dc`, where the line is read off `stdout`.
-  `npm run smoke-pages` against the build before that change: 100 of 100 page
-  loads clean, serving `.next/standalone/server.js`.
+  `npm run smoke-pages` against that build: 100 of 100 page loads clean,
+  serving `.next/standalone/server.js`.
 
 ## Not yet verified by hand
 
