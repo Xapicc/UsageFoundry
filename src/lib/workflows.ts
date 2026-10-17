@@ -7634,9 +7634,41 @@ async function startBlockTurn(
     onSpawn: (child) => blockTurns.set(key, child),
     onSettle: (result) => {
       blockTurns.delete(key);
-      settleBlockTurn(instanceId, nodeId, result, retriesUsed);
+      settleBlockTurn(
+        instanceId,
+        nodeId,
+        withSpendingLimitStop(result, settings.chatTurnBudgetUSD),
+        retriesUsed,
+      );
     },
   });
+}
+
+/**
+ * Whether the CLI ended the turn at the `--max-budget-usd` it was handed.
+ *
+ * `subtype` is the only machine-readable place the CLI says so: the turn also
+ * exits non-zero with `is_error` set, so by `status` it is any other failure.
+ */
+function stoppedAtSpendingLimit(result: TurnResult): boolean {
+  return result.subtype === "error_max_budget_usd";
+}
+
+/**
+ * A turn stopped at its spending limit, with a sentence naming the limit in
+ * place of `The chat failed (error_max_budget_usd).`
+ *
+ * Written here because this is where the figure the turn was handed is known,
+ * and worded the way the run loop words its own stop at that subtype.
+ */
+function withSpendingLimitStop(result: TurnResult, limitUSD: number | null): TurnResult {
+  if (!stoppedAtSpendingLimit(result)) return result;
+  const stop =
+    limitUSD === null
+      ? "Claude Code stopped this deciding turn at a spending limit of its own."
+      : `This deciding turn was given the $${limitUSD.toFixed(2)} Orchestrator chat ` +
+        "limit, and Claude Code stopped it there.";
+  return { ...result, error: `${stop} A turn stopped at its limit is not started again.` };
 }
 
 /** The block's folder on disk, or null when it cannot be resolved any more. */
@@ -7796,10 +7828,18 @@ export interface BlockTurnEnding {
  * as it did. The rest — an operator's halt, an instance-budget stop, a shutdown —
  * are facts about the instance rather than about the turn and are asked by
  * `settleBlockTurn`, which has the database.
+ *
+ * **Nor is a turn the CLI stopped at its spending limit.** That is the limit
+ * holding: the run loop's rule for a work cycle at the same subtype, not a
+ * failure and not a retry. Each attempt is handed `chatTurnBudgetUSD` afresh, so
+ * starting it again made the per-turn limit a bound on each attempt, and a block
+ * saved with two retries spent three times it — on the turn most likely to hit
+ * the limit again, with the same brief against the same repository.
  */
 export function blockTurnRetries(ending: BlockTurnEnding): boolean {
   if (ending.result.status !== "failed") return false;
   if (ending.emitted > 0 || ending.refused) return false;
+  if (stoppedAtSpendingLimit(ending.result)) return false;
   return ending.used < ending.allowed;
 }
 

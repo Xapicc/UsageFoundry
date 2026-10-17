@@ -3021,6 +3021,18 @@ export interface TurnResult {
    * figure is missing, not a second opinion about a turn that reported.
    */
   costGuardUSD?: number;
+  /**
+   * The `result` event's `subtype` verbatim, on a turn that failed having
+   * reached one.
+   *
+   * Kept for one member, `error_max_budget_usd`: the turn reaching the
+   * `--max-budget-usd` it was handed, which `status` alone files as the turn
+   * failing. `blockTurnRetries` reads it, because a deciding block saved with
+   * retries bought that turn again under a fresh limit, and the limit bounded
+   * each attempt rather than the turn. Not narrowed, for
+   * `IterationResult.subtype`'s reason.
+   */
+  subtype?: string;
   sessionId?: string | null;
   denials?: string[];
 }
@@ -3850,6 +3862,7 @@ export function turnResultOf(
       error: text || `The chat failed (${String(parsed.subtype ?? "unknown")}).`,
       costUSD,
       tokens,
+      subtype: typeof parsed.subtype === "string" ? parsed.subtype : undefined,
       sessionId,
       denials,
     };

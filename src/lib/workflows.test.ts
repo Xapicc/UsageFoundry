@@ -5401,6 +5401,16 @@ describe("blockTurnRetries — which ended turns are started again", () => {
     assert.equal(blockTurnRetries(ending({ refused: true })), false);
   });
 
+  it("leaves a turn the CLI stopped at its spending limit alone", () => {
+    // The limit holding, not the turn failing: another attempt is handed the
+    // same limit afresh, so a block saved with two retries spent three of it.
+    const capped: TurnResult = { status: "failed", subtype: "error_max_budget_usd", costUSD: 2 };
+    assert.equal(blockTurnRetries(ending({ result: capped })), false);
+    // Every other subtype the CLI fails a turn with is still started again.
+    const broke: TurnResult = { ...capped, subtype: "error_during_execution" };
+    assert.equal(blockTurnRetries(ending({ result: broke })), true);
+  });
+
   it("agrees with blockSettlement about which turns are failures", () => {
     // The two are asked of the same inputs; a turn one calls `emitted` and the
     // other restarts would be decided over and carried out at once.

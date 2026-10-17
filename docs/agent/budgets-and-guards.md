@@ -31,6 +31,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - `installSpend` reads a fifth place, and the reason it did not before stopped being true.
 - Counting a spender and refusing it are two halves, and the install limit had only the first for assists.
 - The door is read once, so what an admitted child spends has to be bounded on the child, and **every conflict resolution now carries `resolutionBudgetUSD` as `--max-budget-usd`**: $20 by default …
+- A limit handed to a child bounds a turn only while nothing buys the turn again under a fresh one.
 
 ## [Termini, waiting out a window and the duration cap](budgets-and-guards/termini-and-waiting.md)
 

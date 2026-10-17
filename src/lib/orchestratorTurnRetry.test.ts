@@ -32,12 +32,14 @@ let workflows: typeof import("./workflows");
 let settings: typeof import("./settings");
 let dbMod: typeof import("./db");
 let assists: number | null;
+let turnBudget: number | null;
 
 const STUB = (dir: string) => `#!/usr/bin/env node
 const fs = require("node:fs");
 const dir = ${JSON.stringify(dir)};
 const calls = fs.existsSync(dir + "/calls") ? Number(fs.readFileSync(dir + "/calls", "utf8")) : 0;
 fs.writeFileSync(dir + "/calls", String(calls + 1));
+fs.writeFileSync(dir + "/argv-" + calls, JSON.stringify(process.argv.slice(2)));
 const plan = JSON.parse(fs.readFileSync(dir + "/plan.json", "utf8"));
 const outcome = plan[calls] || "ok";
 const session = "stub-session-" + calls;
@@ -49,6 +51,12 @@ if (outcome === "hang") {
   setInterval(() => {}, 1000);
 } else if (outcome === "die") {
   process.stderr.write("The stub went away.\\n");
+  process.exit(1);
+} else if (outcome === "cap") {
+  // How the pinned CLI ends a turn at the --max-budget-usd it was handed.
+  const i = process.argv.indexOf("--max-budget-usd");
+  const cap = i === -1 ? 0 : Number(process.argv[i + 1]);
+  write({ type: "result", subtype: "error_max_budget_usd", is_error: true, session_id: session, total_cost_usd: cap, usage });
   process.exit(1);
 } else if (outcome === "fail") {
   write({ type: "result", subtype: "error_during_execution", is_error: true, session_id: session, result: "It broke.", total_cost_usd: 0.2, usage });
@@ -88,11 +96,12 @@ before(async () => {
   // A turn holds a slot while it is `thinking`; a block refused one stays
   // `waiting`, which would read as the claim not happening.
   assists = settings.getSettings().maxConcurrentAssists;
-  settings.saveSettings({ maxConcurrentAssists: null });
+  turnBudget = settings.getSettings().chatTurnBudgetUSD;
+  settings.saveSettings({ maxConcurrentAssists: null, chatTurnBudgetUSD: 0.5 });
 });
 
 after(() => {
-  settings.saveSettings({ maxConcurrentAssists: assists });
+  settings.saveSettings({ maxConcurrentAssists: assists, chatTurnBudgetUSD: turnBudget });
   const open = (globalThis as { __ufDb?: Database.Database }).__ufDb;
   open?.close();
   fs.rmSync(root, { recursive: true, force: true });
@@ -112,7 +121,7 @@ beforeEach(() => {
   fs.rmSync(path.join(stubDir, "calls"), { force: true });
 });
 
-/** What each successive invocation of the stub does: ok, fail, die or hang. */
+/** What each successive invocation of the stub does: ok, fail, cap, die or hang. */
 function plan(...outcomes: string[]): void {
   fs.writeFileSync(path.join(stubDir, "plan.json"), JSON.stringify(outcomes));
 }
@@ -270,6 +279,23 @@ describe("an orchestrator block whose deciding turn failed", () => {
     assert.equal(after.status, "emitted");
     assert.equal(after.cost_unreported, 1, "the turn that died is the one gap");
     assert.ok(Math.abs(after.cost_usd - 0.3) < 1e-9, `cost_usd ${after.cost_usd}`);
+  });
+
+  it("is not started again when the CLI stopped it at its spending limit", async () => {
+    plan("cap", "cap", "cap");
+    const id = instance("cap", { turnRetries: 2 });
+    const after = await run(id);
+    await sleep(300);
+
+    const argv = JSON.parse(fs.readFileSync(path.join(stubDir, "argv-0"), "utf8")) as string[];
+    assert.equal(argv[argv.indexOf("--max-budget-usd") + 1], "0.5", "the turn was handed the limit");
+    // The limit holding is not the turn failing. Each retry was handed the same
+    // limit afresh, so this block spent three times the figure that bounds one.
+    assert.equal(calls(), 1, "a turn stopped for spending is not bought again");
+    assert.ok(after.cost_usd <= 0.5 + 1e-9, `cost_usd ${after.cost_usd} under a 0.5 limit`);
+    assert.equal(after.status, "failed");
+    assert.match(after.error ?? "", /\$0\.50/, "the error names the limit it stopped at");
+    assert.doesNotMatch(after.notes ?? "", /Attempt/);
   });
 
   it("is not started again after an operator's stop", async () => {
