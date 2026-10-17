@@ -2918,6 +2918,23 @@ function migrate(db: Database.Database) {
   // A row from before the column reads as work turned down — one more pass,
   // bounded by the loop's caps, rather than a loop claiming work it never landed.
   addColumn(db, "workflow_review_items", "committed_nothing", "INTEGER NOT NULL DEFAULT 0");
+  // The review whose cost is already on its block's row, so each review is
+  // banked exactly once by whichever reaches it first — its own branch's poll,
+  // any guard read of the instance, or the boot (`bankSettledReviews`). A row
+  // from before the column reads as banked unless its review is still
+  // `running`, which here can only be one the old process died under: the old
+  // poll banked a review in the same step that saw it end, so banking a settled
+  // one again would count it twice. What that leaves out, once, is a review
+  // that ended inside the poll's last two seconds before the upgrade's restart.
+  if (addColumn(db, "workflow_review_items", "banked_review_id", "TEXT")) {
+    db.exec(`
+      UPDATE workflow_review_items SET banked_review_id = review_id
+       WHERE review_id IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM run_reviews rv
+                          WHERE rv.id = workflow_review_items.review_id
+                            AND rv.status = 'running')
+    `);
+  }
 
   // What runs have asked the operator to install, and which runs are waiting.
   // `stackRequests.ts` carries the design; the part that belongs beside the

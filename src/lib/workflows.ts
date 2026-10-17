@@ -5342,6 +5342,9 @@ function guardInstance(
   // second halt would run a second kill ladder; a `failed` one was rolled back.
   if (status !== "started") return null;
 
+  // A review that has ended is in the figure whether or not its own branch has
+  // polled for it yet — `bankSettledReviews` says why that gap let one through.
+  bankSettledReviews(instanceId);
   const verdict = evaluateInstanceBudget(
     budget,
     snapshot,
@@ -8857,9 +8860,7 @@ function updateReviewItem(
   originRunId: string,
   patch: Partial<
     Pick<ReviewItemRow, "run_id" | "round" | "status" | "review_id" | "note" | "committed_nothing">
-  > & {
-    addCost?: number;
-  },
+  >,
 ): void {
   const row = db()
     .prepare(
@@ -8871,7 +8872,7 @@ function updateReviewItem(
     .prepare(
       `UPDATE workflow_review_items
           SET run_id=?, round=?, status=?, review_id=?, note=?, committed_nothing=?,
-              cost_usd = cost_usd + ?, updated_at=?
+              updated_at=?
         WHERE instance_id=? AND block_id=? AND origin_run_id=?`,
     )
     .run(
@@ -8881,7 +8882,6 @@ function updateReviewItem(
       patch.review_id === undefined ? row.review_id : patch.review_id,
       patch.note === undefined ? row.note : patch.note,
       patch.committed_nothing ?? row.committed_nothing,
-      patch.addCost ?? 0,
       Date.now(),
       instanceId,
       blockId,
@@ -9146,6 +9146,7 @@ async function settleReviewByCommand(
  * outright when a halt ended the block first. Unlatched, for `settleBlock`'s
  * reason. A failed review that reported nothing is a gap and not a zero, so it
  * is counted in `cost_unreported`, as a deciding turn that died silent is.
+ * Only through `bankSettledReviews`, which is what makes it once per review.
  */
 function bankReviewSpend(
   instanceId: string,
@@ -9164,6 +9165,57 @@ function bankReviewSpend(
       instanceId,
       blockId,
     );
+}
+
+/**
+ * Bank every review of one instance's review blocks that has ended and is not
+ * on its block's row yet — or of every instance, which is the boot's call.
+ *
+ * Anybody's to call, not only the branch that started the review. That branch
+ * notices its review ended at its next poll, up to `MERGE_POLL_MS` later, and
+ * the assist slot is free the moment the row settles: a queued sibling woken
+ * in between passed the guard against a figure missing the very review that
+ * let it in. A restart kills the poll outright, so a review that reported just
+ * before it, or one a halted block's reviewer was still dying in, was counted
+ * nowhere while the total read measured. `banked_review_id` is what makes it
+ * once: whoever reaches a review first banks it and the rest find nothing. A
+ * review row that is gone took its figure with it — unknown, not zero — so it
+ * is counted as one that reported nothing. One transaction, so a crash cannot
+ * mark an item banked whose cost never reached the block.
+ */
+function bankSettledReviews(instanceId?: string): void {
+  const scope = instanceId === undefined ? [] : [instanceId];
+  db().transaction(() => {
+    const settled = db()
+      .prepare(
+        `SELECT i.instance_id AS instanceId, i.block_id AS blockId,
+                i.origin_run_id AS originRunId, rv.status AS status, rv.cost_usd AS cost
+           FROM workflow_review_items i
+           LEFT JOIN run_reviews rv ON rv.id = i.review_id
+          WHERE i.review_id IS NOT NULL
+            AND i.banked_review_id IS NOT i.review_id
+            AND (rv.status IS NULL OR rv.status <> 'running')
+            ${instanceId === undefined ? "" : "AND i.instance_id = ?"}`,
+      )
+      .all(...scope) as Array<{
+      instanceId: string;
+      blockId: string;
+      originRunId: string;
+      status: string | null;
+      cost: number | null;
+    }>;
+    for (const row of settled) {
+      const cost = row.cost ?? 0;
+      db()
+        .prepare(
+          `UPDATE workflow_review_items
+              SET banked_review_id = review_id, cost_usd = cost_usd + ?, updated_at = ?
+            WHERE instance_id=? AND block_id=? AND origin_run_id=?`,
+        )
+        .run(cost, Date.now(), row.instanceId, row.blockId, row.originRunId);
+      bankReviewSpend(row.instanceId, row.blockId, { status: row.status ?? "failed", cost_usd: cost });
+    }
+  })();
 }
 
 /** One review's row once it has stopped running, or null if it is gone. */
@@ -9259,9 +9311,10 @@ async function driveReviewItem(
     // the reviewer rather than abandoning it, and what it reports on its way
     // out is still this instance's money.
     const review = await reviewSettled(started.id);
+    // The shared pass rather than this review alone: a sibling's guard read may
+    // have banked it already, and banked here as well it would count twice.
+    bankSettledReviews(instanceId);
     if (!review) return;
-    updateReviewItem(instanceId, blockId, originRunId, { addCost: review.cost_usd });
-    bankReviewSpend(instanceId, blockId, review);
     // Nothing awaits between this and `createRun` below, so this is also the
     // check immediately before the fix run is created.
     if (!open()) return;
@@ -10134,24 +10187,22 @@ export function bootBlockPlan(
  */
 export function reconcileBlocksOnBoot(): void {
   const now = Date.now();
+  // Every review a review block started and had not banked, whatever the block
+  // now says: one that reported before the restart, and one the restart killed
+  // — `reconcileReviewsOnBoot`, which runs first, has failed it at $0, so it is
+  // counted unreported. Asked of every block rather than of a `thinking` one,
+  // because a halted block's reviewer is waited out under a `failed` row.
+  bankSettledReviews();
   const thinking = db()
     .prepare(
       "UPDATE workflow_instance_blocks SET status='failed', finished_at=?, restart_closed=1," +
         " error = CASE kind WHEN 'merge' THEN ? WHEN 'deliver' THEN ? WHEN 'review' THEN ? ELSE ? END," +
-        // A turn the restart killed was billed and never reported, so it is
-        // counted the way `blockTurnSpend` counts one killed any other way: a
-        // deciding block's own child always, and a review block's when a
-        // review of its was still unsettled — `driveReviewItem` banks each one
-        // only as it lands, and this one never will. A merge's resolution is
-        // a queue row's, which `reconcileMergeQueueOnBoot` answers for.
-        " cost_unreported = cost_unreported + CASE" +
-        " WHEN kind = 'orchestrator' THEN 1" +
-        " WHEN kind = 'review' AND EXISTS (SELECT 1 FROM workflow_review_items i" +
-        "   JOIN run_reviews rv ON rv.id = i.review_id" +
-        "  WHERE i.instance_id = workflow_instance_blocks.instance_id" +
-        "    AND i.block_id = workflow_instance_blocks.node_id" +
-        "    AND i.status = 'reviewing' AND rv.status <> 'completed') THEN 1" +
-        " ELSE 0 END" +
+        // A turn the restart killed was billed and never reported, so a
+        // deciding block's own child is counted the way `blockTurnSpend`
+        // counts one killed any other way. A review block's reviews were
+        // banked above, one by one; a merge's resolution is a queue row's,
+        // which `reconcileMergeQueueOnBoot` answers for.
+        " cost_unreported = cost_unreported + CASE WHEN kind = 'orchestrator' THEN 1 ELSE 0 END" +
         " WHERE status='thinking'",
     )
     .run(
