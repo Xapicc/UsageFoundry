@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  HOOKS_PATH_PREFIX,
   hooksPathEntryOf,
   type GitDirChangeDTO,
   type GitDirCommandClassDTO,
@@ -126,6 +127,42 @@ export type GitDirReport = GitDirReportDTO;
  * an attributes digest. NUL, because a link's text can hold anything else.
  */
 export const THROUGH_LINK = "\0";
+
+/**
+ * Every hook git runs by name (githooks(5); each is in git 2.39.5's binary).
+ * Read whatever the size of the directory, so that padding it cannot push one
+ * past the cap on everything else there.
+ */
+export const GIT_HOOK_NAMES: ReadonlySet<string> = new Set([
+  "applypatch-msg",
+  "pre-applypatch",
+  "post-applypatch",
+  "pre-commit",
+  "pre-merge-commit",
+  "prepare-commit-msg",
+  "commit-msg",
+  "post-commit",
+  "pre-rebase",
+  "post-checkout",
+  "post-merge",
+  "pre-push",
+  "pre-receive",
+  "update",
+  "proc-receive",
+  "post-receive",
+  "post-update",
+  "reference-transaction",
+  "push-to-checkout",
+  "pre-auto-gc",
+  "post-rewrite",
+  "sendemail-validate",
+  "fsmonitor-watchman",
+  "p4-changelist",
+  "p4-prepare-changelist",
+  "p4-post-changelist",
+  "p4-pre-submit",
+  "post-index-change",
+]);
 
 /** Long enough to read a planted command, short enough that a pasted script is not stored whole. */
 export const SHOWN_CHARS = 200;
@@ -346,13 +383,37 @@ function configFindings(
   return findings;
 }
 
+/** A hook entry's directory, as the prefix its name carries, and its name there. */
+function splitHookName(name: string): { prefix: string; entry: string } {
+  const inHooksPath = hooksPathEntryOf(name);
+  return inHooksPath
+    ? { prefix: `${HOOKS_PATH_PREFIX}${inHooksPath.dir}/`, entry: inHooksPath.entry }
+    : { prefix: "", entry: name };
+}
+
+/** The `"…"` entry a reader leaves for a directory it did not list whole. */
+function isCut(hook: HookEntry): boolean {
+  return splitHookName(hook.name).entry === "…" && hook.identity.startsWith("more:");
+}
+
 function hookFindings(before: HookEntry[], after: HookEntry[]): GitDirFinding[] {
   const was = new Map(before.map((hook) => [hook.name, hook]));
   const now = new Map(after.map((hook) => [hook.name, hook]));
+  const cutOf = (hooks: HookEntry[]) =>
+    new Set(hooks.filter(isCut).map((hook) => splitHookName(hook.name).prefix));
+  const wasCut = cutOf(before);
+  const nowCut = cutOf(after);
   const findings: GitDirFinding[] = [];
   for (const name of [...new Set([...was.keys(), ...now.keys()])].sort()) {
     const old = was.get(name);
     const cur = now.get(name);
+    // Past a directory's cut nothing is known, so neither the count there nor
+    // a name only one end listed is a change; the reading's `unread` says so.
+    // git's own hook names are listed whatever the size.
+    if ((old && isCut(old)) || (cur && isCut(cur))) continue;
+    const { prefix, entry } = splitHookName(name);
+    const unlisted = (old === undefined && wasCut.has(prefix)) || (cur === undefined && nowCut.has(prefix));
+    if (unlisted && !GIT_HOOK_NAMES.has(entry)) continue;
     if (old && cur && old.identity === cur.identity && old.executable === cur.executable) continue;
     findings.push({
       kind: "hook",

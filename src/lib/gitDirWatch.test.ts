@@ -310,6 +310,30 @@ describe("one case per class of key that runs a command", () => {
     );
   });
 
+  it("a hooks directory too big to list whole: git's own names compared, the rest not guessed", () => {
+    const sentence = "hooks holds 300 entries that are not git's own hook names, so …";
+    // As the reader leaves it: the cut's entry, and the sentence saying so.
+    const cut = (hooks: HookEntry[]): GitDirSnapshot => ({
+      ...snapshot(ORDINARY, [...hooks, { name: "…", identity: "more:300", executable: false }]),
+      unread: [sentence],
+    });
+    const sourced: HookEntry = { name: "h", identity: "file:a", executable: false };
+    const preCommit = (identity: string): HookEntry => ({ name: "pre-commit", identity, executable: true });
+
+    // Listed at the start and past the cut at the end is not known to be gone.
+    const past = compare(snapshot(ORDINARY, [sourced, preCommit("file:a")]), cut([preCommit("file:a")]));
+    assert.equal(past.state, "unchanged", JSON.stringify(past));
+    assert.deepEqual(past.state === "unchanged" && past.notRead, [`At the run's end: ${sentence}`]);
+    // git's own names are listed whatever the size, so one missing is removed,
+    assert.deepEqual(findingsOf(compare(cut([preCommit("file:a")]), cut([]))), [
+      { kind: "hook", name: "pre-commit", change: "removed", executable: false },
+    ]);
+    // and the start listed everything, so a name new at the end is added.
+    assert.deepEqual(findingsOf(compare(snapshot(ORDINARY), cut([sourced]))), [
+      { kind: "hook", name: "h", change: "added", executable: false },
+    ]);
+  });
+
   it("info/attributes added or changed, with the lines that name a driver", () => {
     const findings = findingsOf(
       compare(

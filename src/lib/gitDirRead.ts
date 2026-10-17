@@ -8,6 +8,7 @@ import { HOOKS_PATH_PREFIX } from "./apiTypes";
 import {
   attributesFileOf,
   compareGitDir,
+  GIT_HOOK_NAMES,
   hooksPathOf,
   watchedConfigOf,
   type AttributesFile,
@@ -37,7 +38,10 @@ import {
 
 /** Past this a file is identified by size and mtime rather than read. */
 const MAX_HASHED_BYTES = 1 << 20;
-/** Of one hooks directory's entries read; a directory holding more says so as one entry. */
+/**
+ * Of one hooks directory's entries read beyond git's own hook names, which
+ * are always read; a directory holding more says so.
+ */
 const MAX_HOOK_ENTRIES = 256;
 /** Of submodule git directories read, nested ones included; the rest are listed as not read. */
 const MAX_MODULES = 32;
@@ -344,8 +348,12 @@ async function readHookDir(
     return [link, ...through.filter((hook) => hook.name !== link.name)];
   }
   if (!self.isDirectory()) return [{ name: `${prefix}.`, identity: "other", executable: false }];
-  const names = (await fs.promises.readdir(dir)).filter((name) => !name.endsWith(".sample")).sort();
-  const listed = names.slice(0, MAX_HOOK_ENTRIES);
+  const names = (await fs.promises.readdir(dir)).filter((name) => !name.endsWith(".sample"));
+  const others = names.filter((name) => !GIT_HOOK_NAMES.has(name)).sort();
+  const listed = [
+    ...names.filter((name) => GIT_HOOK_NAMES.has(name)),
+    ...others.slice(0, MAX_HOOK_ENTRIES),
+  ].sort();
   const hooks = await Promise.all(
     listed.map(async (name) => {
       const found = await identify(path.join(dir, name), `${label}/${name}`, unread);
@@ -355,8 +363,11 @@ async function readHookDir(
     }),
   );
   const present = hooks.filter((hook): hook is HookEntry => hook !== null);
-  if (names.length > listed.length) {
-    present.push({ name: `${prefix}…`, identity: `more:${names.length}`, executable: false });
+  if (others.length > MAX_HOOK_ENTRIES) {
+    present.push({ name: `${prefix}…`, identity: `more:${others.length}`, executable: false });
+    unread.push(
+      `${label} holds ${others.length} entries that are not git's own hook names, so those past the first ${MAX_HOOK_ENTRIES} were not compared.`,
+    );
   }
   return present;
 }

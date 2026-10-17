@@ -228,6 +228,52 @@ describe("a submodule's git directory, which the superproject's git status runs 
   });
 });
 
+describe("a hooks directory holding more than this app reads", () => {
+  const pad = (hooks: string) => {
+    // Names that sort before every hook git runs.
+    for (let i = 0; i < 300; i++) {
+      fs.writeFileSync(path.join(hooks, `a${String(i).padStart(3, "0")}`), "x");
+    }
+  };
+  const preCommitOf = (report: GitDirReport) =>
+    report.state === "changed"
+      ? report.findings.find((f) => f.kind === "hook" && f.name === "pre-commit")
+      : undefined;
+
+  it("still compares git's own hooks, and says the rest were not", async () => {
+    for (const padFirst of [false, true]) {
+      const { repo, worktree } = makeRepository(workspace, `padded-${padFirst}`);
+      const hooks = path.join(repo, ".git", "hooks");
+      writeHook(hooks, "pre-commit", "true");
+      if (padFirst) pad(hooks);
+      const baseline = await read.readGitDirBaseline(worktree, 1_000);
+      assert.ok(baseline?.ok, JSON.stringify(baseline));
+      if (!padFirst) pad(hooks);
+      writeHook(hooks, "pre-commit", "exit 3");
+      const report = compareGitDir(baseline, await read.readGitDirAgain(baseline), [], 2_000);
+      const label = `padded ${padFirst ? "before" : "after"} the start`;
+      assert.deepEqual(
+        preCommitOf(report),
+        { kind: "hook", name: "pre-commit", change: "changed", executable: true },
+        `${label}: ${JSON.stringify(report).slice(0, 300)}`,
+      );
+      assert.match(
+        (report.state === "changed" ? (report.notRead ?? []) : []).join("\n"),
+        padFirst
+          ? /At the run's start and end: hooks holds 300 entries that are not git's own hook names/
+          : /At the run's end: hooks holds 300 entries that are not git's own hook names/,
+        label,
+      );
+      // The control: the hook compared is the one git runs.
+      assert.throws(
+        () => plainGit(repo, ["hook", "run", "pre-commit"]),
+        (err: { status?: number }) => err.status === 3,
+        label,
+      );
+    }
+  });
+});
+
 describe("a symlinked hooks/, info/ or hook, which git follows", () => {
   /** `git hook run`'s exit status, which is the hook's. */
   function hookRunStatus(repo: string, hook: string): number {
