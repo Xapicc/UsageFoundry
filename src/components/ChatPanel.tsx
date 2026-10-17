@@ -17,6 +17,7 @@ import type {
 import { RUN_PROVIDER_LABEL } from "@/lib/apiTypes";
 import { chatRequest } from "@/lib/chatRequest";
 import {
+  draftAfterSend,
   hasLeftThread,
   mergeMessages,
   threadItems,
@@ -943,10 +944,10 @@ export function ChatPanel({ layout, openChatId = null, compose = null }: ChatPan
     try {
       const result = await chatRequest(`/api/chat/${chatId}/message`, { message });
       // The draft is cleared on success only, since a failed send that ate the
-      // text is a failure the operator cannot retry — and on success wherever
-      // they are by now, because the composer is not per thread and sent text
-      // left in it is one press from going to the thread they moved to.
-      if (result.ok) setDraft("");
+      // text is a failure the operator cannot retry — and then only of what was
+      // sent, read off the draft as it is now rather than as `send` closed over
+      // it: `draftAfterSend` says why both halves matter.
+      if (result.ok) setDraft((current) => draftAfterSend(current, message));
       if (hasLeftThread(opened.current, chatId)) return;
       if (!result.ok) setSendError(result.error ?? "The message could not be sent.");
       else if (result.chat) drawAnswer(result.chat);

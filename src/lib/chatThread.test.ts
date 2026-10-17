@@ -1,6 +1,12 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { hasLeftThread, mergeMessages, threadItems, turnStartInstant } from "./chatThread";
+import {
+  draftAfterSend,
+  hasLeftThread,
+  mergeMessages,
+  threadItems,
+  turnStartInstant,
+} from "./chatThread";
 import type { ChatMessageDTO, ChatQuestionDTO } from "./apiTypes";
 
 /**
@@ -249,4 +255,18 @@ test("an action's answer lands once the operator is back in its thread", () => {
 
 test("an action's answer is withheld from a thread opened while it was out", () => {
   assert.equal(hasLeftThread("b", "a"), true);
+});
+
+test("a send that succeeds clears the composer when it still holds what was sent", () => {
+  assert.equal(draftAfterSend("first", "first"), "");
+  // The draft is read trimmed, as the send read it.
+  assert.equal(draftAfterSend("  first\n", "first"), "");
+});
+
+test("a send that succeeds leaves text written while it was out", () => {
+  // The composer is never disabled while a send is out, and that send can take
+  // seconds. Cleared outright, the follow-up typed in the wait was deleted
+  // without ever having been sent.
+  assert.equal(draftAfterSend("first\n\nsecond", "first"), "first\n\nsecond");
+  assert.equal(draftAfterSend("second", "first"), "second");
 });

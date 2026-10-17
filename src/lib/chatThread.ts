@@ -151,3 +151,24 @@ export function turnStartInstant(
 export function hasLeftThread(opened: string | null, actedOn: string): boolean {
   return opened !== null && opened !== actedOn;
 }
+
+/**
+ * What the composer holds once a send has succeeded: empty when it still holds
+ * the message that went out, and the operator's text untouched when they have
+ * written since.
+ *
+ * The composer stays usable while a send is out — it is deliberately never
+ * disabled — and the POST can take seconds, since `sendChatMessage` asks
+ * `assistRefusal` first and that rescans every transcript. Clearing it outright
+ * on the answer deleted whatever was typed in that wait, which was never sent
+ * and is not recoverable. Clearing the sent text still matters, wherever the
+ * operator is by then: the composer is not per thread, so sent text left in it
+ * is one press from going again to whichever thread is open.
+ *
+ * `sent` is the trimmed draft the send read, so the draft is compared trimmed.
+ * Pure and unit-tested on `hasLeftThread`'s grounds: getting it wrong loses the
+ * operator's words with nothing on the page to say any were there.
+ */
+export function draftAfterSend(draft: string, sent: string): string {
+  return draft.trim() === sent ? "" : draft;
+}
