@@ -76,6 +76,7 @@ Twenty-two are renderings rather than functions — every `*.test.tsx` in the tr
 | `budgetPayload.test.ts` | [pricing] |
 | `calibration.test.ts` |  |
 | `costBaseline.test.ts` |  |
+| `costOutlierGuard.test.ts` |  |
 | `costSplit.test.ts` |  |
 | `formProblems.test.ts` |  |
 | `formSeed.test.ts` |  |
