@@ -6256,6 +6256,22 @@ export function haltedWorkflowOf(runId: string): string | null {
 }
 
 /**
+ * Why reopening this run would put its workflow run back to work beside
+ * another press of the same workflow in a folder they share, or null —
+ * `memberPickUpRefusal` in `workflows.ts` answers, for every pick-up door.
+ *
+ * Required at the call rather than imported: `workflows.ts` imports this
+ * module, so a static import is a cycle, and `reopenRun` answers synchronously,
+ * so the `import()` the release paths use would answer after the run had been
+ * queued beside the other press.
+ */
+function memberSharedFolderRefusal(runId: string): string | null {
+  // `require` is untyped; `typeof import` names the module's type and loads nothing.
+  const { memberPickUpRefusal } = require("./workflows") as typeof import("./workflows");
+  return memberPickUpRefusal(runId);
+}
+
+/**
  * Put every run blocked behind `roots` back to `waiting`, so the next release
  * pass decides it again on what is true now.
  *
@@ -14964,6 +14980,8 @@ export function reopenRun(
       reason: `This run was stopped with all of workflow “${haltedWith}”, and stopping a workflow run is final. Start that workflow again rather than picking one of its runs back up.`,
     };
   }
+  const sharedFolder = memberSharedFolderRefusal(id);
+  if (sharedFolder) return { ok: false, reason: sharedFolder };
 
   // Its checkout may have been handed to a newer run while it was dead:
   // `allocateSlotPath` only avoids slots that an *active* run holds, and a

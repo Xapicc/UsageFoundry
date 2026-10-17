@@ -1096,10 +1096,16 @@ function blocksShareFolder(a: BlockFolder, b: BlockFolder): boolean {
  * block with its own folder is asked first, because when one of those is
  * shared, choosing another folder cannot help and the sentence must not say it
  * could.
+ *
+ * `incoming` is what would start beside them, and only the sentence reads it:
+ * a pick-up brings back a press that may be the *older* one, and its folder was
+ * chosen when it was pressed, so "an earlier press" and "choose a folder" are
+ * both untrue of it.
  */
 export function sharedFolderRefusal(
   live: readonly LivePress[],
   next: readonly BlockFolder[],
+  incoming: "press" | "pick-up" = "press",
 ): SharedFolder | null {
   const ownFirst = [
     ...next.filter((b) => !b.followsChoice),
@@ -1108,9 +1114,12 @@ export function sharedFolderRefusal(
   for (const press of live) {
     const liveCount = press.liveRuns + press.liveBlocks;
     const going =
-      `${press.liveRuns} run(s) and ${press.liveBlocks} block(s) from an ` +
-      "earlier press of Run have not finished yet";
-    const stop = "Wait for it, or stop that run of the workflow.";
+      `${press.liveRuns} run(s) and ${press.liveBlocks} block(s) from ` +
+      `${incoming === "press" ? "an earlier" : "another"} press of Run have not finished yet`;
+    const stop =
+      incoming === "press"
+        ? "Wait for it, or stop that run of the workflow."
+        : "Wait for it, or stop that run of the workflow, before picking this one up.";
     if (press.blocks === null) {
       return {
         instanceId: press.instanceId,
@@ -1139,10 +1148,12 @@ export function sharedFolderRefusal(
         ? `${folderWords(theirs.folder)}, where this press's “${mine.nodeName}” would work too`
         : `${folderWords(theirs.folder)}, which overlaps ${folderWords(mine.folder)}, ` +
           `where this press's “${mine.nodeName}” would work`;
-      const way = mine.followsChoice
-        ? "Choose a folder it is not working in, wait for it, or stop that run of the workflow."
-        : `“${mine.nodeName}” names its own folder, so every press of this ` +
-          `workflow works there. ${stop}`;
+      const way = !mine.followsChoice
+        ? `“${mine.nodeName}” names its own folder, so every press of this ` +
+          `workflow works there. ${stop}`
+        : incoming === "press"
+          ? "Choose a folder it is not working in, wait for it, or stop that run of the workflow."
+          : stop;
       return {
         instanceId: press.instanceId,
         liveCount,

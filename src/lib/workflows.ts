@@ -4038,6 +4038,48 @@ export function sharedFolderOf(workflowId: string, graph: WorkflowGraph): Shared
 }
 
 /**
+ * Why picking `instance` up would put it to work beside another press of the
+ * same workflow in a folder they share, or null.
+ *
+ * The rule `startWorkflow` holds at a press, held at every door that brings a
+ * press back: a pick-up turns a `finished` or `blocked` instance into a
+ * `started` one as surely as Run starts one, and a newer press admitted into
+ * its folder while it was idle is exactly what that gate lets in. Asked
+ * against the *other* live presses, since this one being live is no conflict
+ * with itself, and off its own graph copy, whose chosen folder was applied
+ * when it was pressed. Asked of an instance that is already live too: two live
+ * presses sharing a folder is the state this rule exists to have none of, and
+ * a pick-up would add work to it.
+ */
+function pickUpSharedFolderRefusal(instance: WorkflowInstance): string | null {
+  const others = livePressesOf(instance.workflowId).filter(
+    (press) => press.instanceId !== instance.id,
+  );
+  if (others.length === 0) return null;
+  return (
+    sharedFolderRefusal(others, placedWorkingFolders(instance.graph), "pick-up")?.reason ??
+    null
+  );
+}
+
+/**
+ * `pickUpSharedFolderRefusal` for a run being picked up on its own page, or null
+ * when it is a member of no workflow run. `reopenRun`'s question: reopening a
+ * member puts its press back to work in the press's folders.
+ */
+export function memberPickUpRefusal(runId: string): string | null {
+  const rows = db()
+    .prepare("SELECT instance_id AS instanceId FROM workflow_instance_runs WHERE run_id = ?")
+    .all(runId) as Array<{ instanceId: string }>;
+  for (const row of rows) {
+    const instance = getInstance(row.instanceId);
+    const refusal = instance ? pickUpSharedFolderRefusal(instance) : null;
+    if (refusal) return refusal;
+  }
+  return null;
+}
+
+/**
  * Which presses of Run would be refused right now, one per saved folder — or
  * one with no folder, for a workflow that saves none.
  *
@@ -5699,6 +5741,8 @@ export type PickUp =
  */
 export function pickUpsOf(instance: WorkflowInstance): PickUp[] {
   if (!instanceIsOpen(instance.status)) return [];
+  // Ahead of each door's own refusal, as `openInstanceFor` asks it.
+  const shared = pickUpSharedFolderRefusal(instance);
 
   const blockedNodes = [
     ...instance.blocks.filter((b) => b.status === "blocked").map((b) => b.nodeId),
@@ -5745,9 +5789,10 @@ export function pickUpsOf(instance: WorkflowInstance): PickUp[] {
       nodeName: node.nodeName,
       status: run.status,
       leaveBehindRefusal:
-        waitedOn.n > 0
+        shared ??
+        (waitedOn.n > 0
           ? "Another run is chained directly behind it, so resuming it is the way through."
-          : passRefusal(node.nodeId),
+          : passRefusal(node.nodeId)),
     });
   }
   for (const block of instance.blocks) {
@@ -5760,11 +5805,13 @@ export function pickUpsOf(instance: WorkflowInstance): PickUp[] {
       nodeId: block.nodeId,
       nodeName: block.nodeName,
       error: block.error,
-      retryRefusal: pass
-        ? passRefusal(block.nodeId)
-        : started
-          ? `“${started}” has already started after it failed.`
-          : null,
+      retryRefusal:
+        shared ??
+        (pass
+          ? passRefusal(block.nodeId)
+          : started
+            ? `“${started}” has already started after it failed.`
+            : null),
     });
   }
   for (const block of instance.blocks) {
@@ -5776,7 +5823,7 @@ export function pickUpsOf(instance: WorkflowInstance): PickUp[] {
       nodeId: block.nodeId,
       nodeName: block.nodeName,
       error: block.error,
-      retryRefusal: orchestratorRetryRefusalIn(instance, block),
+      retryRefusal: shared ?? orchestratorRetryRefusalIn(instance, block),
     });
   }
   for (const loop of instance.blocks) {
@@ -5799,7 +5846,7 @@ export function pickUpsOf(instance: WorkflowInstance): PickUp[] {
       nodeId: loop.nodeId,
       nodeName: loop.nodeName,
       pass,
-      refusal: loopPassRefusal(instance, loop.nodeId, pass),
+      refusal: shared ?? loopPassRefusal(instance, loop.nodeId, pass),
     });
   }
   return out;
@@ -5894,6 +5941,8 @@ function openInstanceFor(
       },
     };
   }
+  const shared = pickUpSharedFolderRefusal(instance);
+  if (shared) return { refusal: { ok: false, status: 409, error: shared } };
   return { instance };
 }
 

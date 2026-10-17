@@ -1287,6 +1287,23 @@ describe("sharedFolderRefusal — two presses of one workflow at once", () => {
     assert.match(refusal.reason, /Choose a folder it is not working in/);
   });
 
+  it("words a pick-up's refusal for a press that may be the older one and cannot move", () => {
+    // A pick-up brings back a press whose folder was chosen when it was
+    // pressed, beside one that may be newer: "earlier" and "choose a folder"
+    // would both be untrue of it.
+    const refusal = sharedFolderRefusal(
+      [pressOf(saved.graph, ALPHA)],
+      placed(withChosenFolder(saved.graph, ALPHA)),
+      "pick-up",
+    );
+    assert.ok(refusal);
+    assert.equal(refusal.instanceId, "press-alpha");
+    assert.match(refusal.reason, /^2 run\(s\) and 1 block\(s\) from another press of Run/);
+    assert.match(refusal.reason, /work\/alpha, where this press's “BUILD” would work too/);
+    assert.doesNotMatch(refusal.reason, /earlier|Choose a folder/);
+    assert.match(refusal.reason, /before picking this one up\.$/);
+  });
+
   it("refuses another folder too while a block with its own folder is shared", () => {
     // Every press of this workflow works in work/tools, whichever folder is
     // chosen, so a second one is the same block in the same folder twice.

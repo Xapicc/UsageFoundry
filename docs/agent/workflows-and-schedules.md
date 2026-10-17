@@ -47,6 +47,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - Four of an instance's six readings are derived, and `started` is not a word for a press of Run that is over.
 - A held gate leaves the instance `started`, and it is the operator's to end — Continue lets it through, Stop halts through the same door as every other halt.
 - A stuck workflow run is picked up one named obstacle at a time, and never through a halt.
+- A pick-up is refused while another press of the same workflow works in a folder it shares — an authorisation rule, the one `startWorkflow` holds at a press, held at every door that brings a press back.
 - The page that presses Run states the refusal to press it again before it is pressed, per folder, and the instance it links is found in both halves of the graph.
 
 ## [The instance budget and the instance total](workflows-and-schedules/instance-budget.md)
