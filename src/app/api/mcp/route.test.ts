@@ -1821,6 +1821,60 @@ test("propose_workflow refuses a name a saved workflow or another waiting card h
   }
 });
 
+// `normalizeWorkflowInput` takes a loop from the editor, and the card has no
+// loop case: it sums `fanOut`, so a 10-pass loop round a fan-out of 4 read "up
+// to 4 runs" over a graph whose worst case is 50.
+test("propose_workflow refuses a loop block, a repeats link and any kind it does not offer, and writes no card", async () => {
+  const { token, proposals } = proposingChat();
+  const decide = {
+    id: "decide",
+    name: "Decide",
+    kind: "orchestrator",
+    mountId: MOUNT,
+    folder: "RepoOne",
+    task: "Pick the next five things.",
+    fanOut: 4,
+  };
+  const land = { id: "land", name: "Land", kind: "merge", mergeStrategy: "merge", dependsOn: [{ id: "decide", edge: "on-success" }] };
+
+  const loop = await callTool(token, "propose_workflow", {
+    name: `Ten rounds ${randomUUID()}`,
+    blocks: [
+      { id: "loop", name: "Keep going", kind: "loop", folder: "", maxPasses: 10 },
+      { ...decide, dependsOn: [{ id: "loop", edge: "repeats" }] },
+      land,
+    ],
+  });
+  assert.equal(loop.isError, true, `propose_workflow took a loop: ${loop.text}`);
+  assert.match(loop.text, /“Keep going” is a loop block/);
+  assert.match(loop.text, /workflow editor/);
+
+  // Refused by name on its own, rather than left to whatever the normalizer
+  // says about a repeats link out of a block that is not a loop.
+  const repeats = await callTool(token, "propose_workflow", {
+    name: `Repeats ${randomUUID()}`,
+    blocks: [
+      { id: "first", name: "First", mountId: MOUNT, folder: "RepoOne", task: "Do a thing." },
+      { ...decide, dependsOn: [{ id: "first", edge: "repeats" }] },
+      land,
+    ],
+  });
+  assert.equal(repeats.isError, true, `propose_workflow took a repeats link: ${repeats.text}`);
+  assert.match(repeats.text, /“Decide” is linked to “first” by repeats/);
+
+  const unknown = await callTool(token, "propose_workflow", {
+    name: `Unknown ${randomUUID()}`,
+    blocks: [{ ...decide, kind: "wait" }],
+  });
+  assert.equal(unknown.isError, true, unknown.text);
+  assert.match(unknown.text, /“Decide” has kind "wait", which a chat cannot propose/);
+  assert.equal(proposals(), 0, "and none of the three wrote a card");
+
+  // The same graph without the loop is a card like any other.
+  const once = await callTool(token, "propose_workflow", { name: `One round ${randomUUID()}`, blocks: [decide, land] });
+  assert.equal(once.isError, false, once.text);
+});
+
 test("propose_workflow refuses a review block whose verdict is a verify command, and writes no card", async () => {
   // The command is a program this app spawns in every branch's checkout with
   // nobody looking, and the card shows a review block as "no agent", so the
