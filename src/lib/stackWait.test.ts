@@ -218,7 +218,14 @@ after(() => {
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
-function start(folder: string, cycles: Cycle[]): string {
+function start(
+  folder: string,
+  cycles: Cycle[],
+  // The default cap, which is the case the refund exists for.
+  budget: { maxIterations: number; maxRunCostUSD?: number; maxDurationMinutes?: number } = {
+    maxIterations: 1,
+  },
+): string {
   fs.mkdirSync(path.join(tmp, "workspace", folder), { recursive: true });
   script = [...cycles];
   argvs = [];
@@ -226,8 +233,7 @@ function start(folder: string, cycles: Cycle[]): string {
     folder,
     mountId: null,
     prompt: "build the crate",
-    // The default cap, which is the case the refund exists for.
-    budget: { maxIterations: 1 },
+    budget,
     origin: "form",
   });
   scriptedRun = run.id;
@@ -242,6 +248,20 @@ async function settled(id: string): Promise<NonNullable<ReturnType<typeof getRun
     await new Promise((r) => setTimeout(r, 10));
   }
   assert.fail(`run ${id} never left running`);
+}
+
+/** A one-commit repository at `folder`, which is what makes a run there isolate onto a branch. */
+function makeRepo(folder: string): void {
+  const repo = path.join(tmp, "workspace", folder);
+  fs.mkdirSync(repo, { recursive: true });
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-c", "user.email=test@example.invalid", "-c", "user.name=Test", ...args], {
+      cwd: repo,
+    });
+  git("init", "-q", "-b", "main");
+  fs.writeFileSync(path.join(repo, "seed.txt"), "seed\n");
+  git("add", "-A");
+  git("commit", "-q", "-m", "seed");
 }
 
 /** The values one variadic flag carries, up to the next flag. */
@@ -599,6 +619,75 @@ describe("a dependent behind a run the provider refused after it worked", () => 
 });
 
 /**
+ * A run whose refunded cycle worked and paid, and which its own spending limit
+ * then refuses before the next cycle, ended `blocked`: the pre-cycle guard
+ * chose between `blocked` and `stopped` on `iterations === 0`, and every refund
+ * puts the counter back to zero. `blocked` is the status for nothing ran and
+ * nothing was spent, and the row beside it said `$0.37` spent.
+ */
+describe("a run its guard refuses after a refunded cycle that worked", () => {
+  const OVERLOADED =
+    'API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}';
+  let seq = 0;
+
+  /** One cycle that edits, costs `cost`, then meets a 529; the retry's backoff then reaches the guard. */
+  async function refusedByCostLimit(turns: number, cost: number, repo = false) {
+    seq += 1;
+    const folder = `cost-limited-${seq}`;
+    if (repo) makeRepo(folder);
+    const parentId = start(
+      folder,
+      [{ refuseMidCycle: { text: OVERLOADED, turns }, cost, reply: "" }],
+      { maxIterations: 1, maxRunCostUSD: 0.3 },
+    );
+    // The retry backoff is 5-7.5s; the guard then reads the cycle's spend.
+    for (let i = 0; i < 1_500 && ["queued", "running"].includes(getRun(parentId)!.status); i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    return getRun(parentId)!;
+  }
+
+  it("ends stopped, because it ran a work cycle and spent", async () => {
+    const parent = await refusedByCostLimit(7, 0.37);
+    assert.equal(parent.spent_usd, 0.37, "the premise: the cycle was paid for");
+    assert.equal(parent.iterations, 0, "the premise: the refund put the counter back to zero");
+    assert.match(parent.stop_reason ?? "", /spending limit/, "the premise: the cost limit refused it");
+    assert.equal(
+      parent.status,
+      "stopped",
+      `blocked says nothing ran and nothing was spent: ${parent.stop_reason ?? ""}`,
+    );
+  });
+
+  // The card is emitted unawaited once the run is over, and only for a run that
+  // has a branch worth describing. `iterations > 0` read this one as never
+  // having started, so the branch its refunded cycle worked on got no card.
+  it("still ends with its handoff card, the branch having been worked on", async () => {
+    const parent = await refusedByCostLimit(7, 0.37, true);
+    assert.equal(parent.isolation, "worktree", "the premise: the run has a branch");
+    assert.equal(parent.iterations, 0, "the premise: the refund put the counter back to zero");
+    const card = db().prepare("SELECT 1 FROM run_events WHERE run_id = ? AND kind = 'handoff'");
+    for (let i = 0; i < 300 && !card.get(parent.id); i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    assert.ok(card.get(parent.id), "a run that worked on a branch ended without describing it");
+  });
+
+  // A run refused before its first cycle did nothing, which is what `blocked`
+  // says. The time limit is the guard that can refuse one: `0` is "off" for the
+  // spending limit, and a time limit smaller than any elapsed minute is not.
+  it("control: a run refused before it spent anything or spawned a child still ends blocked", async () => {
+    seq += 1;
+    const id = start(`cost-limited-${seq}`, [], { maxIterations: 1, maxDurationMinutes: 1e-9 });
+    const row = await settled(id);
+    assert.equal(row.iterations, 0);
+    assert.equal(row.spent_usd, 0);
+    assert.equal(argvs.length, 0, "the premise: no child ever spawned");
+    assert.equal(row.status, "blocked", row.stop_reason ?? "");
+  });
+});
+
+/**
  * A second run set to continue a branch whose first continuer worked, had the
  * cycle it worked in refunded, and was stopped.
  *
@@ -632,19 +721,6 @@ describe("a second run continuing a branch whose continuer was refunded", () => 
     });
     made.push(run.id);
     return run.id;
-  }
-
-  function makeRepo(folder: string): void {
-    const repo = path.join(tmp, "workspace", folder);
-    fs.mkdirSync(repo, { recursive: true });
-    const git = (...args: string[]) =>
-      execFileSync("git", ["-c", "user.email=test@example.invalid", "-c", "user.name=Test", ...args], {
-        cwd: repo,
-      });
-    git("init", "-q", "-b", "main");
-    fs.writeFileSync(path.join(repo, "seed.txt"), "seed\n");
-    git("add", "-A");
-    git("commit", "-q", "-m", "seed");
   }
 
   /** A finished predecessor and a first continuer of it, stopped at zero cycles. */

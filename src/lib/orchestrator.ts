@@ -11135,6 +11135,22 @@ export async function startRun(id: string): Promise<void> {
   let stackWaits = run.stack_waits ?? 0;
   /** Refused cycles that had spent, refunded. See `refundedCyclesSql`. */
   let workedRefunds = run.worked_refunds ?? 0;
+  /**
+   * Whether this run has ever run a work cycle that did something. Not
+   * `iterations > 0`: every refund puts the counter back to zero, so a run that
+   * worked and paid reads as one that never started — and `blocked`, the
+   * ending for "nothing ran, nothing was spent", is chosen on this.
+   */
+  const everWorked = (): boolean =>
+    ranWorkCycle({
+      iterations,
+      refundedCycles: refundedCyclesOf({
+        guard_refunds: guardRefunds,
+        stack_waits: stackWaits,
+        early_ends: earlyEnds,
+        worked_refunds: workedRefunds,
+      }),
+    });
   /** The operator's message for the first cycle of this segment, if any. */
   let followUp: string | null = run.follow_up ?? null;
   /**
@@ -11592,7 +11608,7 @@ export async function startRun(id: string): Promise<void> {
           // Hitting a guard before any work happened is a different outcome
           // from running out mid-task; surface it distinctly so it is not
           // mistaken for a completed run.
-          finalStatus = iterations === 0 ? "blocked" : "stopped";
+          finalStatus = everWorked() ? "stopped" : "blocked";
           endingCode = guardEnding(verdict.code);
         }
         break;
@@ -11622,7 +11638,7 @@ export async function startRun(id: string): Promise<void> {
           },
         });
         stopReason = installVerdict.reason;
-        finalStatus = iterations === 0 ? "blocked" : "stopped";
+        finalStatus = everWorked() ? "stopped" : "blocked";
         endingCode = guardEnding(installVerdict.code);
         break;
       }
@@ -13311,7 +13327,7 @@ export async function startRun(id: string): Promise<void> {
       finalStatus !== "waiting-for-stack" &&
       run.isolation === "worktree" &&
       run.worktree_path &&
-      iterations > 0
+      everWorked()
     ) {
       void emitHandoff(id, run, workDir).catch(() => {
         /* a handoff we cannot describe is not worth failing a finished run */
