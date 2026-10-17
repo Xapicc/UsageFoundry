@@ -6,6 +6,7 @@ import type {
   LoopBoardThresholdDTO,
   RunDependencyDTO,
   RunDTO,
+  RunEndingCode,
   RunProviderDTO,
   RunTaskNotesDTO,
   TaskCommentAuthorDTO,
@@ -84,6 +85,55 @@ export const STATUS_LABEL: Record<RunDTO["status"], string> = {
   failed: "failed",
   "not-needed": "not needed",
 };
+
+/**
+ * How a run ended, in the phrase the runs list and the run page draw it as.
+ *
+ * A `Record` for `STATUS_LABEL`'s reason. Each one completes "This run …" and
+ * says what the status beside it cannot: which of `completed`'s two endings,
+ * which of `stopped`'s several hands. The guard members keep the design
+ * language's words apart — a guard is a window percentage, a limit caps this
+ * unit of work, a ceiling is what a guard is measured against.
+ */
+export const ENDING_LABEL: Record<RunEndingCode, string> = {
+  done: "reported the task complete",
+  cycle_cap: "used all its work cycles",
+  needs_review: "asked for review",
+  operator_stop: "stopped by the operator",
+  workflow_guard: "stopped by its workflow's budget guard",
+  workflow_stop: "stopped by its workflow",
+  "guard:weekly_fraction": "stopped by the weekly guard",
+  "guard:session_fraction": "stopped by the 5-hour guard",
+  "guard:run_cost": "reached its spending limit",
+  "guard:run_cost_outlier": "cost far more than this task usually does",
+  "guard:run_tokens": "reached its token limit",
+  "guard:duration": "reached its time limit",
+  "guard:instance_cost": "reached its workflow's spending limit",
+  "guard:install_cost": "reached the install's spending limit",
+  "guard:no_ceiling": "had no ceiling for its guard to read",
+  "guard:no_terminus": "had no limit that would end it",
+  cli_budget: "stopped at Claude Code's own spending limit",
+  restart: "cut off by a server restart",
+  deadline: "went silent and was ended",
+  refusal: "refused by the provider",
+  exit_code: "exited with an error",
+  resume_failed: "could not resume its session",
+  error: "ended by an error in this app",
+  dependency: "a run it waited for did not finish",
+  not_needed: "its branch was not taken",
+};
+
+/**
+ * `ENDING_LABEL` for a row, or null where there is no code — a run that ended
+ * before `runs.ending_code` existed, or a value this build does not know — for
+ * the caller to say "unknown" in its own sentence. Never a guess from the
+ * status: a `completed` row with no code is the case a guess gets wrong most.
+ */
+export function endingLabel(code: string | null | undefined): string | null {
+  // The cast is the lookup's question rather than a claim: a stored value this
+  // build has no entry for is a miss, and the miss is the unknown answer.
+  return (code && ENDING_LABEL[code as RunEndingCode]) || null;
+}
 
 /** "3/5", or "3 · no cap" when the run has no work-cycle limit (stored as 0). */
 export function fmtCycles(used: number, cap: number): string {

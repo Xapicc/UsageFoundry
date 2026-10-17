@@ -21,6 +21,7 @@ import {
   grantedCycles,
   pollFailureMessage,
   STATUS_LABEL,
+  endingLabel,
 } from "@/lib/format";
 import { jsonRequest, type JsonResult } from "@/lib/jsonRequest";
 import { prunedNetCell } from "@/lib/pruneStatement";
@@ -673,6 +674,14 @@ function RunList({
                         title={detail.exact}
                       >
                         {detail.text}
+                      </div>
+                    )}
+                    {/* How it ended, under the status that cannot say: a
+                        `completed` run that reported the task done and one
+                        that ran out of work cycles are the same word above. */}
+                    {kind === "history" && (
+                      <div className="mt-0.5 text-xs text-ink-muted">
+                        {endingLabel(r.ending_code) ?? "ending unknown"}
                       </div>
                     )}
                   </Td>

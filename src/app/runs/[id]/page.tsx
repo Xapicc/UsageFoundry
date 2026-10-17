@@ -41,6 +41,7 @@ import {
   pollFailureMessage,
   shortPath,
   STATUS_LABEL,
+  endingLabel,
 } from "@/lib/format";
 import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonRow } from "@/components/ui/Button";
@@ -1653,6 +1654,16 @@ export default function RunDetail({
             <p className="mt-1 text-sm text-ink-muted">{state.detail}</p>
             {run.stop_reason && (
               <p className="mt-1 text-xs text-ink-muted">{run.stop_reason}</p>
+            )}
+            {/* What a count across runs files this ending under, which the
+                headline above is not: it is read off `reported_done`, and a
+                run older than `ending_code` says "unknown" here however its
+                headline reads. Gated on `finished_at`, which a park leaves
+                null, because a parked run has not ended. */}
+            {run.finished_at != null && (
+              <p className="mt-1 text-xs text-ink-faint">
+                Ending: {endingLabel(run.ending_code) ?? "unknown"}
+              </p>
             )}
             {/* In the state block rather than a block of its own: what the run
                 waits on is its state, and region 1 is where the audit puts
