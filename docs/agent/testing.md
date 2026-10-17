@@ -496,7 +496,7 @@ Units that are about no test file in the tree:
 | `repoReading.test.ts` |  |
 | `repoSpend.test.ts` |  |
 | `stackRequests.test.ts` |  |
-| `stackWait.test.ts` | [budgets], [cycle] |
+| `stackWait.test.ts` | [budgets], [cycle], [queue] |
 | `stacks.test.ts` |  |
 | `toolInventory.test.ts` |  |
 | `unsavedWork.test.ts` |  |
