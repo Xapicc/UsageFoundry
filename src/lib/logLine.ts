@@ -48,6 +48,13 @@ export interface LogEntry {
    * with no own enumerable keys, per `toolArgs` below.
    */
   text: string;
+  /**
+   * Evidence too long to be the row's body, drawn folded beneath it. Only a
+   * work cycle carries one — the prompt it was sent, which the `iteration`
+   * event has always stored and no row drew, so what an injection put in front
+   * of the agent could not be read off the run it was put in front of.
+   */
+  detail?: string;
 }
 
 /**
@@ -404,6 +411,9 @@ export function describeEvent(e: RunEventDTO): LogEntry | null {
         tone: "neutral",
         label: `Work cycle ${p.n}`,
         text: p.resuming ? "continuing the same conversation" : "",
+        ...(typeof p.prompt === "string" && p.prompt !== ""
+          ? { detail: p.prompt }
+          : {}),
       };
 
     case "assistant": {

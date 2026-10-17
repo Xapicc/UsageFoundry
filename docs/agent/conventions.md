@@ -36,6 +36,7 @@ Each rule is in one topic file under `docs/agent/conventions/`; the lines below 
 - The shell is installable, and the toolbar knows it.
 - ⌘ and nothing beside it, and never over a text field.
 - A run's page is a split view, and the pane shows one thing at a time.
+- A work cycle's row carries the prompt it was sent, folded, and the live tile's does not.
 
 ## [Pane overflow, tables and character art](conventions/pane-overflow-and-tables.md)
 

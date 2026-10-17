@@ -44,7 +44,7 @@ export const LIVE_TEXT_CHARS = 600;
  * so. Every other string anywhere in the payload is cut at `LIVE_TEXT_CHARS`
  * with the `…` the rest of the app marks a cut with: an agent's message, a
  * stderr chunk of up to 8 KB, the whole cycle prompt an `iteration` event
- * carries but no line renders.
+ * carries — which a tile does not draw, for that cut's reason.
  */
 export function clipForTile(e: PersistedRunEvent): PersistedRunEvent {
   if (e.kind === "tool") {

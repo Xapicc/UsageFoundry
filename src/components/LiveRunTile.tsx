@@ -48,7 +48,18 @@ export function LiveRunTile({
     () =>
       tile.events.flatMap((e, i) => {
         const entry = describeEvent(e);
-        return entry ? [{ key: e.id ?? `${e.ts}-${i}`, ts: e.ts, entry }] : [];
+        // Without the cycle's prompt: a tile's events arrive cut at
+        // `LIVE_TEXT_CHARS`, so a fold here would show a clipped prompt as if
+        // it were the whole one. The run page, one click away, has it whole.
+        return entry
+          ? [
+              {
+                key: e.id ?? `${e.ts}-${i}`,
+                ts: e.ts,
+                entry: { ...entry, detail: undefined },
+              },
+            ]
+          : [];
       }),
     [tile.events],
   );

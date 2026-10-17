@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import type { LogEntry, LogTone } from "@/lib/logLine";
+import { Disclosure } from "./Disclosure";
 
 /**
  * The row an app-written line sits on: a tone-coloured edge, and how loud its
@@ -145,18 +146,40 @@ export function LogLine({
   // to is exactly the fact that scrolls off the top first. It needs an opaque
   // background of its own — matching the pane's — because the lines pass
   // underneath it rather than being pushed along by it.
+  //
+  // The prompt is folded *below* the header rather than inside it: an open
+  // fold inside a sticky box would pin the whole prompt over the lines it
+  // belongs to. The hidden clock is there only to line the fold up under the
+  // cycle's label rather than under its time.
   if (entry.voice === "cycle") {
     return (
-      <div className="sticky top-0 z-10 flex items-center gap-2.5 bg-inset px-3 pb-1.5 pt-4 first:pt-0">
-        <Time at={timestamp} />
-        <span className="shrink-0 text-2xs font-semibold uppercase tracking-wide text-ink">
-          {entry.label}
-        </span>
-        {entry.text && (
-          <span className="shrink-0 text-2xs text-ink-muted">{entry.text}</span>
+      <>
+        <div className="sticky top-0 z-10 flex items-center gap-2.5 bg-inset px-3 pb-1.5 pt-4 first:pt-0">
+          <Time at={timestamp} />
+          <span className="shrink-0 text-2xs font-semibold uppercase tracking-wide text-ink">
+            {entry.label}
+          </span>
+          {entry.text && (
+            <span className="shrink-0 text-2xs text-ink-muted">{entry.text}</span>
+          )}
+          <span aria-hidden className="h-px min-w-4 flex-1 bg-line" />
+        </div>
+        {entry.detail && (
+          <div className="flex gap-2.5 px-3 pb-1">
+            <span aria-hidden className="invisible">
+              <Time at={timestamp} />
+            </span>
+            <Disclosure
+              summary="Prompt"
+              className="min-w-0 flex-1 font-sans text-2xs text-ink-muted"
+            >
+              <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-ink">
+                {entry.detail}
+              </p>
+            </Disclosure>
+          </div>
         )}
-        <span aria-hidden className="h-px min-w-4 flex-1 bg-line" />
-      </div>
+      </>
     );
   }
 
