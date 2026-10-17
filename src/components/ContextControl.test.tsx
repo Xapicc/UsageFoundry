@@ -143,6 +143,30 @@ test("an unpriced prune is a coverage gap and not a ceiling", () => {
   assert.doesNotMatch(html, /at most/);
 });
 
+test("pruning nothing could price adds no +$0.00 to the tile", () => {
+  // What `sumPruneSavings` returns for three Claude Haiku 5.5 cuts: counted,
+  // every dollar field 0 because `netReceipt` had no rate. `+$0.00` there says
+  // pruning earned nothing, and the runs list prints `?` for the same run.
+  const unpriced = savings({
+    prunes: 3,
+    pricedPrunes: 0,
+    unmeasuredPrunes: 1,
+    tokensRemoved: 300_000,
+    turnsAfter: 36,
+    cacheSavedUSD: 0,
+    netUSD: 0,
+  });
+  const html = render(unpriced).replace(/<[^>]+>/g, " ");
+  assert.doesNotMatch(html, /\+\$0\.00/);
+  // No bound on a figure that is not there.
+  assert.doesNotMatch(html, /at least/);
+
+  // Beside a filter with money, the span is that half alone, as an unpriced
+  // filter beside priced pruning already is.
+  const withFilter = render(unpriced, FILTERING);
+  assert.match(withFilter, /\+\$0\.40/);
+});
+
 test("an unmeasured removal makes every span's net a floor", () => {
   const html = render(savings({ unmeasuredPrunes: 1 }));
   assert.match(html, /This week, at least/);
