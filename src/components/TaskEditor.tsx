@@ -9,7 +9,13 @@ import type {
   WorkspaceFolderDTO,
   WorkspaceMountDTO,
 } from "@/lib/apiTypes";
-import { pollFailureMessage, storedFolderState } from "@/lib/format";
+import {
+  pollFailureMessage,
+  storedFolderState,
+  taskProjectDraft,
+  taskProjectPayload,
+  type TaskProjectDraft,
+} from "@/lib/format";
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
 import { Button, ButtonRow } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -49,13 +55,10 @@ const PRIORITIES: readonly TaskPriorityDTO[] = [
 ];
 
 /** A form's whole state, which is the DTO's editable half and nothing else. */
-interface TaskDraft {
+interface TaskDraft extends TaskProjectDraft {
   title: string;
   body: string;
   priority: TaskPriorityDTO;
-  mountId: string;
-  /** Relative to the mount, which is what the folder picker offers. */
-  folder: string;
   /**
    * Sent at a create only. On an existing task the flag is its own press on
    * the task's page — see `markOperatorOnly` there for why it is not a field
@@ -79,8 +82,7 @@ function draftFrom(task: TaskDTO | null): TaskDraft {
     title: task.title,
     body: task.body,
     priority: task.priority,
-    mountId: task.mountId ?? "",
-    folder: task.relPath ?? "",
+    ...taskProjectDraft(task),
     operatorOnly: task.operatorOnly,
   };
 }
@@ -95,13 +97,6 @@ type WorkspaceRead =
   | { state: "loading" }
   | { state: "ok"; mounts: WorkspaceMountDTO[]; folders: WorkspaceFolderDTO[] }
   | { state: "failed"; error: string };
-
-/** The pair travels together, which is what the door refuses half of. */
-function projectPayload(draft: TaskDraft) {
-  return draft.mountId && draft.folder
-    ? { mountId: draft.mountId, folder: draft.folder }
-    : { mountId: null, folder: null };
-}
 
 export function TaskEditor({
   task,
@@ -122,6 +117,10 @@ export function TaskEditor({
   // an effect syncing this back would throw away whatever is being typed the
   // moment one of those landed.
   const [draft, setDraft] = useState<TaskDraft>(() => draftFrom(task));
+  // What a save measures the project selects against; see `taskProjectPayload`.
+  const [savedProject, setSavedProject] = useState<TaskProjectDraft | null>(
+    () => (task ? taskProjectDraft(task) : null),
+  );
   const [workspace, setWorkspace] = useState<WorkspaceRead>({
     state: "loading",
   });
@@ -188,7 +187,7 @@ export function TaskEditor({
       title: draft.title,
       body: draft.body,
       priority: draft.priority,
-      ...projectPayload(draft),
+      ...taskProjectPayload(draft, savedProject),
       ...(task ? {} : { operatorOnly: draft.operatorOnly }),
     };
     const res = await jsonRequest<{ task: TaskDTO }>(
@@ -215,6 +214,7 @@ export function TaskEditor({
       return;
     }
     setSaving(false);
+    setSavedProject({ mountId: draft.mountId, folder: draft.folder });
     setNote(`Updated “${res.data.task.title}”`);
     onSaved?.(res.data.task);
   }
@@ -362,8 +362,8 @@ export function TaskEditor({
           // itself loses to the larger value it wrote.
           <div className="-mt-2">
             <Hint tone="warn" className="mb-3.5">
-              Not in the current workspace scan; if its mount is absent, the
-              save is refused rather than clearing the project
+              Not in the current workspace scan; a save keeps it until another
+              folder is picked
             </Hint>
           </div>
         )}

@@ -859,6 +859,46 @@ export function storedFolderState(
     : "absent";
 }
 
+/** A task's project as the editor's two selects hold it: `""` for either half unset. */
+export interface TaskProjectDraft {
+  mountId: string;
+  /** Relative to the mount, which is what the folder picker offers. */
+  folder: string;
+}
+
+export function taskProjectDraft(
+  task: Pick<TaskDTO, "mountId" | "relPath">,
+): TaskProjectDraft {
+  return { mountId: task.mountId ?? "", folder: task.relPath ?? "" };
+}
+
+/**
+ * The project half of a task form's save body, or nothing when the form left
+ * the project as it was seeded or last saved.
+ *
+ * Re-sending the stored pair on every save lost data two ways, both silently.
+ * A task on a mount root has `""` for its path within the mount, which is also
+ * the selects' "no folder", so a retitle sent no project and answered 200. And
+ * a task whose folder was deleted or renamed had its pair re-proved by
+ * `updateTask` and every edit refused, leaving another folder or no project as
+ * the only ways to save. Comparing against `saved` rather than against the row
+ * the page last read is the operator-only toggle's reason: a project another
+ * door set while the form was open is not reverted by a save that never
+ * touched these two selects. `null` is a creation, which always names its pair.
+ */
+export function taskProjectPayload(
+  draft: TaskProjectDraft,
+  saved: TaskProjectDraft | null,
+): { mountId: string | null; folder: string | null } | Record<string, never> {
+  if (saved && draft.mountId === saved.mountId && draft.folder === saved.folder) {
+    return {};
+  }
+  // The pair travels together, which is what the door refuses half of.
+  return draft.mountId && draft.folder
+    ? { mountId: draft.mountId, folder: draft.folder }
+    : { mountId: null, folder: null };
+}
+
 /**
  * When a workflow's own limits are checked, in the words both surfaces use.
  *

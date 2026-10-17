@@ -194,7 +194,9 @@ with no mount is a path this app cannot say which root proved it, and a mount
 with no folder is a project claim with nothing under it. Both would store happily
 and neither would answer the query the pair exists for. A mount that is merely
 *absent right now* refuses with `resolveInMount`'s own sentence naming the mount
-and the path, which is the same refusal the new-run form shows.
+and the path, which is the same refusal the new-run form shows. A patch naming
+the pair has it re-proved even when it restates the stored one, which is why the
+task page sends the pair only when its form changed it (`task-page.md`).
 
 **Three fields are recorded rather than claimed, and are refused by name off the
 wire.** `origin` and `created_by_run_id` come from the caller supplying a
