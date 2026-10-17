@@ -13,10 +13,9 @@ import {
   CACHE_WRITE_1H_MULTIPLIER,
   CACHE_WRITE_5M_MULTIPLIER,
   cacheReadMultiplierOf,
-  cacheWriteTokens,
   resolveFlatPrice,
 } from "./pricing";
-import { scanUsage, type UsageEntry } from "./transcripts";
+import { billedAnything, scanUsage, type UsageEntry } from "./transcripts";
 import type {
   ContextCheckDTO,
   ContextCompositionDTO,
@@ -4282,18 +4281,6 @@ function firstBilledTurn(
   return best;
 }
 
-/**
- * Whether a turn read or wrote any cache at all.
- *
- * The one test every reader here shares, so that the resume a cut is priced
- * off and the turns its saving is counted over cannot come to disagree about
- * what a turn is. The CLI's `<synthetic>` record — written at a restart or an
- * API error, its usage block present and entirely zero — fails it.
- */
-function billedAnything(e: UsageEntry): boolean {
-  return e.tokens.cacheRead + cacheWriteTokens(e.tokens) > 0;
-}
-
 /** The cache traffic of the turn a resume is read off. */
 function resumeWriteOf(e: UsageEntry): ResumeWrite {
   return {
@@ -4312,9 +4299,9 @@ function resumeWriteOf(e: UsageEntry): ResumeWrite {
  *
  * A cut's own `model` is `runs.model`, and that column is NULL for every run
  * started on Claude Code's own default — the stock install, where
- * `defaultModel` is null and the form leaves the field blank — and for a run
- * whose model came from its agent. Priced at that, every prune and fork on
- * such a run came out unpriced while the turns it is netted over named a model
+ * `defaultModel` is null and the form leaves the field blank — and, until
+ * `createRun` froze an agent's model, for a run whose model came from its
+ * agent. Priced at that, every prune and fork on such a run came out unpriced while the turns it is netted over named a model
  * with a price, and the run page blamed the price table. The first billed turn
  * is the one the invalidation is read off, so its model is the rate; the
  * run's column stands in only until a turn has followed.

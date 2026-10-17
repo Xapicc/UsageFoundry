@@ -6,7 +6,7 @@ import {
   cacheReadMultiplierOf,
   resolveFlatPrice,
 } from "./pricing";
-import { scanUsage, type UsageEntry } from "./transcripts";
+import { billedAnything, scanUsage, type UsageEntry } from "./transcripts";
 
 /**
  * What winnow's intake filter kept off the wire, read from its own ledger.
@@ -841,10 +841,17 @@ function filterRunning(): boolean {
   return !fs.existsSync(OFF_FILE);
 }
 
-/** Ascending `ts` per session, so `turnsAfter` is a binary search per result. */
+/**
+ * Ascending `ts` per session, so `turnsAfter` is a binary search per result.
+ *
+ * Billed turns only, the test the prune side counts over: a turn that read and
+ * wrote no cache re-read nothing, so it is not a turn a filtered result was
+ * carried through.
+ */
 function sessionTimelines(entries: UsageEntry[]): Map<string, number[]> {
   const bySession = new Map<string, number[]>();
   for (const entry of entries) {
+    if (!billedAnything(entry)) continue;
     const list = bySession.get(entry.sessionId);
     if (list) list.push(entry.ts);
     else bySession.set(entry.sessionId, [entry.ts]);
@@ -863,6 +870,34 @@ function countAfter(sorted: number[], ts: number): number {
     else high = mid;
   }
   return sorted.length - low;
+}
+
+/**
+ * Joins a ledger request id to the main-thread turn that answered it: when it
+ * ran, what answered it, and how many turns followed in its session. Null for a
+ * request no transcript turn carries.
+ */
+export function requestAnchors(
+  mainThread: UsageEntry[],
+): (requestId: string) => RequestAnchor | null {
+  const byRequest = new Map<string, UsageEntry>();
+  for (const entry of mainThread) {
+    if (entry.requestId && !byRequest.has(entry.requestId)) {
+      byRequest.set(entry.requestId, entry);
+    }
+  }
+  const timelines = sessionTimelines(mainThread);
+  return (requestId) => {
+    const entry = byRequest.get(requestId);
+    if (!entry) return null;
+    return {
+      sessionId: entry.sessionId,
+      ts: entry.ts,
+      model: entry.model,
+      speed: entry.speed,
+      turnsAfter: countAfter(timelines.get(entry.sessionId) ?? [], entry.ts),
+    };
+  };
 }
 
 async function measureFilter(spans: FilterSpans): Promise<FilterSavings> {
@@ -895,29 +930,13 @@ async function measureFilter(spans: FilterSpans): Promise<FilterSavings> {
   // discarded when it answers, so no later turn would have re-read anything the
   // filter took off one of its requests.
   const { entries } = await scanUsage();
-  const mainThread = entries.filter((e) => !e.isSidechain);
-  const byRequest = new Map<string, UsageEntry>();
-  for (const entry of mainThread) {
-    if (entry.requestId && !byRequest.has(entry.requestId)) {
-      byRequest.set(entry.requestId, entry);
-    }
-  }
-  const timelines = sessionTimelines(mainThread);
+  const joinAnchor = requestAnchors(entries.filter((e) => !e.isSidechain));
 
   let unjoined = 0;
   const anchorOf = (requestId: string): RequestAnchor | null => {
-    const entry = byRequest.get(requestId);
-    if (!entry) {
-      unjoined += 1;
-      return null;
-    }
-    return {
-      sessionId: entry.sessionId,
-      ts: entry.ts,
-      model: entry.model,
-      speed: entry.speed,
-      turnsAfter: countAfter(timelines.get(entry.sessionId) ?? [], entry.ts),
-    };
+    const anchor = joinAnchor(requestId);
+    if (!anchor) unjoined += 1;
+    return anchor;
   };
 
   const unique = dedupeResults(requests, anchorOf);

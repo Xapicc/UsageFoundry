@@ -109,6 +109,7 @@ Twenty-three are renderings rather than functions — every `*.test.tsx` in the 
 | `modelAdoption.test.ts` |  |
 | `modelCatalogue.test.ts` |  |
 | `modelDiscovery.test.ts` |  |
+| `runModelPrecedence.test.ts` |  |
 
 ## [Transcript scanning and the usage snapshot](testing/transcripts-and-snapshot.md)
 

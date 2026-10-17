@@ -3,6 +3,7 @@ import path from "node:path";
 import { PROJECTS_DIR, TRANSCRIPT_CACHE_MAX_ENTRIES } from "./config";
 import {
   type TokenCounts,
+  cacheWriteTokens,
   costOf,
   guardCostOf,
   resolvePrice,
@@ -107,6 +108,20 @@ export interface UsageEntry {
   entrypoint?: string;
   /** True when the model string had no known price — cost is a floor, not exact. */
   unpriced: boolean;
+}
+
+/**
+ * Whether a turn read or wrote any cache at all.
+ *
+ * The one test every reader of "turns after a point" shares, so that the resume
+ * a cut is priced off, the turns a prune's saving is counted over and the turns
+ * the intake filter's saving is counted over cannot come to disagree about what
+ * a turn is. The CLI's `<synthetic>` record — written at a restart or an API
+ * error, its usage block present and entirely zero — fails it, and is kept as a
+ * `UsageEntry` only so that it stays out of the unpriced banner.
+ */
+export function billedAnything(e: UsageEntry): boolean {
+  return e.tokens.cacheRead + cacheWriteTokens(e.tokens) > 0;
 }
 
 interface FileCacheEntry {

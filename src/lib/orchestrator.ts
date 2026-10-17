@@ -4795,19 +4795,29 @@ function admitDependencies(
  * which is what the Codex CLI's own `model/list` named — and null where that
  * is unset, which `buildCodexArgs` turns into no `-m` at all, so Codex runs
  * its own default. Neither default ever stands in for the other.
+ *
+ * For a Claude run the order is the run's own (a template's has already become
+ * it at the door), then the model of the agent it is started as, then the
+ * default. The agent has to be frozen here rather than left to `--agent`,
+ * because a `--model` outranks the agent's on the pin and the spawn passes
+ * `runs.model` whenever it is set: freezing the default first made an agent's
+ * model reachable only on an install with no default, against what Settings
+ * says and what the model decider's standing aside for it assumes.
  */
 export function frozenRunModel(
   model: string | null | undefined,
   provider: RunProviderDTO | null | undefined,
   defaultModel: string | null,
   codexDefaultModel: string | null = null,
+  agentModel: string | null | undefined = null,
 ): string | null {
   if (model) return model;
   if (provider === "codex") return codexDefaultModel;
   // A local run is Claude Code, but a Claude id is exactly what its server has
   // never heard of. The door freezes the sign-in's model onto it; a null that
   // got past it spawns with the sign-in's model at the cycle instead.
-  return provider === "local" ? null : defaultModel;
+  if (provider === "local") return null;
+  return agentModel?.trim() || defaultModel;
 }
 
 /**
@@ -4944,6 +4954,7 @@ export function createRun(input: CreateRunInput): RunRow {
           input.provider,
           settings.defaultModel,
           settings.codexDefaultModel,
+          input.agent?.model,
         ),
         // No `?? "claude"`, unlike the model above: the model has a settings
         // default to fall back to (one per provider; `frozenRunModel` says why

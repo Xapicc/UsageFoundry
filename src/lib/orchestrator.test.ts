@@ -4186,6 +4186,25 @@ describe("buildCodexArgs", () => {
     assert.equal(frozenRunModel(null, "local", "claude-opus-5-5", "gpt-6-astra"), null);
     assert.equal(frozenRunModel(null, "codex", "claude-opus-5-5", null), null);
   });
+
+  /**
+   * Settings tells the operator the default is used "when neither the run, its
+   * template nor its agent names one", and the model decider stands aside for an
+   * agent's model as the operator's answer for that role. `createRun` froze the
+   * default instead, and the explicit `--model` that follows outranks the
+   * agent's, so a run started as a Haiku agent ran at the default's price.
+   * The agent's model is a Claude id, so it is a Claude rung only.
+   */
+  it("freezes the agent's model between the run's own and the default", () => {
+    assert.equal(frozenRunModel(null, "claude", "claude-opus-5-5", null, "claude-haiku-4-5"), "claude-haiku-4-5");
+    assert.equal(frozenRunModel(null, null, "claude-opus-5-5", null, "claude-haiku-4-5"), "claude-haiku-4-5");
+    assert.equal(frozenRunModel("claude-sonnet-5", "claude", "claude-opus-5-5", null, "claude-haiku-4-5"), "claude-sonnet-5");
+    assert.equal(frozenRunModel(null, "claude", "claude-opus-5-5", null, null), "claude-opus-5-5");
+    assert.equal(frozenRunModel(null, "claude", "claude-opus-5-5", null, "  "), "claude-opus-5-5");
+    assert.equal(frozenRunModel(null, "codex", "claude-opus-5-5", "gpt-6-astra", "claude-haiku-4-5"), "gpt-6-astra");
+    assert.equal(frozenRunModel(null, "codex", "claude-opus-5-5", null, "claude-haiku-4-5"), null);
+    assert.equal(frozenRunModel(null, "local", "claude-opus-5-5", null, "claude-haiku-4-5"), null);
+  });
 });
 
 /**
