@@ -55,7 +55,11 @@ export interface WatchedConfigEntry {
  */
 export interface HookEntry {
   name: string;
-  /** `file:<sha256>`, `large:<size>:<mtime>`, `symlink:<target>`, `dir` or `other`. */
+  /**
+   * `file:<sha256>`, `large:<size>:<mtime>`, `dir`, `other`, or
+   * `symlink:<target>` followed, when the target was read, by `THROUGH_LINK`
+   * and the target's own identity.
+   */
   identity: string;
   executable: boolean;
 }
@@ -116,6 +120,12 @@ export type GitDirReading = { ok: true; snapshot: GitDirSnapshot } | { ok: false
 export type GitDirChange = GitDirChangeDTO;
 export type GitDirFinding = GitDirFindingDTO;
 export type GitDirReport = GitDirReportDTO;
+
+/**
+ * Between a symlink's text and its target's identity in a hook's identity or
+ * an attributes digest. NUL, because a link's text can hold anything else.
+ */
+export const THROUGH_LINK = "\0";
 
 /** Long enough to read a planted command, short enough that a pasted script is not stored whole. */
 export const SHOWN_CHARS = 200;
@@ -434,10 +444,18 @@ export function compareGitDir(
   const nowHooks = predates
     ? now.hooks.filter((hook) => hooksPathEntryOf(hook.name) === null)
     : now.hooks;
+  // A baseline from before symlinks were read through has a symlinked hook,
+  // hooks/ or info/ as its link's text alone, and nothing behind it.
+  const linksPredate = was.unread === undefined;
+  const endHooks = linksPredate ? asLinkTextOnly(nowHooks) : nowHooks;
+  const endAttributes =
+    linksPredate && now.attributes !== null
+      ? { ...now.attributes, digest: now.attributes.digest.split(THROUGH_LINK)[0] }
+      : now.attributes;
   const findings = [
     ...configFindings(was.config, now.config),
-    ...hookFindings(was.hooks, nowHooks),
-    ...attributesFindings(was.attributes, now.attributes),
+    ...hookFindings(was.hooks, endHooks),
+    ...attributesFindings(was.attributes, endAttributes),
     ...(was.modules && now.modules ? moduleFindings(was.modules, now.modules) : []),
   ];
   const notRead = notReadOf(
@@ -448,6 +466,12 @@ export function compareGitDir(
       // A baseline from before submodules were read has none of them.
       was.modules === undefined && (now.modules === null || (now.modules?.length ?? 0) > 0)
         ? "this app did not yet read submodules' git directories, so theirs were not compared."
+        : null,
+      linksPredate &&
+      (endHooks.length < nowHooks.length ||
+        nowHooks.some((hook) => hook.identity.includes(THROUGH_LINK)) ||
+        endAttributes?.digest !== now.attributes?.digest)
+        ? "this app did not yet read through a symlinked hook, hooks/ or info/, so what it points to was not compared."
         : null,
       ...(was.unread ?? []),
     ],
@@ -468,8 +492,16 @@ export function compareGitDir(
   };
 }
 
+/** The end's hooks as a reader that did not follow symlinks recorded them. */
+function asLinkTextOnly(hooks: HookEntry[]): HookEntry[] {
+  const linkedDir = hooks.some((hook) => hook.name === "." && hook.identity.startsWith("symlink:"));
+  return hooks
+    .filter((hook) => !linkedDir || hook.name === "." || hooksPathEntryOf(hook.name) !== null)
+    .map((hook) => ({ ...hook, identity: hook.identity.split(THROUGH_LINK)[0] }));
+}
+
 /**
- * What git runs hooks from that either end could not read, as the report
+ * What git runs commands from that either end could not read, as the report
  * keeps it. Never folded into "unchanged": that is a claim this app can only
  * make about what it read twice.
  */

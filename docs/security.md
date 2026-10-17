@@ -227,7 +227,9 @@ read — reaches something that is not this run's business.
     change is already on disk when you read the warning. A `core.hooksPath`
     directory it cannot read — outside every folder you configured, or a path
     under `~` that only your host can expand — is reported as not checked, on
-    both the run's page and its Land card. It does not see a repository other
+    both the run's page and its Land card. So is a symlinked `.git/hooks`,
+    hook or `.git/info` that points outside those folders; one that points
+    inside them is read through, since git runs what it points to. It does not see a repository other
     than the run's own, or another checkout's copy of a relative
     `core.hooksPath`: git resolves that against whichever checkout it runs in,
     and only your main checkout's is read. Nothing about it has been measured

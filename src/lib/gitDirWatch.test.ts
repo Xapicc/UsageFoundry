@@ -14,6 +14,7 @@ import {
   type GitDirSnapshot,
   type HookEntry,
   type ModuleSnapshot,
+  THROUGH_LINK,
 } from "./gitDirWatch";
 
 /**
@@ -384,6 +385,39 @@ describe("the directory a core.hooksPath the repository already had names", () =
     assert.deepEqual(notReadOf(compare(unread("away."), unread("away."))), [
       "At the run's start and end: away.",
     ]);
+  });
+});
+
+describe("a symlinked hook, hooks/ or info/, read through", () => {
+  it("is not compared against a baseline that only kept the link, and says so", () => {
+    const linkedDir: HookEntry = { name: ".", identity: "symlink:../.githooks", executable: false };
+    const behind: HookEntry = { name: "pre-commit", identity: "file:a", executable: true };
+    const older = (hooks: HookEntry[], attributes: GitDirSnapshot["attributes"] = null) => {
+      const { modules: _, unread: __, ...rest } = { ...snapshot(ORDINARY, hooks), attributes };
+      return rest;
+    };
+    const now = (hooks: HookEntry[], attributes: GitDirSnapshot["attributes"] = null) => ({
+      ...snapshot(ORDINARY, hooks),
+      attributes,
+    });
+    const said = /^At the run's start: this app did not yet read through a symlinked hook/;
+    for (const report of [
+      compare(older([linkedDir]), now([linkedDir, behind])),
+      compare(
+        older([{ name: "pre-commit", identity: "symlink:../x", executable: true }]),
+        now([{ name: "pre-commit", identity: `symlink:../x${THROUGH_LINK}file:a`, executable: true }]),
+      ),
+      compare(
+        older([], { digest: "symlinked-info:../.gitinfo", driverLines: [] }),
+        now([], { digest: `symlinked-info:../.gitinfo${THROUGH_LINK}d`, driverLines: ["* filter=x"] }),
+      ),
+    ]) {
+      assert.equal(report.state, "unchanged", JSON.stringify(report));
+      assert.match((report.state === "unchanged" ? report.notRead ?? [] : []).join(), said);
+    }
+    // A link repointed is still a change, whatever the baseline kept.
+    const repointed = { ...linkedDir, identity: "symlink:/elsewhere" };
+    assert.equal(findingsOf(compare(older([linkedDir]), now([repointed])))[0].kind, "hook");
   });
 });
 
