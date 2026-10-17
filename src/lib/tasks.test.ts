@@ -405,6 +405,27 @@ test("a title, body or parent that is not a string is refused by name, never coe
   }
 });
 
+// The pair `normalizeTaskPatch` already refused at an edit, refused at a create
+// too: `String()` filed `["RepoOne"]` against the folder inside it, and `{…}`
+// was resolved as a folder named "[object Object]".
+test("a mount or folder that is not a string is refused by name at a create, never coerced", () => {
+  for (const [field, value] of [
+    ["mountId", [MOUNT]],
+    ["mountId", { id: MOUNT }],
+    ["folder", ["RepoOne"]],
+    ["folder", { path: "RepoOne" }],
+  ] as const) {
+    const parsed = normalizeTaskInput(
+      { title: "t", body: "b", mountId: MOUNT, folder: "RepoOne", [field]: value },
+      CREATION,
+    );
+    assert.equal(parsed.ok, false, `${field}: ${JSON.stringify(value)} was read as text`);
+    const error = !parsed.ok ? parsed.error : "";
+    assert.match(error, new RegExp(`"${field}" has to be a string when it is given`));
+    assert.doesNotMatch(error, /\[object Object\]/);
+  }
+});
+
 test("origin, createdByRunId and status are refused by name at a create", () => {
   // Silently dropping any of these leaves the caller believing it took effect —
   // and an origin off the wire is a chat turn filing work as the operator.
