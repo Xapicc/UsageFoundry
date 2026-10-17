@@ -496,7 +496,7 @@ describe("what a cut is priced at, and over which turns", () => {
   it("prices a cut at the model its later turns ran on when the run names none", async () => {
     // `runs.model` is NULL for every run started on Claude Code's own default,
     // which is the stock install (`defaultModel: null`, a blank form field), and
-    // for a run whose model came from its agent. Pricing at that column left
+    // was for a run whose model came from its agent. Pricing at that column left
     // every prune and fork on such a run unpriced, and the run page blamed the
     // price table for a model that has a price. The transcript names the model
     // the resume actually billed at.

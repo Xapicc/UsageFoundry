@@ -4299,9 +4299,9 @@ function resumeWriteOf(e: UsageEntry): ResumeWrite {
  *
  * A cut's own `model` is `runs.model`, and that column is NULL for every run
  * started on Claude Code's own default — the stock install, where
- * `defaultModel` is null and the form leaves the field blank — and for a run
- * whose model came from its agent. Priced at that, every prune and fork on
- * such a run came out unpriced while the turns it is netted over named a model
+ * `defaultModel` is null and the form leaves the field blank — and, until
+ * `createRun` froze an agent's model, for a run whose model came from its
+ * agent. Priced at that, every prune and fork on such a run came out unpriced while the turns it is netted over named a model
  * with a price, and the run page blamed the price table. The first billed turn
  * is the one the invalidation is read off, so its model is the rate; the
  * run's column stands in only until a turn has followed.

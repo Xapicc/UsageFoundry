@@ -4073,9 +4073,10 @@ export default function SettingsPage() {
               tool list at the door and has no column for a permission mode — so
               this decides who a run *is* and never what it is allowed to do.
               Beside the model for a second reason since `--agent`: a saved
-              agent's model is the session's, reached only where the field above
-              is blank. It is an id, so an operator who fixes their reviewer's
-              prompt gets the fixed one on the next run. */}
+              agent's model is the session's, and `createRun` freezes it ahead
+              of the field above, which it only fills in for a run whose agent
+              names none. It is an id, so an operator who fixes their
+              reviewer's prompt gets the fixed one on the next run. */}
           <SettingRow
             htmlFor="agent"
             edited={isEdited("defaultAgentId")}

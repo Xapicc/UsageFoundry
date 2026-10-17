@@ -925,26 +925,17 @@ export default function NewRunPage() {
     continueAfterDone,
   };
 
-  /**
-   * The model this run will actually be started with, as far as the page can
-   * tell, or null for the provider CLI's own default.
-   *
-   * For display only — `modelFromForm` is what goes on the wire, and it sends
-   * nothing at all when the field is blank so that the fallback stays
-   * `createRun`'s to apply. Reading it here would post a default that was true
-   * when the page loaded rather than when Start was pressed.
-   */
   // The Codex list, empty until Codex model discovery has listed the account's
   // models — and while it is empty the Codex model field stays free text.
   const codexCatalogue = settings?.codexModelCatalogue ?? [];
 
-  const effectiveModel =
-    model.trim() ||
-    (provider === "codex"
-      ? (settings?.codexDefaultModel ?? null)
-      : provider === "local"
-        ? (localSignIn?.model ?? null)
-        : (settings?.defaultModel ?? null));
+  // What a blank model field resolves to, by label, for the Claude picker's
+  // "Inherit" option. Display only — `modelFromForm` sends nothing when the
+  // field is blank so that `createRun` applies the fallback when Start is
+  // pressed, not the one that was true when the page loaded. The agent's model
+  // comes first because `createRun` freezes it ahead of the default.
+  const inheritedModel =
+    (provider === "claude" ? selectedAgent?.model : null) || settings?.defaultModel || null;
 
   const rowChanged = (row: RowId) =>
     ROW_FIELDS[row].some((k) => current[k] !== baseline.values[k]);
@@ -1662,17 +1653,16 @@ export default function NewRunPage() {
                       "Changes who the run is, not what it may do"
                     )}
                     {/* An agent's model is the session's now, not a delegated
-                        turn's — so it only reaches a run that has no model of
-                        its own. An explicit --model outranks it, measured on
-                        the pin, and a run's model is the field below, falling
-                        back to settings.defaultModel where that is blank. */}
-                    {selectedAgent?.model && (
+                        turn's. An explicit --model outranks it, measured on
+                        the pin, so it yields to the run's own model (the field
+                        below) and to nothing else: `createRun` freezes it
+                        ahead of settings.defaultModel. A Codex run never takes
+                        it, being a Claude id. */}
+                    {provider === "claude" && selectedAgent?.model && (
                       <span className="block">
                         Runs on{" "}
                         <span className="mono">{selectedAgent.model}</span>
-                        {effectiveModel
-                          ? ", unless this run's own model wins"
-                          : ""}
+                        {model.trim() ? ", unless this run's own model wins" : ""}
                       </span>
                     )}
                     {/* The registry is a part of the set and not the whole of
@@ -1826,11 +1816,11 @@ export default function NewRunPage() {
                         can be `claude-haiku-4-5-20251001`, and "Inherit — "
                         plus that is the 35 characters again. */}
                     <option value="">
-                      {settings?.defaultModel
+                      {inheritedModel
                         ? `Inherit — ${
-                            settings.modelCatalogue.find(
-                              (entry) => entry.id === settings.defaultModel,
-                            )?.label ?? settings.defaultModel
+                            settings?.modelCatalogue.find(
+                              (entry) => entry.id === inheritedModel,
+                            )?.label ?? inheritedModel
                           }`
                         : "Inherit"}
                     </option>
