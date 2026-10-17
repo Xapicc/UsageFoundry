@@ -6479,7 +6479,18 @@ function advanceInstance(instanceId: string): void {
   // otherwise both push the same branch. Not held by the install-wide hold,
   // which stops new *spending* and which a push does none of — the merge block
   // is not held by it either, when no resolution is authorised.
+  //
+  // Held by a shutdown, though, and left `waiting` for the boot to decide, as
+  // the spawn claim leaves a deciding block. `deliverRun` refuses every branch
+  // during one, so a claim bought nothing but a `failed` block that tried
+  // nothing — which `on-finish` reads as finished, so the block behind it was
+  // started in the grace, and that started successor then refused the very
+  // retry the refusal tells the operator to press. The merge claim above
+  // needs no such check: its queue does not drain during a shutdown, so the
+  // block is still `thinking` at the exit, and the boot fails it
+  // `restart_closed`, which blocks every edge out of it and is retryable.
   for (const deliver of step.deliver) {
+    if (isShuttingDown()) break;
     if (!claimBlock(instanceId, deliver.nodeId)) continue;
     void startDeliverBlock(instanceId, deliver.nodeId, deliver.runIds).catch((err) => {
       finishMergeBlock(instanceId, deliver.nodeId, {
