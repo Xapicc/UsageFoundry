@@ -117,6 +117,7 @@ const {
   copyGlobsFor,
   cycleCostAfterResult,
   cycleSpendOf,
+  cycleTelemetryEnv,
   logLifecycle,
   maxRetriesFor,
   transientBackoffMs,
@@ -5962,6 +5963,21 @@ describe("telemetryEnv — what the exporter authenticates with", () => {
     }
     // Swept on the way past, so the map is bounded by live runs.
     assert.equal(runForIngestToken(token), null);
+  });
+
+  it("is not handed to a Codex cycle, which exports nothing this app ingests", () => {
+    // `required` so the settings table is not consulted, as above. A Codex run
+    // never gets `required`, but `settings.telemetryForRuns` would hand it the
+    // capability all the same, and its only use there is posting forged records.
+    assert.deepEqual(cycleTelemetryEnv("run-codex", selectCycleAdapter("codex"), true), {});
+    for (const provider of [null, "claude", "local"] as const) {
+      assert.match(
+        cycleTelemetryEnv("run-claude", selectCycleAdapter(provider), true)
+          .OTEL_EXPORTER_OTLP_HEADERS ?? "",
+        /^Authorization=Bearer .+/,
+        `a ${provider} cycle lost its exporter, and with it the live spending guard's input`,
+      );
+    }
   });
 
   it("refuses an empty or unknown bearer", () => {

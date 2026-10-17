@@ -7632,6 +7632,23 @@ export function telemetryEnv(
 }
 
 /**
+ * `telemetryEnv` for one cycle, and nothing for a Codex one.
+ *
+ * `codex exec` exports nothing this app ingests, and its live figure is its
+ * rollout (`codexInFlightSpend`), which never reads `otlp_requests`. So the
+ * capability would reach that child for no use but one: posting records of
+ * its own, which `parseLogsPayload` bounds but does not refuse. `required` is
+ * already false for a Codex run; this also covers `settings.telemetryForRuns`.
+ */
+export function cycleTelemetryEnv(
+  runId: string,
+  adapter: CycleAdapter,
+  required: boolean,
+): Record<string, string> {
+  return adapter === CODEX_ADAPTER ? {} : telemetryEnv(runId, required);
+}
+
+/**
  * Answers git's credential request for github.com from `$GH_TOKEN`.
  *
  * A `!`-prefixed helper is a command git runs through a shell, with the
@@ -7988,8 +8005,9 @@ const CLAUDE_ADAPTER: CycleAdapter = Object.freeze({
  * unchanged. What is worth saying here is what the three fields buy: they are
  * the *whole* of the difference between the two providers inside the run loop.
  * The loop below spawns, watches, guards, prunes, parks and reconciles without
- * knowing which of these it is holding — with one exception, `providerRecordsSpend`,
- * which exists because one of the two cannot say what a cycle cost.
+ * knowing which of these it is holding — with two exceptions: `providerRecordsSpend`,
+ * which exists because one of the two cannot say what a cycle cost, and
+ * `cycleTelemetryEnv`, which withholds a credential only the other one uses.
  */
 const CODEX_ADAPTER: CycleAdapter = Object.freeze({
   bin: CODEX_BIN,
@@ -8168,7 +8186,7 @@ export function runIteration(
     // No shell: arguments are passed as an array, so a prompt containing
     // quotes, backticks, or semicolons is inert rather than interpreted.
     const env = childEnv({
-      ...telemetryEnv(runId, telemetryRequired),
+      ...cycleTelemetryEnv(runId, adapter, telemetryRequired),
       ...agentGitEnv(githubToken, excludes.path),
       ...(backgroundWaitMs === null ? {} : { [BACKGROUND_WAIT_ENV]: backgroundWaitMs }),
     });
