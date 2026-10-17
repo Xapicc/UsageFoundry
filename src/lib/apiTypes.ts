@@ -1127,6 +1127,16 @@ export interface ClaudeAuthStateDTO {
 }
 
 /**
+ * What a sign-in or sign-out answers once the CLI has changed the credential:
+ * the fresh status read after it, or, when that read failed, no status and why.
+ *
+ * `error` here is "changed, but could not confirm" and never "did not change",
+ * which is a non-2xx answer instead. The page shows it where it shows a status
+ * the CLI could not give, and offers no Sign in button over it.
+ */
+export type ClaudeAuthChangeDTO = Pick<ClaudeAuthStateDTO, "auth" | "error">;
+
+/**
  * Whether the container's Codex has a credential, and of which kind.
  *
  * Deliberately thinner than `ClaudeAuthDTO` rather than padded out to match it.
@@ -1175,6 +1185,9 @@ export interface CodexAuthStateDTO {
    */
   loginError: string | null;
 }
+
+/** `ClaudeAuthChangeDTO`'s twin, for the key store and the sign-out. */
+export type CodexAuthChangeDTO = Pick<CodexAuthStateDTO, "auth" | "error">;
 
 /** Names a plan. Carries no ceiling, no email, no account UUID. */
 export interface AccountProfileDTO {

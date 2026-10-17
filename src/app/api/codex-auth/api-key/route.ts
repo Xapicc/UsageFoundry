@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 // Relative, not "@/…" — see the note in the login route.
-import type { CodexAuthDTO } from "../../../../lib/apiTypes";
+import type { CodexAuthChangeDTO } from "../../../../lib/apiTypes";
 import { submitApiKey } from "../../../../lib/codexAuth";
 import { readJsonObject } from "../../../../lib/http";
 import { auditMutation, recordDurableMutation } from "../../../../lib/requestLog";
@@ -30,7 +30,10 @@ export const dynamic = "force-dynamic";
  * it read nothing at all**, so the exit code cannot be the success signal and
  * `submitApiKey` refuses to report a sign-in the CLI does not confirm. That is
  * also what makes the row below trustworthy: it is written behind a status read
- * that agreed about the method, not behind an exit code.
+ * that agreed about the method, not behind an exit code — or, when the read
+ * itself failed, marked `unconfirmed`, because a key handed over and stored
+ * with exit 0 that no read could check is still a credential that may have
+ * been replaced.
  *
  * 400 rather than 502: a refused key is something the operator fixes by pasting
  * a different one.
@@ -41,12 +44,24 @@ async function postHandler(req: Request) {
   const body = read.body;
   const res = await submitApiKey(body.apiKey);
   if (!res.ok) return NextResponse.json({ error: res.error }, { status: 400 });
-  const auth: CodexAuthDTO = res.value;
+  if (!res.status.ok) {
+    recordDurableMutation(req, "warn", "auth.provider_signed_in", {
+      provider: "codex",
+      method: null,
+      unconfirmed: true,
+    });
+    const answer: CodexAuthChangeDTO = {
+      auth: null,
+      error: `The key was stored, but could not confirm it: ${res.status.error}`,
+    };
+    return NextResponse.json(answer);
+  }
   recordDurableMutation(req, "info", "auth.provider_signed_in", {
     provider: "codex",
-    method: auth.method,
+    method: res.status.value.method,
   });
-  return NextResponse.json({ auth });
+  const answer: CodexAuthChangeDTO = { auth: res.status.value, error: null };
+  return NextResponse.json(answer);
 }
 
 /** Wrapped for the reason `/api/claude-auth/login` is. */

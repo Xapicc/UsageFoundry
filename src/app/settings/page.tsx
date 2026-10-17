@@ -12,9 +12,9 @@ import type {
   AgentDTO,
   AmbientAgentDTO,
   BudgetPolicyDTO,
-  ClaudeAuthDTO,
+  ClaudeAuthChangeDTO,
   ClaudeAuthStateDTO,
-  CodexAuthDTO,
+  CodexAuthChangeDTO,
   CodexAuthStateDTO,
   CodexModelDiscoveryCheckDTO,
   CodexModelDiscoveryDTO,
@@ -1745,7 +1745,7 @@ function ClaudeAccount() {
   async function finish() {
     setBusy(true);
     setFlowError(null);
-    const res = await jsonRequest<{ auth: ClaudeAuthDTO }>(
+    const res = await jsonRequest<ClaudeAuthChangeDTO>(
       "/api/claude-auth/login/code",
       { method: "POST", body: { code } },
     );
@@ -1753,7 +1753,9 @@ function ClaudeAccount() {
       setBusy(false);
       setLinkUrl(null);
       setCode("");
-      setState({ auth: res.data.auth, error: null, pending: null });
+      // `error` set is a credential written that no status read could confirm,
+      // shown where an unreadable status is rather than as a failed sign-in.
+      setState({ ...res.data, pending: null });
       return;
     }
 
@@ -1789,7 +1791,7 @@ function ClaudeAccount() {
 
   async function out() {
     setBusy(true);
-    const res = await jsonRequest<{ auth: ClaudeAuthDTO }>(
+    const res = await jsonRequest<ClaudeAuthChangeDTO>(
       "/api/claude-auth/logout",
       { method: "POST", body: {} },
     );
@@ -1799,7 +1801,7 @@ function ClaudeAccount() {
       setLoadError(actionFailureMessage(res, "Could not sign out."));
       return;
     }
-    setState({ auth: res.data.auth, error: null, pending: null });
+    setState({ ...res.data, pending: null });
   }
 
   const auth = state?.auth ?? null;
@@ -2027,7 +2029,7 @@ function CodexAccount() {
   async function submitKey() {
     setBusy(true);
     setFlowError(null);
-    const res = await jsonRequest<{ auth: CodexAuthDTO }>(
+    const res = await jsonRequest<CodexAuthChangeDTO>(
       "/api/codex-auth/api-key",
       { method: "POST", body: { apiKey } },
     );
@@ -2040,12 +2042,12 @@ function CodexAccount() {
     // credential and there is no reason for it to outlive the request.
     setApiKey("");
     setKeyOpen(false);
-    setState({ auth: res.data.auth, error: null, pending: null, loginError: null });
+    setState({ ...res.data, pending: null, loginError: null });
   }
 
   async function out() {
     setBusy(true);
-    const res = await jsonRequest<{ auth: CodexAuthDTO }>(
+    const res = await jsonRequest<CodexAuthChangeDTO>(
       "/api/codex-auth/logout",
       { method: "POST", body: {} },
     );
@@ -2055,7 +2057,7 @@ function CodexAccount() {
       setLoadError(actionFailureMessage(res, "Could not sign out."));
       return;
     }
-    setState({ auth: res.data.auth, error: null, pending: null, loginError: null });
+    setState({ ...res.data, pending: null, loginError: null });
   }
 
   const identity =

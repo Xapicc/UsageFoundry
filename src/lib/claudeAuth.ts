@@ -381,12 +381,29 @@ function runAuth(
  * no rate limit in front of it, and the answer cannot differ between two reads
  * a few milliseconds apart — without the share, a page opened in five tabs is
  * five processes for one fact.
+ *
+ * That premise holds only while nothing changes the credential, which is why
+ * the sign-in and sign-out below never join: see `readFreshAuthStatus`.
  */
 export function readAuthStatus(): Promise<ClaudeAuthResult<ClaudeAuthStatus>> {
-  if (store.__ufClaudeAuthRead) return store.__ufClaudeAuthRead;
-  const read = statusOnce().finally(() => {
-    store.__ufClaudeAuthRead = null;
-  });
+  return store.__ufClaudeAuthRead ?? readFreshAuthStatus();
+}
+
+/**
+ * A status read spawned now, for a caller that has just changed the credential.
+ *
+ * Joining instead answered for the credential as it was whenever a poll had
+ * started before the change — a second tab, a script, this page's own reload —
+ * so a sign-out was answered "still signed in" after the CLI had deleted the
+ * file. It takes the shared slot as well, so a reader arriving afterwards joins
+ * this read rather than the one from before the change.
+ */
+function readFreshAuthStatus(): Promise<ClaudeAuthResult<ClaudeAuthStatus>> {
+  const read: Promise<ClaudeAuthResult<ClaudeAuthStatus>> = statusOnce().finally(
+    () => {
+      if (store.__ufClaudeAuthRead === read) store.__ufClaudeAuthRead = null;
+    },
+  );
   store.__ufClaudeAuthRead = read;
   return read;
 }
@@ -573,8 +590,23 @@ function waitForUrl(
 }
 
 /**
+ * A sign-in or sign-out that changed the credential, and the fresh read after it.
+ *
+ * Two facts, kept apart because they are owed to different readers. Whether
+ * the credential changed is the CLI's own exit, and it decides the durable
+ * audit row: deciding it from the read instead let a status child killed after
+ * `auth logout` had already deleted the file suppress the one row an operator
+ * needs after a fleet went quiet. What it changed *to* is `status`, which is
+ * what the page shows and which may itself have failed — "changed, but could
+ * not confirm" is a different answer from "did not change".
+ */
+export type ChangeOutcome =
+  | { ok: true; status: ClaudeAuthResult<ClaudeAuthStatus> }
+  | { ok: false; error: string };
+
+/**
  * A submitted code either finished the sign-in or did not, and the second case
- * splits in a way the page has to see.
+ * splits in a way the page has to see. A finished one is `ChangeOutcome`'s.
  *
  * `stillPending` is the difference between "paste it again" and "start again",
  * and it is not cosmetic: the CLI validates the code's shape locally *before*
@@ -584,7 +616,7 @@ function waitForUrl(
  * killing it over a typo would cost them the whole round trip.
  */
 export type SubmitOutcome =
-  | { ok: true; value: ClaudeAuthStatus }
+  | { ok: true; status: ClaudeAuthResult<ClaudeAuthStatus> }
   | { ok: false; error: string; stillPending: boolean };
 
 /** How long a locally-rejected code's message is given to arrive. */
@@ -664,11 +696,18 @@ export async function submitCode(input: unknown): Promise<SubmitOutcome> {
   }
 
   // The exit code says the exchange worked; the status read is what proves the
-  // credential landed somewhere the next child can read.
-  const status = await readAuthStatus();
-  return status.ok
-    ? { ok: true, value: status.value }
-    : { ok: false, error: status.error, stillPending: false };
+  // credential landed somewhere the next child can read. One that answers and
+  // still says signed out is refused, as Codex's key store refuses one; one
+  // that cannot answer leaves the change standing, unconfirmed.
+  const status = await readFreshAuthStatus();
+  if (status.ok && !status.value.loggedIn) {
+    return {
+      ok: false,
+      error: `\`${CLAUDE_BIN} auth login\` exited 0, but \`${CLAUDE_BIN} auth status\` still answers signed out.`,
+      stillPending: false,
+    };
+  }
+  return { ok: true, status };
 }
 
 /**
@@ -710,7 +749,7 @@ function after(ms: number): Promise<void> {
  * unreachable exactly when a leaked credential most needs revoking. The page
  * confirms instead.
  */
-export async function signOut(): Promise<ClaudeAuthResult<ClaudeAuthStatus>> {
+export async function signOut(): Promise<ChangeOutcome> {
   cancelLogin();
   const res = await runAuth(["auth", "logout"], COMMAND_TIMEOUT_MS);
   if (res.spawnError) {
@@ -722,5 +761,5 @@ export async function signOut(): Promise<ClaudeAuthResult<ClaudeAuthStatus>> {
   if (res.code !== 0) {
     return { ok: false, error: describeOutput(stripEscapes(res.output)) };
   }
-  return readAuthStatus();
+  return { ok: true, status: await readFreshAuthStatus() };
 }
