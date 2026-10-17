@@ -86,6 +86,12 @@ Twenty-three are renderings rather than functions — every `*.test.tsx` in the 
 | `resumedCycleSpend.test.ts` |  |
 | `validationGrant.test.ts` | [cycle] |
 
+## [Codex cycles that end without reporting](testing/codex-killed-cycles.md)
+
+| Test file | Also in |
+|---|---|
+| `codexKilledCycle.test.ts` |  |
+
 ## [Pricing and model choice](testing/pricing-and-models.md)
 
 | Test file | Also in |

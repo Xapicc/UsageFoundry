@@ -165,6 +165,7 @@ import {
   endCodexCycle,
   noteCodexThread,
   readCodexCycle,
+  readCodexCycleSince,
   takeCodexSampleAdvance,
 } from "./codexRollout";
 import {
@@ -8120,6 +8121,38 @@ export function providerRecordsSpend(provider: RunProviderDTO | null): boolean {
 }
 
 /**
+ * The ending's sentence for a run whose provider reports no cost: its dollars
+ * are unknown, and what it says about the tokens depends on whether every cycle
+ * reported them.
+ *
+ * "Its token count is measured" was the whole of it, and it was said of a run
+ * whose cycles had been killed before they reported — a Codex cycle's tokens
+ * arrive on `turn.completed` and nowhere else. `bankedTokens` is the run's
+ * `spent_tokens_est`, which only a Codex cycle that ended without reporting
+ * writes, so it also carries the fact across a restart that lost
+ * `cutShort`: a later segment's ending still says the count is understated.
+ */
+export function unmeasuredSpendNotice(
+  provider: RunProviderDTO | null,
+  cutShort: boolean,
+  bankedTokens: number,
+): string {
+  const dollars =
+    provider === "local"
+      ? "This run went to a local model, which Claude Code has no price for, so its spend is unknown rather than $0."
+      : `This run was spawned as ${RUN_PROVIDER_LABEL[provider ?? "claude"]}, which reports no cost, so its spend is unknown rather than $0.`;
+  if (!cutShort && bankedTokens <= 0) return `${dollars} Its token count is measured.`;
+  if (provider !== "codex") {
+    return `${dollars} A work cycle ended before it reported its usage, so its token count is understated.`;
+  }
+  const counted =
+    bankedTokens > 0
+      ? `${bankedTokens.toLocaleString()} tokens of it are counted from the thread's session log rather than reported, and a request still running when a cycle ended is not in them.`
+      : "None of that cycle's tokens could be read from the thread's session log either.";
+  return `${dollars} A work cycle ended before Codex reported its usage, so its token count is understated. ${counted}`;
+}
+
+/**
  * Spawn one work cycle.
  *
  * `onSession` fires the moment the stream first names a session, and again if it
@@ -12237,6 +12270,10 @@ export async function startRun(id: string): Promise<void> {
       startLiveTicker();
 
       let res: IterationResult;
+      // What the rollout recorded of this cycle, taken in the `finally` below so
+      // it is read once the child is gone and used after `res` says whether
+      // Codex reported the cycle itself.
+      let codexCycleEnd: ReturnType<typeof endCodexCycle> = null;
       try {
         res = await runIteration(
           id,
@@ -12291,9 +12328,15 @@ export async function startRun(id: string): Promise<void> {
         // The last reading of a Codex cycle, so one shorter than the tick that
         // samples it still leaves a point on the run's context chart.
         if (run.provider === "codex") {
-          const last = endCodexCycle(id);
-          if (last) {
-            sampleCodexContext(id, iterations, last.reading, last.advanced, last.freshThread);
+          codexCycleEnd = endCodexCycle(id);
+          if (codexCycleEnd) {
+            sampleCodexContext(
+              id,
+              iterations,
+              codexCycleEnd.reading,
+              codexCycleEnd.advanced,
+              codexCycleEnd.freshThread,
+            );
           }
         }
         // The child is gone by here on every path this `finally` is reached by,
@@ -12426,6 +12469,31 @@ export async function startRun(id: string): Promise<void> {
       // run's session id names a thread in `$CODEX_HOME/sessions`, which this
       // scan does not look at, so it would answer "no transcripts, therefore no
       // spend" — a nothing that is indistinguishable from a measurement.
+      //
+      // **A Codex cycle has the same hole and a different way to fill it.**
+      // `turn.completed` is the only thing that put its tokens in `spentTokens`
+      // above, so a cycle the live `run_tokens` guard killed, that Stop or the
+      // silence deadline ended, or that ended in `turn.failed`, added nothing
+      // although its rollout had recorded every request. `maxRunTokens` is the
+      // one spending guard a Codex run has and it is read from
+      // `spentTokens + spentEstTokens`, so a run stopped at 120,500 tokens of a
+      // 100,000 limit crossed it again on every reopen. The rollout's running
+      // total is the figure `turn.completed` would have carried, and it goes
+      // where Claude's reconciled estimate goes — apart from the reported
+      // column, which stays what Codex itself said — and into the guard.
+      if (
+        !res.sawResult &&
+        run.provider === "codex" &&
+        codexCycleEnd !== null &&
+        codexCycleEnd.reading.tokens > 0
+      ) {
+        spentEstTokens += codexCycleEnd.reading.tokens;
+        loop.reconciled += 1;
+        log(
+          id,
+          `Codex ended this work cycle before it reported its usage, so ${codexCycleEnd.reading.tokens.toLocaleString()} tokens are counted from the thread's session log rather than reported.`,
+        );
+      }
       if (!res.sawResult && spendIsMeasured) {
         const recovered = await reconcileKilledCycle(sessionId, cycleStartedAt);
         if (recovered) {
@@ -13182,9 +13250,7 @@ export async function startRun(id: string): Promise<void> {
       // substitute for the other.
       stopReason = [
         stopReason,
-        run.provider === "local"
-          ? "This run went to a local model, which Claude Code has no price for, so its spend is unknown rather than $0. Its token count is measured."
-          : `This run was spawned as ${RUN_PROVIDER_LABEL[run.provider ?? "claude"]}, which reports no cost, so its spend is unknown rather than $0. Its token count is measured.`,
+        unmeasuredSpendNotice(run.provider, incompleteIteration, spentEstTokens),
       ]
         .filter(Boolean)
         .join(" ");
@@ -15606,6 +15672,25 @@ function cyclesInFlight(): RunRow[] {
 }
 
 /**
+ * What a cycle no loop came back for spent, from whichever record its provider
+ * keeps. A Codex session id names a thread in `$CODEX_HOME/sessions`, which
+ * `reconcileKilledCycle` does not look in: handed one, it answers "no
+ * transcripts" for a cycle whose rollout recorded every request, and the run
+ * goes on to cross its token limit again with nothing in its log but that the
+ * spend "is missing". Tokens only for Codex, and never a dollar figure.
+ */
+async function interruptedCycleEstimate(
+  run: RunRow,
+): Promise<{ costUSD: number; tokens: number } | null> {
+  if (run.provider !== "codex") {
+    return reconcileKilledCycle(run.session_id, run.active_started_at!);
+  }
+  if (!run.session_id) return null;
+  const reading = readCodexCycleSince(run.session_id, run.active_started_at!);
+  return reading && reading.tokens > 0 ? { costUSD: 0, tokens: reading.tokens } : null;
+}
+
+/**
  * Recover what the interrupted cycles spent, and stop claiming they are open.
  *
  * The mechanism is `reconcileKilledCycle`, which already existed and was
@@ -15649,7 +15734,7 @@ export async function reconcileInterruptedCycles(
   let recovered = 0;
 
   for (const run of cyclesInFlight()) {
-    const est = await reconcileKilledCycle(run.session_id, run.active_started_at!);
+    const est = await interruptedCycleEstimate(run);
 
     // Relative, and guarded on the column the loop clears: whichever of the two
     // writes lands second is a no-op rather than a second charge. The loop's
@@ -15671,7 +15756,15 @@ export async function reconcileInterruptedCycles(
         ? `The server shut down during work cycle ${run.active_iteration ?? "?"}`
         : `The server stopped during work cycle ${run.active_iteration ?? "?"} ` +
           "without shutting down cleanly";
-    if (est) {
+    if (est && run.provider === "codex") {
+      recovered += 1;
+      log(
+        run.id,
+        `${what}. Codex never reported its usage, so ` +
+          `${est.tokens.toLocaleString()} tokens are counted from the ` +
+          "thread's session log rather than reported.",
+      );
+    } else if (est) {
       recovered += 1;
       log(
         run.id,
@@ -15682,7 +15775,9 @@ export async function reconcileInterruptedCycles(
     } else {
       log(
         run.id,
-        `${what} and no transcript records for it could be read, so whatever ` +
+        `${what} and no ${
+          run.provider === "codex" ? "session log" : "transcript"
+        } records for it could be read, so whatever ` +
           "that cycle spent is missing from this run's total.",
       );
     }

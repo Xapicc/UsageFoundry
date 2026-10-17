@@ -61,6 +61,13 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - A Codex run's spend is tokens wherever a report shows spend, and it is never folded into a dollar figure.
 - A loop's cost limit is checked on the guard figure and its card shows the floor with the pass blocks' turns added, and the card says so rather than showing the difference.
 
+## [A Codex cycle that never reports its tokens](metering/codex-killed-cycles.md)
+
+- A Codex cycle's tokens reached `runs.spent_tokens` only through `turn.completed`, so a cycle that ended any other way charged the run nothing, and the one spending guard a Codex run has stopped holding.
+- The loop banks that reading into `spent_tokens_est` when the cycle did not report, and into nothing else.
+- A cycle no loop came back for is read from its thread's rollout, from where it began.
+- The ending says the count is understated, and the sentence outlives the segment that lost the flag.
+
 ## [Attribution by effort, agent and skill](metering/attribution.md)
 
 - Attribution comes from the transcript, not from telemetry.

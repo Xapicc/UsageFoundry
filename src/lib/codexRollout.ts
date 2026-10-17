@@ -115,15 +115,23 @@ export function parseTokenCountLine(line: string): CodexTokenLine | null {
  * was appended after the cycle began — so the newest total *is* the cycle's.
  * A request is counted only when the total grows, which is what keeps a
  * repeated `token_count` from reading as a second request.
+ *
+ * `notBefore` is for a file whose start is not this cycle's and where the cycle
+ * began is known only as an instant: a line stamped earlier belongs to a cycle
+ * that already reported, and its total is that cycle's, not this one's.
  */
 export function foldTokenLines(
   prev: CodexCycleReading,
   lines: readonly string[],
+  notBefore: number | null = null,
 ): CodexCycleReading {
   let next = prev;
   for (const line of lines) {
     const parsed = parseTokenCountLine(line);
     if (!parsed) continue;
+    // A line with no timestamp cannot be placed in the cycle, so it is left out:
+    // the reading is then a floor, never a figure that counts an earlier cycle.
+    if (notBefore !== null && (parsed.at === null || parsed.at < notBefore)) continue;
     if (parsed.cycleTokens <= next.tokens && next.requests > 0) continue;
     next = {
       requests: next.requests + 1,
@@ -199,6 +207,8 @@ interface CycleTrack {
   sampledRequests: number;
   /** Whether the thread is new this cycle, so the file holds nothing older. */
   freshThread: boolean;
+  /** Epoch ms below which a line is an earlier cycle's; null when `offset` already says. */
+  notBefore: number | null;
 }
 
 // A key of its own: nothing else has ever stored this shape.
@@ -240,6 +250,7 @@ export function beginCodexCycle(
     reading: EMPTY_CODEX_READING,
     sampledRequests: 0,
     freshThread: threadId === null,
+    notBefore: null,
   });
 }
 
@@ -286,7 +297,9 @@ function advance(track: CycleTrack, codexHome: string, budget: number): void {
       const complete = cut === -1 ? "" : text.slice(0, cut);
       track.carry = cut === -1 ? text : text.slice(cut + 1);
       if (track.carry.length > MAX_CARRY_CHARS) track.carry = "";
-      if (complete) track.reading = foldTokenLines(track.reading, complete.split("\n"));
+      if (complete) {
+        track.reading = foldTokenLines(track.reading, complete.split("\n"), track.notBefore);
+      }
     }
   } catch {
     // Unreadable this time; the next call tries again from the same offset.
@@ -354,4 +367,42 @@ export function endCodexCycle(
     advanced: track.reading.requests - track.sampledRequests,
     freshThread: track.freshThread,
   };
+}
+
+/**
+ * What a cycle recorded, read by a process that did not run it. Never throws.
+ *
+ * `beginCodexCycle`'s tracker lives in the memory of the process that spawned
+ * the cycle, so a restart that cut the cycle off has nothing to end. The
+ * thread's rollout is still on disk, and `since` — the cycle's own start, which
+ * the run's row keeps for exactly this — is what tells its lines from an
+ * earlier cycle's. Read from the file's tail when it is longer than a final
+ * read allows, because the newest lines are the interrupted cycle's. Null when
+ * the thread has no file, which is not the same answer as "no requests".
+ */
+export function readCodexCycleSince(
+  threadId: string,
+  since: number,
+  codexHome: string = CODEX_HOME,
+): CodexCycleReading | null {
+  const file = findCodexRollout(threadId, codexHome);
+  if (!file) return null;
+  let size: number;
+  try {
+    size = fs.statSync(file).size;
+  } catch {
+    return null;
+  }
+  const track: CycleTrack = {
+    threadId,
+    path: file,
+    offset: Math.max(0, size - FINAL_READ_BYTES),
+    carry: "",
+    reading: EMPTY_CODEX_READING,
+    sampledRequests: 0,
+    freshThread: false,
+    notBefore: since,
+  };
+  advance(track, codexHome, FINAL_READ_BYTES);
+  return track.reading;
 }
