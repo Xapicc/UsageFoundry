@@ -24,7 +24,7 @@ Twenty-two are renderings rather than functions — every `*.test.tsx` in the tr
 |---|---|
 | `branchRival.test.ts` |  |
 | `budget.test.ts` | [harnesses] |
-| `cutOffCheckout.test.ts` |  |
+| `cutOffCheckout.test.ts` | [cycle] |
 | `diff.test.ts` |  |
 | `land.test.ts` | [landing], [merge-queue], [harnesses] |
 | `orchestrator.test.ts` | [cycle], [argv], [ceiling], [pruning], [parsers], [budgets], [pricing], [landing], [merge-queue], [sandbox], [harnesses] |
@@ -49,14 +49,14 @@ Twenty-two are renderings rather than functions — every `*.test.tsx` in the tr
 
 | Test file | Also in |
 |---|---|
-| `fleet.test.ts` | [harnesses] |
+| `fleet.test.ts` | [harnesses], [cycle] |
 | `restartClosedView.test.ts` |  |
 
 ## [Shutdown](testing/shutdown.md)
 
 | Test file | Also in |
 |---|---|
-| `shutdown.test.ts` | [workflows] |
+| `shutdown.test.ts` | [workflows], [cycle] |
 
 ## [Data directory ownership, retention and migrations](testing/data-dir-retention-and-migrations.md)
 
@@ -80,9 +80,9 @@ Twenty-two are renderings rather than functions — every `*.test.tsx` in the tr
 | `formSeed.test.ts` |  |
 | `installSpend.test.ts` | [chat], [harnesses] |
 | `instanceBudget.test.ts` |  |
-| `parksAndRefunds.test.ts` |  |
+| `parksAndRefunds.test.ts` | [cycle] |
 | `resumedCycleSpend.test.ts` |  |
-| `validationGrant.test.ts` |  |
+| `validationGrant.test.ts` | [cycle] |
 
 ## [Pricing and model choice](testing/pricing-and-models.md)
 
@@ -182,7 +182,7 @@ Twenty-two are renderings rather than functions — every `*.test.tsx` in the tr
 | `loopBoardCount.test.ts` |  |
 | `loopMergeOwnership.test.ts` |  |
 | `loopSection.test.ts` | [fleet] |
-| `workflows.test.ts` | [argv], [pricing], [workflows], [decider], [pick-ups] |
+| `workflows.test.ts` | [argv], [pricing], [workflows], [decider], [pick-ups], [cycle] |
 
 Units that are about no test file in the tree:
 
