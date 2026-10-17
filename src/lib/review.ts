@@ -10,7 +10,7 @@ import { agentsArgs, type AgentDefinition } from "./agents";
 import { installBudgetRefusal } from "./installBudget";
 import { clipToolInput } from "./logLine";
 import { dataDirRefusal } from "./serverLock";
-import { getSettings } from "./settings";
+import { getSettings, newWorkPaused } from "./settings";
 import {
   CERTIFICATION_PROMPT_LINES,
   isFrontierReviewModel,
@@ -286,6 +286,12 @@ export type ReviewOutcome =
        * a spent window into a wait.
        */
       busy?: true;
+      /**
+       * Set when the refusal is the install-wide hold on new work, for a caller
+       * that asked for it with `refuseWhileHeld`. Waited out like `busy`: the
+       * lift is what the operator pressed the hold to wait for.
+       */
+      held?: true;
     };
 
 /**
@@ -311,6 +317,15 @@ export async function startReview(
      * get a billed reviewer started into a workflow already stopped.
      */
     stillWanted?: () => boolean;
+    /**
+     * Refuse while new work is held, asked beside `stillWanted` after the last
+     * `await`. A workflow's review block passes it: its reviews are billed
+     * children nobody pressed for, which is what the hold stops, and its own
+     * door asked before the diff, the window scan and the checkout were read,
+     * so a hold pressed meanwhile was never asked about. Not asked of the Review
+     * button, which is somebody pressing for one.
+     */
+    refuseWhileHeld?: boolean;
     /**
      * Refuse rather than review on a model that is not a frontier one. A
      * workflow's review block words a rejection "by the frontier review" and
@@ -362,6 +377,13 @@ export async function startReview(
 
   if (opts.stillWanted && !opts.stillWanted()) {
     return { ok: false, reason: "The review was no longer wanted by the time it could start." };
+  }
+  if (opts.refuseWhileHeld && newWorkPaused()) {
+    return {
+      ok: false,
+      reason: "New work is held across this install, so no review is started until the hold is lifted.",
+      held: true,
+    };
   }
 
   // Last, with no `await` between it and `startAssist`, which reads the setting

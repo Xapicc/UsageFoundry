@@ -9272,6 +9272,7 @@ async function driveReviewItem(
       requireVerdict: true,
       requireFrontier: true,
       stillWanted: open,
+      refuseWhileHeld: true,
     });
     if (!started.ok) {
       // A halt while the review was being prepared: `stillWanted` refused it
@@ -9282,8 +9283,10 @@ async function driveReviewItem(
       // while the diff is read. So `startReview`'s own door can still find the
       // queue full, and that is the same shortage, waited out the same way. Only
       // the budget is `busy` — a spent window or install limit is an answer, and
-      // a halt or a shutdown ends this wait at the top of the loop.
-      if (started.busy) {
+      // a halt or a shutdown ends this wait at the top of the loop. The hold is
+      // asked again there too, after its last await, since one pressed while the
+      // diff was read passed the check above: `held`, waited out for the lift.
+      if (started.busy || started.held) {
         await pause();
         continue;
       }

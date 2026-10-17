@@ -597,6 +597,50 @@ describe("a review block whose workflow is halted", () => {
   });
 });
 
+describe("a review block while the install's new work is held", () => {
+  it("spawns no reviewer when the hold lands while the review is being prepared, and reviews on the lift", async () => {
+    // The halt case above with the halt replaced by the hold: pressed inside
+    // `startReview`'s own snapshot read, after `driveReviewItem`'s door asked
+    // `newWorkPaused()` and before the child would be spawned.
+    const settings = await import("./settings");
+    reviewScene("inst-hold-gap", {
+      runs: [{ id: "hold-gap-origin", prompt: "Do it. APPROVE-ME", branch: "uf/repo-good" }],
+    });
+    let pressed = false;
+    duringSnapshot = () => {
+      if (workflows.reviewItemsOf("inst-hold-gap", "r").length === 0) return false;
+      settings.setNewWorkPaused(true);
+      pressed = true;
+      return true;
+    };
+    const driving = workflows.startReviewBlock("inst-hold-gap", "r", ["hold-gap-origin"]);
+    try {
+      await until("the hold to be pressed", () => pressed);
+      // Long enough for a stub reviewer spawned past the hold to have finished.
+      await sleep(1_500);
+      assert.deepEqual(
+        reviewsOf("hold-gap-origin").map((r) => r.status),
+        [],
+        "a billed reviewer was spawned after the operator held new work",
+      );
+      assert.deepEqual(
+        workflows.reviewItemsOf("inst-hold-gap", "r").map((i) => [i.status, i.note]),
+        [["reviewing", null]],
+        "the branch was set aside over the hold rather than waiting for the lift",
+      );
+    } finally {
+      duringSnapshot = null;
+      settings.setNewWorkPaused(false);
+      await settledWithin(driving, 30_000, "startReviewBlock");
+    }
+    assert.deepEqual(
+      workflows.reviewItemsOf("inst-hold-gap", "r").map((i) => [i.status, i.note]),
+      [["approved", null]],
+    );
+    assert.equal(reviewsOf("hold-gap-origin").length, 1, "the lift started the one review");
+  });
+});
+
 describe("a review block and its workflow's limit", () => {
   it("counts a finished review in the guard figure while the block is still working", async () => {
     reviewScene("inst-mid", {
