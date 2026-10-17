@@ -106,6 +106,15 @@
   or MCP door met an operator-held task outside `tasks.test.ts`. (The
   2026-09-26 entry's "the operator cannot claim" was the rule then.)
 
+- **A save that leaves the project alone keeps it, in a browser, 2026-10-17**,
+  standalone build at `2bb95b6a`, scratch `DATA_DIR` and mount, Chromium at
+  1280. A task on the mount root (form drew folder "— pick a folder —") and one
+  whose folder was removed after filing were each retitled on their page with
+  Save changes: both PATCH bodies carried no `mountId`/`folder`, both answered
+  200, and both rows kept their stored pair. Picking another folder in the same
+  form sent and stored it, and a retitle after that sent no pair. No console
+  error. Caveat: 390px, the ascii skin and an absent mount were not rendered.
+
 ## Not yet verified by hand
 
 - **No model has called the board tools over stdio**; that needs a billed run.
