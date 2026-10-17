@@ -426,8 +426,10 @@ export const ADMIN_API_KEY = optionalEnv("ANTHROPIC_ADMIN_KEY");
  * this app runs, and those children execute repository-controlled code —
  * `worktree add` fires `post-checkout`, `merge` fires `pre-merge-commit`. A
  * token named `GH_TOKEN` in the environment of this server would be inherited
- * by all of them. Named this way it reaches exactly one place, because
- * `githubEnv()` puts it there on purpose.
+ * by all of them — which is why every child-environment strip also drops
+ * `GH_TOKEN` and `GITHUB_TOKEN` by name, and one set there reaches no child at
+ * all. Named this way it reaches exactly one place, because `githubEnv()` puts
+ * it there on purpose.
  *
  * Almost nothing this app itself does with git touches the network: the
  * exceptions are presses — Deliver's push, and the project view's push (an

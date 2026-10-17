@@ -350,6 +350,8 @@ function codexAuthEnv(): NodeJS.ProcessEnv {
       key.startsWith("OTEL_") ||
       key === "ANTHROPIC_ADMIN_KEY" ||
       key === "CODEX_ACCESS_TOKEN" ||
+      key === "GH_TOKEN" ||
+      key === "GITHUB_TOKEN" ||
       key === "CLAUDE_CODE_ENABLE_TELEMETRY" ||
       key === "DATA_DIR" ||
       key === "NODE_OPTIONS"

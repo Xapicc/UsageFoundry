@@ -77,6 +77,8 @@ export function gitEnv(): NodeJS.ProcessEnv {
       k === "OPENAI_API_KEY" ||
       k === "CODEX_API_KEY" ||
       k === "CODEX_ACCESS_TOKEN" ||
+      k === "GH_TOKEN" ||
+      k === "GITHUB_TOKEN" ||
       k === "CLAUDE_CODE_ENABLE_TELEMETRY" ||
       k === "DATA_DIR" ||
       k === "NODE_OPTIONS"
