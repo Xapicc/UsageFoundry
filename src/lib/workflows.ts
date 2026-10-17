@@ -5522,6 +5522,7 @@ export function reviveBlockedBlocks(roots: readonly string[]): number {
       instance,
       members.map((m) => m.nodeId),
     );
+    withdrawHoldsBehind(instance, members);
     // A root inside a pass has no node of the graph to walk from — its id is
     // the pass's, not the section's — so what its ending wrote off is the rest
     // of its pass and, when that pass stopped the loop, the loop itself. A
@@ -5572,6 +5573,51 @@ function reviveGraphDependents(
     revived += reopen.run(instance.id, nodeId).changes;
   }
   return revived;
+}
+
+/**
+ * Take back the hold on each gate directly behind a run that has just been
+ * picked up, so the instance page stops offering Continue the moment the pick-up
+ * happens rather than at the next advance, which is the whole of the redo away.
+ *
+ * `advanceInstance` and `stepPass` withdraw a hold whenever the plan stops
+ * listing it, and that stays the rule; this is only the earlier moment. Nothing
+ * advances an instance when a run is queued, and a gate behind a run is not a
+ * blocked row the revive above can wake, so without it a pick-up left a held gate
+ * with its button until some other run ended. Only the gates the run's own node
+ * has an edge to: further down, everything waits on one of those and was never
+ * reached on this run's ending alone. A pass member reaches only the gates of
+ * its own pass, which are rows of their own.
+ */
+function withdrawHoldsBehind(
+  instance: WorkflowInstance,
+  members: ReadonlyArray<{ memberId: string; nodeId: string }>,
+): void {
+  const gatesBehind = (graph: WorkflowGraph, fromIds: ReadonlySet<string>): string[] =>
+    graph.edges
+      .filter((e) => isDependencyEdge(e) && fromIds.has(e.from))
+      .map((e) => e.to)
+      .filter((to) => graph.nodes.some((n) => n.id === to && n.kind === "gate"));
+
+  const topLevel = new Set<string>();
+  for (const member of members) {
+    const inPass = passMemberIn(instance.graph, member.memberId);
+    if (!inPass) {
+      topLevel.add(member.nodeId);
+      continue;
+    }
+    const loop = instance.graph.nodes.find((n) => n.id === inPass.loopNodeId);
+    if (!loop || !inPass.bodyNodeId) continue;
+    const section = loopSection(instance.graph, loop);
+    withdrawGateHolds(
+      instance.id,
+      gatesBehind(section.graph, new Set([inPass.bodyNodeId])).map((gateId) =>
+        passMemberId(inPass.loopNodeId, inPass.pass, gateId),
+      ),
+      [],
+    );
+  }
+  withdrawGateHolds(instance.id, gatesBehind(instance.graph, topLevel), []);
 }
 
 /** The distinct passes a set of member ids belongs to. */
@@ -6441,6 +6487,11 @@ function advanceInstance(instanceId: string): void {
   // and a gate that waited for any of them to clear would be a person not told
   // that the workflow had stopped for them.
   for (const nodeId of step.hold) holdGate(instance, nodeId);
+  withdrawGateHolds(
+    instanceId,
+    instance.graph.nodes.filter((n) => n.kind === "gate").map((n) => n.id),
+    step.hold,
+  );
 
   // Claimed synchronously, spawned after. The claim is what makes this
   // re-entrant safe; the spawn is what makes it worth doing.
@@ -6733,6 +6784,43 @@ function holdGate(instance: WorkflowInstance, nodeId: string): boolean {
   if (changed !== 1) return false;
   notifyGateHeld({ instanceId: instance.id, workflowId: instance.workflowId });
   return true;
+}
+
+/**
+ * Take back the hold on every gate the plan no longer lists, so that a gate is
+ * reached when its predecessors are satisfied *now* and not when they once were.
+ *
+ * `held_at` says "reached", and `holdGate`'s guard on it is the *once* — so
+ * without this a gate stayed reached for ever. A run in front of a held gate that
+ * is picked up again (`completed` is reopenable) is a new wait: the plan reads its
+ * edge as pending, but the gate kept its `held_at`, so the page went on offering
+ * Continue, `continueGate` released what was behind it beside a run mid-redo, and
+ * when the run ended again `holdGate` was a no-op and nobody was told. Clearing it
+ * here is `reviveBlockedBlocks`' treatment of a gate put back — a gate not yet
+ * seen is held, and announced, afresh — applied to one that was never blocked.
+ *
+ * `gateIds` is every gate this call's plan covers and `held` the ones it still
+ * lists, in the same id space: a top-level plan must not reach a loop's pass
+ * members and a pass's plan must reach only its own, or one plan would clear the
+ * hold another had just written. Guarded on `waiting`, so a gate Continue let
+ * through, or a halt wrote off, keeps its answer. Returns whether any row changed.
+ */
+function withdrawGateHolds(
+  instanceId: string,
+  gateIds: readonly string[],
+  held: readonly string[],
+): boolean {
+  const withdraw = db().prepare(
+    "UPDATE workflow_instance_blocks SET held_at=NULL" +
+      " WHERE instance_id=? AND node_id=? AND kind='gate'" +
+      " AND status='waiting' AND held_at IS NOT NULL",
+  );
+  let changed = false;
+  for (const nodeId of gateIds) {
+    if (held.includes(nodeId)) continue;
+    if (withdraw.run(instanceId, nodeId).changes === 1) changed = true;
+  }
+  return changed;
 }
 
 /**
@@ -7471,6 +7559,17 @@ function stepPass(
   // it still is.
   for (const nodeId of step.hold) {
     if (holdGate(instance, memberId(nodeId))) wrote = true;
+  }
+  // A withdrawn hold is a write too: the pass is no longer waiting on a person,
+  // and the step that follows must read it as the pass it now is.
+  if (
+    withdrawGateHolds(
+      instanceId,
+      section.nodes.filter((n) => n.kind === "gate").map((n) => memberId(n.id)),
+      step.hold.map(memberId),
+    )
+  ) {
+    wrote = true;
   }
 
   // Held as `advanceInstance`'s review claims are, and for their reason.
