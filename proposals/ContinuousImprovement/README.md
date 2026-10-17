@@ -5,6 +5,24 @@ injection measured behind a holdout — not a memory.** Eleven options for stopp
 earlier run already established, weighed against 294 runs of one install's own
 database, and refused in five cases on arithmetic taken from that database.
 
+## What has been built, 2026-10-17
+
+Phase 0 and Phase 2 of [17-implementation-sketch.md](17-implementation-sketch.md),
+on branch `uf/usagefoundry-721638d11c0b-22`. Phases 1 and 3 — the readout and
+the prior-read pointer behind its holdout — are not built; the run chained after
+this one is to build them on the same branch.
+
+| Item | Outcome | Where |
+|---|---|---|
+| 0a `repo_root` on every run | **Already solved another way.** `runs.folder_repo` is written for every run at `createRun` (and at a waiting run's release), synchronously, and `repoSpend.ts` groups on `COALESCE(folder_repo, repo_root)`. `repo_root` left alone. | `src/lib/db.ts`, `src/lib/repoSpend.ts` |
+| 0b the twenty `reported_done = 0` rows | **Decided against the data repair.** It would change what a pick-up of one of them sends (the continuation and `NEEDS_REVIEW_NOTICE` today, the DONE pushback after) and the run page's Resume, and its `WHERE` is a parse of `stop_reason`. `ending_code` is the field a count of finished runs reads instead, and it files those rows as unknown. | `docs/agent/run-lifecycle/ending-code.md` |
+| 0c `priorWorkNotice` | **Already solved: reachable.** Three restarts added since the survey reach the session-less branch with cycles behind it; `resumeMissingTranscript.test.ts` drives one. Its docblock was moved back above it, saying so. | `e5c5ef3f` |
+| 0d hooks invisible | **Built.** `--include-hook-events` on every cycle; `hookInjection` logs what reached the model from any event; the lifecycle rows that carry nothing are not stored. Unfiltered it would have grown a median cycle's log about 2.7-fold. | `2d84770f` |
+| 0e the cycle's prompt | **Built.** A "Prompt" `Disclosure` under each work cycle's row on the run page. | `90e4e143` |
+| Phase 2 `ending_code` | **Built.** One closed `RunEndingCode` union, written at every branch that settles a final status, null on parks and older rows, cleared on pick-up; on the run DTO, MCP `list_runs` / `get_run`, the runs list and the run page. | `8e0ab6ee`, `a66dac5c` |
+
+The measurements are in `docs/verification/run-lifecycle-hooks-and-endings.md`.
+
 ## The recommendation
 
 **Build the readout — Option A, with Option F's contention card as its third
@@ -137,7 +155,8 @@ over eleven arguments.
 ## Five repairs this survey found while looking for something else
 
 Each is independent of whether any option ships, and each is argued in
-[16-recommendation.md](16-recommendation.md).
+[16-recommendation.md](16-recommendation.md). What became of each is in
+*What has been built* above; the list stays as the survey wrote it.
 
 1. **`runs.repo_root` is not a repository field** — written only where isolation
    resolved to a worktree, so 51 of 294 runs carry NULL and `$645.28` lands in
