@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 // Relative, not "@/…", so `jsonObjectBody.test.ts` can load this handler —
 // `../route.ts` gives the reason.
 import { getChat, sendChatMessage } from "../../../../../lib/chat";
-import { readJsonObject } from "../../../../../lib/http";
+import { optionalStringField, readJsonObject } from "../../../../../lib/http";
 import { chatDTO } from "../../dto";
 import { auditMutation } from "../../../../../lib/requestLog";
 
@@ -23,9 +23,12 @@ async function postHandler(req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
   const read = await readJsonObject(req);
   if (!read.ok) return read.response;
-  const body = read.body;
+  // `String()` here sent an object as "[object Object]" and an array joined
+  // with commas, each as a billed turn on words nobody wrote.
+  const message = optionalStringField(read.body, "message");
+  if (!message.ok) return NextResponse.json({ error: message.error }, { status: 400 });
 
-  const res = await sendChatMessage(id, String(body.message ?? ""));
+  const res = await sendChatMessage(id, message.value ?? "");
   if (!res.ok) {
     return NextResponse.json({ error: res.reason }, { status: 400 });
   }

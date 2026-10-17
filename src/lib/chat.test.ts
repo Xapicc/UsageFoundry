@@ -1936,9 +1936,9 @@ describe("answerMessage", () => {
 
 describe("settleQuestions", () => {
   const open = [
-    { id: "q1", question: "Which package manager?" },
-    { id: "q2", question: "Should it push?" },
-    { id: "q3", question: "Which folder?" },
+    { id: "q1", question: "Which package manager?", choices: "[]", allow_text: 1 },
+    { id: "q2", question: "Should it push?", choices: "[]", allow_text: 1 },
+    { id: "q3", question: "Which folder?", choices: "[]", allow_text: 1 },
   ];
 
   it("carries every open question into the message, answered or not", () => {
@@ -1983,6 +1983,35 @@ describe("settleQuestions", () => {
       { id: "q1", answer: "npm" },
     ]);
     assert.equal(twice.ok, false);
+  });
+
+  it("takes only an offered choice for a question asked without a typed answer", () => {
+    // The model asked a pick-one to bound the answer. Free text settled as its
+    // answer is a reply nobody offered, read back to the model as though it was.
+    const pickOne = [
+      { id: "q1", question: "Which package manager?", choices: '["pnpm","npm"]', allow_text: 0 },
+      { id: "q2", question: "Anything else?", choices: "[]", allow_text: 1 },
+    ];
+    const typed = settleQuestions(pickOne, [
+      { id: "q1", answer: "yarn, and delete the lockfile" },
+      { id: "q2", answer: "no" },
+    ]);
+    assert.equal(typed.ok, false);
+    if (typed.ok) return;
+    assert.match(typed.reason, /Question 1 takes one of the choices it offered/);
+
+    const picked = settleQuestions(pickOne, [{ id: "q1", answer: "pnpm" }]);
+    assert.equal(picked.ok, true);
+    if (!picked.ok) return;
+    assert.deepEqual(picked.answered, [{ id: "q1", answer: "pnpm" }]);
+
+    // An unreadable list is no choices, so the question is unanswerable rather
+    // than answerable with anything at all.
+    const unreadable = settleQuestions(
+      [{ id: "q1", question: "Which package manager?", choices: "not json", allow_text: 0 }],
+      [{ id: "q1", answer: "pnpm" }],
+    );
+    assert.equal(unreadable.ok, false);
   });
 });
 
@@ -2122,6 +2151,32 @@ describe("what a message does to an open question", () => {
     if (res.ok) return;
     assert.match(res.reason, /no longer waiting/);
     assert.equal(spawnCount - before, 0);
+  });
+
+  it("refuses a typed answer to a choices-only question and starts no turn", async () => {
+    const chat = createChat();
+    const [question] = createQuestions(chat.id, [
+      { question: "Which package manager?", choices: ["pnpm", "npm"], allowText: false },
+    ]);
+
+    const before = spawnCount;
+    const typed = await answerChatQuestions(chat.id, [
+      { id: question.id, answer: "yarn, and delete the lockfile" },
+    ]);
+    assert.equal(typed.ok, false);
+    assert.equal(spawnCount - before, 0);
+    assert.equal(listQuestions(chat.id)[0].status, "pending");
+    assert.equal(listMessages(chat.id).length, 0, "a refused answer wrote nothing");
+
+    // The choice it offered still settles it, padded the way a client may send it.
+    const picked = await answerChatQuestions(chat.id, [{ id: question.id, answer: " pnpm " }]);
+    assert.equal(picked.ok, true);
+    assert.equal(spawnCount - before, 1);
+    const [row] = listQuestions(chat.id);
+    assert.equal(row.status, "answered");
+    assert.equal(row.answer, "pnpm");
+
+    await settle();
   });
 });
 

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 // Relative, not "@/…", so `jsonObjectBody.test.ts` can load this handler —
 // `../route.ts` gives the reason.
 import { answerChatQuestions, getChat } from "../../../../../lib/chat";
-import { readJsonObject } from "../../../../../lib/http";
+import { isJsonObject, notStringRefusal, readJsonObject } from "../../../../../lib/http";
 import { chatDTO } from "../../dto";
 import { auditMutation } from "../../../../../lib/requestLog";
 
@@ -41,13 +41,24 @@ async function postHandler(req: Request, ctx: Ctx) {
 
   // Read off the wire in the shape the page holds it: one entry per question
   // the operator touched. Anything unreadable becomes an empty list, which is
-  // the refusal below rather than a silent partial answer.
-  const answers = (Array.isArray(body.answers) ? body.answers : []).map(
-    (entry) => {
-      const a = (entry ?? {}) as Record<string, unknown>;
-      return { id: String(a.id ?? ""), answer: String(a.answer ?? "") };
-    },
-  );
+  // the refusal below rather than a silent partial answer. A field that is not
+  // text is refused by position rather than through `String()`, which settled
+  // the question as answered with "[object Object]" and quoted that to the model.
+  const sent: unknown[] = Array.isArray(body.answers) ? body.answers : [];
+  const answers: { id: string; answer: string }[] = [];
+  for (const [index, entry] of sent.entries()) {
+    const a: Record<string, unknown> = isJsonObject(entry) ? entry : {};
+    for (const field of ["id", "answer"]) {
+      const problem = notStringRefusal(field, a[field]);
+      if (problem) {
+        return NextResponse.json({ error: `Answer ${index + 1}: ${problem}` }, { status: 400 });
+      }
+    }
+    answers.push({
+      id: typeof a.id === "string" ? a.id : "",
+      answer: typeof a.answer === "string" ? a.answer : "",
+    });
+  }
 
   const res = await answerChatQuestions(id, answers);
   if (!res.ok) {

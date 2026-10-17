@@ -1052,6 +1052,12 @@ export type QuestionSettlement =
  * is to ask it again — a second turn and a second billed window for something
  * the operator has already declined once.
  *
+ * **A question asked without `allow_text` takes one of its choices, exactly.**
+ * The model asked a pick-one to bound the answer, and free text settled as its
+ * answer is a reply it never offered, read as though it had. `questionChoices`
+ * reads an unreadable list as none, so such a question is then unanswerable
+ * here, which is the direction its comment says that reading fails safe in.
+ *
  * What is deliberately *not* here is the supersede rule. Nothing an operator
  * sends leaves a question open, and that is enforced by a single
  * `WHERE status='pending'` UPDATE in `settleOpenQuestions` covering both doors —
@@ -1059,13 +1065,14 @@ export type QuestionSettlement =
  * query, so it is pinned against a database rather than here.
  */
 export function settleQuestions(
-  open: ReadonlyArray<Pick<ChatQuestionRow, "id" | "question">>,
+  open: ReadonlyArray<Pick<ChatQuestionRow, "id" | "question" | "choices" | "allow_text">>,
   answering: ReadonlyArray<QuestionAnswer>,
 ): QuestionSettlement {
   const byId = new Map<string, string>();
-  const ids = new Set(open.map((q) => q.id));
+  const position = new Map(open.map((q, index) => [q.id, index]));
   for (const { id, answer } of answering) {
-    if (!ids.has(id)) {
+    const at = position.get(id);
+    if (at === undefined) {
       return {
         ok: false,
         reason:
@@ -1076,6 +1083,15 @@ export function settleQuestions(
     }
     if (byId.has(id)) {
       return { ok: false, reason: "That question was answered twice in one request." };
+    }
+    const asked = open[at];
+    if (!asked.allow_text && !questionChoices(asked).includes(answer)) {
+      return {
+        ok: false,
+        reason:
+          `Question ${at + 1} takes one of the choices it offered and no typed ` +
+          "answer, and that answer is not one of them, so nothing was sent.",
+      };
     }
     byId.set(id, answer);
   }

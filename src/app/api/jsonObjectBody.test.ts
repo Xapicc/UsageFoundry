@@ -370,3 +370,47 @@ test("POST /api/runs/[id]/reopen refuses a follow-up that is not a string", asyn
   assert.match(String(reply.error), /"followUp" has to be a string when it is given; got an object/);
   assert.equal(await runStatus(runId), "stopped");
 });
+
+// `String()` sent an object as "[object Object]" and an array joined with
+// commas, each as a billed chat turn. Nothing here can spawn — the binary does
+// not exist — so what is asserted is that nothing was written to the thread,
+// which `sendChatMessage` does before it claims the turn.
+for (const { got, message } of [
+  { got: "an object", message: { text: "fix the parser" } },
+  { got: "an array", message: ["use pnpm", "and push"] },
+]) {
+  test(`POST /api/chat/[id]/message refuses a message that is ${got}, and starts no turn`, async () => {
+    const { POST } = await import("./chat/[id]/message/route");
+    const chat = await import("../../lib/chat");
+    const id = chat.createChat().id;
+    const reply = await send(POST, "POST", `/api/chat/${id}/message`, id, JSON.stringify({ message }));
+
+    assert.equal(reply.status, 400, String(reply.error));
+    assert.match(String(reply.error), new RegExp(`"message" has to be a string when it is given; got ${got}`));
+    assert.deepEqual(chat.listMessages(id), [], "a refused message reached the thread");
+    assert.equal(chat.getChat(id)?.status, "idle");
+  });
+}
+
+// The same `String()` settled the question as answered with "[object Object]"
+// and quoted that to the model as the operator's answer.
+test("POST /api/chat/[id]/questions refuses an id or answer that is not a string, and settles nothing", async () => {
+  const { POST } = await import("./chat/[id]/questions/route");
+  const chat = await import("../../lib/chat");
+  const id = chat.createChat().id;
+  const [question] = chat.createQuestions(id, [
+    { question: "Which package manager?", choices: ["pnpm", "npm"], allowText: false },
+  ]);
+
+  for (const { field, got, answer } of [
+    { field: "answer", got: "an object", answer: { id: question.id, answer: { choice: "pnpm" } } },
+    { field: "answer", got: "an array", answer: { id: question.id, answer: ["pnpm"] } },
+    { field: "id", got: "an array", answer: { id: [question.id], answer: "pnpm" } },
+  ]) {
+    const reply = await send(POST, "POST", `/api/chat/${id}/questions`, id, JSON.stringify({ answers: [answer] }));
+    assert.equal(reply.status, 400, `${JSON.stringify(answer)}: ${String(reply.error)}`);
+    assert.match(String(reply.error), new RegExp(`^Answer 1: "${field}" has to be a string when it is given; got ${got}`));
+  }
+  assert.equal(chat.listQuestions(id)[0].status, "pending");
+  assert.deepEqual(chat.listMessages(id), [], "a refused answer reached the thread");
+});
