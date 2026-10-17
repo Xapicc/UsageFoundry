@@ -14,12 +14,16 @@ import { after, describe, it, mock } from "node:test";
  * open the way the real CLI does while it waits for a code. `STUB_HOLD`, read
  * at spawn time, makes it wait for that file before printing;
  * `STUB_EXIT_AFTER_LINK` makes it leave on its own once it has printed, the
- * way a CLI that hit a network error or crashed does.
+ * way a CLI that hit a network error or crashed does. Every line it reads goes
+ * into `received.log` against its pid; under `STUB_EXCHANGE` it redeems only
+ * `code-<its own pid>` and fails anything else the way a verifier mismatch
+ * does, with a 400 and an exit.
  */
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-claude-auth-")));
 const pidsDir = path.join(tmp, "pids");
 fs.mkdirSync(pidsDir);
 const stub = path.join(tmp, "claude");
+const receivedLog = path.join(tmp, "received.log");
 fs.writeFileSync(
   stub,
   [
@@ -28,7 +32,13 @@ fs.writeFileSync(
     'if [ -n "$STUB_HOLD" ]; then while [ ! -e "$STUB_HOLD" ]; do sleep 0.02; done; fi',
     'echo "Open https://claude.ai/oauth/authorize?state=$$"',
     'if [ -n "$STUB_EXIT_AFTER_LINK" ]; then sleep 0.2; exit 0; fi',
-    "while read line; do :; done",
+    "while read line; do",
+    `  echo "$$ got $line" >> "${receivedLog}"`,
+    '  if [ -n "$STUB_EXCHANGE" ]; then',
+    '    if [ "$line" = "code-$$" ]; then exit 0; fi',
+    '    echo "Login failed: Request failed with status code 400"; exit 1',
+    "  fi",
+    "done",
     "",
   ].join("\n"),
   { mode: 0o755 },
@@ -418,12 +428,48 @@ describe("the sign-in child's exit", () => {
       const started = await beginLogin();
       assert.ok(started.ok, JSON.stringify(started));
       // The stub reads the code and says nothing, so only the cancel ends it.
-      const submit = submitCode("code-whatever");
+      const submit = submitCode("code-whatever", started.value.loginId);
       await realDelay(300);
       cancelLogin();
       const outcome = await submit;
       assert.equal(outcome.ok, false);
     });
     assert.equal(left, 0, "an interval outlived the submit it was polling for");
+  });
+});
+
+/**
+ * A second start kills the first child and mints a new verifier, so a code
+ * from the first link can be redeemed by nothing. Written to whichever child
+ * was pending, it was spent on the newer sign-in's one exchange, which failed
+ * on the mismatch and ended that sign-in too — both dead, and the error about
+ * the one the operator was not using.
+ */
+describe("a code pasted from a superseded sign-in link", () => {
+  it("is refused before any child reads it, and the newer sign-in stays live", async () => {
+    process.env.STUB_EXCHANGE = "1";
+    try {
+      const first = await beginLogin();
+      const second = await beginLogin();
+      assert.ok(first.ok && second.ok, JSON.stringify([first, second]));
+      const firstPid = pidOf(first.value.url);
+      const secondPid = pidOf(second.value.url);
+
+      const outcome = await submitCode(`code-${firstPid}`, first.value.loginId);
+      const received = fs.existsSync(receivedLog) ? fs.readFileSync(receivedLog, "utf8") : "";
+      assert.ok(
+        !received.includes(`${secondPid} got`),
+        `the newer sign-in's child was handed the stale link's code: ${received}`,
+      );
+      assert.equal(!outcome.ok && outcome.stillPending, true, JSON.stringify(outcome));
+      assert.equal(pendingLogin()?.url, second.value.url);
+
+      // And its own code still redeems it.
+      const live = await submitCode(`code-${secondPid}`, second.value.loginId);
+      assert.ok(live.ok, JSON.stringify(live));
+    } finally {
+      delete process.env.STUB_EXCHANGE;
+      cancelLogin();
+    }
   });
 });

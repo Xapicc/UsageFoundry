@@ -3,6 +3,7 @@ import {
   type ChildProcess,
   type SpawnOptions,
 } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { CLAUDE_BIN, spawnCommand } from "./config";
 import { childCredentials } from "./privsep";
 import { agentEnvironment } from "./stacks";
@@ -86,6 +87,8 @@ const COMMAND_TIMEOUT_MS = 30_000;
 const CAPTURE_LIMIT = 16_384;
 
 interface PendingLogin {
+  /** What a code must name to be written to this child. See `submitCode`. */
+  id: string;
   child: ChildProcess;
   url: string;
   startedAt: number;
@@ -420,9 +423,13 @@ async function statusOnce(): Promise<ClaudeAuthResult<ClaudeAuthStatus>> {
 }
 
 /** Is a login waiting for its code right now? */
-export function pendingLogin(): { url: string; startedAt: number } | null {
+export function pendingLogin(): {
+  url: string;
+  startedAt: number;
+  loginId: string;
+} | null {
   const p = store.__ufClaudeLogin;
-  return p ? { url: p.url, startedAt: p.startedAt } : null;
+  return p ? { url: p.url, startedAt: p.startedAt, loginId: p.id } : null;
 }
 
 /**
@@ -455,11 +462,12 @@ export function cancelLogin(): void {
  * docblock says why the two must not share a status.
  */
 export type StartOutcome =
-  | { ok: true; value: { url: string } }
+  | { ok: true; value: { url: string; loginId: string } }
   | { ok: false; error: string; superseded: boolean };
 
 /**
- * Start a login and return the URL to open.
+ * Start a login and return the URL to open, and the id a code from it must
+ * name.
  *
  * The child stays alive afterwards, holding the verifier, until `submitCode`
  * feeds it a line or something cancels it.
@@ -529,6 +537,7 @@ export async function beginLogin(): Promise<StartOutcome> {
   timer.unref?.();
 
   const pending: PendingLogin = {
+    id: randomUUID(),
     child,
     url: url.value,
     startedAt: Date.now(),
@@ -548,7 +557,7 @@ export async function beginLogin(): Promise<StartOutcome> {
     clearTimeout(timer);
   });
 
-  return { ok: true, value: { url: url.value } };
+  return { ok: true, value: { url: url.value, loginId: pending.id } };
 }
 
 /** Poll the captured output until the URL appears, the child dies, or we give up. */
@@ -638,8 +647,17 @@ const REJECTION_GRACE_MS = 1_500;
  *
  * The child owns the exchange — it holds the verifier, it writes the credential
  * — so success here is its exit code and nothing this module computes.
+ *
+ * `loginId` is the start's, and a code naming any other is refused before a
+ * child reads a byte. A newer start replaces the child and the verifier, so a
+ * code from the replaced link — another tab, a reload, a second client — was
+ * written to the newer child, which spent its one exchange failing on it: both
+ * sign-ins dead, and the error about the one the operator was not using.
  */
-export async function submitCode(input: unknown): Promise<SubmitOutcome> {
+export async function submitCode(
+  input: unknown,
+  loginId: unknown,
+): Promise<SubmitOutcome> {
   const code = normalizeCode(input);
   if (!code.ok) return { ok: false, error: code.error, stillPending: true };
 
@@ -649,6 +667,14 @@ export async function submitCode(input: unknown): Promise<SubmitOutcome> {
       ok: false,
       error: "That sign-in has expired or was cancelled. Start it again.",
       stillPending: false,
+    };
+  }
+
+  if (loginId !== pending.id) {
+    return {
+      ok: false,
+      error: "That code is from a sign-in link a newer one replaced. Open the link shown now and paste its code.",
+      stillPending: true,
     };
   }
 

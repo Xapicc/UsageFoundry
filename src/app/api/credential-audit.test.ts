@@ -299,6 +299,16 @@ async function until(check: () => boolean, what: string): Promise<void> {
   }
 }
 
+/**
+ * Start a Claude sign-in and return the id its code has to be sent beside:
+ * `login/code` refuses a code that names any sign-in but the pending one.
+ */
+async function startClaudeSignIn(): Promise<string> {
+  const res = await claudeLogin.POST(post("http://localhost/api/claude-auth/login"));
+  assert.equal(res.status, 200);
+  return ((await res.json()) as { loginId: string }).loginId;
+}
+
 function post(url: string, body?: unknown): Request {
   return new Request(url, {
     method: "POST",
@@ -314,10 +324,7 @@ function post(url: string, body?: unknown): Request {
 
 describe("a provider credential that changed leaves a durable row", () => {
   it("names the provider and the method a Claude sign-in landed", async () => {
-    assert.equal(
-      (await claudeLogin.POST(post("http://localhost/api/claude-auth/login"))).status,
-      200,
-    );
+    const loginId = await startClaudeSignIn();
     // The link and the code are two presses that may be minutes apart, so they
     // are two rows: a trail with only the completion cannot say when the link
     // was minted or how many were.
@@ -329,7 +336,7 @@ describe("a provider credential that changed leaves a durable row", () => {
 
     process.env.CLAUDE_STUB_LOGGED_IN = "1";
     const res = await claudeCode.POST(
-      post("http://localhost/api/claude-auth/login/code", { code: CODE }),
+      post("http://localhost/api/claude-auth/login/code", { code: CODE, loginId }),
     );
     assert.equal(res.status, 200);
 
@@ -346,9 +353,9 @@ describe("a provider credential that changed leaves a durable row", () => {
 
   it("carries neither the authorize code nor the API key into either table", async () => {
     process.env.CLAUDE_STUB_LOGGED_IN = "1";
-    await claudeLogin.POST(post("http://localhost/api/claude-auth/login"));
+    const loginId = await startClaudeSignIn();
     await claudeCode.POST(
-      post("http://localhost/api/claude-auth/login/code", { code: CODE }),
+      post("http://localhost/api/claude-auth/login/code", { code: CODE, loginId }),
     );
 
     process.env.CODEX_STUB_STATUS = "Logged in using an API key - sk-proj-***here";
@@ -511,13 +518,10 @@ describe("a status read already in flight does not answer for a change made afte
   });
 
   it("answers a Claude sign-in as signed in, and audits the method that landed", async () => {
-    assert.equal(
-      (await claudeLogin.POST(post("http://localhost/api/claude-auth/login"))).status,
-      200,
-    );
+    const loginId = await startClaudeSignIn();
     const poll = await readInFlight(() => claudeAuth.readAuthStatus());
     const res = await claudeCode.POST(
-      post("http://localhost/api/claude-auth/login/code", { code: CODE }),
+      post("http://localhost/api/claude-auth/login/code", { code: CODE, loginId }),
     );
     const body = (await res.json()) as { auth?: { loggedIn: boolean } };
     await poll.done;
@@ -592,14 +596,11 @@ describe("a credential that changed is recorded even when the read confirming it
   });
 
   it("records a Claude sign-in", async () => {
-    assert.equal(
-      (await claudeLogin.POST(post("http://localhost/api/claude-auth/login"))).status,
-      200,
-    );
+    const loginId = await startClaudeSignIn();
     dbMod.db().prepare("DELETE FROM ops_events").run();
     process.env.STUB_STATUS_FAIL = "1";
     const res = await claudeCode.POST(
-      post("http://localhost/api/claude-auth/login/code", { code: CODE }),
+      post("http://localhost/api/claude-auth/login/code", { code: CODE, loginId }),
     );
     assert.ok(fs.existsSync(claudeCredential()));
     assertUnconfirmed(res.status, await res.json());
@@ -675,10 +676,10 @@ describe("what a credential route records when nothing changed", () => {
     // `ok` over whatever the read said, and audited a sign-in as `none`.
     // Set before the start: the child that does the exchange is spawned there.
     process.env.CLAUDE_STUB_EXCHANGE = "forget";
-    await claudeLogin.POST(post("http://localhost/api/claude-auth/login"));
+    const loginId = await startClaudeSignIn();
     dbMod.db().prepare("DELETE FROM ops_events").run();
     const res = await claudeCode.POST(
-      post("http://localhost/api/claude-auth/login/code", { code: CODE }),
+      post("http://localhost/api/claude-auth/login/code", { code: CODE, loginId }),
     );
     assert.equal(res.status, 400);
     const body = (await res.json()) as { error?: unknown; stillPending?: unknown };
@@ -746,9 +747,9 @@ describe("every one of the six leaves a request line", () => {
     process.env.CLAUDE_STUB_LOGGED_IN = "1";
     process.env.CODEX_STUB_STATUS = "Logged in using an API key - sk-proj-***4321";
 
-    await claudeLogin.POST(post("http://localhost/api/claude-auth/login"));
+    const loginId = await startClaudeSignIn();
     await claudeCode.POST(
-      post("http://localhost/api/claude-auth/login/code", { code: CODE }),
+      post("http://localhost/api/claude-auth/login/code", { code: CODE, loginId }),
     );
     await claudeLogout.POST(post("http://localhost/api/claude-auth/logout"));
     await codexLogin.POST(post("http://localhost/api/codex-auth/login"));

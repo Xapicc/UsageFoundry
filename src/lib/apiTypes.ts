@@ -1121,9 +1121,10 @@ export interface ClaudeAuthStateDTO {
    * Reported so the flow survives a page reload: the child holding the PKCE
    * verifier outlives the tab that started it, and without this the operator
    * would be shown a fresh Sign in button while the code in their clipboard
-   * still belonged to the old one.
+   * still belonged to the old one. `loginId` is what `login/code` must be sent
+   * beside a code from this link.
    */
-  pending: { url: string; startedAt: number } | null;
+  pending: { url: string; startedAt: number; loginId: string } | null;
 }
 
 /**

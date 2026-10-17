@@ -27,6 +27,10 @@ export const dynamic = "force-dynamic";
  * wrote the credential marks the row `unconfirmed` and the answer says so,
  * rather than reporting a credential replacement as one that did not happen.
  *
+ * The body names the sign-in as well as the code — `loginId`, from the start
+ * that minted the link — so a code from a link a newer start replaced is
+ * refused here rather than spent on the newer sign-in's child.
+ *
  * 400 rather than 502: every failure here — a stale link, a mistyped code, a
  * code already redeemed — is one the operator fixes by starting again.
  */
@@ -34,7 +38,7 @@ async function postHandler(req: Request) {
   const read = await readJsonObject(req);
   if (!read.ok) return read.response;
   const body = read.body;
-  const res = await submitCode(body.code);
+  const res = await submitCode(body.code, body.loginId);
   if (!res.ok) {
     // `stillPending` is what tells the page whether to leave the field open for
     // another paste or send the operator back to a fresh link. Without it a

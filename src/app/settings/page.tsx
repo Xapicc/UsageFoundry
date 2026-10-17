@@ -1703,8 +1703,13 @@ function FailedSignIns({ summary }: { summary: unknown }) {
 function ClaudeAccount() {
   const [state, setState] = useState<ClaudeAuthStateDTO | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  /** The link being shown. Non-null is the sign-in sheet being open. */
-  const [linkUrl, setLinkUrl] = useState<string | null>(null);
+  /**
+   * The link being shown, and the sign-in it belongs to, which a code from it
+   * is sent beside. Non-null is the sign-in sheet being open.
+   */
+  const [link, setLink] = useState<{ url: string; loginId: string } | null>(
+    null,
+  );
   const [code, setCode] = useState("");
   const [confirmOut, setConfirmOut] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -1729,17 +1734,17 @@ function ClaudeAccount() {
   async function begin() {
     setBusy(true);
     setFlowError(null);
-    const res = await jsonRequest<{ url: string }>("/api/claude-auth/login", {
-      method: "POST",
-      body: {},
-    });
+    const res = await jsonRequest<{ url: string; loginId: string }>(
+      "/api/claude-auth/login",
+      { method: "POST", body: {} },
+    );
     setBusy(false);
     if (!res.ok) {
       setLoadError(actionFailureMessage(res, "Could not start the sign-in."));
       return;
     }
     setCode("");
-    setLinkUrl(res.data.url);
+    setLink(res.data);
   }
 
   async function finish() {
@@ -1747,11 +1752,11 @@ function ClaudeAccount() {
     setFlowError(null);
     const res = await jsonRequest<ClaudeAuthChangeDTO>(
       "/api/claude-auth/login/code",
-      { method: "POST", body: { code } },
+      { method: "POST", body: { code, loginId: link?.loginId } },
     );
     if (res.ok) {
       setBusy(false);
-      setLinkUrl(null);
+      setLink(null);
       setCode("");
       // `error` set is a credential written that no status read could confirm,
       // shown where an unreadable status is rather than as a failed sign-in.
@@ -1770,11 +1775,18 @@ function ClaudeAccount() {
     setBusy(false);
     if (fresh.ok) {
       setState(fresh.data);
-      if (!fresh.data.pending) {
-        setLinkUrl(null);
+      const live = fresh.data.pending;
+      if (!live) {
+        setLink(null);
         setCode("");
         setLoadError(message);
         return;
+      }
+      // The code was from a link a newer start replaced, and was refused before
+      // any child read it. The sheet moves to the link that can still redeem one.
+      if (live.loginId !== link?.loginId) {
+        setLink({ url: live.url, loginId: live.loginId });
+        setCode("");
       }
     }
     setFlowError(message);
@@ -1782,7 +1794,7 @@ function ClaudeAccount() {
 
   /** Closing the sheet abandons the child too, or it waits ten minutes alone. */
   async function abandon() {
-    setLinkUrl(null);
+    setLink(null);
     setCode("");
     setFlowError(null);
     await jsonRequest("/api/claude-auth/login", { method: "DELETE" });
@@ -1857,7 +1869,7 @@ function ClaudeAccount() {
               onClick={() => {
                 setFlowError(null);
                 setCode("");
-                setLinkUrl(pending.url);
+                setLink({ url: pending.url, loginId: pending.loginId });
               }}
             >
               Finish sign-in
@@ -1881,7 +1893,7 @@ function ClaudeAccount() {
           `display: none` and an open one is in the top layer — which is exactly
           why the wrong version would never have announced itself. */}
       <Sheet
-        open={linkUrl !== null}
+        open={link !== null}
         onDismiss={() => void abandon()}
         title="Sign in to Claude"
         confirmLabel="Finish"
@@ -1894,14 +1906,14 @@ function ClaudeAccount() {
           back. The link works from any device.
         </p>
         <p className="mt-3">
-          <a href={linkUrl ?? "#"} target="_blank" rel="noopener noreferrer">
+          <a href={link?.url ?? "#"} target="_blank" rel="noopener noreferrer">
             Open the Anthropic sign-in page
           </a>
         </p>
         {/* The full URL as text as well as a link: the browser showing this
             page is often not the one signed in to Anthropic, and on a remote
             container it may not be able to reach the page at all. */}
-        <p className="mono mt-2 break-all text-xs text-ink-faint">{linkUrl}</p>
+        <p className="mono mt-2 break-all text-xs text-ink-faint">{link?.url}</p>
         <Field
           className="mt-4"
           label="Code"

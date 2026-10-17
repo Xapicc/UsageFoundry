@@ -15,7 +15,8 @@ export const dynamic = "force-dynamic";
  * read that happens to compute a URL: pressing it twice abandons the first
  * link, and a code issued against the abandoned one can no longer be redeemed.
  *
- * 200 carries the link. 502 is the CLI failing — it would not run, printed no
+ * 200 carries the link, and the `loginId` that `login/code` must be sent beside
+ * a code from it. 502 is the CLI failing — it would not run, printed no
  * link in time, or exited first — and 502 rather than 500 because the fault is
  * the CLI's, not this server's. 409 is this start taken over while it waited
  * for its link, by a newer start, a cancel or a sign-out: two presses
