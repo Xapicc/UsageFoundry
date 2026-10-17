@@ -84,7 +84,8 @@ Phase 0 and Phase 2 of `proposals/ContinuousImprovement/`, because
   task, its two paths indented on lines of their own. The holdout run's
   cycle row read "files earlier runs read held back, for the holdout", and
   its fold went from the checkout notice to the task. No console error at
-  either width.
+  either width. `npm run smoke-pages` against the same build (`fb9c8617`):
+  100 of 100 page loads clean, serving `.next/standalone/server.js`.
 
 - **`priorReads.test.ts`, 14 cases, and the slot case in `orchestrator.test.ts`,
   2026-10-17.** Mutations of the compiled module that reversed the decay,

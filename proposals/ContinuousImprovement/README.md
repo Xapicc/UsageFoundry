@@ -7,10 +7,20 @@ database, and refused in five cases on arithmetic taken from that database.
 
 ## What has been built, 2026-10-17
 
-Phase 0 and Phase 2 of [17-implementation-sketch.md](17-implementation-sketch.md),
-on branch `uf/usagefoundry-721638d11c0b-22`. Phases 1 and 3 — the readout and
-the prior-read pointer behind its holdout — are not built; the run chained after
-this one is to build them on the same branch.
+Phases 0 to 3 of [17-implementation-sketch.md](17-implementation-sketch.md), on
+branch `uf/usagefoundry-721638d11c0b-22`, in two runs. Phase 4, reading the
+holdout back, is not built. It needs runs through both arms first: **the first
+reading is due around 2026-10-31**, and it must be taken before
+`eventRetentionDays` sweeps those runs' logs.
+
+**The re-measure before Phases 1 and 3 was not run**, because a work cycle cannot
+read the install's database. [19-remeasure-2026-10.md](19-remeasure-2026-10.md)
+says why, commits the four queries as
+[`scripts/remeasure.mjs`](scripts/remeasure.mjs) for the operator, and applies the
+orchestrator's gate to the 2026-08 figures instead: 36.1% addressable ≥ 15%, and
+45.0% coverage ≥ 25%. The pointer was built on a two-month-old measurement.
+**Running that script is the first thing to do with this branch**, and if its
+last line but one says `STOPS the pointer`, revert `b748ac0d`.
 
 | Item | Outcome | Where |
 |---|---|---|
@@ -20,8 +30,14 @@ this one is to build them on the same branch.
 | 0d hooks invisible | **Built.** `--include-hook-events` on every cycle; `hookInjection` logs what reached the model from any event; the lifecycle rows that carry nothing are not stored. Unfiltered it would have grown a median cycle's log about 2.7-fold. | `2d84770f`, `4388e6dc` |
 | 0e the cycle's prompt | **Built.** A "Prompt" `Disclosure` under each work cycle's row on the run page. | `90e4e143` |
 | Phase 2 `ending_code` | **Built.** One closed `RunEndingCode` union, written at every branch that settles a final status, null on parks and older rows, cleared on pick-up; on the run DTO, MCP `list_runs` / `get_run`, the runs list and the run page. | `8e0ab6ee`, `a66dac5c` |
+| Re-measure | **Not run: the database is unreachable from a work cycle.** The queries are a read-only script, checked against a scratch database whose figures were worked out by hand. | `a1336c23` |
+| Phase 1, the readout | **Built.** `repoReading.ts`: repeat reads split by whether the run edited the file, tool failures grouped by Dreaming's `signatureOf` and ordered by distinct runs, and completed conflict resolutions with their cost per repository and never per file. `/api/repo-reading`, and a card per repository in its own dashboard band beside the repository spend. **Linked to Dreaming rather than duplicating it**: its pane is install-wide and carries no folder, so the per-repository list is new, but it uses Dreaming's normaliser unchanged. | `74ab5b28` |
+| Phase 3, the pointer | **Built, behind `inHoldout(runId)`.** The top 20 files earlier runs' main threads read on the repository, at ×0.9 per run back, proved to exist in the run's tree, named in the session-less prompt directly ahead of the task as a record rather than an instruction. Half of all runs are held out by a hash of the id. Every session-less cycle's `iteration` event records `priorReads: { arm, paths }`. No setting. Codex, local-model, non-repository and Dreaming-writer runs are in neither arm. | `b748ac0d` |
 
-The measurements are in `docs/verification/run-lifecycle-hooks-and-endings.md`.
+The measurements are in `docs/verification/run-lifecycle-hooks-and-endings.md`
+and `docs/verification/metering-and-cost.md`. The decisions are in
+`docs/agent/run-lifecycle/prior-read-pointer.md` and
+`docs/agent/metering/run-spend-readings.md`.
 
 ## The recommendation
 
