@@ -56,7 +56,7 @@ assert.equal(
     "run against the real database",
 );
 
-const { createRun, getRun, reconcileOnBoot, releaseStackWaits, resumeRun, stopRun } =
+const { createRun, getRun, reconcileOnBoot, releaseDependents, releaseStackWaits, resumeRun, stopRun } =
   require("./orchestrator") as typeof import("./orchestrator");
 const { readReceipts, stackGrants } = require("./stacks") as typeof import("./stacks");
 const { declineStackRequest, recordStackRequest, stackRequestsOfRun, stackWaitOf } =
@@ -108,6 +108,12 @@ interface Cycle {
   cost?: number;
   /** The provider turns the cycle away at the wall: no work, no spend, exit 1. */
   refuse?: boolean;
+  /**
+   * The provider turns a later turn of the cycle away with this text, after
+   * `turns` turns, spending `cost`. More than one turn means an edit was made
+   * first. Exit 1.
+   */
+  refuseMidCycle?: { text: string; turns: number };
   reply: string;
 }
 
@@ -145,6 +151,35 @@ childProcess.spawn = (command: unknown, ...rest: unknown[]) => {
   // After `runIteration` has attached its listeners, which it does once
   // `spawn` has returned.
   setImmediate(() => {
+    if (step.refuseMidCycle) {
+      const { text, turns } = step.refuseMidCycle;
+      const say = (event: object) =>
+        stdout.write(`${JSON.stringify({ ...event, session_id: "sess-stack" })}\n`);
+      say({ type: "system", subtype: "init" });
+      if (turns > 1) {
+        say({
+          type: "assistant",
+          message: {
+            model: "claude-sonnet-4-5",
+            content: [{ type: "tool_use", id: "tu1", name: "Edit", input: { file_path: "a.ts", old_string: "x", new_string: "y" } }],
+          },
+        });
+        say({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu1", content: "ok" }] } });
+      }
+      say({ type: "assistant", message: { model: "<synthetic>", content: [{ type: "text", text }] } });
+      say({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        num_turns: turns,
+        result: text,
+        total_cost_usd: step.cost ?? 0,
+      });
+      stdout.end();
+      child.emit("exit", 1, null);
+      child.emit("close", 1, null);
+      return;
+    }
     if (step.refuse) {
       stdout.write(
         `${JSON.stringify({
@@ -451,6 +486,111 @@ describe("a dependent behind a run a stack wait refunded", () => {
 });
 
 /**
+ * A run chained behind one whose cycle worked and paid, met the provider's
+ * refusal on a later turn of it, and was stopped before it ran again.
+ *
+ * Both refusals the loop survives refund the cycle — the wall by parking, a
+ * transient error by retrying after a backoff — and neither was counted where
+ * `ranWorkCycle` reads, on the premise that the provider turned the cycle away
+ * before any work. A wall is met by whichever turn crosses the allowance, and a
+ * 529 after the CLI's own retries by any turn, so the dependent was blocked
+ * "without running a work cycle" behind a run that had edited a file and paid.
+ */
+describe("a dependent behind a run the provider refused after it worked", () => {
+  const { setNewWorkPaused } = settings;
+  let seq = 0;
+  const dependents: string[] = [];
+  const WALL = "Claude AI usage limit reached|1786400000";
+  const OVERLOADED =
+    'API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}';
+
+  /** On-finish behind `parentId`, under the hold, so a released one stays `waiting`. */
+  function dependentOf(parentId: string): string {
+    setNewWorkPaused(true);
+    fs.mkdirSync(path.join(tmp, "workspace", `refused-child-${seq}`), { recursive: true });
+    const child = createRun({
+      folder: `refused-child-${seq}`,
+      mountId: null,
+      prompt: "build on a.ts",
+      budget: { maxIterations: 1 },
+      origin: "form",
+      dependsOn: [{ runId: parentId, edge: "on-finish" }],
+    });
+    dependents.push(child.id);
+    assert.equal(child.status, "waiting", "the dependency has not settled yet");
+    return child.id;
+  }
+
+  /** A's one cycle meets a transient error, and A is stopped in the backoff before the retry. */
+  async function stoppedInBackoff(refusal: { text: string; turns: number }, cost: number) {
+    seq += 1;
+    const parentId = start(`retried-parent-${seq}`, [{ refuseMidCycle: refusal, cost, reply: "" }]);
+    const backingOff = db().prepare(
+      "SELECT 1 FROM run_events WHERE run_id = ? AND kind = 'error' AND json_extract(payload, '$.retrying') = 1",
+    );
+    for (let i = 0; i < 1_000 && !backingOff.get(parentId); i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    assert.ok(backingOff.get(parentId), "the premise: the loop is waiting to retry");
+    const childId = dependentOf(parentId);
+    assert.notEqual(stopRun(parentId), "not-active");
+    const parent = await settled(parentId);
+    assert.equal(parent.status, "stopped", parent.stop_reason ?? "");
+    assert.equal(argvs.length, 1, "the premise: stopped before the retry spawned");
+    // The pass the loop's `finally` ran, run again so the answer cannot depend
+    // on whether that one had finished when the row turned `stopped`.
+    releaseDependents();
+    return { parentId, childId };
+  }
+
+  function assertReleased(parentId: string, childId: string): void {
+    const parent = getRun(parentId)!;
+    assert.equal(parent.iterations, 0, "the premise: the refund put the counter back to zero");
+    assert.equal(parent.spent_usd, 0.37, "the premise: the cycle was paid for");
+    const child = getRun(childId)!;
+    assert.equal(
+      child.status,
+      "waiting",
+      `a run that worked and paid was read as never having run a cycle: ${child.stop_reason ?? ""}`,
+    );
+  }
+
+  afterEach(() => {
+    for (const id of dependents.splice(0)) stopRun(id);
+    setNewWorkPaused(false);
+  });
+
+  it("wall: parked, then stopped, and the on-finish dependent is released", async () => {
+    seq += 1;
+    const parentId = start(`walled-parent-${seq}`, [
+      { refuseMidCycle: { text: WALL, turns: 7 }, cost: 0.37, reply: "" },
+    ]);
+    const parked = await settled(parentId);
+    assert.equal(parked.status, "paused", parked.stop_reason ?? "");
+    assert.equal(parked.refusal_pauses, 1, "the premise: this park is the provider's refusal");
+    const childId = dependentOf(parentId);
+    assert.equal(stopRun(parentId), "cancelled");
+    assertReleased(parentId, childId);
+  });
+
+  it("transient error: stopped during the retry's backoff, and the dependent is released", async () => {
+    const { parentId, childId } = await stoppedInBackoff({ text: OVERLOADED, turns: 7 }, 0.37);
+    assertReleased(parentId, childId);
+  });
+
+  // The turn count is not the evidence of work: the pinned CLI reports
+  // `num_turns: 1` for an API error on a cycle's first turn, having done
+  // nothing (`docs/verification/run-lifecycle.md`, 2026-10-06). What it spent is.
+  it("control: a transient error that spent nothing on its one turn still ran nothing", async () => {
+    const { parentId, childId } = await stoppedInBackoff({ text: OVERLOADED, turns: 1 }, 0);
+    assert.equal(getRun(parentId)!.spent_usd, 0);
+    const child = getRun(childId)!;
+    assert.equal(child.status, "blocked", child.stop_reason ?? "");
+    assert.match(child.stop_reason ?? "", /ended stopped without running a work cycle/);
+  });
+});
+
+/**
  * A second run set to continue a branch whose first continuer worked, had the
  * cycle it worked in refunded, and was stopped.
  *
@@ -522,7 +662,7 @@ describe("a second run continuing a branch whose continuer was refunded", () => 
   });
 
   it("refuses the second, naming the first, whichever refund left it at zero", () => {
-    for (const counter of ["stack_waits", "guard_refunds", "early_ends"]) {
+    for (const counter of ["stack_waits", "guard_refunds", "early_ends", "worked_refunds"]) {
       const { folder, predecessor, first } = stoppedContinuer(counter);
       assert.throws(
         () => create(folder, [{ runId: predecessor, continueBranch: true }]),

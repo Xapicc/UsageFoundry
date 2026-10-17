@@ -998,6 +998,11 @@ function migrate(db: Database.Database) {
   // was per segment and reset at every park, restart and pick-up. No backfill,
   // for `guard_refunds`' reason.
   addColumn(db, "runs", "early_ends", "INTEGER NOT NULL DEFAULT 0");
+  // Work cycles the provider refused partway through, after they had spent,
+  // which the loop refunded on a park or a transient retry. Counted only so
+  // `ranWorkCycle` can see them: unbounded, because both refunds are bounded
+  // already. No backfill: nothing recorded which old refusals had spent.
+  addColumn(db, "runs", "worked_refunds", "INTEGER NOT NULL DEFAULT 0");
   // Milliseconds this run has spent parked, closed off every time it leaves a
   // park. `maxDurationMinutes` is a cap on *worked* minutes, so the guard
   // subtracts this from the wall clock since `started_at`; without it a run that
