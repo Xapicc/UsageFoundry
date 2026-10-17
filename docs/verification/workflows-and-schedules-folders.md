@@ -39,6 +39,23 @@
   every press went through the API rather than a click, no agent ran, and the
   sentence names the mount by id where the picker names it by label.
 
+- **Reopening a member of an older press is refused while a newer press works
+  in its folder, 2026-10-17** (production standalone build of commit
+  27622c80's tree, scratch `DATA_DIR`, mount `workspace` with `project` and
+  `second`, a `CLAUDE_BIN` that does not exist, new work held): press 1 of a
+  workflow of a run block and a deciding block, both following the chosen
+  folder, was seeded idle (its run `failed` after one cycle, its turn
+  `failed`), press 2 into `project` was admitted, and its deciding block
+  stayed `waiting` across the server's boot (the `held` arm). `POST
+  /api/runs/<press 1's run>/reopen` answered 400 "0 run(s) and 1 block(s)
+  from another press of Run have not finished yet, … before picking this one
+  up.", and the same call for a failed run outside any workflow answered
+  200. This was the check that `reopenRun`'s `require("./workflows")`
+  resolves in the shipped bundle (it compiles to webpack's own require of
+  the module). Caveat: through the API rather than the run page's button,
+  and the instance-page pick-ups were exercised by `orchestratorPickUp.test.ts`
+  only.
+
 ## Not yet verified by hand
 
 - **No two presses of one workflow have run agents side by side (2026-10-08).**

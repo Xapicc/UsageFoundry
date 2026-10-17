@@ -22,6 +22,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - A gate is a block that waits for a person, and it is a ledger row that never has a turn.
 - It is `waiting` the whole time, and `held_at` is the only thing that says it was reached.
 - A gate hands on no runs, and that is the cost the diagram pays.
+- A restart spares an instance with a held gate, and a block the restart failed releases nothing beside it.
 - Whether a chat may propose one: yes.
 
 ## [Orchestrator blocks](workflows-and-schedules/orchestrator-and-merge-blocks.md)
@@ -47,6 +48,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - Four of an instance's six readings are derived, and `started` is not a word for a press of Run that is over.
 - A held gate leaves the instance `started`, and it is the operator's to end — Continue lets it through, Stop halts through the same door as every other halt.
 - A stuck workflow run is picked up one named obstacle at a time, and never through a halt.
+- A pick-up is refused while another press of the same workflow works in a folder it shares — an authorisation rule, the one `startWorkflow` holds at a press, held at every door that brings a press back.
 - The page that presses Run states the refusal to press it again before it is pressed, per folder, and the instance it links is found in both halves of the graph.
 
 ## [The instance budget and the instance total](workflows-and-schedules/instance-budget.md)

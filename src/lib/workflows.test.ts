@@ -1287,6 +1287,23 @@ describe("sharedFolderRefusal — two presses of one workflow at once", () => {
     assert.match(refusal.reason, /Choose a folder it is not working in/);
   });
 
+  it("words a pick-up's refusal for a press that may be the older one and cannot move", () => {
+    // A pick-up brings back a press whose folder was chosen when it was
+    // pressed, beside one that may be newer: "earlier" and "choose a folder"
+    // would both be untrue of it.
+    const refusal = sharedFolderRefusal(
+      [pressOf(saved.graph, ALPHA)],
+      placed(withChosenFolder(saved.graph, ALPHA)),
+      "pick-up",
+    );
+    assert.ok(refusal);
+    assert.equal(refusal.instanceId, "press-alpha");
+    assert.match(refusal.reason, /^2 run\(s\) and 1 block\(s\) from another press of Run/);
+    assert.match(refusal.reason, /work\/alpha, where this press's “BUILD” would work too/);
+    assert.doesNotMatch(refusal.reason, /earlier|Choose a folder/);
+    assert.match(refusal.reason, /before picking this one up\.$/);
+  });
+
   it("refuses another folder too while a block with its own folder is shared", () => {
     // Every press of this workflow works in work/tools, whichever folder is
     // chosen, so a second one is the same block in the same folder twice.
@@ -5654,6 +5671,7 @@ function decided(
         refundedCycles: 0,
         restartClosed: false,
       })),
+      restartClosed: false,
       error,
     },
   };
@@ -6422,6 +6440,24 @@ describe("planInstanceStep — the link that says what a loop repeats", () => {
     assert.deepEqual(strict.create, []);
     assert.match(strict.block[0].reason, /did not finish what it repeats/);
   });
+
+  it("blocks an on-finish successor of a loop whose pass the restart cut off", () => {
+    // `advanceLoop` marks a loop it stops on a pass the restart closed out, and
+    // the boot marks one it fails itself: either way the pass died with the
+    // container, which is not a pass that finished.
+    const cleanup: WorkflowGraph = {
+      ...DRAWN,
+      edges: [
+        ...DRAWN.edges.filter((e) => e.to !== "z"),
+        edge("l", "z", { edge: "on-finish" }),
+      ],
+    };
+    const l = decided("failed");
+    l.block!.restartClosed = true;
+    const step = stepOf({ l, z: decided("waiting") }, cleanup);
+    assert.deepEqual(step.create, []);
+    assert.match(step.block[0]?.reason ?? "", /whose pass the server restart cut off/);
+  });
 });
 
 /* ------------------------------------------------------------------ */
@@ -6590,6 +6626,30 @@ describe("planInstanceStep — merge blocks", () => {
       g,
     );
     assert.deepEqual(step.create, [{ nodeId: "after", dependsOn: [] }]);
+  });
+
+  it("blocks an on-finish successor of a merge the restart cut off", () => {
+    // The same failed row, written by the boot rather than by the merge: it did
+    // not finish having tried, it died with the container. A boot that spares
+    // the instance — a held gate, a kept member, the hold — leaves this edge to
+    // the next advance, and that advance must not start "after" on it.
+    const g: WorkflowGraph = {
+      ...LAND,
+      edges: [
+        edge("left", "land"),
+        edge("right", "land"),
+        edge("land", "after", { edge: "on-finish" }),
+      ],
+    };
+    const land = decided("failed", [], "The server restarted while this block was landing branches.");
+    land.block!.restartClosed = true;
+    const step = stepOf(
+      { left: ran("r-left", "completed"), right: ran("r-right", "completed"), land },
+      g,
+    );
+    assert.deepEqual(step.create, []);
+    assert.equal(step.block[0]?.nodeId, "after");
+    assert.match(step.block[0].reason, /“Land it”, which the server restart cut off/);
   });
 
   it("blocks behind a merge that never ran, whatever the condition", () => {
@@ -7121,7 +7181,7 @@ function blockMember(
     name: opts.name ?? nodeId,
     kind,
     run: null,
-    block: { status, error: opts.error ?? null },
+    block: { status, error: opts.error ?? null, restartClosed: false },
     emitted: opts.emitted ?? [],
     workSetAside: 0,
   };
@@ -7350,7 +7410,7 @@ function reviewMember(
     name: nodeId,
     kind: "review",
     run: null,
-    block: { status: "emitted", error: null },
+    block: { status: "emitted", error: null, restartClosed: false },
     // `loopPasses`' reading: the approved branches' last links, and nothing
     // the review set aside.
     emitted: opts.approved ?? [],

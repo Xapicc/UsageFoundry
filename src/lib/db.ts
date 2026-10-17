@@ -1697,6 +1697,22 @@ function migrate(db: Database.Database) {
   // on every other kind and on a gate not yet reached.
   addColumn(db, "workflow_instance_blocks", "held_at", "INTEGER");
 
+  // Whether a restart failed this block, rather than its own work: a merge,
+  // deliver or deciding turn the boot found `thinking`, or a loop whose pass
+  // the restart cut off. `runs.restart_closed` one table over and for its
+  // reason — `error` is prose, and a failed merge, deliver or loop satisfies
+  // `on-finish`, so without a fact the scheduler can read, a restart that
+  // spared the instance (a gate held, a member kept, new work held) left the
+  // next advance to start what was behind it on work that died with the
+  // container. Read only beside `status = 'failed'`; a retry or pick-up that
+  // puts the block back clears it.
+  addColumn(
+    db,
+    "workflow_instance_blocks",
+    "restart_closed",
+    "INTEGER NOT NULL DEFAULT 0",
+  );
+
   // Whether this run was closed out because the server went down under it,
   // rather than for any reason of its own.
   //

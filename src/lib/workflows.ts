@@ -1201,7 +1201,7 @@ export interface LoopPassMember {
   /** The ledger row, for a member that is not a run or has not become one. */
   block: Pick<
     NonNullable<InstanceNodeState["block"]>,
-    "status" | "error" | "decided" | "notes"
+    "status" | "error" | "decided" | "notes" | "restartClosed"
   > | null;
   /** The runs an orchestrator member started, as their rows stand now. */
   emitted: readonly LoopRunState[];
@@ -1425,6 +1425,21 @@ function memberSettled(member: LoopPassMember): boolean {
  */
 function passSettled(pass: LoopPass): boolean {
   return pass.members.every(memberSettled);
+}
+
+/**
+ * Whether a restart cut this pass off: a member or a run one decided on that a
+ * restart closed out, or a member block the boot failed, none picked up or
+ * left behind since. What `advanceLoop` marks a loop that stops `failed` on
+ * it with, so `loopVerdict` blocks what is behind it rather than letting
+ * `on-finish` release on work that died with the container.
+ */
+function passCutByRestart(pass: LoopPass): boolean {
+  const closed = (run: LoopRunState | null) =>
+    run !== null && run.restartClosed && run.leftBehind !== true;
+  return pass.members.some(
+    (m) => closed(m.run) || m.emitted.some(closed) || m.block?.restartClosed === true,
+  );
 }
 
 /**
@@ -1727,6 +1742,14 @@ export interface InstanceNodeState {
     decided?: number;
     /** This app's notes on the turn, which say why a decided run never started. */
     notes?: readonly string[];
+    /**
+     * A restart failed it and nobody has picked it up since — see
+     * `workflow_instance_blocks.restart_closed`. Required for
+     * `ReleaseState.restartClosed`'s reason: absent would read a merge the
+     * restart cut off as one that finished, and `on-finish` would release
+     * what is behind it.
+     */
+    restartClosed: boolean;
     /** Why it ended this way, for the sentence its successors carry. */
     error: string | null;
   } | null;
@@ -1927,13 +1950,13 @@ export function planInstanceStep(
         step.block.push({ nodeId: node.id, reason: stopper });
         live.set(node.id, {
           run: null,
-          block: { status: "blocked", emitted: [], error: stopper },
+          block: { status: "blocked", emitted: [], restartClosed: false, error: stopper },
         });
       } else if (passedOver !== null) {
         step.notNeeded.push({ nodeId: node.id, reason: passedOver });
         live.set(node.id, {
           run: null,
-          block: { status: "not-needed", emitted: [], error: passedOver },
+          block: { status: "not-needed", emitted: [], restartClosed: false, error: passedOver },
         });
       } else if (pending) {
         continue;
@@ -2033,6 +2056,19 @@ function edgeVerdict(
       };
     }
     if (block.status === "not-needed") return passedOverBehind(from);
+    // Ahead of the condition, on either, for the run block's `restartClosed`
+    // reason below: a merge or delivery the restart cut off did not finish
+    // having tried, it died with the container, and the boot does not always
+    // close out what is behind it — a held gate, a kept member or the hold
+    // spares the instance, and the next advance reads this edge.
+    if (block.status === "failed" && block.restartClosed) {
+      return {
+        kind: "blocked",
+        reason:
+          `Set to start after “${from.name}”, which the server restart cut ` +
+          "off. Retrying it puts this block back to waiting for it.",
+      };
+    }
     // A deliver block reads exactly as a merge block does, and for the same
     // reason: it created no run, so its edge carries a condition and no branch.
     // So does a gate, one step further: it also never fails, so the failed
@@ -2240,6 +2276,16 @@ function loopVerdict(
     block.status === "thinking"
   ) {
     return PENDING;
+  }
+  // `edgeVerdict`'s restart rule for a merge block: a pass the restart cut off
+  // is not a pass that finished, and `on-finish` would release on it.
+  if (block.status === "failed" && block.restartClosed) {
+    return {
+      kind: "blocked",
+      reason:
+        `Set to start after “${from.name}”, whose pass the server restart cut ` +
+        "off. Picking that pass up puts this block back to waiting for it.",
+    };
   }
   // A loop that stopped on a pass that did not finish still *took* passes, which
   // is what separates it from one that never ran — the distinction `edgeVerdict`
@@ -2683,6 +2729,8 @@ export interface WorkflowInstanceBlock {
    * left on the row after the loop ends as the record of why it did.
    */
   stopAfterPass: number | null;
+  /** `failed` because a restart cut it off, and not picked up since. */
+  restartClosed: boolean;
   error: string | null;
 }
 
@@ -3456,6 +3504,7 @@ export function blocksOf(instanceId: string): WorkflowInstanceBlock[] {
               tokens, emitted_specs AS specs, error,
               merge_batch_id AS batchId, reply, notes,
               stop_after_pass AS stopAfterPass,
+              (restart_closed = 1 AND status = 'failed') AS restartClosed,
               -- Read back off the queue's own rows rather than counted into the
               -- block as it went: those rows carry git's answer for each branch,
               -- and a copy on the block would be a second thing to keep in step
@@ -3482,12 +3531,13 @@ export function blocksOf(instanceId: string): WorkflowInstanceBlock[] {
     .all(instanceId) as Array<
     Omit<
       WorkflowInstanceBlock,
-      "emitted" | "decided" | "notes" | "costUnknown"
+      "emitted" | "decided" | "notes" | "costUnknown" | "restartClosed"
     > & {
       specs: string | null;
       batchId: string | null;
       notes: string | null;
       unreported: number;
+      restartClosed: number;
     }
   >;
   // A loop block emits nothing — it repeats — so its count is the **passes** it
@@ -3526,9 +3576,10 @@ export function blocksOf(instanceId: string): WorkflowInstanceBlock[] {
     [...passKeys].map(([nodeId, seen]) => [nodeId, seen.size] as const),
   );
 
-  return rows.map(({ specs, batchId, notes, unreported, ...row }) => ({
+  return rows.map(({ specs, batchId, notes, unreported, restartClosed, ...row }) => ({
     ...row,
     costUnknown: unreported > 0,
+    restartClosed: restartClosed === 1,
     emitted:
       row.kind === "loop"
         ? (passes.get(row.nodeId) ?? 0)
@@ -3992,6 +4043,48 @@ export function sharedFolderOf(workflowId: string, graph: WorkflowGraph): Shared
   const live = livePressesOf(workflowId);
   if (live.length === 0) return null;
   return sharedFolderRefusal(live, placedWorkingFolders(graph));
+}
+
+/**
+ * Why picking `instance` up would put it to work beside another press of the
+ * same workflow in a folder they share, or null.
+ *
+ * The rule `startWorkflow` holds at a press, held at every door that brings a
+ * press back: a pick-up turns a `finished` or `blocked` instance into a
+ * `started` one as surely as Run starts one, and a newer press admitted into
+ * its folder while it was idle is exactly what that gate lets in. Asked
+ * against the *other* live presses, since this one being live is no conflict
+ * with itself, and off its own graph copy, whose chosen folder was applied
+ * when it was pressed. Asked of an instance that is already live too: two live
+ * presses sharing a folder is the state this rule exists to have none of, and
+ * a pick-up would add work to it.
+ */
+function pickUpSharedFolderRefusal(instance: WorkflowInstance): string | null {
+  const others = livePressesOf(instance.workflowId).filter(
+    (press) => press.instanceId !== instance.id,
+  );
+  if (others.length === 0) return null;
+  return (
+    sharedFolderRefusal(others, placedWorkingFolders(instance.graph), "pick-up")?.reason ??
+    null
+  );
+}
+
+/**
+ * `pickUpSharedFolderRefusal` for a run being picked up on its own page, or null
+ * when it is a member of no workflow run. `reopenRun`'s question: reopening a
+ * member puts its press back to work in the press's folders.
+ */
+export function memberPickUpRefusal(runId: string): string | null {
+  const rows = db()
+    .prepare("SELECT instance_id AS instanceId FROM workflow_instance_runs WHERE run_id = ?")
+    .all(runId) as Array<{ instanceId: string }>;
+  for (const row of rows) {
+    const instance = getInstance(row.instanceId);
+    const refusal = instance ? pickUpSharedFolderRefusal(instance) : null;
+    if (refusal) return refusal;
+  }
+  return null;
 }
 
 /**
@@ -5583,8 +5676,8 @@ function reopenLoopPass(
     .run(instance.id, prefix.length, prefix).changes;
   const loop = db()
     .prepare(
-      "UPDATE workflow_instance_blocks SET status='looping', error=NULL, finished_at=NULL" +
-        " WHERE instance_id=? AND node_id=? AND status='failed'",
+      "UPDATE workflow_instance_blocks SET status='looping', error=NULL, finished_at=NULL," +
+        " restart_closed=0 WHERE instance_id=? AND node_id=? AND status='failed'",
     )
     .run(instance.id, loopNodeId);
   if (loop.changes > 0) {
@@ -5657,6 +5750,8 @@ export type PickUp =
  */
 export function pickUpsOf(instance: WorkflowInstance): PickUp[] {
   if (!instanceIsOpen(instance.status)) return [];
+  // Ahead of each door's own refusal, as `openInstanceFor` asks it.
+  const shared = pickUpSharedFolderRefusal(instance);
 
   const blockedNodes = [
     ...instance.blocks.filter((b) => b.status === "blocked").map((b) => b.nodeId),
@@ -5703,9 +5798,10 @@ export function pickUpsOf(instance: WorkflowInstance): PickUp[] {
       nodeName: node.nodeName,
       status: run.status,
       leaveBehindRefusal:
-        waitedOn.n > 0
+        shared ??
+        (waitedOn.n > 0
           ? "Another run is chained directly behind it, so resuming it is the way through."
-          : passRefusal(node.nodeId),
+          : passRefusal(node.nodeId)),
     });
   }
   for (const block of instance.blocks) {
@@ -5718,11 +5814,13 @@ export function pickUpsOf(instance: WorkflowInstance): PickUp[] {
       nodeId: block.nodeId,
       nodeName: block.nodeName,
       error: block.error,
-      retryRefusal: pass
-        ? passRefusal(block.nodeId)
-        : started
-          ? `“${started}” has already started after it failed.`
-          : null,
+      retryRefusal:
+        shared ??
+        (pass
+          ? passRefusal(block.nodeId)
+          : started
+            ? `“${started}” has already started after it failed.`
+            : null),
     });
   }
   for (const block of instance.blocks) {
@@ -5734,7 +5832,7 @@ export function pickUpsOf(instance: WorkflowInstance): PickUp[] {
       nodeId: block.nodeId,
       nodeName: block.nodeName,
       error: block.error,
-      retryRefusal: orchestratorRetryRefusalIn(instance, block),
+      retryRefusal: shared ?? orchestratorRetryRefusalIn(instance, block),
     });
   }
   for (const loop of instance.blocks) {
@@ -5757,7 +5855,7 @@ export function pickUpsOf(instance: WorkflowInstance): PickUp[] {
       nodeId: loop.nodeId,
       nodeName: loop.nodeName,
       pass,
-      refusal: loopPassRefusal(instance, loop.nodeId, pass),
+      refusal: shared ?? loopPassRefusal(instance, loop.nodeId, pass),
     });
   }
   return out;
@@ -5852,6 +5950,8 @@ function openInstanceFor(
       },
     };
   }
+  const shared = pickUpSharedFolderRefusal(instance);
+  if (shared) return { refusal: { ok: false, status: 409, error: shared } };
   return { instance };
 }
 
@@ -6039,8 +6139,8 @@ function retryExitBlock(
   db().transaction(() => {
     db()
       .prepare(
-        "UPDATE workflow_instance_blocks SET status='waiting', error=NULL, finished_at=NULL" +
-          " WHERE instance_id=? AND node_id=? AND status='failed'",
+        "UPDATE workflow_instance_blocks SET status='waiting', error=NULL, finished_at=NULL," +
+          " restart_closed=0 WHERE instance_id=? AND node_id=? AND status='failed'",
       )
       .run(instanceId, nodeId);
     if (pass) {
@@ -6156,7 +6256,8 @@ export function retryOrchestratorBlock(instanceId: string, nodeId: string): Pick
     db()
       .prepare(
         "UPDATE workflow_instance_blocks SET status='waiting', error=NULL, finished_at=NULL," +
-          " emitted_specs=NULL WHERE instance_id=? AND node_id=? AND status='failed'",
+          " emitted_specs=NULL, restart_closed=0" +
+          " WHERE instance_id=? AND node_id=? AND status='failed'",
       )
       .run(instanceId, nodeId);
     if (pass) {
@@ -6492,6 +6593,7 @@ function instanceState(
         // and a loop's passes under the same name; only the first is a decision.
         decided: block.kind === "orchestrator" ? block.emitted : 0,
         notes: block.notes,
+        restartClosed: block.restartClosed,
         error: block.error,
       },
     });
@@ -6655,13 +6757,15 @@ function settleLoop(
   nodeId: string,
   status: "emitted" | "failed",
   reason: string,
+  /** The pass it stopped on was cut off by a restart — see `passCutByRestart`. */
+  cutByRestart = false,
 ): void {
   db()
     .prepare(
-      "UPDATE workflow_instance_blocks SET status=?, finished_at=?, error=?" +
+      "UPDATE workflow_instance_blocks SET status=?, finished_at=?, error=?, restart_closed=?" +
         " WHERE instance_id=? AND node_id=? AND status='looping'",
     )
-    .run(status, Date.now(), reason, instanceId, nodeId);
+    .run(status, Date.now(), reason, cutByRestart ? 1 : 0, instanceId, nodeId);
 }
 
 /**
@@ -6720,7 +6824,8 @@ function loopPasses(instanceId: string, nodeId: string): LoopPass[] {
     .prepare(
       `SELECT node_id AS memberId, node_name AS name, position AS position,
               kind AS kind, status AS status, error AS error,
-              emitted_specs AS specs, notes AS notes
+              emitted_specs AS specs, notes AS notes,
+              (restart_closed = 1 AND status = 'failed') AS restartClosed
          FROM workflow_instance_blocks
         WHERE instance_id = ? AND substr(node_id, 1, ?) = ?
         ORDER BY position`,
@@ -6734,6 +6839,7 @@ function loopPasses(instanceId: string, nodeId: string): LoopPass[] {
     error: string | null;
     specs: string | null;
     notes: string | null;
+    restartClosed: number;
   }>;
 
   const runOf = (row: (typeof runRows)[number]): LoopRunState | null =>
@@ -6794,6 +6900,7 @@ function loopPasses(instanceId: string, nodeId: string): LoopPass[] {
           // other kind reads as having decided on nothing, which it did.
           decided: parseSpecs(row.specs).length,
           notes: splitNotes(row.notes),
+          restartClosed: row.restartClosed === 1,
         },
         emitted: [],
         workSetAside:
@@ -6949,11 +7056,13 @@ function advanceLoop(
     });
 
     if (decision.kind === "stop") {
+      const status = loopStopStatus(decision.code);
       settleLoop(
         instanceId,
         nodeId,
-        loopStopStatus(decision.code),
+        status,
         decision.reason,
+        status === "failed" && latest !== undefined && passCutByRestart(latest),
       );
       return;
     }
@@ -9797,7 +9906,10 @@ export interface BootBlockInstance {
   status: WorkflowInstanceStatus;
   /** Its member runs, as this same boot's run reconciler has just left them. */
   memberStatuses: readonly RunStatus[];
-  /** Whether a restart or a shutdown closed out any of those runs. */
+  /**
+   * Whether a restart or a shutdown closed out any of those runs, or a restart
+   * failed any of its blocks — `workflow_instance_blocks.restart_closed`.
+   */
   restartClosedMember: boolean;
   /**
    * Whether a gate of this instance was reached and is waiting for a person.
@@ -9861,8 +9973,13 @@ export interface BootBlockPlan {
  * member survived — after the live-member test, so a survivor is still named
  * as the reason — and the sweep leaves every one of its `waiting` rows alone.
  * What that spares behind the gate is what the gate holds; what it spares
- * beside it is `planInstanceStep`'s to decide off the runs the boot closed out,
- * whose edges it reads as blocked rather than released.
+ * beside it is `planInstanceStep`'s to decide off the runs the boot closed out
+ * and the blocks it failed, whose edges it reads as blocked rather than
+ * released. The blocks are the half that needed a mark: a merge, deliver or
+ * loop that failed satisfies `on-finish`, so until `restart_closed` was
+ * written on the block too, the advance after the boot started what sat
+ * beside a held gate on a landing that died with the container — and the same
+ * hole was open in the `spared` arm and, under the hold, in `held`.
  *
  * **The hold is the other thing that wakes a block.** Lifting it calls
  * `releaseDependents`, so under the hold a block nothing of its own instance
@@ -9873,9 +9990,10 @@ export interface BootBlockPlan {
  * closing it out wrote off the very work the operator held the fleet to keep,
  * where the run half keeps a `waiting` run that is ready and held. It is
  * spared only when the restart closed out **none** of its members, read off
- * `restart_closed`: a block behind a run the restart ended is behind a cycle
- * that died with the container, `on-finish` would release it on that, and
- * that is the queued-run rule's case under the hold as without it.
+ * `restart_closed` on its runs and its blocks alike: a block behind a run the
+ * restart ended, or behind a merge or delivery it cut off, is behind work that
+ * died with the container, `on-finish` would release it on that, and that is
+ * the queued-run rule's case under the hold as without it.
  */
 export function bootBlockPlan(
   instances: readonly BootBlockInstance[],
@@ -9939,7 +10057,7 @@ export function reconcileBlocksOnBoot(): void {
   const now = Date.now();
   const thinking = db()
     .prepare(
-      "UPDATE workflow_instance_blocks SET status='failed', finished_at=?," +
+      "UPDATE workflow_instance_blocks SET status='failed', finished_at=?, restart_closed=1," +
         " error = CASE kind WHEN 'merge' THEN ? WHEN 'deliver' THEN ? WHEN 'review' THEN ? ELSE ? END," +
         // A turn the restart killed was billed and never reported, so it is
         // counted the way `blockTurnSpend` counts one killed any other way: a
@@ -9986,6 +10104,12 @@ export function reconcileBlocksOnBoot(): void {
     .prepare(
       `SELECT i.id AS id, i.status AS status, r.status AS memberStatus,
               r.restart_closed AS restartClosed,
+              -- The sweep above has just marked every block it failed, and an
+              -- earlier restart's mark stands until a retry clears it.
+              EXISTS (SELECT 1 FROM workflow_instance_blocks c
+                       WHERE c.instance_id = i.id AND c.restart_closed = 1
+                         AND c.status = 'failed')
+                AS restartClosedBlock,
               EXISTS (SELECT 1 FROM workflow_instance_blocks g
                        WHERE g.instance_id = i.id AND g.kind = 'gate'
                          AND g.status = 'waiting' AND g.held_at IS NOT NULL)
@@ -10002,6 +10126,7 @@ export function reconcileBlocksOnBoot(): void {
     status: WorkflowInstanceStatus;
     memberStatus: RunStatus | null;
     restartClosed: number | null;
+    restartClosedBlock: number;
     holdsGate: number;
   }>;
   const gathered = new Map<
@@ -10019,7 +10144,7 @@ export function reconcileBlocksOnBoot(): void {
       entry = {
         status: row.status,
         memberStatuses: [],
-        restartClosedMember: false,
+        restartClosedMember: row.restartClosedBlock === 1,
         holdsGate: row.holdsGate === 1,
       };
       gathered.set(row.id, entry);
@@ -10053,7 +10178,7 @@ export function reconcileBlocksOnBoot(): void {
       : ` AND instance_id NOT IN (${kept.map(() => "?").join(",")})`;
   const looping = db()
     .prepare(
-      "UPDATE workflow_instance_blocks SET status='failed', finished_at=?," +
+      "UPDATE workflow_instance_blocks SET status='failed', finished_at=?, restart_closed=1," +
         " error='The server restarted while this block was repeating its task, and the pass it was working on was closed out by the same restart.'" +
         " WHERE status='looping'" +
         keptClause,
