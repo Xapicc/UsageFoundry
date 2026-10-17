@@ -38,6 +38,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 
 - A block can land what the blocks in front of it built, and every protection that made `land.ts` safe stays where it is.
 - A block can publish what the blocks in front of it built, and it removes the person, so two doors stay shut.
+- A halt that arrives before a branch's push refuses the push, and one that arrives after it lets it finish.
 - A branch refused because a land or a run holds its checkout is failed, not waited for, and that was decided.
 
 ## [Halting, status and pick-ups of a workflow instance](workflows-and-schedules/instance-lifecycle.md)

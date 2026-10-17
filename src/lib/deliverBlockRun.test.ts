@@ -27,6 +27,10 @@ import { after, before, beforeEach, describe, it } from "node:test";
  * pushed every branch again would update each pull request's branch and then be
  * refused by GitHub, and nothing else would notice.
  *
+ * The last is the halt: **a Stop that lands while a branch is in its verify
+ * command pushes nothing**, though the page already reads Stopped and nothing
+ * on the instance would say a push had happened.
+ *
  * The pure half — what the outcome of several branches reads as — is pinned in
  * `workflows.test.ts`. This is the join those cannot reach: a real instance
  * row, the scheduler's claim, `deliverRun`'s own gates and the run's row.
@@ -559,5 +563,67 @@ describe("retrying a deliver block that failed", () => {
       false,
       "the merge door does not open a deliver block, so a stale button cannot cross them",
     );
+  });
+});
+
+/**
+ * Stop pressed while the block's branch is inside `deliverRun`'s verify
+ * command, where nothing has left the machine yet.
+ *
+ * Measured on 02f3b764 by bug hunt 3/6 (board task 5e2ce382) and again in this
+ * harness on 2026-10-17: the halt wrote the block off "while it was delivering
+ * branches" and the instance read `stopped` at once, and after the check
+ * finished the branch was pushed and its pull request opened anyway. The block
+ * read its latch only before each branch, and `deliverRun` asked nothing of the
+ * workflow. The check is held on a file rather than a clock, so the Stop lands
+ * inside it every time.
+ */
+describe("a deliver block stopped while it verifies a branch", () => {
+  async function until(done: () => boolean, failure: string): Promise<void> {
+    const deadline = Date.now() + 20_000;
+    while (!done()) {
+      if (Date.now() > deadline) assert.fail(failure);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+
+  it("pushes nothing and opens no pull request once the workflow is stopped", async () => {
+    const s = scene("stopped");
+    const signals = path.join(root, "signals-stopped");
+    fs.mkdirSync(signals);
+    const probe = path.join(root, "held-check.js");
+    fs.writeFileSync(
+      probe,
+      `const fs = require("node:fs");
+const path = require("node:path");
+const dir = process.argv[2];
+fs.writeFileSync(path.join(dir, "started"), "");
+const deadline = Date.now() + 20000;
+while (!fs.existsSync(path.join(dir, "go"))) {
+  if (Date.now() > deadline) process.exit(3);
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+}
+`,
+    );
+    settings.saveSettings({ landVerifyCommand: `${process.execPath} ${probe} ${signals}` });
+    const ship = () => workflows.blocksOf(s.instanceId).find((b) => b.nodeId === "ship")!;
+
+    workflows.advanceInstances();
+    await until(() => fs.existsSync(path.join(signals, "started")), "the branch's check never started");
+    assert.equal(ship().status, "thinking");
+
+    const halted = workflows.stopInstance(s.instanceId, { kind: "operator" });
+    assert.equal(halted.ok, true, halted.ok ? "" : halted.reason);
+    assert.equal(workflows.getInstance(s.instanceId)!.status, "stopped");
+
+    fs.writeFileSync(path.join(signals, "go"), "");
+    // The claim is let go only once `deliverRun` has returned, pushed or not.
+    await until(() => !land.checkoutHolder(s.repo).landing, "the delivery never let go of the checkout");
+
+    assert.equal(remoteTip(s), null, "the branch was pushed after the workflow was stopped");
+    assert.deepEqual(opened, [], "a pull request was opened after the workflow was stopped");
+    assert.equal(land.deliveredPullRequest(s.runId), null);
+    assert.match(ship().error ?? "", /^Stopped by the operator .* while it was delivering branches\.$/);
+    assert.equal(workflows.getInstance(s.instanceId)!.status, "stopped");
   });
 });

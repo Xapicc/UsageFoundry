@@ -6129,6 +6129,14 @@ function deliverHoldNow(run: RunRow): string | null {
 export async function deliverRun(
   runId: string,
   o: DeliveryRequest = {},
+  /**
+   * Whether the caller still wants this delivery, asked beside both shutdown
+   * reads and nowhere after the push. A workflow's deliver block passes its
+   * halt latch: a Stop during the verify command, which may run for
+   * `VERIFY_TIMEOUT_MS`, used to be followed by the push and the pull request
+   * once the check ended, under a page that already read Stopped.
+   */
+  stillWanted: () => boolean = () => true,
 ): Promise<
   | { ok: true; url: string; number: number }
   | { ok: false; reason: string }
@@ -6185,6 +6193,7 @@ export async function deliverRun(
   // before the registration, so a delivery this lets through is one the
   // shutdown waits for, and no check is started in a process that is exiting.
   if (isShuttingDown()) return { ok: false, reason: DELIVER_SHUTDOWN_REFUSAL };
+  if (!stillWanted()) return { ok: false, reason: DELIVER_WITHDRAWN_REFUSAL };
 
   if (landing.has(folder)) return { ok: false, reason: LANDING_HELD };
   landing.add(folder);
@@ -6193,7 +6202,7 @@ export async function deliverRun(
   // on the run saying it was pushed.
   const untrack = trackLand();
   try {
-    return await pushAndOpen({ run, state, folder, o });
+    return await pushAndOpen({ run, state, folder, o, stillWanted });
   } finally {
     landing.delete(folder);
     untrack();
@@ -6207,6 +6216,11 @@ export async function deliverRun(
 const DELIVER_SHUTDOWN_REFUSAL =
   "The server is shutting down, so nothing was pushed and no pull request was opened. " +
   "Try again once it has restarted.";
+
+/** What `deliverRun` returns when its caller's `stillWanted` says no, from the same two places. */
+const DELIVER_WITHDRAWN_REFUSAL =
+  "The delivery was called off before its push began, so nothing was pushed and no " +
+  "pull request was opened.";
 
 /**
  * Every URL Deliver's push to `origin` goes to, as that push's own git will
@@ -6234,10 +6248,11 @@ async function pushAndOpen(a: {
   state: NonNullable<Awaited<ReturnType<typeof landState>>>;
   folder: string;
   o: DeliveryRequest;
+  stillWanted: () => boolean;
 }): Promise<
   { ok: true; url: string; number: number } | { ok: false; reason: string }
 > {
-  const { run, state, folder, o } = a;
+  const { run, state, folder, o, stillWanted } = a;
   const runId = run.id;
 
   // The credential is chosen from the **repository**, not from the checkout
@@ -6303,6 +6318,9 @@ async function pushAndOpen(a: {
   // pull request is opened. One begun before it is waited on. Deliberately not
   // read again after the push, where refusing would leave exactly that.
   if (isShuttingDown()) return { ok: false, reason: DELIVER_SHUTDOWN_REFUSAL };
+  // The caller's latch, here for the same reason: until the push spawns,
+  // refusing loses nothing and leaves nothing half-published.
+  if (!stillWanted()) return { ok: false, reason: DELIVER_WITHDRAWN_REFUSAL };
 
   // Never `--force`, and the upstream is set so a second press is an ordinary
   // fast-forward rather than a new branch.

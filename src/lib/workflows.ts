@@ -4920,8 +4920,9 @@ function haltBlocks(instanceId: string, cause: string): number {
         // A push already under way is not cancelled: `deliverRun` writes the
         // pull request to the run's row, which is the record of what was
         // delivered, and a halt that killed it between the push and that write
-        // would leave a published branch with no record. The block stops before
-        // it starts the next branch.
+        // would leave a published branch with no record. One not yet begun is
+        // refused, because `deliverRun` asks the block's latch where nothing
+        // awaits before the push, and the block stops before the next branch.
         `${cause} while it was delivering branches.`,
         `${cause} while it was reviewing branches.`,
         `${cause} while it was deciding what to start.`,
@@ -8483,9 +8484,13 @@ export function deliverBlockOutcome(branches: readonly DeliveryOutcome[]): {
  * *in that folder* — an agent without an isolated checkout — and that arrives
  * here as a failed branch with its sentence.
  *
- * The halt latch is read before each branch rather than once: a push is not
- * something to begin in a workflow that is being taken down, and the branches
- * already pushed are recorded on their own runs whatever this block says.
+ * The halt latch is read before each branch rather than once, and handed to
+ * `deliverRun`, which asks it again where nothing awaits before the push: a
+ * push is not something to begin in a workflow that is being taken down, and
+ * a Stop during a branch's verify command, which may run for fifteen minutes,
+ * used to be followed by the push and the pull request once the check ended.
+ * The branches already pushed are recorded on their own runs whatever this
+ * block says.
  */
 async function startDeliverBlock(
   instanceId: string,
@@ -8502,26 +8507,30 @@ async function startDeliverBlock(
     return;
   }
 
+  const stillDelivering = () => {
+    const fresh = getInstance(instanceId);
+    return (
+      !!fresh &&
+      instanceIsOpen(fresh.status) &&
+      getBlock(instanceId, nodeId)?.status === "thinking"
+    );
+  };
   const outcomes: DeliveryOutcome[] = [];
   for (const runId of runIds) {
-    const fresh = getInstance(instanceId);
-    if (
-      !fresh ||
-      !instanceIsOpen(fresh.status) ||
-      getBlock(instanceId, nodeId)?.status !== "thinking"
-    ) {
-      // The halt has already written the block off with its own wording, and
-      // `finishMergeBlock`'s latch would refuse ours.
-      return;
-    }
-    outcomes.push(await deliverBranch(runId));
+    // The halt has already written the block off with its own wording, and
+    // `finishMergeBlock`'s latch would refuse ours.
+    if (!stillDelivering()) return;
+    outcomes.push(await deliverBranch(runId, stillDelivering));
   }
 
   finishMergeBlock(instanceId, nodeId, deliverBlockOutcome(outcomes));
 }
 
 /** One predecessor run, delivered or the reason it was not. */
-async function deliverBranch(runId: string): Promise<DeliveryOutcome> {
+async function deliverBranch(
+  runId: string,
+  stillDelivering: () => boolean,
+): Promise<DeliveryOutcome> {
   const branch = branchLabel(runId);
 
   // Ahead of the git reads: the card's own rule, one pull request per branch.
@@ -8550,7 +8559,7 @@ async function deliverBranch(runId: string): Promise<DeliveryOutcome> {
   // off as one that "could not start delivering" and lose the branches already
   // pushed from its note.
   try {
-    const delivery = await deliverRun(runId);
+    const delivery = await deliverRun(runId, {}, stillDelivering);
     return delivery.ok
       ? { branch, result: "delivered", reason: delivery.url }
       : { branch, result: "failed", reason: delivery.reason };
