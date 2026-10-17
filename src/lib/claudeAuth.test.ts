@@ -12,7 +12,9 @@ import { after, describe, it, mock } from "node:test";
  *
  * The stub records its pid, prints a link carrying that pid, and holds stdin
  * open the way the real CLI does while it waits for a code. `STUB_HOLD`, read
- * at spawn time, makes it wait for that file before printing.
+ * at spawn time, makes it wait for that file before printing;
+ * `STUB_EXIT_AFTER_LINK` makes it leave on its own once it has printed, the
+ * way a CLI that hit a network error or crashed does.
  */
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-claude-auth-")));
 const pidsDir = path.join(tmp, "pids");
@@ -25,6 +27,7 @@ fs.writeFileSync(
     `echo $$ > "${pidsDir}/$$"`,
     'if [ -n "$STUB_HOLD" ]; then while [ ! -e "$STUB_HOLD" ]; do sleep 0.02; done; fi',
     'echo "Open https://claude.ai/oauth/authorize?state=$$"',
+    'if [ -n "$STUB_EXIT_AFTER_LINK" ]; then sleep 0.2; exit 0; fi',
     "while read line; do :; done",
     "",
   ].join("\n"),
@@ -51,6 +54,7 @@ const {
   normalizeCode,
   parseAuthStatus,
   pendingLogin,
+  submitCode,
 } = require("./claudeAuth") as typeof import("./claudeAuth");
 
 /**
@@ -276,6 +280,18 @@ async function driveUntilSettled<T>(promise: Promise<T>): Promise<T> {
   return promise;
 }
 
+after(() => {
+  cancelLogin();
+  for (const pid of recordedPids()) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // Already gone, which is what the tests want.
+    }
+  }
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
 /** `PENDING_TIMEOUT_MS` in `claudeAuth.ts`. The last assertion below fails if it drifts. */
 const PENDING_TIMEOUT_MS = 10 * 60_000;
 
@@ -292,18 +308,6 @@ const PENDING_TIMEOUT_MS = 10 * 60_000;
  * is a process left running, and nothing short of one shows it.
  */
 describe("beginLogin, started twice at once", () => {
-  after(() => {
-    cancelLogin();
-    for (const pid of recordedPids()) {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {
-        // Already gone, which is what the tests want.
-      }
-    }
-    fs.rmSync(tmp, { recursive: true, force: true });
-  });
-
   it("leaves no child that cancelLogin cannot reach", async () => {
     const results = await Promise.all([beginLogin(), beginLogin()]);
     const pendingUrl = pendingLogin()?.url;
@@ -351,5 +355,75 @@ describe("beginLogin, started twice at once", () => {
       cancelLogin();
       mock.timers.reset();
     }
+  });
+});
+
+function pidOf(url: string): number {
+  return Number(new URL(url).searchParams.get("state"));
+}
+
+/**
+ * Every timer `setInterval` hands out while `run` is running, less the ones
+ * cleared. Patched on `globalThis` because the leak is an interval nothing
+ * holds a handle to, and that is the only place left to see it from.
+ */
+async function intervalsLeftBy(run: () => Promise<void>): Promise<number> {
+  const realSetInterval = globalThis.setInterval;
+  const realClearInterval = globalThis.clearInterval;
+  const live = new Set<unknown>();
+  const timers = globalThis as unknown as Record<"setInterval" | "clearInterval", unknown>;
+  timers.setInterval = (...args: Parameters<typeof setInterval>) => {
+    const handle = realSetInterval(...args);
+    live.add(handle);
+    return handle;
+  };
+  timers.clearInterval = (handle: Parameters<typeof clearInterval>[0]) => {
+    live.delete(handle);
+    realClearInterval(handle);
+  };
+  try {
+    await run();
+  } finally {
+    timers.setInterval = realSetInterval;
+    timers.clearInterval = realClearInterval;
+    for (const handle of live) realClearInterval(handle as NodeJS.Timeout);
+  }
+  return live.size;
+}
+
+/**
+ * The sign-in child is the one thing that knows whether a sign-in is still
+ * alive, and this module used to act on its exit only inside a code submit: a
+ * child that left on its own stayed "pending" for ten minutes behind a link
+ * whose verifier was gone, and a submit ended by a kill left its rejection
+ * poll firing every 100 ms for as long as the server lived.
+ */
+describe("the sign-in child's exit", () => {
+  it("ends the pending login when the child leaves on its own", async () => {
+    process.env.STUB_EXIT_AFTER_LINK = "1";
+    const started = await beginLogin();
+    delete process.env.STUB_EXIT_AFTER_LINK;
+    try {
+      assert.ok(started.ok, JSON.stringify(started));
+      await realDelay(1000);
+      assert.equal(alive(pidOf(started.value.url)), false, "the stub never left");
+      assert.equal(pendingLogin(), null);
+    } finally {
+      cancelLogin();
+    }
+  });
+
+  it("stops polling for a rejection once a cancel has ended the submit", async () => {
+    const left = await intervalsLeftBy(async () => {
+      const started = await beginLogin();
+      assert.ok(started.ok, JSON.stringify(started));
+      // The stub reads the code and says nothing, so only the cancel ends it.
+      const submit = submitCode("code-whatever");
+      await realDelay(300);
+      cancelLogin();
+      const outcome = await submit;
+      assert.equal(outcome.ok, false);
+    });
+    assert.equal(left, 0, "an interval outlived the submit it was polling for");
   });
 });

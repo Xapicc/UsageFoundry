@@ -537,6 +537,17 @@ export async function beginLogin(): Promise<StartOutcome> {
     timer,
   };
   store.__ufClaudeLogin = pending;
+
+  // A child that leaves on its own — a network error, a crash, the CLI giving
+  // up — took the verifier with it, and its link must stop being offered. After
+  // the store is set and guarded on it, as `codexAuth.ts` does, so a cancelled
+  // child's exit cannot end the login that replaced it.
+  void exited.then(() => {
+    if (store.__ufClaudeLogin !== pending) return;
+    store.__ufClaudeLogin = null;
+    clearTimeout(timer);
+  });
+
   return { ok: true, value: { url: url.value } };
 }
 
@@ -653,13 +664,17 @@ export async function submitCode(input: unknown): Promise<SubmitOutcome> {
   const mark = pending.output().length;
   pending.child.stdin.write(`${code.value}\n`);
 
+  const raced = new AbortController();
   const outcome = await Promise.race([
     pending.exited.then((e) => ({ kind: "exit" as const, ...e })),
     // Only resolves while the child is still on the prompt, so an exit always
     // wins this race even when the CLI prints a parting line before it goes.
-    waitForRejection(pending, mark).then(() => ({ kind: "rejected" as const })),
+    waitForRejection(pending, mark, raced.signal).then(() => ({
+      kind: "rejected" as const,
+    })),
     after(EXCHANGE_TIMEOUT_MS).then(() => ({ kind: "timeout" as const })),
   ]);
+  raced.abort();
 
   if (outcome.kind === "rejected") {
     return {
@@ -717,13 +732,23 @@ export async function submitCode(input: unknown): Promise<SubmitOutcome> {
  * The grace period is what keeps this from firing on a success that prints a
  * parting line: the child is re-checked after it, and a process that has left
  * is left to the `exited` branch of the race by never resolving here.
+ *
+ * Never resolving is also why it takes `raced`: the poll clears itself only on
+ * new output, so a child killed while quiet — a cancel, a newer start, a
+ * sign-out, the exchange timeout — left it firing every 100 ms for the life of
+ * the process, holding the dead login's child and output with it.
  */
-function waitForRejection(pending: PendingLogin, mark: number): Promise<void> {
+function waitForRejection(
+  pending: PendingLogin,
+  mark: number,
+  raced: AbortSignal,
+): Promise<void> {
   return new Promise((resolve) => {
+    let settle: NodeJS.Timeout | undefined;
     const poll = setInterval(() => {
       if (pending.output().length <= mark) return;
       clearInterval(poll);
-      const settle = setTimeout(() => {
+      settle = setTimeout(() => {
         const gone =
           pending.child.exitCode !== null || pending.child.signalCode !== null;
         if (!gone) resolve();
@@ -731,6 +756,14 @@ function waitForRejection(pending: PendingLogin, mark: number): Promise<void> {
       settle.unref?.();
     }, 100);
     poll.unref?.();
+    raced.addEventListener(
+      "abort",
+      () => {
+        clearInterval(poll);
+        clearTimeout(settle);
+      },
+      { once: true },
+    );
   });
 }
 
