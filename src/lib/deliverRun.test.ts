@@ -22,11 +22,21 @@ import { after, before, beforeEach, describe, it } from "node:test";
  * Driven for real, a database, a repository, the run's own checkout and a
  * remote, because what is pinned is what reaches the remote and what the card
  * reads back, and no fixture can state either. The remote is a **local bare
- * repository under the test's own temporary directory**: `origin` reads as a
- * GitHub URL, which `planDelivery` requires, and `pushInsteadOf` sends the push
- * to the bare repository instead; every scene asserts that rewrite before it
- * presses. The pull request is opened by a stub standing in for `fetch`, so
- * nothing here reaches GitHub or its API.
+ * repository under the test's own temporary directory**, reached the way
+ * `projectPush.test.ts` reaches its own: `origin` is a genuine
+ * `https://github.com/acme/<name>.git`, which `planDelivery` requires of every
+ * push URL, and **git's https transport is replaced** for this process by a
+ * `git-remote-https` that hands the connection to `<root>/remotes/<name>.git`.
+ * It used to be `pushInsteadOf`, which is exactly the rewrite Deliver now
+ * refuses, because it is how a repository's own config could send the push and
+ * its token somewhere else. Every scene's first push of `main` goes through
+ * the stand-in before anything presses. The pull request is opened by a stub
+ * standing in for `fetch`, so nothing here reaches GitHub or its API.
+ *
+ * The process's own git configuration and credentials are cleared before the
+ * first import, for `projectPush.test.ts`' reason: an agent's shell carries a
+ * `GIT_CONFIG_COUNT` block and a real token, and neither may reach a test of
+ * the call that sends one.
  *
  * Its own file, with `DATA_DIR` and the token named before the first import,
  * for `loopMergeOwnership.test.ts`' reason: `config.ts` is read at module load.
@@ -39,10 +49,16 @@ let orchestrator: typeof import("./orchestrator");
 let retention: typeof import("./retention");
 let route: typeof import("../app/api/runs/[id]/deliver/route");
 let root: string;
+let remotes: string;
 
 const MOUNT_DIR = "deliver-mount";
-const GITHUB_REMOTE = "https://github.com/acme/widget.git";
-const PULLS_ENDPOINT = "https://api.github.com/repos/acme/widget/pulls";
+/** `origin` for the scene named `name`; the stand-in serves `<remotes>/<name>.git` for it. */
+const githubRemote = (name: string) => `https://github.com/acme/${name}.git`;
+const PULLS_ENDPOINT = /^https:\/\/api\.github\.com\/repos\/acme\/([^/]+)\/pulls$/;
+
+for (const key of Object.keys(process.env)) {
+  if (/^(GIT_|GH_|GITHUB_)/.test(key)) delete process.env[key];
+}
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, {
@@ -57,6 +73,15 @@ const git = (cwd: string, ...args: string[]) =>
     },
   });
 
+/** `git`, or null where it fails. */
+const gitMay = (cwd: string, ...args: string[]) => {
+  try {
+    return git(cwd, ...args).trim();
+  } catch {
+    return null;
+  }
+};
+
 /** Every pull request the stub was asked to open, in order. */
 let opened: Array<{ head: string; base: string; title: string }> = [];
 let realFetch: typeof fetch;
@@ -68,18 +93,34 @@ let realFetch: typeof fetch;
  */
 const stubFetch = (async (input: string | URL | Request, init?: RequestInit) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-  if (url !== PULLS_ENDPOINT) throw new Error(`the test's fetch stub refuses ${url}`);
+  const repo = PULLS_ENDPOINT.exec(url)?.[1];
+  if (!repo) throw new Error(`the test's fetch stub refuses ${url}`);
   const body = JSON.parse(String(init?.body)) as { head: string; base: string; title: string };
   opened.push({ head: body.head, base: body.base, title: body.title });
   const number = 40 + opened.length;
   return new Response(
-    JSON.stringify({ number, html_url: `https://github.com/acme/widget/pull/${number}` }),
+    JSON.stringify({ number, html_url: `https://github.com/acme/${repo}/pull/${number}` }),
     { status: 201, headers: { "content-type": "application/json" } },
   );
 }) as typeof fetch;
 
 before(async () => {
   root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-deliver-")));
+  remotes = path.join(root, "remotes");
+  fs.mkdirSync(remotes);
+  process.env.GIT_EXEC_PATH = standInTransport();
+  // The operator's global config is not this test's: a URL rewrite or a hook
+  // path there would change what is measured. The app's git reads the same.
+  process.env.GIT_CONFIG_GLOBAL = "/dev/null";
+  process.env.GIT_CONFIG_NOSYSTEM = "1";
+  // `commitPending` commits through the app's own git, which with no global
+  // config has no identity to commit as.
+  Object.assign(process.env, {
+    GIT_AUTHOR_NAME: "t",
+    GIT_AUTHOR_EMAIL: "t@example.com",
+    GIT_COMMITTER_NAME: "t",
+    GIT_COMMITTER_EMAIL: "t@example.com",
+  });
   process.env.DATA_DIR = path.join(root, "data");
   process.env.CLAUDE_HOME = path.join(root, "claude");
   // `planUsage` looks for an OAuth token here, and Resolve asks it before a
@@ -87,8 +128,8 @@ before(async () => {
   process.env.CLAUDE_CONFIG_DIR = path.join(root, "claude");
   process.env.WORKSPACE_ROOT = path.join(root, MOUNT_DIR);
   process.env.WORKSPACE_ROOTS = "";
-  // A credential `planDelivery` accepts. It never leaves this process: the push
-  // goes to a local path, and the stub above answers the API call.
+  // A credential `planDelivery` accepts. It never leaves this process: the
+  // stand-in transport asks for none, and the stub above answers the API call.
   process.env.UF_GITHUB_TOKEN = "test-token-not-a-real-credential";
   process.env.UF_GITHUB_TOKENS = "";
   // Nothing here should reach a spawn of `claude`; one that does fails rather
@@ -114,6 +155,37 @@ before(async () => {
   globalThis.fetch = stubFetch;
 });
 
+/**
+ * A copy of git's exec directory whose `git-remote-https` serves
+ * `<remotes>/<name>.git` for any `https://…/<name>.git`: `projectPush.test.ts`'
+ * stand-in, copied because every test file here carries its own harness.
+ */
+function standInTransport(): string {
+  const real = execFileSync("git", ["--exec-path"], { encoding: "utf8" }).trim();
+  const dir = path.join(root, "git-exec");
+  fs.mkdirSync(dir);
+  for (const entry of fs.readdirSync(real)) {
+    if (entry !== "git-remote-https") fs.symlinkSync(path.join(real, entry), path.join(dir, entry));
+  }
+  fs.writeFileSync(
+    path.join(dir, "git-remote-https"),
+    [
+      "#!/bin/sh",
+      'repo=$(basename "$2" .git)',
+      "while read -r line; do",
+      '  case "$line" in',
+      "    capabilities) printf 'connect\\n\\n' ;;",
+      `    "connect "*) printf '\\n'; exec \${line#connect } "${remotes}/$repo.git" ;;`,
+      "    *) exit 1 ;;",
+      "  esac",
+      "done",
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  return dir;
+}
+
 after(() => {
   globalThis.fetch = realFetch;
   const open = (globalThis as { __ufDb?: { close(): void } }).__ufDb;
@@ -132,14 +204,14 @@ interface Scene {
   repo: string;
   slot: string;
   branch: string;
-  /** The bare repository `origin`'s pushes are rewritten to. */
+  /** The bare repository the stand-in transport serves for `origin`. */
   remote: string;
 }
 
 /**
  * An isolated run with one commit on its branch, checked out in a slot where
  * `allocateSlotPath` would look for one, the operator's checkout on `main` and
- * clean, and `origin` reading as GitHub while pushing to a bare repository.
+ * clean, and `origin` a GitHub URL the stand-in serves from a bare repository.
  */
 function scene(
   name: string,
@@ -158,15 +230,17 @@ function scene(
   git(repo, "commit", "-q", "-m", "base");
   const base = git(repo, "rev-parse", "main").trim();
 
-  const remote = path.join(root, "remotes", `${name}.git`);
-  fs.mkdirSync(remote, { recursive: true });
-  git(remote, "init", "-q", "--bare");
-  git(repo, "remote", "add", "origin", GITHUB_REMOTE);
-  git(repo, "config", `url.${remote}.pushInsteadOf`, GITHUB_REMOTE);
-  // The guard every scene stands on: if the rewrite ever stopped applying, the
-  // press below would aim at GitHub, so the test refuses to press at all.
-  assert.equal(git(repo, "remote", "get-url", "--push", "origin").trim(), remote);
-  assert.equal(git(repo, "remote", "get-url", "origin").trim(), GITHUB_REMOTE);
+  const remote = path.join(remotes, `${name}.git`);
+  git(root, "init", "-q", "--bare", remote);
+  const url = githubRemote(name);
+  git(repo, "remote", "add", "origin", url);
+  // The guard every scene stands on: the push URL is GitHub's, and a push to it
+  // reached the bare repository, so the stand-in is what carries the press
+  // below. If it ever stopped applying, this push would aim at GitHub and the
+  // test refuses to press at all.
+  assert.equal(git(repo, "remote", "get-url", "--push", "--all", "origin").trim(), url);
+  git(repo, "push", "-q", "origin", "main:refs/heads/main");
+  assert.equal(git(remote, "rev-parse", "refs/heads/main").trim(), base);
 
   const branch = `uf/${name}`;
   const slot = path.join(
@@ -290,6 +364,115 @@ describe("deliverRun refuses a branch something can still commit to, and pushes 
 
     assert.equal(state.possible, false);
     assert.equal(state.reason, pressed.ok ? "" : pressed.reason);
+  });
+});
+
+/**
+ * Where the push goes, which is not always where `origin` fetches from.
+ *
+ * Measured before the fix, 2026-10-17 in this harness: `deliveryState` and
+ * `deliverRun` decided on `git remote get-url origin`, the fetch URL, so the
+ * card offered every configuration below. The `pushurl`, the local
+ * `pushInsteadOf`, the second URL and the rewrite the verify command planted
+ * each pushed the branch to the other repository and opened a pull request;
+ * the SSH spelling ran the repository's `core.sshCommand` in the push's
+ * environment, which carries the token. Each is a line in `.git/config`, which
+ * a work cycle can write, and the last is written by the verify command
+ * itself, which runs the branch's own code after the first read.
+ */
+describe("Deliver decides on every URL the push goes to, not on the fetch URL", () => {
+  /** An empty bare repository, for a push that must not arrive. */
+  function elsewhere(name: string): string {
+    const dir = path.join(root, "elsewhere", `${name}.git`);
+    git(root, "init", "-q", "--bare", dir);
+    return dir;
+  }
+
+  const branchIn = (dir: string, s: Scene) =>
+    gitMay(dir, "rev-parse", "--verify", "-q", `refs/heads/${s.branch}`);
+
+  /** The card and the press refuse in one sentence, and nothing is pushed or opened. */
+  async function assertRefused(s: Scene, reason: RegExp): Promise<void> {
+    const state = await land.deliveryState(s.runId);
+    const pressed = await land.deliverRun(s.runId);
+
+    assert.equal(state.possible, false, "the card offered the press");
+    assert.match(state.reason ?? "", reason);
+    assert.equal(pressed.ok, false, "the press delivered");
+    assert.equal(pressed.ok ? "" : pressed.reason, state.reason);
+    assert.equal(remoteTip(s), null);
+    assert.deepEqual(opened, []);
+  }
+
+  it("refuses a pushurl that is not GitHub while origin fetches from GitHub", async () => {
+    const s = scene("pushurl");
+    const away = elsewhere("pushurl");
+    git(s.repo, "remote", "set-url", "--push", "origin", away);
+
+    await assertRefused(s, /is not a GitHub remote/);
+    assert.equal(branchIn(away, s), null);
+  });
+
+  it("refuses a pushInsteadOf that sends GitHub's pushes to a local path", async () => {
+    const s = scene("push-instead");
+    const away = elsewhere("push-instead");
+    git(s.repo, "config", `url.${away}.pushInsteadOf`, githubRemote("push-instead"));
+
+    await assertRefused(s, /is not a GitHub remote/);
+    assert.equal(branchIn(away, s), null);
+  });
+
+  it("refuses a pushInsteadOf to GitHub's SSH spelling, whose core.sshCommand gets the token", async () => {
+    const s = scene("push-ssh");
+    // `parseRemote` reads `git@github.com:` as GitHub, and the push would go
+    // over ssh through whatever program the repository names.
+    const leaked = path.join(root, "push-ssh-leaked");
+    const command = path.join(root, "push-ssh-command.sh");
+    fs.writeFileSync(command, `#!/bin/sh\nprintf '%s' "$GH_TOKEN" > ${leaked}\nexit 1\n`, {
+      mode: 0o755,
+    });
+    git(s.repo, "config", "url.git@github.com:.pushInsteadOf", "https://github.com/");
+    git(s.repo, "config", "core.sshCommand", command);
+
+    await assertRefused(s, /is not a GitHub remote/);
+    assert.equal(fs.existsSync(leaked), false, "core.sshCommand ran with the token in its environment");
+  });
+
+  it("refuses a second url on origin, which git pushes to as well", async () => {
+    const s = scene("two-urls");
+    const away = elsewhere("two-urls");
+    git(s.repo, "config", "--add", "remote.origin.url", away);
+
+    await assertRefused(s, /pushes to 2 URLs/);
+    assert.equal(branchIn(away, s), null);
+  });
+
+  it("refuses a pushInsteadOf the verify command writes, after the card offered the press", async () => {
+    const s = scene("planted");
+    const away = elsewhere("planted");
+    // Run in the run's own tree, a worktree sharing the checkout's config.
+    const plant = path.join(root, "plant.js");
+    fs.writeFileSync(
+      plant,
+      `require("node:child_process").execFileSync("git", ` +
+        `["config", "url.${away}.pushInsteadOf", "${githubRemote("planted")}"]);\n`,
+    );
+    settings.saveSettings({ landVerifyCommand: `${process.execPath} ${plant}` });
+
+    const state = await land.deliveryState(s.runId);
+    assert.equal(state.possible, true, state.reason ?? "");
+    const pressed = await land.deliverRun(s.runId);
+
+    assert.equal(pressed.ok, false, "the press delivered");
+    assert.match(pressed.ok ? "" : pressed.reason, /is not a GitHub remote/);
+    assert.equal(
+      git(s.repo, "remote", "get-url", "--push", "origin").trim(),
+      away,
+      "the check wrote the rewrite this case is about",
+    );
+    assert.equal(branchIn(away, s), null);
+    assert.equal(remoteTip(s), null);
+    assert.deepEqual(opened, []);
   });
 });
 

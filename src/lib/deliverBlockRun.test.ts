@@ -33,9 +33,12 @@ import { after, before, beforeEach, describe, it } from "node:test";
  *
  * Driven in `deliverRun.test.ts`' harness and for its reasons: the remote is a
  * **local bare repository under this test's own temporary directory**, `origin`
- * reads as a GitHub URL and `pushInsteadOf` sends the push there, every scene
- * asserts that rewrite before it presses, and the pull request is opened by a
- * stub standing in for `fetch`. Nothing here reaches GitHub or its API.
+ * is a genuine `https://github.com/acme/<name>.git` and git's https transport
+ * is replaced by a stand-in serving the bare repository for it — not
+ * `pushInsteadOf`, which Deliver refuses — every scene's first push goes
+ * through the stand-in before it presses, and the pull request is opened by a
+ * stub standing in for `fetch`. Nothing here reaches GitHub or its API, and the
+ * process's own `GIT_*`, `GH_*` and `GITHUB_*` variables are cleared first.
  *
  * Its own file, with `DATA_DIR` and the token named before the first import,
  * for `deliverRun.test.ts`' reason: `config.ts` is read at module load.
@@ -47,10 +50,16 @@ let dbMod: typeof import("./db");
 let settings: typeof import("./settings");
 let orchestrator: typeof import("./orchestrator");
 let root: string;
+let remotes: string;
 
 const MOUNT_DIR = "deliver-block-mount";
-const GITHUB_REMOTE = "https://github.com/acme/widget.git";
-const PULLS_ENDPOINT = "https://api.github.com/repos/acme/widget/pulls";
+/** `origin` for the branch named `name`; the stand-in serves `<remotes>/<name>.git` for it. */
+const githubRemote = (name: string) => `https://github.com/acme/${name}.git`;
+const PULLS_ENDPOINT = /^https:\/\/api\.github\.com\/repos\/acme\/([^/]+)\/pulls$/;
+
+for (const key of Object.keys(process.env)) {
+  if (/^(GIT_|GH_|GITHUB_)/.test(key)) delete process.env[key];
+}
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, {
@@ -72,25 +81,31 @@ let realFetch: typeof fetch;
 /** The one endpoint `openPullRequest` calls; anything else is refused, not forwarded. */
 const stubFetch = (async (input: string | URL | Request, init?: RequestInit) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-  if (url !== PULLS_ENDPOINT) throw new Error(`the test's fetch stub refuses ${url}`);
+  const repo = PULLS_ENDPOINT.exec(url)?.[1];
+  if (!repo) throw new Error(`the test's fetch stub refuses ${url}`);
   const body = JSON.parse(String(init?.body)) as { head: string; base: string };
   opened.push({ head: body.head, base: body.base });
   const number = 70 + opened.length;
   return new Response(
-    JSON.stringify({ number, html_url: `https://github.com/acme/widget/pull/${number}` }),
+    JSON.stringify({ number, html_url: `https://github.com/acme/${repo}/pull/${number}` }),
     { status: 201, headers: { "content-type": "application/json" } },
   );
 }) as typeof fetch;
 
 before(async () => {
   root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-deliver-block-")));
+  remotes = path.join(root, "remotes");
+  fs.mkdirSync(remotes);
+  process.env.GIT_EXEC_PATH = standInTransport();
+  process.env.GIT_CONFIG_GLOBAL = "/dev/null";
+  process.env.GIT_CONFIG_NOSYSTEM = "1";
   process.env.DATA_DIR = path.join(root, "data");
   process.env.CLAUDE_HOME = path.join(root, "claude");
   process.env.CLAUDE_CONFIG_DIR = path.join(root, "claude");
   process.env.WORKSPACE_ROOT = path.join(root, MOUNT_DIR);
   process.env.WORKSPACE_ROOTS = "";
-  // A credential `planDelivery` accepts. It never leaves this process: the push
-  // goes to a local path, and the stub above answers the API call.
+  // A credential `planDelivery` accepts. It never leaves this process: the
+  // stand-in transport asks for none, and the stub above answers the API call.
   process.env.UF_GITHUB_TOKEN = "test-token-not-a-real-credential";
   process.env.UF_GITHUB_TOKENS = "";
   // Nothing here should reach a spawn of `claude`; one that does fails rather
@@ -114,6 +129,33 @@ before(async () => {
   realFetch = globalThis.fetch;
   globalThis.fetch = stubFetch;
 });
+
+/** `deliverRun.test.ts`' stand-in transport, copied for the reason given there. */
+function standInTransport(): string {
+  const real = execFileSync("git", ["--exec-path"], { encoding: "utf8" }).trim();
+  const dir = path.join(root, "git-exec");
+  fs.mkdirSync(dir);
+  for (const entry of fs.readdirSync(real)) {
+    if (entry !== "git-remote-https") fs.symlinkSync(path.join(real, entry), path.join(dir, entry));
+  }
+  fs.writeFileSync(
+    path.join(dir, "git-remote-https"),
+    [
+      "#!/bin/sh",
+      'repo=$(basename "$2" .git)',
+      "while read -r line; do",
+      '  case "$line" in',
+      "    capabilities) printf 'connect\\n\\n' ;;",
+      `    "connect "*) printf '\\n'; exec \${line#connect } "${remotes}/$repo.git" ;;`,
+      "    *) exit 1 ;;",
+      "  esac",
+      "done",
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  return dir;
+}
 
 after(() => {
   globalThis.fetch = realFetch;
@@ -189,15 +231,15 @@ function branchScene(name: string, opts: { commits?: boolean } = {}): Branch {
   git(repo, "commit", "-q", "-m", "base");
   const base = git(repo, "rev-parse", "main").trim();
 
-  const remote = path.join(root, "remotes", `${name}.git`);
-  fs.mkdirSync(remote, { recursive: true });
-  git(remote, "init", "-q", "--bare");
-  git(repo, "remote", "add", "origin", GITHUB_REMOTE);
-  git(repo, "config", `url.${remote}.pushInsteadOf`, GITHUB_REMOTE);
-  // The guard every scene stands on: if the rewrite ever stopped applying, the
-  // press below would aim at GitHub, so the test refuses to press at all.
-  assert.equal(git(repo, "remote", "get-url", "--push", "origin").trim(), remote);
-  assert.equal(git(repo, "remote", "get-url", "origin").trim(), GITHUB_REMOTE);
+  const remote = path.join(remotes, `${name}.git`);
+  git(root, "init", "-q", "--bare", remote);
+  const url = githubRemote(name);
+  git(repo, "remote", "add", "origin", url);
+  // The guard every scene stands on: if the stand-in ever stopped carrying the
+  // push, the press below would aim at GitHub, so the test refuses to press.
+  assert.equal(git(repo, "remote", "get-url", "--push", "--all", "origin").trim(), url);
+  git(repo, "push", "-q", "origin", "main:refs/heads/main");
+  assert.equal(git(remote, "rev-parse", "refs/heads/main").trim(), base);
 
   const branch = `uf/${name}`;
   const slot = path.join(
@@ -301,12 +343,12 @@ describe("a deliver block against a real repository", () => {
     const block = await settleBlock(s);
 
     assert.equal(block.status, "emitted", block.error ?? "");
-    assert.match(block.error ?? "", /Delivered 1 branch\(es\): uf\/dirty — https:\/\/github\.com\/acme\/widget\/pull\/71/);
+    assert.match(block.error ?? "", /Delivered 1 branch\(es\): uf\/dirty — https:\/\/github\.com\/acme\/dirty\/pull\/71/);
     assert.equal(remoteTip(s), git(s.slot, "rev-parse", "HEAD").trim());
     assert.deepEqual(opened, [{ head: s.branch, base: "main" }]);
     assert.equal(
       land.deliveredPullRequest(s.runId)?.url,
-      "https://github.com/acme/widget/pull/71",
+      "https://github.com/acme/dirty/pull/71",
       "the run's row records it, which is what the Land card reads",
     );
     // Delivery wrote `.git/config` and nothing in the working tree.
