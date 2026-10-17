@@ -65,6 +65,7 @@ import { isCommitChord } from "@/components/shell/shortcuts";
 import {
   EDGE_OPTION_LABEL,
   WORKFLOW_LIMIT_TIMING_NOTE,
+  costBlindNote,
   describeAmbientAgents,
   fmtBoardThresholds,
   fmtTaskPlace,
@@ -588,6 +589,8 @@ export function WorkflowEditor({
     }
     return owner;
   }, [blocks, links]);
+
+  const costBlind = costBlindNote(blocks);
 
   /* ---------------------------------------------------------------- */
   /* What the install offers                                           */
@@ -1325,6 +1328,7 @@ export function WorkflowEditor({
                   to $5 each can spend $50
                 </Hint>
               )}
+              {costCapped && costBlind && <Hint tone="warn">{costBlind}</Hint>}
             </Field>
 
             <Field label="Stop at 5-hour usage" htmlFor="wf-sess">

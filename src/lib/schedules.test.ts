@@ -483,6 +483,64 @@ describe("scheduleRefusal", () => {
     }
   });
 
+  it("does not take a spending limit as the bound of blocks that report no cost", () => {
+    // A Codex or local run reports no money, so a dollar limit over it compares
+    // $0 for ever, and a schedule admitted on that limit presses Run on a clock
+    // with nothing bounding those blocks. Any such block, not only a graph of
+    // nothing else: the Claude blocks can stay under the limit while the Codex
+    // one spends.
+    const runs = (...providers: Array<WorkflowNode["provider"]>) => ({
+      nodes: providers.map(
+        (provider, i) =>
+          ({ id: `n${i}`, name: `Block ${i}`, kind: "run", provider }) as WorkflowNode,
+      ),
+    });
+    const dollars = { ...off, maxInstanceCostUSD: 20 };
+
+    const allCodex = scheduleRefusal({
+      name: "nightly codex sweep",
+      instanceBudget: dollars,
+      graph: runs("codex", "codex"),
+    });
+    assert.notEqual(allCodex, null, "an all-Codex workflow bounded only by dollars is schedulable");
+    assert.match(allCodex ?? "", /nightly codex sweep/);
+    assert.match(allCodex ?? "", /Block 0/);
+    assert.match(allCodex ?? "", /reports no cost/);
+
+    assert.match(
+      scheduleRefusal({ name: "Mixed", instanceBudget: dollars, graph: runs(null, "local") }) ?? "",
+      /Block 1/,
+    );
+    // An orchestrator block's provider is the one its emitted runs take.
+    assert.notEqual(
+      scheduleRefusal({
+        name: "Fan-out",
+        instanceBudget: dollars,
+        graph: {
+          nodes: [{ id: "d", name: "Decide", kind: "orchestrator", provider: "codex" } as WorkflowNode],
+        },
+      }),
+      null,
+    );
+
+    // Unchanged: a dollar limit over blocks that report it, and a window guard
+    // beside the dollar limit, which is the rule's other way of bounding a
+    // press. What that guard reads for a Codex block is recorded as open in
+    // docs/agent/workflows-and-schedules/schedules.md.
+    assert.equal(
+      scheduleRefusal({ name: "Claude", instanceBudget: dollars, graph: runs(null, "claude") }),
+      null,
+    );
+    assert.equal(
+      scheduleRefusal({
+        name: "Guarded",
+        instanceBudget: { ...dollars, maxWeeklyFraction: 0.5 },
+        graph: runs("codex"),
+      }),
+      null,
+    );
+  });
+
   it("refuses a budgeted workflow that publishes, and names the block", () => {
     const reason = scheduleRefusal({
       name: "Nightly",

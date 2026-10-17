@@ -21,6 +21,7 @@ import type {
   WorkflowInstanceNodeDTO,
   WorkflowInstanceWaitDTO,
 } from "./apiTypes";
+import { blockReportsNoCost } from "./apiTypes";
 
 /**
  * Badges and notices carry *different* vocabularies — a badge can be `accent`
@@ -112,6 +113,7 @@ export const ENDING_LABEL: Record<RunEndingCode, string> = {
   "guard:install_cost": "reached the install's spending limit",
   "guard:no_ceiling": "had no ceiling for its guard to read",
   "guard:no_terminus": "had no limit that would end it",
+  "guard:unmetered": "had a spending limit that could not see it",
   cli_budget: "stopped at Claude Code's own spending limit",
   restart: "cut off by a server restart",
   deadline: "went silent and was ended",
@@ -913,6 +915,28 @@ export const WORKFLOW_LIMIT_TIMING_NOTE =
   "never during one — a block already working carries on until it or another " +
   "reaches one of those boundaries, so the total can overshoot by up to one work " +
   "cycle per block running at the time, and blocks running at once multiply that";
+
+/**
+ * What a workflow's spending limit cannot count, beside the limit, in the words
+ * the editor and the workflow page both use — or null when it counts every
+ * block. `blockReportsNoCost` picks the blocks, so the sentence names the ones
+ * the server's own refusals would.
+ *
+ * Said rather than refused, the run form's answer to a spending limit on a
+ * Codex run: the limit still bounds the blocks that report, and each of these
+ * is bounded by its own cycles or time.
+ */
+export function costBlindNote(
+  blocks: readonly { name: string; kind: string; provider?: string | null }[],
+): string | null {
+  const blind = blocks.filter(blockReportsNoCost);
+  if (blind.length === 0) return null;
+  const names = blind.map((b) => `“${b.name || "Untitled block"}”`).join(", ");
+  return (
+    "Codex and the local model report no cost, so this never counts what " +
+    `${names} ${blind.length === 1 ? "spends" : "spend"}`
+  );
+}
 
 /**
  * One member of one pass, with whatever that member caused.

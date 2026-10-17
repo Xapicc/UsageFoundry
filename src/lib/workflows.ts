@@ -2900,6 +2900,9 @@ export function addBlockSpend(
     spentGuardUSD: members.spentGuardUSD + blocks.spent + blocks.est,
     subjects: members.subjects + blocks.paying,
     unmeasured: members.unmeasured + blocks.unreported,
+    // Not `blocks.unreported`: a turn that never reported is in the guard's
+    // figure at its estimate one line up, so the guard can see it.
+    unmetered: members.unmetered,
   };
 }
 
@@ -2968,7 +2971,16 @@ export function sumMemberSpend(rows: readonly MemberSpendRow[]): InstanceSpend {
       spentGuardUSD += telemetrySpendSince(row.id, row.cycleStartedAt).costUSD;
     }
   }
-  return { spentUSD, spentGuardUSD, subjects: rows.length, unmeasured };
+  // One count for both readers, because for a member they are one fact: a
+  // member is unmeasured only because its provider reports nothing, which is
+  // also the only reason the guard cannot see it.
+  return {
+    spentUSD,
+    spentGuardUSD,
+    subjects: rows.length,
+    unmeasured,
+    unmetered: unmeasured,
+  };
 }
 
 const MEMBER_SPEND_COLUMNS =
@@ -3048,6 +3060,11 @@ export interface InstanceMemberTally {
  * and a merge member's conflict resolution are money this loop spent — and
  * `addBlockSpend` is what decides which figure each column may reach, once,
  * rather than twice.
+ *
+ * A run on a provider that reports no cost is in no figure here, and the cap
+ * does not learn that at run time: a section holding one is refused a cap at
+ * save, by `loopBodyRefusal`, which is the only place the answer can still be
+ * "take the cap off" rather than a loop that runs to `maxPasses` in silence.
  */
 function loopSpend(instanceId: string, nodeId: string): number {
   const prefix = passPrefix(nodeId);
@@ -4241,6 +4258,7 @@ export function startWorkflow(
     const verdict = evaluateInstanceBudget(instanceBudget, snapshot, {
       spentUSD: 0,
       spentGuardUSD: 0,
+      unmetered: 0,
     });
     if (!verdict.allowed) {
       return {
@@ -5225,7 +5243,7 @@ export type InstanceGuardOutcome = {
    * `halted` — the workflow is being taken down, this run with it.
    * `unenforceable` — the verdict is real but is not one an instance may be
    * halted on. See `INSTANCE_ENFORCEABLE_CODES`; today that is `no_ceiling`
-   * alone, and the caller says so in the log rather than acting on it.
+   * and `unmetered`, and the caller says so in the log rather than acting on it.
    */
   kind: "halted" | "unenforceable";
   verdict: BudgetVerdict & { allowed: false };

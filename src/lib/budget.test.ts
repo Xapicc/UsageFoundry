@@ -1020,7 +1020,7 @@ const instanceBase: InstanceBudgetPolicy = {
 
 /** Nothing killed, nothing in flight: the two figures agree. */
 function settled(spentUSD: number) {
-  return { spentUSD, spentGuardUSD: spentUSD };
+  return { spentUSD, spentGuardUSD: spentUSD, unmetered: 0 };
 }
 
 describe("normalizeInstanceBudget", () => {
@@ -1133,7 +1133,7 @@ describe("evaluateInstanceBudget — the cap on everything one press of Run spen
     // duration. Guarding on that would let a workflow run past its cap for as
     // long as its blocks keep working. The in-flight figure reaches the guard
     // through `telemetrySpendSince` and lands here, and only here.
-    const inFlight = { spentUSD: 14, spentGuardUSD: 21 };
+    const inFlight = { spentUSD: 14, spentGuardUSD: 21, unmetered: 0 };
     const policy = { ...instanceBase, maxInstanceCostUSD: 20 };
 
     const v = evaluateInstanceBudget(policy, snapshot(null, null), inFlight);
@@ -1151,7 +1151,7 @@ describe("evaluateInstanceBudget — the cap on everything one press of Run spen
     // `spent_usd_est` and stays out of `spent_usd` for ever. An instance whose
     // blocks were all killed would otherwise read as having spent nothing at
     // all, and the cap would never trip however many times it happened.
-    const estimatedOnly = { spentUSD: 0, spentGuardUSD: 25 };
+    const estimatedOnly = { spentUSD: 0, spentGuardUSD: 25, unmetered: 0 };
     const v = evaluateInstanceBudget(
       { ...instanceBase, maxInstanceCostUSD: 20 },
       snapshot(null, null),
@@ -1162,6 +1162,56 @@ describe("evaluateInstanceBudget — the cap on everything one press of Run spen
     // …and what is *displayed* is untouched by that: the meter reports the
     // guard's figure, but the reason names the guard's, not a floor of zero.
     assert.match(v.allowed === false ? v.reason : "", /\$25\.00/);
+  });
+
+  it("does not pass a spending limit that cannot see the members it bounds", () => {
+    // A Codex or local member is in neither figure — its provider reports no
+    // cost, so `sumMemberSpend` skips it — and the guard's figure for an
+    // all-Codex instance stays $0 however many tokens it burns. Passing that
+    // verdict is the limit reading nothing and saying nothing, which looks
+    // exactly like a limit that holds. Built as a variable rather than a
+    // literal so the case compiles, and fails, against a tree without the
+    // field.
+    const allCodex = { spentUSD: 0, spentGuardUSD: 0, unmetered: 3 };
+    const v = evaluateInstanceBudget(
+      { ...instanceBase, maxInstanceCostUSD: 0.01 },
+      snapshot(null, null),
+      allCodex,
+    );
+    assert.notEqual(v.allowed, true, "a $0.01 limit admitted an all-Codex instance");
+    assert.equal(v.allowed === false && v.code, "unmetered");
+    assert.match(v.allowed === false ? v.reason : "", /3 of its runs/);
+    // Said, not acted on: the members are each bounded by their own cycles or
+    // time, and halting every workflow with a Codex block in it the moment
+    // its first member reached a boundary would make the limit a refusal to run.
+    assert.equal((INSTANCE_ENFORCEABLE_CODES as readonly string[]).includes("unmetered"), false);
+  });
+
+  it("still trips on the members it can see, and asks nothing of a workflow with no spending limit", () => {
+    const mixed = { spentUSD: 25, spentGuardUSD: 25, unmetered: 2 };
+    const tripped = evaluateInstanceBudget(
+      { ...instanceBase, maxInstanceCostUSD: 20 },
+      snapshot(null, null),
+      mixed,
+    );
+    assert.equal(tripped.allowed === false && tripped.code, "instance_cost");
+
+    // Held behind a window that is over, for `no_ceiling`'s reason: a code
+    // nothing acts on must not end the check order early.
+    const windowOver = evaluateInstanceBudget(
+      { ...instanceBase, maxInstanceCostUSD: 20, maxSessionFraction: 0.5 },
+      snapshot(0.97, null),
+      { ...mixed, spentUSD: 1, spentGuardUSD: 1 },
+    );
+    assert.equal(windowOver.allowed === false && windowOver.code, "session_fraction");
+
+    // The count is about the dollar limit and nothing else.
+    const fractionOnly = evaluateInstanceBudget(
+      { ...instanceBase, maxSessionFraction: 0.5 },
+      snapshot(0.1, null),
+      mixed,
+    );
+    assert.equal(fractionOnly.allowed, true);
   });
 
   it("refuses a fraction guard with no ceiling rather than ignoring it", () => {
@@ -1316,7 +1366,7 @@ describe("evaluateInstanceBudget — the cap on everything one press of Run spen
     const on = evaluateInstanceBudget(
       { ...instanceBase, maxInstanceCostUSD: 20 },
       snapshot(0.5, 0.5),
-      { spentUSD: 5, spentGuardUSD: 9 },
+      { spentUSD: 5, spentGuardUSD: 9, unmetered: 0 },
     );
     const meter = on.meters.find((m) => m.label === "Spent by this workflow run");
     // The guard's figure, so the card shows what the decision was made on.

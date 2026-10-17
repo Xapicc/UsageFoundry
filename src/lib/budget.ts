@@ -213,7 +213,13 @@ export type BudgetStopCode =
   /** Everything this installation has spent, across every run, block and chat. */
   | "install_cost"
   | "no_ceiling"
-  | "no_terminus";
+  | "no_terminus"
+  /**
+   * A workflow's spending limit over members whose provider reports no cost
+   * (Codex, the local model), so nothing they spend reaches the figure it
+   * compares. About configuration, like `no_ceiling`, and acted on nowhere.
+   */
+  | "unmetered";
 
 /**
  * A union rather than one object with optional fields, so that `resumeAt` is
@@ -940,6 +946,16 @@ export interface InstanceProgress {
    * what could have been spent.
    */
   spentGuardUSD: number;
+  /**
+   * Members in **neither** figure, because their provider reports no cost.
+   *
+   * Not `InstanceSpend.unmeasured`, which also counts a block turn that died
+   * before reporting: that turn's estimate is in `spentGuardUSD`, so the guard
+   * can see it. A Codex member is the one subject the guard cannot see at all,
+   * and without this count an all-Codex instance compares $0 with its limit at
+   * every boundary and passes — a limit reading nothing and saying nothing.
+   */
+  unmetered: number;
 }
 
 /**
@@ -962,6 +978,12 @@ export interface InstanceProgress {
  * for a live spending limit whose telemetry never arrived, and for the same
  * reason: a guard reading nothing refuses nothing and looks exactly like a guard
  * that was never reached.
+ *
+ * `unmetered` is left off for the same pair of reasons: it is configuration —
+ * a dollar limit over members whose provider reports no dollars — and acting
+ * on it would halt every graph holding a Codex block at its first boundary.
+ * It is not refused at the door either, since nothing exists there to count;
+ * the editor and the workflow page say it beside the limit instead.
  */
 export const INSTANCE_ENFORCEABLE_CODES: readonly BudgetStopCode[] = [
   "instance_cost",
@@ -1056,12 +1078,27 @@ export function evaluateInstanceBudget(
     );
   }
 
-  // Held rather than returned, for `evaluateBudget`'s reason one level up: this
-  // code is on nothing's enforceable list, so returning it where it is found
+  // Held rather than returned, for `evaluateBudget`'s reason one level up: these
+  // codes are on nothing's enforceable list, so returning one where it is found
   // makes an unreadable weekly window switch the 5-hour guard off silently for
   // every block of the instance. The refusal is returned once every guard that
-  // *can* be read has passed, and `??=` keeps the weekly wording in front.
+  // *can* be read has passed, and `??=` keeps the check order's wording in front.
   let unreadable: BudgetVerdict | null = null;
+
+  // Below the comparison, so the members the limit *can* see still trip it.
+  // Said rather than acted on, the run form's answer to `maxRunCostUSD` on a
+  // Codex run: each member is bounded by its own cycles or time, and halting
+  // every graph with a Codex block in it would turn the limit into a refusal
+  // to run. The caller logs it once per segment, which is what keeps a limit
+  // that cannot see a member from looking like one that holds.
+  if (policy.maxInstanceCostUSD !== null && progress.unmetered > 0) {
+    unreadable = block(
+      "unmetered",
+      `This workflow's $${policy.maxInstanceCostUSD.toFixed(2)} spending limit cannot see ` +
+        `${progress.unmetered} of its runs: they are on a provider that reports no cost, ` +
+        "so nothing they spend reaches the figure it compares.",
+    );
+  }
 
   if (policy.maxWeeklyFraction !== null) {
     const weekly = readWindowGuard(snapshot.weekly, policy.maxWeeklyFraction);

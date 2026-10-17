@@ -56,11 +56,13 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 
 - A workflow instance carries its own budget, and it is checked between blocks rather than during one.
 - The instance total is a fourth reading, and the door telemetry reaches it through is the same one, widened by one caller.
+- A dollar limit over members whose provider reports no cost is said rather than passed in silence, and where it would bound repetition it is refused.
 - A person sets an instance budget, and there is nothing on the wire that could.
 
 ## [Schedules](workflows-and-schedules/schedules.md)
 
 - A schedule is the first thing here that starts an agent with no person present at all, and every property that makes that defensible is somewhere else.
+- A spending limit is not the bound of a press whose blocks report no cost.
 - A missed window is not made up, an overlap is skipped rather than queued, and both are on the page.
 - The zone is stored with the schedule, and an unknown one is refused rather than replaced.
 - One timer per process, `globalThis`-pinned, lazily started and stopped.
