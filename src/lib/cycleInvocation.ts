@@ -448,17 +448,6 @@ export function startsFresh(o: {
 }
 
 /**
- * What an agent is told when it is handed the original task on a run that has
- * already done work.
- *
- * Everything the previous attempt left behind is on disk and nowhere else — the
- * conversation is gone, so nothing else in the prompt refers to it — and an
- * agent given a bare task does the first thing that task says, which is the work
- * it is standing on top of. Pointing it at the branch is the whole point for an
- * isolated run: its predecessor's output is committed there, which is the one
- * place a fresh session can still read it.
- */
-/**
  * What an agent is told when the commits under it are another run's.
  *
  * A different case from `priorWorkNotice`, and the difference is what the agent
@@ -500,6 +489,26 @@ function continuedWorkNotice(
   );
 }
 
+/**
+ * What an agent is told when it is handed the original task on a run that has
+ * already done work.
+ *
+ * Everything the previous attempt left behind is on disk and nowhere else — the
+ * conversation is gone, so nothing else in the prompt refers to it — and an
+ * agent given a bare task does the first thing that task says, which is the work
+ * it is standing on top of. Pointing it at the branch is the whole point for an
+ * isolated run: its predecessor's output is committed there, which is the one
+ * place a fresh session can still read it.
+ *
+ * Reachable, which it was not when a survey of this install's prompts found it
+ * on none of them (`proposals/ContinuousImprovement/`): pick-up resumed the
+ * session and nothing else reached the session-less branch with cycles behind
+ * it. Three paths do now — a transcript found absent before a segment's first
+ * cycle, a pick-up of a run whose session retention cleared, and `startsFresh`'s
+ * restart — and `resumeMissingTranscript.test.ts` drives the first. Its slot is
+ * the one directly ahead of the task in `nextPrompt`'s session-less join, after
+ * `continuedWorkNotice`.
+ */
 function priorWorkNotice(cycles: number, branch: string | null): string {
   const spent = `${cycles} work ${cycles === 1 ? "cycle" : "cycles"}`;
   const where = branch
