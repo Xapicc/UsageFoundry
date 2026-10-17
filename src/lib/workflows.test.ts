@@ -72,7 +72,7 @@ import {
   type LivePress,
   type WorkflowFolder,
 } from "./workflowGraph";
-import { topologicalOrder, type RunStatus } from "./orchestrator";
+import { releasableRuns, topologicalOrder, type RunStatus } from "./orchestrator";
 import { readTaskLinks } from "./tasks";
 import type { QueueStatus } from "./mergeQueue";
 import {
@@ -6000,6 +6000,55 @@ describe("planInstanceStep — a review block between the work and the merge", (
     assert.equal(s.block[0]?.nodeId, "land");
     assert.match(s.block[0]?.reason ?? "", /could not review what was in front of it/);
   });
+});
+
+/**
+ * A run block behind a review block: the planner says the link is satisfied and
+ * `createRun` hands what it planned to `releasableRuns`, which asks
+ * `edgeSatisfied` again. An approved run that ended `needs-review` passed the
+ * first and was refused by the second, so the follow-up was written `blocked`
+ * after the review's frontier cost had been paid — where a merge block in the
+ * same place lands that very branch.
+ */
+describe("planInstanceStep — a run block behind a review block", () => {
+  const FOLLOWED: WorkflowGraph = {
+    nodes: [
+      graphNode("build", "Build it"),
+      graphNode("check", "Check it", { kind: "review", task: "", fixRounds: 1 }),
+      graphNode("follow", "Follow up"),
+    ],
+    edges: [
+      edge("build", "check", { edge: "on-finish" }),
+      edge("check", "follow", { edge: "on-success" }),
+    ],
+  };
+
+  for (const status of ["completed", "needs-review"] as const) {
+    it(`starts it behind an approved run that ended ${status}`, () => {
+      const s = stepOf(
+        {
+          build: ran("r-1", status),
+          check: decided("emitted", [["r-1", status]]),
+          follow: decided("waiting"),
+        },
+        FOLLOWED,
+      );
+      assert.deepEqual(s.block, []);
+      assert.deepEqual(s.create.map((c) => c.nodeId), ["follow"]);
+
+      const states = [
+        { id: "follow-run", status: "waiting" as const, iterations: 0, refundedCycles: 0, restartClosed: false },
+        { id: "r-1", status, iterations: 1, refundedCycles: 0, restartClosed: false },
+      ];
+      const links = s.create[0].dependsOn.map((d) => ({
+        runId: "follow-run",
+        dependsOn: d.runId,
+        edge: d.edge,
+      }));
+      const verdict = releasableRuns(states, links);
+      assert.deepEqual(verdict.release, ["follow-run"], JSON.stringify(verdict.block));
+    });
+  }
 });
 
 /**

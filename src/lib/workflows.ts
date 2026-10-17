@@ -2065,7 +2065,7 @@ function edgeVerdict(
 
   if (from.kind === "loop") return loopVerdict(from, state, edge);
 
-  if (from.kind === "review") return reviewVerdict(from, state, edge, dependsOn);
+  if (from.kind === "review") return reviewVerdict(from, state, dependsOn);
 
   if (from.kind === "run") {
     if (!state.run) {
@@ -2282,6 +2282,15 @@ function loopVerdict(
  * approved run: the review is the verdict on it, and a branch whose last run
  * asked for review is still one a frontier model approved.
  *
+ * So an approved run is handed on under `on-finish` whatever the drawn link
+ * says. A successor that is a run is created with this list, and `createRun`
+ * hands it to `releasableRuns`, which *does* ask `edgeSatisfied` — and reads
+ * `on-success` as `completed`, so a follow-up behind an approved branch that
+ * ended `needs-review` was planned as satisfied here and then written `blocked`
+ * there, after the review had been paid for. The link's condition has already
+ * been answered by the approval, on either link; what `on-finish` still asks —
+ * that the run settled having done a cycle — `on-success` asked first as well.
+ *
  * A review block that **failed** — the machinery around it rather than a
  * verdict, a restart mid-review for instance — resolves to nothing either way,
  * blocked on both conditions: nothing it was given has been judged, and
@@ -2290,7 +2299,6 @@ function loopVerdict(
 function reviewVerdict(
   from: WorkflowNode,
   state: InstanceNodeState,
-  edge: WorkflowDependencyEdge,
   dependsOn: InstanceCreation["dependsOn"],
 ): EdgeVerdict {
   const block = state.block;
@@ -2311,7 +2319,7 @@ function reviewVerdict(
     };
   }
   for (const run of block.emitted) {
-    dependsOn.push({ runId: run.id, edge: edge.edge, continueBranch: false });
+    dependsOn.push({ runId: run.id, edge: "on-finish", continueBranch: false });
   }
   return SATISFIED;
 }
@@ -9010,6 +9018,15 @@ async function driveReviewItem(
     if (assistBudgetFull() || newWorkPaused()) {
       await pause();
       continue;
+    }
+    // The workflow's limit before every review, not only at the block's start:
+    // a branch that waited in the queue, or comes back from a fix round, starts
+    // after earlier reviews have put their cost on the block's row, and asked
+    // once a block of N branches overshot by every review still queued when the
+    // limit was crossed. Skipped with no limit, which needs no snapshot read.
+    if (!instanceBudgetIsOff(instance.instanceBudget)) {
+      const guard = enforceInstanceBudgetForBlock(instanceId, await currentSnapshot());
+      if (guard?.kind === "halted" || !open()) return;
     }
     const started = await startReview(current.run_id, {
       requireVerdict: true,
