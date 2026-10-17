@@ -1725,7 +1725,7 @@ export type GitDirCommandClassDTO =
 
 export type GitDirChangeDTO = "added" | "removed" | "changed";
 
-export type GitDirFindingDTO =
+export type GitDirFindingDTO = (
   | {
       kind: "config";
       commandClass: GitDirCommandClassDTO;
@@ -1741,7 +1741,14 @@ export type GitDirFindingDTO =
       change: GitDirChangeDTO;
       executable: boolean;
     }
-  | { kind: "attributes"; change: GitDirChangeDTO; driverLines: string[] };
+  | { kind: "attributes"; change: GitDirChangeDTO; driverLines: string[] }
+) & {
+  /**
+   * The submodule git directory it was found in, relative to the common one
+   * (`modules/<name>`); absent for the repository's own.
+   */
+  module?: string;
+};
 
 /**
  * What a hook entry's name starts with when it was read from the directory a

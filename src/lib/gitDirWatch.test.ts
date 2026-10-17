@@ -13,6 +13,7 @@ import {
   type GitDirReport,
   type GitDirSnapshot,
   type HookEntry,
+  type ModuleSnapshot,
 } from "./gitDirWatch";
 
 /**
@@ -69,6 +70,8 @@ function snapshot(
     hooks,
     attributes: attributes === null ? null : attributesFileOf(attributes),
     hooksPathUnread: null,
+    modules: [],
+    unread: [],
   };
 }
 
@@ -381,6 +384,61 @@ describe("the directory a core.hooksPath the repository already had names", () =
     assert.deepEqual(notReadOf(compare(unread("away."), unread("away."))), [
       "At the run's start and end: away.",
     ]);
+  });
+});
+
+describe("a submodule's git directory", () => {
+  const MODULE_CONFIG = `${COMMON}/modules/lib/config`;
+  const clean: ModuleSnapshot["reading"] = { config: [], hooks: [], attributes: null };
+  const planted: ModuleSnapshot["reading"] = {
+    config: watchedConfigOf(listing([["local", MODULE_CONFIG, "core.fsmonitor", "evil"]])),
+    hooks: [],
+    attributes: null,
+  };
+  const withModules = (modules: ModuleSnapshot[] | null, unread: string[] = []): GitDirSnapshot => ({
+    ...snapshot(ORDINARY),
+    modules,
+    unread,
+  });
+  const lib = (reading: ModuleSnapshot["reading"]): ModuleSnapshot => ({ dir: "modules/lib", reading });
+
+  it("is compared as the repository's own is, each finding marked with it", () => {
+    const expected = {
+      kind: "config",
+      commandClass: "fsmonitor",
+      key: "core.fsmonitor",
+      change: "added",
+      now: [{ scope: "local", origin: MODULE_CONFIG, shown: "evil" }],
+      module: "modules/lib",
+    };
+    assert.deepEqual(findingsOf(compare(withModules([lib(clean)]), withModules([lib(planted)]))), [
+      expected,
+    ]);
+    // One that arrives with a plant in it is the same finding.
+    assert.deepEqual(findingsOf(compare(withModules([]), withModules([lib(planted)]))), [expected]);
+  });
+
+  it("is never removed or unchanged when either end did not read it", () => {
+    const notReadOf = (report: GitDirReport) => {
+      assert.equal(report.state, "unchanged", JSON.stringify(report));
+      return report.state === "unchanged" ? report.notRead : undefined;
+    };
+    // Past the cap at the end, or too many entries to look through.
+    assert.deepEqual(
+      notReadOf(compare(withModules([lib(planted)]), withModules([lib(null)], ["Past the cap."]))),
+      ["At the run's end: Past the cap."],
+    );
+    assert.deepEqual(
+      notReadOf(compare(withModules([lib(planted)]), withModules(null, ["Too many."]))),
+      ["At the run's end: Too many."],
+    );
+    // A baseline from before submodules were read has none of them.
+    const { modules: _, unread: __, ...older } = snapshot(ORDINARY);
+    assert.match(
+      (notReadOf(compare(older, withModules([lib(planted)]))) ?? []).join(),
+      /^At the run's start: this app did not yet read submodules' git directories/,
+    );
+    assert.equal(notReadOf(compare(older, withModules([]))), undefined);
   });
 });
 

@@ -170,6 +170,64 @@ describe("reading a planted repository", () => {
   });
 });
 
+describe("a submodule's git directory, which the superproject's git status runs from", () => {
+  it("compares what a run plants there, keyed by the module, and runs none of it", async () => {
+    const lib = path.join(root, "lib-source");
+    fs.mkdirSync(lib);
+    setupGit(lib, ["init", "-q", "-b", "main"]);
+    setupGit(lib, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "l"]);
+    const { repo, worktree } = makeRepository(workspace, "super");
+    const baseline = await read.readGitDirBaseline(worktree, 1_000);
+    assert.ok(baseline?.ok, JSON.stringify(baseline));
+    setupGit(repo, ["-c", "protocol.file.allow=always", "submodule", "add", "-q", lib, "lib"]);
+    // A name with a slash in it, which git keeps as nested directories.
+    setupGit(repo, [
+      "-c",
+      "protocol.file.allow=always",
+      "submodule",
+      "add",
+      "-q",
+      "--name",
+      "vendor/two",
+      lib,
+      "two",
+    ]);
+    setupGit(repo, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "s"]);
+    // Adding a submodule is not itself a warning: git sets no watched key or hook.
+    const added = compareGitDir(baseline, await read.readGitDirAgain(baseline), [], 2_000);
+    assert.deepEqual(added.state === "unchanged" && added.notRead, undefined, JSON.stringify(added));
+
+    // Inside the run's own common git directory, so the run can write it.
+    const moduleDir = path.join(repo, ".git", "modules", "lib");
+    setupGit(repo, [
+      "config",
+      "-f",
+      path.join(moduleDir, "config"),
+      "core.fsmonitor",
+      `touch ${marker("submodule-fsmonitor")} #`,
+    ]);
+    const slashed = path.join(repo, ".git", "modules", "vendor", "two");
+    writeHook(path.join(slashed, "hooks"), "pre-commit", `touch ${marker("submodule-hook")}`);
+    const report = compareGitDir(baseline, await read.readGitDirAgain(baseline), [], 3_000);
+    assert.equal(report.state, "changed", JSON.stringify(report));
+    assert.deepEqual(
+      report.state === "changed" &&
+        report.findings.map((f) => [f.module, f.kind === "config" ? f.key : f.kind, f.change]),
+      [
+        ["modules/lib", "core.fsmonitor", "added"],
+        ["modules/vendor/two", "hook", "added"],
+      ],
+    );
+    assert.equal(report.state === "changed" && report.notRead, undefined);
+    assert.ok(!markersWritten().includes("ran-submodule-fsmonitor"), "reading ran the fsmonitor");
+
+    // The control: the superproject's own status recurses into the submodule
+    // and runs what was planted in its git directory.
+    plainGit(repo, ["status", "--short"]);
+    assert.ok(markersWritten().includes("ran-submodule-fsmonitor"), markersWritten().join(", "));
+  });
+});
+
 describe("a core.hooksPath the repository already had", () => {
   it("compares the directory it names, which is where git runs hooks from", async () => {
     const { repo, worktree } = makeRepository(workspace, "husky");

@@ -77,6 +77,26 @@ export interface GitDirSnapshot {
    * before this app read that directory at all.
    */
   hooksPathUnread?: string | null;
+  /**
+   * Each submodule git directory under `modules/`, in path order; null when
+   * there were too many directories there to look through, which `unread`
+   * then says. Absent, with `unread`, from a snapshot taken before this app
+   * read them.
+   */
+  modules?: ModuleSnapshot[] | null;
+  /** What else this reading did not read, a sentence each. */
+  unread?: string[];
+}
+
+/**
+ * A submodule's own git directory, which git keeps inside the superproject's
+ * and runs from whenever the superproject's `git status` recurses into it.
+ */
+export interface ModuleSnapshot {
+  /** Relative to the common directory: `modules/<name>`, `modules/<name>/modules/<nested>`. */
+  dir: string;
+  /** Null when it was not read, which the snapshot's `unread` says. */
+  reading: Pick<GitDirSnapshot, "config" | "hooks" | "attributes"> | null;
 }
 
 /**
@@ -349,6 +369,32 @@ function attributesFindings(
 }
 
 /**
+ * Each submodule git directory compared as the repository's own is, its
+ * findings marked with it. One present at a single end is compared against
+ * nothing, so what it would run reads as added or removed; one either end did
+ * not read is left out, and that end's `unread` says so.
+ */
+function moduleFindings(before: ModuleSnapshot[], after: ModuleSnapshot[]): GitDirFinding[] {
+  const was = new Map(before.map((module) => [module.dir, module]));
+  const now = new Map(after.map((module) => [module.dir, module]));
+  const none: NonNullable<ModuleSnapshot["reading"]> = { config: [], hooks: [], attributes: null };
+  const findings: GitDirFinding[] = [];
+  for (const dir of [...new Set([...was.keys(), ...now.keys()])].sort()) {
+    const old = was.has(dir) ? was.get(dir)!.reading : none;
+    const cur = now.has(dir) ? now.get(dir)!.reading : none;
+    if (old === null || cur === null) continue;
+    findings.push(
+      ...[
+        ...configFindings(old.config, cur.config),
+        ...hookFindings(old.hooks, cur.hooks),
+        ...attributesFindings(old.attributes, cur.attributes),
+      ].map((finding) => ({ ...finding, module: dir })),
+    );
+  }
+  return findings;
+}
+
+/**
  * Two snapshots of one repository's git directory, as the run page reports
  * them.
  *
@@ -392,12 +438,20 @@ export function compareGitDir(
     ...configFindings(was.config, now.config),
     ...hookFindings(was.hooks, nowHooks),
     ...attributesFindings(was.attributes, now.attributes),
+    ...(was.modules && now.modules ? moduleFindings(was.modules, now.modules) : []),
   ];
   const notRead = notReadOf(
-    predates && nowHooks.length < now.hooks.length
-      ? "this app did not yet read the directory core.hooksPath names, so the hooks there were not compared."
-      : (was.hooksPathUnread ?? null),
-    now.hooksPathUnread ?? null,
+    [
+      predates && nowHooks.length < now.hooks.length
+        ? "this app did not yet read the directory core.hooksPath names, so the hooks there were not compared."
+        : (was.hooksPathUnread ?? null),
+      // A baseline from before submodules were read has none of them.
+      was.modules === undefined && (now.modules === null || (now.modules?.length ?? 0) > 0)
+        ? "this app did not yet read submodules' git directories, so theirs were not compared."
+        : null,
+      ...(was.unread ?? []),
+    ],
+    [now.hooksPathUnread ?? null, ...(now.unread ?? [])],
   );
   const since = baseline.takenAt;
   if (findings.length === 0) {
@@ -419,11 +473,19 @@ export function compareGitDir(
  * keeps it. Never folded into "unchanged": that is a claim this app can only
  * make about what it read twice.
  */
-function notReadOf(start: string | null, end: string | null): { notRead?: string[] } {
-  if (start !== null && start === end) return { notRead: [`At the run's start and end: ${start}`] };
+function notReadOf(
+  startSentences: Array<string | null>,
+  endSentences: Array<string | null>,
+): { notRead?: string[] } {
+  const start = startSentences.filter((sentence): sentence is string => sentence !== null);
+  const end = endSentences.filter((sentence): sentence is string => sentence !== null);
   const notRead = [
-    ...(start === null ? [] : [`At the run's start: ${start}`]),
-    ...(end === null ? [] : [`At the run's end: ${end}`]),
+    ...start.map((sentence) =>
+      end.includes(sentence)
+        ? `At the run's start and end: ${sentence}`
+        : `At the run's start: ${sentence}`,
+    ),
+    ...end.filter((sentence) => !start.includes(sentence)).map((s) => `At the run's end: ${s}`),
   ];
   return notRead.length === 0 ? {} : { notRead };
 }

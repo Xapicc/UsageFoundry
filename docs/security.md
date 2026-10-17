@@ -202,6 +202,9 @@ read — reaches something that is not this run's business.
     `diff.*` or `merge.*` driver, or a hook without `.sample`. If the
     repository sets `core.hooksPath` of its own (husky sets `.husky/_`), git
     runs hooks from that directory instead of `.git/hooks`, so `ls -la` it too.
+    In a repository with submodules, look in each `.git/modules/<name>` the
+    same way: your superproject's `git status` recurses into a submodule and
+    runs the `core.fsmonitor` set there.
   - The app now does that look for you at the end of every run, and **warns
     on the run's page and on its Land card** when something changed. Before
     a run's first work cycle it reads the repository's shared git directory.
@@ -213,7 +216,9 @@ read — reaches something that is not this run's business.
     added, changed or made executable, in `.git/hooks` and in the directory a
     `core.hooksPath` your repository already set names, and any change to
     `.git/info/attributes`. That directory is husky's `.husky/_` in the common
-    case, which is gitignored and so in no branch or diff either. Branch, remote and worktree settings this app
+    case, which is gitignored and so in no branch or diff either. It reads each
+    submodule's git directory under `.git/modules/` the same way and names the
+    submodule on what it finds there. Branch, remote and worktree settings this app
     writes itself are not listed. It names the other runs that worked in the
     same repository in that time, because they share the directory. It cannot
     tell a run's change from yours or the chat's, and says so. If either

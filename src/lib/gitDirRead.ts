@@ -15,6 +15,7 @@ import {
   type GitDirReading,
   type GitDirReport,
   type HookEntry,
+  type ModuleSnapshot,
   SHOWN_CHARS,
 } from "./gitDirWatch";
 
@@ -35,6 +36,16 @@ import {
 const MAX_HASHED_BYTES = 1 << 20;
 /** Of one hooks directory's entries read; a directory holding more says so as one entry. */
 const MAX_HOOK_ENTRIES = 256;
+/** Of submodule git directories read, nested ones included; the rest are listed as not read. */
+const MAX_MODULES = 32;
+/** How many submodules deep a submodule's own `modules/` is followed. */
+const MAX_MODULE_NESTING = 3;
+/**
+ * Of entries under `modules/` looked at for them, since a name with a slash in
+ * it sits that many directories down. Past it none is compared, because which
+ * were missed could differ between the two ends.
+ */
+const MAX_MODULE_WALK = 256;
 /**
  * Each git call here is a read of a few small files. `include.path` can name a
  * FIFO, and `git config` would wait on it for ever; the start's read is also
@@ -335,24 +346,21 @@ async function readAttributes(commonDir: string): Promise<AttributesFile | null>
     : attributesFileOf(file.text);
 }
 
+type DirReading = NonNullable<ModuleSnapshot["reading"]> & { hooksPathUnread: string | null };
+
 /**
- * Run from inside the git directory with it named explicitly, so the reading
- * needs neither checkout to exist any more and is the main checkout's view:
- * `config.worktree` here is the common one the operator's own checkout reads,
- * not the run's linked worktree's.
+ * One git directory's configuration, hooks and attributes. Run from inside
+ * it with it named explicitly, so the reading needs neither checkout to exist
+ * any more and is the main checkout's view: `config.worktree` here is the
+ * common one the operator's own checkout reads, not the run's linked
+ * worktree's.
  */
-async function readSnapshot(commonDir: string): Promise<GitDirReading> {
+async function readGitDir(
+  gitDir: string,
+): Promise<{ ok: true; reading: DirReading } | { ok: false; reason: string }> {
   const listing = await git(
-    commonDir,
-    [
-      `--git-dir=${commonDir}`,
-      "config",
-      "--list",
-      "--show-scope",
-      "--show-origin",
-      "-z",
-      "--includes",
-    ],
+    gitDir,
+    [`--git-dir=${gitDir}`, "config", "--list", "--show-scope", "--show-origin", "-z", "--includes"],
     { timeoutMs: GIT_READ_TIMEOUT_MS, trim: false },
   );
   // Never empty when it worked: `gitArgs`' own `-c` pairs are listed too, under
@@ -360,24 +368,127 @@ async function readSnapshot(commonDir: string): Promise<GitDirReading> {
   if (!listing.ok) {
     return {
       ok: false,
-      reason: `git config could not list ${commonDir}/config: ${listing.stderr || `exit ${listing.code}`}`,
+      reason: `git config could not list ${gitDir}/config: ${listing.stderr || `exit ${listing.code}`}`,
     };
   }
-  try {
-    const [hooks, hooksPath, attributes] = await Promise.all([
-      readHookDir(path.join(commonDir, "hooks"), ""),
-      readHooksPath(commonDir, hooksPathOf(listing.stdout)),
-      readAttributes(commonDir),
-    ]);
+  const [hooks, hooksPath, attributes] = await Promise.all([
+    readHookDir(path.join(gitDir, "hooks"), ""),
+    readHooksPath(gitDir, hooksPathOf(listing.stdout)),
+    readAttributes(gitDir),
+  ]);
+  return {
+    ok: true,
+    reading: {
+      config: watchedConfigOf(listing.stdout),
+      hooks: [...hooks, ...hooksPath.hooks],
+      attributes,
+      hooksPathUnread: hooksPath.unread,
+    },
+  };
+}
+
+/**
+ * Whether `rel` under the common directory is a directory to look in. A
+ * symlink is not followed, and is said in `unread`.
+ */
+async function lookable(commonDir: string, rel: string, unread: string[]): Promise<boolean> {
+  const abs = path.join(commonDir, rel);
+  const self = await fs.promises.lstat(abs).catch((err: NodeJS.ErrnoException) => {
+    if (err.code === "ENOENT") return null;
+    throw err;
+  });
+  if (self?.isSymbolicLink()) {
+    unread.push(
+      `${rel} is a symlink to ${await fs.promises.readlink(abs)}, so the submodule git directories through it were not read.`,
+    );
+    return false;
+  }
+  return self?.isDirectory() ?? false;
+}
+
+/**
+ * The submodule git directories under `<common>/modules`, relative to the
+ * common directory, or null when there were more entries there than
+ * `MAX_MODULE_WALK`. A directory there is one when it holds a `HEAD`; one
+ * that does not is part of a name with a slash in it, which git keeps as
+ * nested directories.
+ */
+async function findModules(commonDir: string): Promise<{ dirs: string[] | null; unread: string[] }> {
+  const dirs: string[] = [];
+  const unread: string[] = [];
+  let looked = 0;
+  const lookIn = async (rel: string, nesting: number): Promise<boolean> => {
+    for (const name of (await fs.promises.readdir(path.join(commonDir, rel))).sort()) {
+      if (++looked > MAX_MODULE_WALK) return false;
+      const child = `${rel}/${name}`;
+      if (!(await lookable(commonDir, child, unread))) continue;
+      if (!(await exists(path.join(commonDir, child, "HEAD")))) {
+        if (!(await lookIn(child, nesting))) return false;
+        continue;
+      }
+      dirs.push(child);
+      const nested = `${child}/modules`;
+      if (!(await lookable(commonDir, nested, unread))) continue;
+      if (nesting >= MAX_MODULE_NESTING) {
+        unread.push(
+          `${nested} is nested deeper than this app reads, so the submodule git directories there were not read.`,
+        );
+        continue;
+      }
+      if (!(await lookIn(nested, nesting + 1))) return false;
+    }
+    return true;
+  };
+  if (!(await lookable(commonDir, "modules", unread))) return { dirs, unread };
+  return (await lookIn("modules", 1)) ? { dirs, unread } : { dirs: null, unread };
+}
+
+/**
+ * Every submodule's own git directory, read as the repository's is. git keeps
+ * each inside the common one, where a work cycle can write it, and the
+ * superproject's `git status` recurses into the submodule and runs its
+ * fsmonitor, filters and the rest; its hooks run on the operator's commits
+ * there.
+ */
+async function readModules(
+  commonDir: string,
+): Promise<{ modules: ModuleSnapshot[] | null; unread: string[] }> {
+  const found = await findModules(commonDir);
+  if (found.dirs === null) {
     return {
-      ok: true,
-      snapshot: {
-        config: watchedConfigOf(listing.stdout),
-        hooks: [...hooks, ...hooksPath.hooks],
-        attributes,
-        hooksPathUnread: hooksPath.unread,
-      },
+      modules: null,
+      unread: [
+        ...found.unread,
+        `There are more than ${MAX_MODULE_WALK} entries under modules/, so no submodule's git directory was compared.`,
+      ],
     };
+  }
+  const read = await Promise.all(
+    found.dirs.map(async (dir, i): Promise<{ module: ModuleSnapshot; unread: string | null }> => {
+      if (i >= MAX_MODULES) return { module: { dir, reading: null }, unread: null };
+      const own = await readGitDir(path.join(commonDir, dir));
+      if (!own.ok) return { module: { dir, reading: null }, unread: own.reason };
+      const { hooksPathUnread, ...reading } = own.reading;
+      return {
+        module: { dir, reading },
+        unread: hooksPathUnread === null ? null : `In ${dir}, ${hooksPathUnread}`,
+      };
+    }),
+  );
+  const unread = [...found.unread, ...read.flatMap((one) => (one.unread === null ? [] : [one.unread]))];
+  if (found.dirs.length > MAX_MODULES) {
+    unread.push(
+      `Of ${found.dirs.length} submodule git directories, those after the first ${MAX_MODULES} were not compared.`,
+    );
+  }
+  return { modules: read.map((one) => one.module), unread };
+}
+
+async function readSnapshot(commonDir: string): Promise<GitDirReading> {
+  try {
+    const own = await readGitDir(commonDir);
+    if (!own.ok) return own;
+    return { ok: true, snapshot: { ...own.reading, ...(await readModules(commonDir)) } };
   } catch (err) {
     return {
       ok: false,
