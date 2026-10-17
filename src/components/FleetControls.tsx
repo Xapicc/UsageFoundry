@@ -1,18 +1,25 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   FleetReopenReportDTO,
   FleetStateDTO,
   FleetStopReportDTO,
 } from "@/lib/apiTypes";
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
+import { startPoll } from "@/lib/poll";
 import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonRow } from "@/components/ui/Button";
 import { Card, CardTitle } from "@/components/ui/Card";
 import { Field, Input } from "@/components/ui/Field";
 import { Notice } from "@/components/ui/Notice";
 import { Sheet } from "@/components/ui/Sheet";
+
+/**
+ * The runs page's own period, so this card is never further behind the
+ * In-flight band beneath it than one of that band's polls.
+ */
+const POLL_MS = 4000;
 
 /**
  * The three controls that act on the whole install.
@@ -55,13 +62,28 @@ export function FleetControls({
   const [moreIterations, setMoreIterations] = useState("1");
   const [maxRunCostUSD, setMaxRunCostUSD] = useState("");
 
+  // Taken by every read and every press, and a read's answer is drawn only
+  // while it holds the newest one: a poll sent just before Stop everything can
+  // land after the stop's own answer, and would put the fleet back on screen as
+  // it was before the press.
+  const latest = useRef(0);
+
   const load = useCallback(async () => {
+    const ticket = ++latest.current;
     const res = await jsonRequest<{ state: FleetStateDTO }>("/api/fleet");
-    if (res.ok) setState(res.data.state);
+    if (res.ok && ticket === latest.current) setState(res.data.state);
   }, []);
 
+  // Polled rather than read once at mount, because runs start here without
+  // this page doing anything — a schedule fires, the queue promotes, another
+  // tab presses Run — and a card read once went on saying "Nothing is in
+  // flight" with Stop everything disabled while the band below it filled up.
   useEffect(() => {
-    void load();
+    const stop = startPoll(load, POLL_MS);
+    return () => {
+      stop();
+      latest.current += 1;
+    };
   }, [load]);
 
   const live = state
@@ -69,6 +91,7 @@ export function FleetControls({
     : 0;
 
   async function post(body: Record<string, unknown>, describe: string) {
+    latest.current += 1;
     setBusy(true);
     setError(null);
     setNote(null);
