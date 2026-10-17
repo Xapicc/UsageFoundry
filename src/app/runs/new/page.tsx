@@ -1736,7 +1736,9 @@ export default function NewRunPage() {
                     : "A model id this provider's CLI takes; blank runs its default"
                   : provider === "local"
                     ? "A model id your local server lists; blank takes the one you signed in with"
-                    : "Blank takes the default in Settings, read when the run starts"
+                    : selectedAgent?.model
+                      ? "Blank takes the agent's model"
+                      : "Blank takes the default in Settings, read when the run starts"
               }
             >
               {mark("model")}
