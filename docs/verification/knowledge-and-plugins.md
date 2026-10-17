@@ -103,10 +103,11 @@
 - **None of the four pinned-bundle hook and read facts has been run.** Each
   stays read-not-run until a billed run confirms it.
 
-- **No hook event but `SessionStart` has been observed.** `hook_response` is
-  emitted only for `["SessionStart","Setup"]` outside `CLAUDE_CODE_REMOTE`,
-  so `PostToolUse`, `PreCompact`, `PostCompact`, `Stop` and `readGuard`'s
-  `PreToolUse` run, or not, unobserved.
+- **No `PreCompact` or `PostCompact` hook, and no plugin's hook but
+  `SessionStart`, has been observed.** Every other event's hooks were observed
+  on 2026-10-17 under `--include-hook-events`, which every cycle now passes
+  ([run-lifecycle-hooks-and-endings.md](run-lifecycle-hooks-and-endings.md)),
+  but only from `settings.json` hooks against a stub API.
 
 - **The graph orientation layer is unseen in the dark theme, on a touch
   device, with a screen reader and under `docker compose`**, and no run passed
@@ -145,8 +146,8 @@
   `LINE_HEIGHT_PX` 16 (an estimate), the 7.3MB payload's parse, the row-height
   sizing, and the one-shot tag seed with `uf.knowledge-graph` cleared.
 
-- **`readGuard`'s `PreToolUse` hook has never been seen to fire.** Plugin
-  hooks are observed for `SessionStart` only, and the CLI emits
-  `hook_response` for `SessionStart` and `Setup` alone, so an inert guard looks
-  exactly like one switched off. One billed run settles it: switch `readGuard`
-  on, have a cycle read one file twice, and confirm the second read is refused.
+- **`readGuard`'s `PreToolUse` hook has never been seen to fire.** Since
+  2026-10-17 a firing one leaves a `system:hook_response` row, since a deny is
+  output the store keeps; none has been looked for. One billed run settles it:
+  switch `readGuard` on, have a cycle read one file twice, and confirm the
+  second read is refused and its row is there.

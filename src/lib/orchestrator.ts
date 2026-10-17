@@ -9109,7 +9109,7 @@ export function contextAfterPrune(
  *
  * `output` is the hook's stdout verbatim, and which part of it reaches the
  * model depends on the event, measured against the pinned CLI rather than read
- * off its docs (`docs/verification/run-lifecycle-hook-events.md`): a JSON
+ * off its docs (`docs/verification/run-lifecycle-hooks-and-endings.md`): a JSON
  * object's `hookSpecificOutput.additionalContext` reached it from `PreToolUse`
  * and `PostToolUse` alike, and plain text reached it from `SessionStart` and
  * `UserPromptSubmit` and did **not** from `PostToolUse`. So a JSON reply is read

@@ -84,6 +84,12 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - An operator's Stop also reaches the validation, and the task it leaves is claimed by the stopped run.
 - The cycle a verdict buys carries the evidence, not a scolding, and `nextPrompt` ranks it above both standing prompts and below the operator's own words.
 
+## [How a run ended, as a code: `runs.ending_code`](run-lifecycle/ending-code.md)
+
+- `runs.ending_code` says how a run ended, and the branch that ended it writes it.
+- Null means not recorded, and that is the load-bearing part.
+- It is the field a count of finished runs reads, and `reported_done` was deliberately not repaired.
+
 ## [A cycle's CLI, argv and appended notices](run-lifecycle/cycle-argv-and-notices.md)
 
 - Three flags ride *every* cycle's argv, not the opening one, and `--resume` restores none of them.

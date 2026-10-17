@@ -27,3 +27,4 @@ Each paragraph is in one topic file under `docs/agent/architecture/`; the lines 
 - `orchestrator.ts`'s loop calls `currentSnapshot()` (a fresh transcript scan, shared with every other caller that asks while it is running — see *One aggregation per burst* in `docs/agent/metering/transcripts.md`) *before every iteration*, evaluates …
 - Several runs can be in flight at once.
 - Events flow: `emit()` writes to `run_events` and publishes on a `globalThis` EventEmitter → `/api/runs/[id]/stream` replays persisted history first (honouring `Last-Event-ID`), then tails live.
+- A hook's injection is a line on the run's log, and the hook lifecycle `--include-hook-events` reports is filtered before it is stored.
