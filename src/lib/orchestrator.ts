@@ -2604,6 +2604,29 @@ export function refusalStopReason(
 }
 
 /**
+ * What a run's row says when its CLI exited non-zero with no refusal sentence,
+ * or could not resume the session it was handed (`resumeTarget` non-null).
+ *
+ * Named for the CLI that exited, `refusalStopReason`'s rule: a Codex run's
+ * `runs.session_id` is a Codex thread id, and "claude --resume <thread id>"
+ * sent the operator to a command that has never heard of it. `codex resume`
+ * is the subcommand the pinned 0.153.4 lists for picking a recorded session
+ * back up by hand (`codex exec resume` is the non-interactive one this app
+ * spawns). A local run is still Claude Code.
+ */
+export function exitStopReason(
+  provider: RunProviderDTO | null,
+  exitCode: number,
+  resumeTarget: string | null,
+): string {
+  const codex = provider === "codex";
+  const cli = RUN_PROVIDER_LABEL[codex ? "codex" : "claude"];
+  if (resumeTarget === null) return `${cli} exited with code ${exitCode}.`;
+  const command = codex ? `codex resume ${resumeTarget}` : `claude --resume ${resumeTarget}`;
+  return `Could not resume this run's ${cli} session (exit ${exitCode}). Its work is still on disk; pick it up by hand with: ${command}`;
+}
+
+/**
  * Sleep, unless the run is interrupted first.
  *
  * The loop's `cancelled` checkpoints only run between cycles, so sleeping
@@ -12967,9 +12990,11 @@ export async function startRun(id: string): Promise<void> {
           );
           continue;
         }
-        stopReason = looksLikeResumeFailure
-          ? `Could not resume this run's Claude Code session (exit ${res.exitCode}). Its work is still on disk; pick it up by hand with: claude --resume ${resumeTarget}`
-          : `Claude Code exited with code ${res.exitCode}.`;
+        stopReason = exitStopReason(
+          run.provider,
+          res.exitCode,
+          looksLikeResumeFailure ? resumeTarget : null,
+        );
         finalStatus = "failed";
         endingCode = looksLikeResumeFailure ? "resume_failed" : "exit_code";
         break;

@@ -131,6 +131,7 @@ const {
   hookInjection,
   refusalDisposition,
   refusalStopReason,
+  exitStopReason,
   refusalKind,
   refusalResumeAt,
   reopenPrompt,
@@ -2196,6 +2197,33 @@ describe("rate limits, apart from the rest", () => {
     assert.match(refusalStopReason("other", "boom", "codex"), /^Codex refused the request: boom$/);
     assert.match(refusalStopReason("other", "boom", null), /^Claude Code refused the request: boom$/);
     assert.match(refusalStopReason("pauses-spent", "boom", "codex"), /^Codex refused the work cycle/);
+  });
+
+  it("names the CLI that exited, and its own resume command, on a non-zero exit", () => {
+    const thread = "0199abcd-0000-7000-8000-000000000000";
+
+    const codexExit = exitStopReason("codex", 1, null);
+    assert.equal(codexExit, "Codex exited with code 1.");
+
+    // The resume failure used to say "Claude Code session" and send the
+    // operator to `claude --resume` with a Codex thread id, which `claude` has
+    // never heard of. `codex resume <id>` is the subcommand the pinned 0.153.4
+    // lists for picking a recorded session back up by hand.
+    const codexResume = exitStopReason("codex", 1, thread);
+    assert.match(codexResume, /^Could not resume this run's Codex session \(exit 1\)\./);
+    assert.ok(codexResume.endsWith(`codex resume ${thread}`), codexResume);
+    assert.doesNotMatch(codexResume, /claude/i);
+    assert.doesNotMatch(codexExit, /claude/i);
+
+    // The Claude sentences are unchanged, and a local run is still Claude Code
+    // — `refusalStopReason`'s rule — so neither is sent to the Codex CLI.
+    for (const provider of ["claude", "local", null] as const) {
+      assert.equal(exitStopReason(provider, 2, null), "Claude Code exited with code 2.");
+      assert.equal(
+        exitStopReason(provider, 2, "sess-1"),
+        "Could not resume this run's Claude Code session (exit 2). Its work is still on disk; pick it up by hand with: claude --resume sess-1",
+      );
+    }
   });
 
   it("gives each refusal cause its own instruction to the operator", () => {
