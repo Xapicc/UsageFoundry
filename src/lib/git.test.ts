@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, it } from "node:test";
+import { after, before, describe, it } from "node:test";
 
 import { git, gitArgs, gitEnv, gitSync } from "./git";
 import { agentEnvironment } from "./stacks";
@@ -35,6 +35,14 @@ describe("gitArgs", () => {
       "core.hooksPath=/dev/null",
       "-c",
       "safe.directory=*",
+      "-c",
+      "commit.gpgSign=false",
+      "-c",
+      "gpg.program=gpg",
+      "-c",
+      "gpg.x509.program=gpgsm",
+      "-c",
+      "gpg.ssh.program=ssh-keygen",
       "worktree",
       "add",
       "/tmp/x",
@@ -51,6 +59,39 @@ describe("gitArgs", () => {
       "core.hooksPath=/dev/null",
       "-c",
       "safe.directory=*",
+      "-c",
+      "commit.gpgSign=false",
+      "-c",
+      "gpg.program=gpg",
+      "-c",
+      "gpg.x509.program=gpgsm",
+      "-c",
+      "gpg.ssh.program=ssh-keygen",
+    ]);
+  });
+
+  it("splices extra config between the fixed flags and the subcommand", () => {
+    // The filter neutralisers are config and must precede the subcommand, or
+    // `git add -c filter.x.clean=` is an add of a pathspec called `-c`.
+    assert.deepEqual(gitArgs(["add", "-A"], ["-c", "filter.x.clean="]), [
+      "-c",
+      "core.fsmonitor=",
+      "-c",
+      "core.hooksPath=/dev/null",
+      "-c",
+      "safe.directory=*",
+      "-c",
+      "commit.gpgSign=false",
+      "-c",
+      "gpg.program=gpg",
+      "-c",
+      "gpg.x509.program=gpgsm",
+      "-c",
+      "gpg.ssh.program=ssh-keygen",
+      "-c",
+      "filter.x.clean=",
+      "add",
+      "-A",
     ]);
   });
 });
@@ -220,4 +261,161 @@ describe("GIT_BIN", () => {
       }
     },
   );
+});
+
+/**
+ * That a program a work cycle plants in its repository's `.git` cannot be run by
+ * this app's own git — the vuln this server would be wide open to otherwise, of
+ * the same class as the `core.hooksPath` clearing. A work cycle commits into the
+ * real common `.git`, so it can write `.git/config` and `.git/info/attributes`;
+ * two lines in each make `git commit`, `git add` or `git worktree add` run a
+ * program the run chose, as this server's git child, outside the permission
+ * model. The fix pins the signing programs and forces `commit.gpgSign=false` in
+ * `gitArgs`, and blanks every repository-named filter driver on the content
+ * subcommands. The control proves the plants fire without it, so a `-c` that
+ * stopped carrying its pin would fail this rather than pass silently.
+ */
+describe("the server's own git refuses a command a work cycle planted in .git", () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-git-plant-")));
+
+  before(() => {
+    // The server's own environment carries none of a shell's git overrides, so
+    // only `gitArgs`/`gitEnv` and the repository's `.git/config` decide. An
+    // inherited `GIT_CONFIG_*` would otherwise outrank the planted config and
+    // the control could stop firing. Scoped to this file's process, which
+    // `node --test` isolates.
+    for (const k of Object.keys(process.env)) if (k.startsWith("GIT_")) delete process.env[k];
+  });
+
+  after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  // `before` has stripped `GIT_*` from `process.env`, so spreading it carries
+  // no shell git override; `NOSYSTEM`/`GLOBAL` keep the host's config out too.
+  const plainEnv = (): NodeJS.ProcessEnv => ({
+    ...process.env,
+    HOME: root,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+  });
+  const plain = (cwd: string, args: string[]) =>
+    execFileSync("git", args, { cwd, env: plainEnv(), encoding: "utf8" });
+
+  function repoWithPlant(name: string): { repo: string; marker: string; prog: string } {
+    const repo = path.join(root, name);
+    fs.mkdirSync(repo);
+    plain(repo, ["init", "-q", "-b", "main"]);
+    plain(repo, ["config", "user.email", "a@b.c"]);
+    plain(repo, ["config", "user.name", "a"]);
+    fs.writeFileSync(path.join(repo, "f.txt"), "one\n");
+    plain(repo, ["add", "-A"]);
+    plain(repo, ["commit", "-q", "-m", "init"]);
+    const marker = path.join(root, `${name}.ran`);
+    const prog = path.join(root, `${name}.sh`);
+    // Records that it ran and passes content through, so a filter that is not
+    // neutralised succeeds *and* leaves the marker — the failure the test hunts.
+    fs.writeFileSync(prog, `#!/bin/sh\necho "ran $*" >> ${marker}\ncat\n`, { mode: 0o755 });
+    return { repo, marker, prog };
+  }
+
+  const attribute = (repo: string) => {
+    fs.mkdirSync(path.join(repo, ".git", "info"), { recursive: true });
+    fs.writeFileSync(path.join(repo, ".git", "info", "attributes"), "* filter=x\n");
+  };
+
+  it("commit.gpgSign + gpg.program: `git commit` signs with nothing", async () => {
+    const { repo, marker, prog } = repoWithPlant("sign");
+    plain(repo, ["config", "commit.gpgSign", "true"]);
+    plain(repo, ["config", "gpg.program", prog]);
+    fs.writeFileSync(path.join(repo, "f.txt"), "two\n");
+    await git(repo, ["add", "-A"]);
+    const res = await git(repo, ["commit", "-m", "x"]);
+
+    assert.equal(res.ok, true, `commit failed: ${res.stderr}`);
+    assert.equal(
+      fs.existsSync(marker),
+      false,
+      `planted gpg.program ran: ${fs.existsSync(marker) ? fs.readFileSync(marker, "utf8") : ""}`,
+    );
+  });
+
+  it("filter.<x>.clean named from .git/info/attributes: `git add -A` runs nothing", async () => {
+    const { repo, marker, prog } = repoWithPlant("clean");
+    plain(repo, ["config", "filter.x.clean", prog]);
+    attribute(repo);
+    fs.writeFileSync(path.join(repo, "f.txt"), "three\n");
+    const res = await git(repo, ["add", "-A"]);
+
+    assert.equal(res.ok, true, `add failed: ${res.stderr}`);
+    assert.equal(
+      fs.existsSync(marker),
+      false,
+      `planted clean filter ran: ${fs.existsSync(marker) ? fs.readFileSync(marker, "utf8") : ""}`,
+    );
+  });
+
+  it("filter.<x>.smudge: `git worktree add` runs nothing on checkout", async () => {
+    const { repo, marker, prog } = repoWithPlant("smudge");
+    plain(repo, ["config", "filter.x.smudge", prog]);
+    attribute(repo);
+    const res = await git(repo, ["worktree", "add", "-b", "uf/x", path.join(root, "smudge-wt"), "main"]);
+
+    assert.equal(res.ok, true, `worktree add failed: ${res.stderr}`);
+    assert.equal(
+      fs.existsSync(marker),
+      false,
+      `planted smudge filter ran: ${fs.existsSync(marker) ? fs.readFileSync(marker, "utf8") : ""}`,
+    );
+  });
+
+  it("filter.<x>.clean: a working-tree `diff --name-only` runs nothing on a stat-dirty file", async () => {
+    // `conflictedFiles`' call shape. `--name-only` opens no blob for a diff
+    // driver, but deciding whether a stat-dirty file changed re-hashes it, and
+    // that runs the clean filter (measured, 2.39).
+    const { repo, marker, prog } = repoWithPlant("diffwt");
+    plain(repo, ["config", "filter.x.clean", prog]);
+    attribute(repo);
+    const past = new Date("2001-01-01T00:00:00Z");
+    fs.utimesSync(path.join(repo, "f.txt"), past, past);
+    const res = await git(repo, ["diff", "--name-only", "-z"]);
+
+    assert.equal(res.ok, true, `diff failed: ${res.stderr}`);
+    assert.equal(
+      fs.existsSync(marker),
+      false,
+      `planted clean filter ran: ${fs.existsSync(marker) ? fs.readFileSync(marker, "utf8") : ""}`,
+    );
+  });
+
+  it("a dotted driver name keeps its case, so the override still matches", async () => {
+    // git lower-cases the section and the key but preserves the subsection, so
+    // `filter.Some.Name.clean` must be blanked with its case intact.
+    const { repo, marker, prog } = repoWithPlant("dotted");
+    plain(repo, ["config", "filter.Some.Name.clean", prog]);
+    fs.mkdirSync(path.join(repo, ".git", "info"), { recursive: true });
+    fs.writeFileSync(path.join(repo, ".git", "info", "attributes"), "* filter=Some.Name\n");
+    fs.writeFileSync(path.join(repo, "f.txt"), "four\n");
+    const res = await git(repo, ["add", "-A"]);
+
+    assert.equal(res.ok, true, `add failed: ${res.stderr}`);
+    assert.equal(
+      fs.existsSync(marker),
+      false,
+      `planted dotted filter ran: ${fs.existsSync(marker) ? fs.readFileSync(marker, "utf8") : ""}`,
+    );
+  });
+
+  it("control: the same plants fire under plain git", () => {
+    const { repo, marker, prog } = repoWithPlant("control");
+    plain(repo, ["config", "filter.x.clean", prog]);
+    attribute(repo);
+    fs.writeFileSync(path.join(repo, "f.txt"), "five\n");
+    plain(repo, ["add", "-A"]);
+    assert.equal(fs.existsSync(marker), true, "the planted clean filter did not fire on add");
+
+    fs.rmSync(marker);
+    const past = new Date("2001-01-01T00:00:00Z");
+    fs.utimesSync(path.join(repo, "f.txt"), past, past);
+    plain(repo, ["diff", "--name-only"]);
+    assert.equal(fs.existsSync(marker), true, "the planted clean filter did not fire on diff");
+  });
 });

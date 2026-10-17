@@ -6040,12 +6040,9 @@ export async function deliveryState(
   }
 
   const folder = state.checkout?.path;
-  const remoteUrl = folder
-    ? (await git(folder, ["remote", "get-url", "origin"], NO_CLOCK)).stdout.trim()
-    : "";
   const plan = planDelivery({
     token: githubTokenFor(run.repo_root ?? run.folder).token,
-    remoteUrl,
+    pushUrls: folder ? await originPushUrls(folder) : [],
     branch: state.branch,
     target: state.target,
   });
@@ -6132,6 +6129,14 @@ function deliverHoldNow(run: RunRow): string | null {
 export async function deliverRun(
   runId: string,
   o: DeliveryRequest = {},
+  /**
+   * Whether the caller still wants this delivery, asked beside both shutdown
+   * reads and nowhere after the push. A workflow's deliver block passes its
+   * halt latch: a Stop during the verify command, which may run for
+   * `VERIFY_TIMEOUT_MS`, used to be followed by the push and the pull request
+   * once the check ended, under a page that already read Stopped.
+   */
+  stillWanted: () => boolean = () => true,
 ): Promise<
   | { ok: true; url: string; number: number }
   | { ok: false; reason: string }
@@ -6188,6 +6193,7 @@ export async function deliverRun(
   // before the registration, so a delivery this lets through is one the
   // shutdown waits for, and no check is started in a process that is exiting.
   if (isShuttingDown()) return { ok: false, reason: DELIVER_SHUTDOWN_REFUSAL };
+  if (!stillWanted()) return { ok: false, reason: DELIVER_WITHDRAWN_REFUSAL };
 
   if (landing.has(folder)) return { ok: false, reason: LANDING_HELD };
   landing.add(folder);
@@ -6196,7 +6202,7 @@ export async function deliverRun(
   // on the run saying it was pushed.
   const untrack = trackLand();
   try {
-    return await pushAndOpen({ run, state, folder, o });
+    return await pushAndOpen({ run, state, folder, o, stillWanted });
   } finally {
     landing.delete(folder);
     untrack();
@@ -6211,21 +6217,43 @@ const DELIVER_SHUTDOWN_REFUSAL =
   "The server is shutting down, so nothing was pushed and no pull request was opened. " +
   "Try again once it has restarted.";
 
+/** What `deliverRun` returns when its caller's `stillWanted` says no, from the same two places. */
+const DELIVER_WITHDRAWN_REFUSAL =
+  "The delivery was called off before its push began, so nothing was pushed and no " +
+  "pull request was opened.";
+
+/**
+ * Every URL Deliver's push to `origin` goes to, as that push's own git will
+ * use them, or none when git cannot name one.
+ *
+ * `--push`, because the fetch URL is not where a push goes: `pushurl` and
+ * `pushInsteadOf` replace it. `--all`, because git pushes to every URL a remote
+ * has and `get-url` alone names the first. Under `githubEnv`'s rewrites, which
+ * the push carries too, with a placeholder for the token: the rewrites do not
+ * depend on it and the real one stays off a call that needs none. This is
+ * `projects.ts`' `urlReadEnv`, restated because that module imports this one.
+ */
+async function originPushUrls(folder: string): Promise<string[]> {
+  const read = await git(
+    folder,
+    ["remote", "get-url", "--push", "--all", "--end-of-options", "origin"],
+    { ...NO_CLOCK, env: githubEnv("placeholder-not-a-credential") },
+  );
+  return read.ok ? read.stdout.split("\n").filter(Boolean) : [];
+}
+
 /** The delivery itself, so the folder claim above is one `try`/`finally`. */
 async function pushAndOpen(a: {
   run: NonNullable<ReturnType<typeof getRun>>;
   state: NonNullable<Awaited<ReturnType<typeof landState>>>;
   folder: string;
   o: DeliveryRequest;
+  stillWanted: () => boolean;
 }): Promise<
   { ok: true; url: string; number: number } | { ok: false; reason: string }
 > {
-  const { run, state, folder, o } = a;
+  const { run, state, folder, o, stillWanted } = a;
   const runId = run.id;
-
-  const remoteUrl = (
-    await git(folder, ["remote", "get-url", "origin"], NO_CLOCK)
-  ).stdout.trim();
 
   // The credential is chosen from the **repository**, not from the checkout
   // this pushes out of, which is `githubTokenFor`'s own rule at the run loop's
@@ -6238,7 +6266,7 @@ async function pushAndOpen(a: {
 
   const plan = planDelivery({
     token: github.token,
-    remoteUrl,
+    pushUrls: await originPushUrls(folder),
     branch: state.branch,
     target: state.target,
   });
@@ -6252,6 +6280,19 @@ async function pushAndOpen(a: {
     const verify = await verifyRunBranch(run, verifyCommand, "deliver");
     if (!verify.passed) return { ok: false, reason: verify.reason };
   }
+
+  // Read again after the check, because the check is the branch's own code run
+  // in a worktree that shares this checkout's `.git/config`: a `pushInsteadOf`
+  // it wrote there would send the push, and the token, where the read above
+  // never looked. Only the seeded read below awaits between this and the
+  // push's spawn; a write inside that window is one no read can see.
+  const destination = planDelivery({
+    token: github.token,
+    pushUrls: await originPushUrls(folder),
+    branch: state.branch,
+    target: state.target,
+  });
+  if (!destination.ok) return { ok: false, reason: destination.reason };
 
   // Of the branch as it is pushed rather than as `landState` read it before the
   // check: a commit made during the check — the card's Commit button runs
@@ -6277,6 +6318,9 @@ async function pushAndOpen(a: {
   // pull request is opened. One begun before it is waited on. Deliberately not
   // read again after the push, where refusing would leave exactly that.
   if (isShuttingDown()) return { ok: false, reason: DELIVER_SHUTDOWN_REFUSAL };
+  // The caller's latch, here for the same reason: until the push spawns,
+  // refusing loses nothing and leaves nothing half-published.
+  if (!stillWanted()) return { ok: false, reason: DELIVER_WITHDRAWN_REFUSAL };
 
   // Never `--force`, and the upstream is set so a second press is an ordinary
   // fast-forward rather than a new branch.
@@ -6305,7 +6349,7 @@ async function pushAndOpen(a: {
     // default: a repository scoped to its own credential must not open its
     // pull request as the install.
     token: github.token,
-    remote: plan.remote,
+    remote: destination.remote,
     head: plan.head,
     base: plan.base,
     title: o.title?.trim() || `${run.prompt.split("\n")[0].slice(0, 72)}`,

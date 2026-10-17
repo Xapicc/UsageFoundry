@@ -307,10 +307,21 @@ export const LIVE_ENFORCEABLE_CODES: readonly BudgetStopCode[] = [
  * `no_terminus` stays on this list and is not a second configuration code to
  * treat the same way: it says nothing would ever end the run, so ignoring it
  * would leave an agent nothing stops. It is also refused at the same door.
+ *
+ * `run_cost_outlier` is on it because it is a verdict on what this run measured
+ * itself spending, not on a reading that went away — and because
+ * `evaluateBudget` returns it above the token and window checks, so carrying a
+ * run past it also leaves `maxRunTokens` and both fraction guards unread for as
+ * long as the run stays an outlier. It arrived after this list and was missed,
+ * which is how a run at ten times its task's median spawned another cycle under
+ * a reason saying it had been stopped. It is not on `LIVE_ENFORCEABLE_CODES`:
+ * the live `progress()` carries no baseline, so a mid-cycle check never reaches
+ * it.
  */
 export const RUN_ENFORCEABLE_CODES: readonly BudgetStopCode[] = [
   "duration",
   "run_cost",
+  "run_cost_outlier",
   "run_tokens",
   "weekly_fraction",
   "session_fraction",

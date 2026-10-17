@@ -112,7 +112,6 @@ import {
   listTasks,
   readTaskLinks,
   reopenRejectedTask,
-  resolveTaskFolder,
   tasksLinkedToRun,
   updateTask,
   type TaskLinkReading,
@@ -272,6 +271,7 @@ import {
   normalizeBoardCondition,
   normalizeWorkflowFolders,
   normalizeWorkflowInput,
+  resolveBoardFolder,
   sharedFolderRefusal,
   withChosenFolder,
   workingFolders,
@@ -1201,7 +1201,7 @@ export interface LoopPassMember {
   /** The ledger row, for a member that is not a run or has not become one. */
   block: Pick<
     NonNullable<InstanceNodeState["block"]>,
-    "status" | "error" | "decided" | "notes"
+    "status" | "error" | "decided" | "notes" | "restartClosed"
   > | null;
   /** The runs an orchestrator member started, as their rows stand now. */
   emitted: readonly LoopRunState[];
@@ -1425,6 +1425,21 @@ function memberSettled(member: LoopPassMember): boolean {
  */
 function passSettled(pass: LoopPass): boolean {
   return pass.members.every(memberSettled);
+}
+
+/**
+ * Whether a restart cut this pass off: a member or a run one decided on that a
+ * restart closed out, or a member block the boot failed, none picked up or
+ * left behind since. What `advanceLoop` marks a loop that stops `failed` on
+ * it with, so `loopVerdict` blocks what is behind it rather than letting
+ * `on-finish` release on work that died with the container.
+ */
+function passCutByRestart(pass: LoopPass): boolean {
+  const closed = (run: LoopRunState | null) =>
+    run !== null && run.restartClosed && run.leftBehind !== true;
+  return pass.members.some(
+    (m) => closed(m.run) || m.emitted.some(closed) || m.block?.restartClosed === true,
+  );
 }
 
 /**
@@ -1727,6 +1742,14 @@ export interface InstanceNodeState {
     decided?: number;
     /** This app's notes on the turn, which say why a decided run never started. */
     notes?: readonly string[];
+    /**
+     * A restart failed it and nobody has picked it up since — see
+     * `workflow_instance_blocks.restart_closed`. Required for
+     * `ReleaseState.restartClosed`'s reason: absent would read a merge the
+     * restart cut off as one that finished, and `on-finish` would release
+     * what is behind it.
+     */
+    restartClosed: boolean;
     /** Why it ended this way, for the sentence its successors carry. */
     error: string | null;
   } | null;
@@ -1927,13 +1950,13 @@ export function planInstanceStep(
         step.block.push({ nodeId: node.id, reason: stopper });
         live.set(node.id, {
           run: null,
-          block: { status: "blocked", emitted: [], error: stopper },
+          block: { status: "blocked", emitted: [], restartClosed: false, error: stopper },
         });
       } else if (passedOver !== null) {
         step.notNeeded.push({ nodeId: node.id, reason: passedOver });
         live.set(node.id, {
           run: null,
-          block: { status: "not-needed", emitted: [], error: passedOver },
+          block: { status: "not-needed", emitted: [], restartClosed: false, error: passedOver },
         });
       } else if (pending) {
         continue;
@@ -2033,6 +2056,19 @@ function edgeVerdict(
       };
     }
     if (block.status === "not-needed") return passedOverBehind(from);
+    // Ahead of the condition, on either, for the run block's `restartClosed`
+    // reason below: a merge or delivery the restart cut off did not finish
+    // having tried, it died with the container, and the boot does not always
+    // close out what is behind it — a held gate, a kept member or the hold
+    // spares the instance, and the next advance reads this edge.
+    if (block.status === "failed" && block.restartClosed) {
+      return {
+        kind: "blocked",
+        reason:
+          `Set to start after “${from.name}”, which the server restart cut ` +
+          "off. Retrying it puts this block back to waiting for it.",
+      };
+    }
     // A deliver block reads exactly as a merge block does, and for the same
     // reason: it created no run, so its edge carries a condition and no branch.
     // So does a gate, one step further: it also never fails, so the failed
@@ -2065,7 +2101,7 @@ function edgeVerdict(
 
   if (from.kind === "loop") return loopVerdict(from, state, edge);
 
-  if (from.kind === "review") return reviewVerdict(from, state, edge, dependsOn);
+  if (from.kind === "review") return reviewVerdict(from, state, dependsOn);
 
   if (from.kind === "run") {
     if (!state.run) {
@@ -2241,6 +2277,16 @@ function loopVerdict(
   ) {
     return PENDING;
   }
+  // `edgeVerdict`'s restart rule for a merge block: a pass the restart cut off
+  // is not a pass that finished, and `on-finish` would release on it.
+  if (block.status === "failed" && block.restartClosed) {
+    return {
+      kind: "blocked",
+      reason:
+        `Set to start after “${from.name}”, whose pass the server restart cut ` +
+        "off. Picking that pass up puts this block back to waiting for it.",
+    };
+  }
   // A loop that stopped on a pass that did not finish still *took* passes, which
   // is what separates it from one that never ran — the distinction `edgeVerdict`
   // already draws for a merge block, and the condition on the edge decides
@@ -2282,6 +2328,15 @@ function loopVerdict(
  * approved run: the review is the verdict on it, and a branch whose last run
  * asked for review is still one a frontier model approved.
  *
+ * So an approved run is handed on under `on-finish` whatever the drawn link
+ * says. A successor that is a run is created with this list, and `createRun`
+ * hands it to `releasableRuns`, which *does* ask `edgeSatisfied` — and reads
+ * `on-success` as `completed`, so a follow-up behind an approved branch that
+ * ended `needs-review` was planned as satisfied here and then written `blocked`
+ * there, after the review had been paid for. The link's condition has already
+ * been answered by the approval, on either link; what `on-finish` still asks —
+ * that the run settled having done a cycle — `on-success` asked first as well.
+ *
  * A review block that **failed** — the machinery around it rather than a
  * verdict, a restart mid-review for instance — resolves to nothing either way,
  * blocked on both conditions: nothing it was given has been judged, and
@@ -2290,7 +2345,6 @@ function loopVerdict(
 function reviewVerdict(
   from: WorkflowNode,
   state: InstanceNodeState,
-  edge: WorkflowDependencyEdge,
   dependsOn: InstanceCreation["dependsOn"],
 ): EdgeVerdict {
   const block = state.block;
@@ -2311,7 +2365,7 @@ function reviewVerdict(
     };
   }
   for (const run of block.emitted) {
-    dependsOn.push({ runId: run.id, edge: edge.edge, continueBranch: false });
+    dependsOn.push({ runId: run.id, edge: "on-finish", continueBranch: false });
   }
   return SATISFIED;
 }
@@ -2496,19 +2550,25 @@ export function pickDuplicateName(
   sourceName: string,
   takenNames: readonly string[],
 ): string {
-  // The unique index on `workflows.name` is `COLLATE NOCASE`, which folds the
-  // 26 ASCII capitals and nothing else. A wider fold only skips names the
-  // index would accept; a locale-dependent one (Turkish "I") would pass a name
-  // it refuses.
-  const fold = (name: string) =>
-    name.replace(/[A-Z]/g, (c) => c.toLowerCase());
-  const taken = new Set(takenNames.map(fold));
+  const taken = new Set(takenNames.map(foldWorkflowName));
   for (let n = 1; ; n++) {
     const suffix = n === 1 ? " copy" : ` copy ${n}`;
     const candidate =
       trimForSuffix(sourceName, MAX_WORKFLOW_NAME - suffix.length) + suffix;
-    if (!taken.has(fold(candidate))) return candidate;
+    if (!taken.has(foldWorkflowName(candidate))) return candidate;
   }
+}
+
+/**
+ * A workflow name as `idx_workflows_name` compares it: two names with one key
+ * cannot both be saved.
+ *
+ * The index is `COLLATE NOCASE`, which folds the 26 ASCII capitals and nothing
+ * else. A wider fold refuses names the index would accept; a locale-dependent
+ * one (Turkish "I") would pass a name it refuses.
+ */
+export function foldWorkflowName(name: string): string {
+  return name.replace(/[A-Z]/g, (c) => c.toLowerCase());
 }
 
 function trimForSuffix(name: string, room: number): string {
@@ -2675,6 +2735,8 @@ export interface WorkflowInstanceBlock {
    * left on the row after the loop ends as the record of why it did.
    */
   stopAfterPass: number | null;
+  /** `failed` because a restart cut it off, and not picked up since. */
+  restartClosed: boolean;
   error: string | null;
 }
 
@@ -3271,12 +3333,7 @@ export function loopBoardCount(node: WorkflowNode): LoopBoardReading {
 export function countBoardCondition(
   condition: LoopBoardCondition,
 ): LoopBoardReading {
-  // `"."` rather than `""` for the mount root: `resolveTaskFolder` refuses a
-  // mount with no folder beside it, and the root is a folder — it is the path a
-  // run working there files its own tasks against. Going round that resolver to
-  // spell the root ourselves is what would put a second folder resolver in this
-  // app, which `tasks.ts` exists to prevent.
-  const resolved = resolveTaskFolder(condition.mountId, condition.folder || ".");
+  const resolved = resolveBoardFolder(condition);
   if (!resolved.ok) return { ok: false, error: resolved.error };
 
   const where = {
@@ -3448,6 +3505,7 @@ export function blocksOf(instanceId: string): WorkflowInstanceBlock[] {
               tokens, emitted_specs AS specs, error,
               merge_batch_id AS batchId, reply, notes,
               stop_after_pass AS stopAfterPass,
+              (restart_closed = 1 AND status = 'failed') AS restartClosed,
               -- Read back off the queue's own rows rather than counted into the
               -- block as it went: those rows carry git's answer for each branch,
               -- and a copy on the block would be a second thing to keep in step
@@ -3474,12 +3532,13 @@ export function blocksOf(instanceId: string): WorkflowInstanceBlock[] {
     .all(instanceId) as Array<
     Omit<
       WorkflowInstanceBlock,
-      "emitted" | "decided" | "notes" | "costUnknown"
+      "emitted" | "decided" | "notes" | "costUnknown" | "restartClosed"
     > & {
       specs: string | null;
       batchId: string | null;
       notes: string | null;
       unreported: number;
+      restartClosed: number;
     }
   >;
   // A loop block emits nothing — it repeats — so its count is the **passes** it
@@ -3518,9 +3577,10 @@ export function blocksOf(instanceId: string): WorkflowInstanceBlock[] {
     [...passKeys].map(([nodeId, seen]) => [nodeId, seen.size] as const),
   );
 
-  return rows.map(({ specs, batchId, notes, unreported, ...row }) => ({
+  return rows.map(({ specs, batchId, notes, unreported, restartClosed, ...row }) => ({
     ...row,
     costUnknown: unreported > 0,
+    restartClosed: restartClosed === 1,
     emitted:
       row.kind === "loop"
         ? (passes.get(row.nodeId) ?? 0)
@@ -3987,6 +4047,48 @@ export function sharedFolderOf(workflowId: string, graph: WorkflowGraph): Shared
 }
 
 /**
+ * Why picking `instance` up would put it to work beside another press of the
+ * same workflow in a folder they share, or null.
+ *
+ * The rule `startWorkflow` holds at a press, held at every door that brings a
+ * press back: a pick-up turns a `finished` or `blocked` instance into a
+ * `started` one as surely as Run starts one, and a newer press admitted into
+ * its folder while it was idle is exactly what that gate lets in. Asked
+ * against the *other* live presses, since this one being live is no conflict
+ * with itself, and off its own graph copy, whose chosen folder was applied
+ * when it was pressed. Asked of an instance that is already live too: two live
+ * presses sharing a folder is the state this rule exists to have none of, and
+ * a pick-up would add work to it.
+ */
+function pickUpSharedFolderRefusal(instance: WorkflowInstance): string | null {
+  const others = livePressesOf(instance.workflowId).filter(
+    (press) => press.instanceId !== instance.id,
+  );
+  if (others.length === 0) return null;
+  return (
+    sharedFolderRefusal(others, placedWorkingFolders(instance.graph), "pick-up")?.reason ??
+    null
+  );
+}
+
+/**
+ * `pickUpSharedFolderRefusal` for a run being picked up on its own page, or null
+ * when it is a member of no workflow run. `reopenRun`'s question: reopening a
+ * member puts its press back to work in the press's folders.
+ */
+export function memberPickUpRefusal(runId: string): string | null {
+  const rows = db()
+    .prepare("SELECT instance_id AS instanceId FROM workflow_instance_runs WHERE run_id = ?")
+    .all(runId) as Array<{ instanceId: string }>;
+  for (const row of rows) {
+    const instance = getInstance(row.instanceId);
+    const refusal = instance ? pickUpSharedFolderRefusal(instance) : null;
+    if (refusal) return refusal;
+  }
+  return null;
+}
+
+/**
  * Which presses of Run would be refused right now, one per saved folder — or
  * one with no folder, for a workflow that saves none.
  *
@@ -4199,7 +4301,9 @@ export function startWorkflow(
 
   // The same resolution `createRun` performs, run early so a folder that has
   // been moved or deleted since the workflow was saved names its block instead
-  // of aborting a half-built graph.
+  // of aborting a half-built graph. A loop's board folder is asked here too, off
+  // the chosen graph, or it would fail the loop at its first check — after
+  // every block in front of the loop had run.
   const missing = folderRefusal(graph);
   if (missing) return { ok: false, reason: missing };
 
@@ -4920,8 +5024,9 @@ function haltBlocks(instanceId: string, cause: string): number {
         // A push already under way is not cancelled: `deliverRun` writes the
         // pull request to the run's row, which is the record of what was
         // delivered, and a halt that killed it between the push and that write
-        // would leave a published branch with no record. The block stops before
-        // it starts the next branch.
+        // would leave a published branch with no record. One not yet begun is
+        // refused, because `deliverRun` asks the block's latch where nothing
+        // awaits before the push, and the block stops before the next branch.
         `${cause} while it was delivering branches.`,
         `${cause} while it was reviewing branches.`,
         `${cause} while it was deciding what to start.`,
@@ -5574,8 +5679,8 @@ function reopenLoopPass(
     .run(instance.id, prefix.length, prefix).changes;
   const loop = db()
     .prepare(
-      "UPDATE workflow_instance_blocks SET status='looping', error=NULL, finished_at=NULL" +
-        " WHERE instance_id=? AND node_id=? AND status='failed'",
+      "UPDATE workflow_instance_blocks SET status='looping', error=NULL, finished_at=NULL," +
+        " restart_closed=0 WHERE instance_id=? AND node_id=? AND status='failed'",
     )
     .run(instance.id, loopNodeId);
   if (loop.changes > 0) {
@@ -5648,6 +5753,8 @@ export type PickUp =
  */
 export function pickUpsOf(instance: WorkflowInstance): PickUp[] {
   if (!instanceIsOpen(instance.status)) return [];
+  // Ahead of each door's own refusal, as `openInstanceFor` asks it.
+  const shared = pickUpSharedFolderRefusal(instance);
 
   const blockedNodes = [
     ...instance.blocks.filter((b) => b.status === "blocked").map((b) => b.nodeId),
@@ -5694,9 +5801,10 @@ export function pickUpsOf(instance: WorkflowInstance): PickUp[] {
       nodeName: node.nodeName,
       status: run.status,
       leaveBehindRefusal:
-        waitedOn.n > 0
+        shared ??
+        (waitedOn.n > 0
           ? "Another run is chained directly behind it, so resuming it is the way through."
-          : passRefusal(node.nodeId),
+          : passRefusal(node.nodeId)),
     });
   }
   for (const block of instance.blocks) {
@@ -5709,11 +5817,13 @@ export function pickUpsOf(instance: WorkflowInstance): PickUp[] {
       nodeId: block.nodeId,
       nodeName: block.nodeName,
       error: block.error,
-      retryRefusal: pass
-        ? passRefusal(block.nodeId)
-        : started
-          ? `“${started}” has already started after it failed.`
-          : null,
+      retryRefusal:
+        shared ??
+        (pass
+          ? passRefusal(block.nodeId)
+          : started
+            ? `“${started}” has already started after it failed.`
+            : null),
     });
   }
   for (const block of instance.blocks) {
@@ -5725,7 +5835,7 @@ export function pickUpsOf(instance: WorkflowInstance): PickUp[] {
       nodeId: block.nodeId,
       nodeName: block.nodeName,
       error: block.error,
-      retryRefusal: orchestratorRetryRefusalIn(instance, block),
+      retryRefusal: shared ?? orchestratorRetryRefusalIn(instance, block),
     });
   }
   for (const loop of instance.blocks) {
@@ -5748,7 +5858,7 @@ export function pickUpsOf(instance: WorkflowInstance): PickUp[] {
       nodeId: loop.nodeId,
       nodeName: loop.nodeName,
       pass,
-      refusal: loopPassRefusal(instance, loop.nodeId, pass),
+      refusal: shared ?? loopPassRefusal(instance, loop.nodeId, pass),
     });
   }
   return out;
@@ -5843,6 +5953,8 @@ function openInstanceFor(
       },
     };
   }
+  const shared = pickUpSharedFolderRefusal(instance);
+  if (shared) return { refusal: { ok: false, status: 409, error: shared } };
   return { instance };
 }
 
@@ -6030,8 +6142,8 @@ function retryExitBlock(
   db().transaction(() => {
     db()
       .prepare(
-        "UPDATE workflow_instance_blocks SET status='waiting', error=NULL, finished_at=NULL" +
-          " WHERE instance_id=? AND node_id=? AND status='failed'",
+        "UPDATE workflow_instance_blocks SET status='waiting', error=NULL, finished_at=NULL," +
+          " restart_closed=0 WHERE instance_id=? AND node_id=? AND status='failed'",
       )
       .run(instanceId, nodeId);
     if (pass) {
@@ -6147,7 +6259,8 @@ export function retryOrchestratorBlock(instanceId: string, nodeId: string): Pick
     db()
       .prepare(
         "UPDATE workflow_instance_blocks SET status='waiting', error=NULL, finished_at=NULL," +
-          " emitted_specs=NULL WHERE instance_id=? AND node_id=? AND status='failed'",
+          " emitted_specs=NULL, restart_closed=0" +
+          " WHERE instance_id=? AND node_id=? AND status='failed'",
       )
       .run(instanceId, nodeId);
     if (pass) {
@@ -6483,6 +6596,7 @@ function instanceState(
         // and a loop's passes under the same name; only the first is a decision.
         decided: block.kind === "orchestrator" ? block.emitted : 0,
         notes: block.notes,
+        restartClosed: block.restartClosed,
         error: block.error,
       },
     });
@@ -6646,13 +6760,15 @@ function settleLoop(
   nodeId: string,
   status: "emitted" | "failed",
   reason: string,
+  /** The pass it stopped on was cut off by a restart — see `passCutByRestart`. */
+  cutByRestart = false,
 ): void {
   db()
     .prepare(
-      "UPDATE workflow_instance_blocks SET status=?, finished_at=?, error=?" +
+      "UPDATE workflow_instance_blocks SET status=?, finished_at=?, error=?, restart_closed=?" +
         " WHERE instance_id=? AND node_id=? AND status='looping'",
     )
-    .run(status, Date.now(), reason, instanceId, nodeId);
+    .run(status, Date.now(), reason, cutByRestart ? 1 : 0, instanceId, nodeId);
 }
 
 /**
@@ -6711,7 +6827,8 @@ function loopPasses(instanceId: string, nodeId: string): LoopPass[] {
     .prepare(
       `SELECT node_id AS memberId, node_name AS name, position AS position,
               kind AS kind, status AS status, error AS error,
-              emitted_specs AS specs, notes AS notes
+              emitted_specs AS specs, notes AS notes,
+              (restart_closed = 1 AND status = 'failed') AS restartClosed
          FROM workflow_instance_blocks
         WHERE instance_id = ? AND substr(node_id, 1, ?) = ?
         ORDER BY position`,
@@ -6725,6 +6842,7 @@ function loopPasses(instanceId: string, nodeId: string): LoopPass[] {
     error: string | null;
     specs: string | null;
     notes: string | null;
+    restartClosed: number;
   }>;
 
   const runOf = (row: (typeof runRows)[number]): LoopRunState | null =>
@@ -6785,6 +6903,7 @@ function loopPasses(instanceId: string, nodeId: string): LoopPass[] {
           // other kind reads as having decided on nothing, which it did.
           decided: parseSpecs(row.specs).length,
           notes: splitNotes(row.notes),
+          restartClosed: row.restartClosed === 1,
         },
         emitted: [],
         workSetAside:
@@ -6914,11 +7033,28 @@ function advanceLoop(
     }
 
     // Read before every decision, including the one in front of the first
-    // pass. A condition this app cannot count for ends the loop `failed` rather
-    // than being treated as a clear board: zero is the answer that stops it,
-    // and a mount that has gone is not a finished project.
+    // pass. A condition this app cannot count for is never a clear board: zero
+    // is the answer that stops the loop, and a mount that has gone is not a
+    // finished project.
     const board = loopBoardCount(node);
-    if (!board.ok) {
+    const decision = planLoopPass({
+      blockName: node.name,
+      passes,
+      maxPasses: node.maxPasses,
+      maxCostUSD: node.maxLoopCostUSD,
+      spentGuardUSD: loopSpend(instanceId, nodeId),
+      // Decided without the board when it cannot be read, and failed below only
+      // if that decision is another pass. A pass that reported DONE and a stop
+      // the operator asked for rank above the board, and a cap reached ends the
+      // loop whichever way the board reads, so failing any of them protects
+      // nothing — and writes off the `on-success` block behind the loop, in a
+      // pass with nothing blocked for `pickUpsOf` to offer.
+      stopWhenTasks: board.ok ? node.stopWhenTasks : null,
+      boardCounts: board.ok ? board.counts : null,
+      stopAfterPass: loopStopAfter(instanceId, nodeId),
+    });
+
+    if (!board.ok && decision.kind === "pass") {
       settleLoop(
         instanceId,
         nodeId,
@@ -6928,23 +7064,14 @@ function advanceLoop(
       return;
     }
 
-    const decision = planLoopPass({
-      blockName: node.name,
-      passes,
-      maxPasses: node.maxPasses,
-      maxCostUSD: node.maxLoopCostUSD,
-      spentGuardUSD: loopSpend(instanceId, nodeId),
-      stopWhenTasks: node.stopWhenTasks,
-      boardCounts: board.counts,
-      stopAfterPass: loopStopAfter(instanceId, nodeId),
-    });
-
     if (decision.kind === "stop") {
+      const status = loopStopStatus(decision.code);
       settleLoop(
         instanceId,
         nodeId,
-        loopStopStatus(decision.code),
+        status,
         decision.reason,
+        status === "failed" && latest !== undefined && passCutByRestart(latest),
       );
       return;
     }
@@ -8523,9 +8650,13 @@ export function deliverBlockOutcome(branches: readonly DeliveryOutcome[]): {
  * *in that folder* — an agent without an isolated checkout — and that arrives
  * here as a failed branch with its sentence.
  *
- * The halt latch is read before each branch rather than once: a push is not
- * something to begin in a workflow that is being taken down, and the branches
- * already pushed are recorded on their own runs whatever this block says.
+ * The halt latch is read before each branch rather than once, and handed to
+ * `deliverRun`, which asks it again where nothing awaits before the push: a
+ * push is not something to begin in a workflow that is being taken down, and
+ * a Stop during a branch's verify command, which may run for fifteen minutes,
+ * used to be followed by the push and the pull request once the check ended.
+ * The branches already pushed are recorded on their own runs whatever this
+ * block says.
  */
 async function startDeliverBlock(
   instanceId: string,
@@ -8542,26 +8673,30 @@ async function startDeliverBlock(
     return;
   }
 
+  const stillDelivering = () => {
+    const fresh = getInstance(instanceId);
+    return (
+      !!fresh &&
+      instanceIsOpen(fresh.status) &&
+      getBlock(instanceId, nodeId)?.status === "thinking"
+    );
+  };
   const outcomes: DeliveryOutcome[] = [];
   for (const runId of runIds) {
-    const fresh = getInstance(instanceId);
-    if (
-      !fresh ||
-      !instanceIsOpen(fresh.status) ||
-      getBlock(instanceId, nodeId)?.status !== "thinking"
-    ) {
-      // The halt has already written the block off with its own wording, and
-      // `finishMergeBlock`'s latch would refuse ours.
-      return;
-    }
-    outcomes.push(await deliverBranch(runId));
+    // The halt has already written the block off with its own wording, and
+    // `finishMergeBlock`'s latch would refuse ours.
+    if (!stillDelivering()) return;
+    outcomes.push(await deliverBranch(runId, stillDelivering));
   }
 
   finishMergeBlock(instanceId, nodeId, deliverBlockOutcome(outcomes));
 }
 
 /** One predecessor run, delivered or the reason it was not. */
-async function deliverBranch(runId: string): Promise<DeliveryOutcome> {
+async function deliverBranch(
+  runId: string,
+  stillDelivering: () => boolean,
+): Promise<DeliveryOutcome> {
   const branch = branchLabel(runId);
 
   // Ahead of the git reads: the card's own rule, one pull request per branch.
@@ -8590,7 +8725,7 @@ async function deliverBranch(runId: string): Promise<DeliveryOutcome> {
   // off as one that "could not start delivering" and lose the branches already
   // pushed from its note.
   try {
-    const delivery = await deliverRun(runId);
+    const delivery = await deliverRun(runId, {}, stillDelivering);
     return delivery.ok
       ? { branch, result: "delivered", reason: delivery.url }
       : { branch, result: "failed", reason: delivery.reason };
@@ -9041,6 +9176,15 @@ async function driveReviewItem(
     if (assistBudgetFull() || newWorkPaused()) {
       await pause();
       continue;
+    }
+    // The workflow's limit before every review, not only at the block's start:
+    // a branch that waited in the queue, or comes back from a fix round, starts
+    // after earlier reviews have put their cost on the block's row, and asked
+    // once a block of N branches overshot by every review still queued when the
+    // limit was crossed. Skipped with no limit, which needs no snapshot read.
+    if (!instanceBudgetIsOff(instance.instanceBudget)) {
+      const guard = enforceInstanceBudgetForBlock(instanceId, await currentSnapshot());
+      if (guard?.kind === "halted" || !open()) return;
     }
     const started = await startReview(current.run_id, {
       requireVerdict: true,
@@ -9811,7 +9955,10 @@ export interface BootBlockInstance {
   status: WorkflowInstanceStatus;
   /** Its member runs, as this same boot's run reconciler has just left them. */
   memberStatuses: readonly RunStatus[];
-  /** Whether a restart or a shutdown closed out any of those runs. */
+  /**
+   * Whether a restart or a shutdown closed out any of those runs, or a restart
+   * failed any of its blocks — `workflow_instance_blocks.restart_closed`.
+   */
   restartClosedMember: boolean;
   /**
    * Whether a gate of this instance was reached and is waiting for a person.
@@ -9875,8 +10022,13 @@ export interface BootBlockPlan {
  * member survived — after the live-member test, so a survivor is still named
  * as the reason — and the sweep leaves every one of its `waiting` rows alone.
  * What that spares behind the gate is what the gate holds; what it spares
- * beside it is `planInstanceStep`'s to decide off the runs the boot closed out,
- * whose edges it reads as blocked rather than released.
+ * beside it is `planInstanceStep`'s to decide off the runs the boot closed out
+ * and the blocks it failed, whose edges it reads as blocked rather than
+ * released. The blocks are the half that needed a mark: a merge, deliver or
+ * loop that failed satisfies `on-finish`, so until `restart_closed` was
+ * written on the block too, the advance after the boot started what sat
+ * beside a held gate on a landing that died with the container — and the same
+ * hole was open in the `spared` arm and, under the hold, in `held`.
  *
  * **The hold is the other thing that wakes a block.** Lifting it calls
  * `releaseDependents`, so under the hold a block nothing of its own instance
@@ -9887,9 +10039,10 @@ export interface BootBlockPlan {
  * closing it out wrote off the very work the operator held the fleet to keep,
  * where the run half keeps a `waiting` run that is ready and held. It is
  * spared only when the restart closed out **none** of its members, read off
- * `restart_closed`: a block behind a run the restart ended is behind a cycle
- * that died with the container, `on-finish` would release it on that, and
- * that is the queued-run rule's case under the hold as without it.
+ * `restart_closed` on its runs and its blocks alike: a block behind a run the
+ * restart ended, or behind a merge or delivery it cut off, is behind work that
+ * died with the container, `on-finish` would release it on that, and that is
+ * the queued-run rule's case under the hold as without it.
  */
 export function bootBlockPlan(
   instances: readonly BootBlockInstance[],
@@ -9953,7 +10106,7 @@ export function reconcileBlocksOnBoot(): void {
   const now = Date.now();
   const thinking = db()
     .prepare(
-      "UPDATE workflow_instance_blocks SET status='failed', finished_at=?," +
+      "UPDATE workflow_instance_blocks SET status='failed', finished_at=?, restart_closed=1," +
         " error = CASE kind WHEN 'merge' THEN ? WHEN 'deliver' THEN ? WHEN 'review' THEN ? ELSE ? END," +
         // A turn the restart killed was billed and never reported, so it is
         // counted the way `blockTurnSpend` counts one killed any other way: a
@@ -10000,6 +10153,12 @@ export function reconcileBlocksOnBoot(): void {
     .prepare(
       `SELECT i.id AS id, i.status AS status, r.status AS memberStatus,
               r.restart_closed AS restartClosed,
+              -- The sweep above has just marked every block it failed, and an
+              -- earlier restart's mark stands until a retry clears it.
+              EXISTS (SELECT 1 FROM workflow_instance_blocks c
+                       WHERE c.instance_id = i.id AND c.restart_closed = 1
+                         AND c.status = 'failed')
+                AS restartClosedBlock,
               EXISTS (SELECT 1 FROM workflow_instance_blocks g
                        WHERE g.instance_id = i.id AND g.kind = 'gate'
                          AND g.status = 'waiting' AND g.held_at IS NOT NULL)
@@ -10016,6 +10175,7 @@ export function reconcileBlocksOnBoot(): void {
     status: WorkflowInstanceStatus;
     memberStatus: RunStatus | null;
     restartClosed: number | null;
+    restartClosedBlock: number;
     holdsGate: number;
   }>;
   const gathered = new Map<
@@ -10033,7 +10193,7 @@ export function reconcileBlocksOnBoot(): void {
       entry = {
         status: row.status,
         memberStatuses: [],
-        restartClosedMember: false,
+        restartClosedMember: row.restartClosedBlock === 1,
         holdsGate: row.holdsGate === 1,
       };
       gathered.set(row.id, entry);
@@ -10067,7 +10227,7 @@ export function reconcileBlocksOnBoot(): void {
       : ` AND instance_id NOT IN (${kept.map(() => "?").join(",")})`;
   const looping = db()
     .prepare(
-      "UPDATE workflow_instance_blocks SET status='failed', finished_at=?," +
+      "UPDATE workflow_instance_blocks SET status='failed', finished_at=?, restart_closed=1," +
         " error='The server restarted while this block was repeating its task, and the pass it was working on was closed out by the same restart.'" +
         " WHERE status='looping'" +
         keptClause,

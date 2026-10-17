@@ -47,8 +47,10 @@ export type Remote = { owner: string; repo: string };
 // a URL git sends somewhere else: `git@github.com/o/r` (a slash where the
 // colon goes) is a local path, `ssh://git@github.com:o/r` dodges the rewrite to
 // https, and `https://elsewhere/@github.com/o/r` is a request to `elsewhere`.
+// No `http://`: that push is unencrypted, so whatever is on the path reads the
+// branch and can answer for GitHub.
 const SSH = /^(?:ssh:\/\/git@github\.com\/|git@github\.com:)([^/]+)\/(.+?)(?:\.git)?\/?$/;
-const HTTPS = /^https?:\/\/(?:[^@/?#\s]+@)?github\.com\/([^/]+)\/(.+?)(?:\.git)?\/?$/;
+const HTTPS = /^https:\/\/(?:[^@/?#\s]+@)?github\.com\/([^/]+)\/(.+?)(?:\.git)?\/?$/;
 
 /**
  * Read an owner and repository out of a git remote URL.
@@ -85,7 +87,15 @@ export type DeliveryPlan =
  */
 export function planDelivery(o: {
   token: string;
-  remoteUrl: string;
+  /**
+   * Every URL a push to `origin` goes to, read as the push's own git will use
+   * them — `git remote get-url --push --all` under `githubEnv`'s rewrites.
+   * Not the fetch URL: `pushurl`, `pushInsteadOf` and a second `url` all live
+   * in the repository's config, which a work cycle can write, and each sends
+   * the push, with the token in its environment, somewhere the fetch URL does
+   * not say.
+   */
+  pushUrls: readonly string[];
   branch: string | null;
   target: string | null;
 }): DeliveryPlan {
@@ -113,12 +123,25 @@ export function planDelivery(o: {
         `pull request from.`,
     };
   }
-  const remote = parseRemote(o.remoteUrl);
+  // git pushes to every one, so one pull request could not account for them.
+  if (o.pushUrls.length > 1) {
+    return {
+      ok: false,
+      reason:
+        `\`origin\` pushes to ${o.pushUrls.length} URLs, and Deliver publishes to one ` +
+        `GitHub repository. The branch can still be pushed by hand.`,
+    };
+  }
+  const url = o.pushUrls[0] ?? "";
+  // `https://` as well as `parseRemote`, because the rewrites have been
+  // applied: an SSH spelling still standing is one a `pushInsteadOf` put
+  // there, and git runs the repository's `core.sshCommand` for it.
+  const remote = url.startsWith("https://") ? parseRemote(url) : null;
   if (!remote) {
     return {
       ok: false,
       reason:
-        `\`${o.remoteUrl || "origin"}\` is not a GitHub remote, and GitHub is ` +
+        `\`${url || "origin"}\` is not a GitHub remote, and GitHub is ` +
         `the only forge this knows how to open a pull request on. The branch ` +
         `can still be pushed by hand.`,
     };

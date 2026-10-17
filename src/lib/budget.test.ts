@@ -4,6 +4,7 @@ import {
   type BudgetPolicy,
   type InstanceBudgetPolicy,
   INSTANCE_ENFORCEABLE_CODES,
+  LIVE_ENFORCEABLE_CODES,
   RUN_ENFORCEABLE_CODES,
   enforceableForRun,
   evaluateBudget,
@@ -486,6 +487,34 @@ describe("evaluateBudget", () => {
       enforceableForRun(evaluateBudget(base, snapshot(null, null), noProgress, 0)),
       true,
     );
+  });
+
+  /**
+   * The outlier verdict is returned above the token and window checks, so a run
+   * carried past it is a run whose token limit and both window guards are not
+   * read either, for as long as it stays an outlier. It was left off the list
+   * by omission when the code arrived: the pre-cycle guard logged it as a guard
+   * that could not be read and spawned the next cycle.
+   *
+   * Not live: `liveGuardTick`'s `progress()` carries no baseline, so a live
+   * check could never reach the verdict, and listing it there would claim one.
+   */
+  it("ends a run that has left its own task's cost distribution", () => {
+    const verdict = evaluateBudget(
+      { ...base, maxRunCostFactor: 2, maxSessionFraction: 0.5, maxRunTokens: 1000 },
+      snapshot(0.97, 0.1),
+      {
+        ...noProgress,
+        iterations: 1,
+        spentUSD: 10,
+        spentTokens: 5000,
+        costBaseline: { medianUSD: 1, samples: 3 },
+      },
+      STARTED_AT + 60_000,
+    );
+    assert.equal(verdict.allowed === false && verdict.code, "run_cost_outlier");
+    assert.equal(enforceableForRun(verdict), true);
+    assert.equal(LIVE_ENFORCEABLE_CODES.includes("run_cost_outlier"), false);
   });
 
   /**

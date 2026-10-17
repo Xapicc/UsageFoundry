@@ -64,7 +64,14 @@ describe("parseRemote reads both spellings and refuses the rest", () => {
       "ssh://git@github.com:acme/widget.git",
       "https://elsewhere.example/@github.com/acme/widget.git",
       "https://elsewhere.example?@github.com/acme/widget.git",
+      "https://elsewhere.example/x/@github.com/acme/widget",
     ]) {
+      assert.equal(parseRemote(url), null, url);
+    }
+  });
+
+  it("returns null for plain http, which publishes the branch unencrypted", () => {
+    for (const url of ["http://github.com/acme/widget.git", "http://token@github.com/acme/widget"]) {
       assert.equal(parseRemote(url), null, url);
     }
   });
@@ -73,7 +80,7 @@ describe("parseRemote reads both spellings and refuses the rest", () => {
 describe("planDelivery refuses before anything leaves the machine", () => {
   const ok = {
     token: "t",
-    remoteUrl: "https://github.com/o/r.git",
+    pushUrls: ["https://github.com/o/r.git"],
     branch: "uf/run-1",
     target: "main",
   };
@@ -103,9 +110,30 @@ describe("planDelivery refuses before anything leaves the machine", () => {
   });
 
   it("refuses a non-GitHub remote without calling it malformed", () => {
-    const plan = planDelivery({ ...ok, remoteUrl: "https://gitlab.com/o/r.git" });
+    const plan = planDelivery({ ...ok, pushUrls: ["https://gitlab.com/o/r.git"] });
     assert.equal(plan.ok, false);
     assert.match(plan.ok === false ? plan.reason : "", /not a GitHub remote/);
+  });
+
+  it("refuses a push URL still spelled SSH after the rewrites, and a remote with none", () => {
+    // `githubEnv` rewrites both SSH spellings to https, so one still standing
+    // was put there by a `pushInsteadOf`, and git would run the repository's
+    // `core.sshCommand` with the token in its environment.
+    for (const pushUrls of [["git@github.com:o/r.git"], ["ssh://git@github.com/o/r.git"], []]) {
+      const plan = planDelivery({ ...ok, pushUrls });
+      assert.equal(plan.ok, false, pushUrls.join());
+      assert.match(plan.ok === false ? plan.reason : "", /not a GitHub remote/);
+    }
+  });
+
+  it("refuses a remote that pushes to more than one URL, even if each is GitHub", () => {
+    // git pushes to all of them, so the pull request would account for one.
+    const plan = planDelivery({
+      ...ok,
+      pushUrls: ["https://github.com/o/r.git", "https://github.com/o/mirror.git"],
+    });
+    assert.equal(plan.ok, false);
+    assert.match(plan.ok === false ? plan.reason : "", /pushes to 2 URLs/);
   });
 
   it("refuses a run with no branch or no target", () => {

@@ -45,6 +45,7 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 ## [Deliver, and what may leave](isolation-and-landing/deliver.md)
 
 - The other exit. `deliverRun` pushes a run's branch and opens a pull request on the checkout's GitHub remote. (was lines 99–124)
+- Deliver decides on every URL its push goes to, never on the fetch URL, and reads them again after the verify gate.
 - A workflow's deliver block is the second caller, and it asks nothing the button does not.
 - Deliver refuses a branch that can still move, in Land's own words.
 - The Land card offers it once, and states every refusal instead of discovering one. (was lines 149–165)

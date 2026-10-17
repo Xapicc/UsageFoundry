@@ -429,12 +429,20 @@ on may do nothing whatever. `docs/verification.md` carries what would settle it.
   project view's push sends your checkout's current branch to its configured
   upstream as a fast-forward, and only the commit the page showed, after
   asking the remote where that branch is; its fetch fetches that upstream's
-  remote. Both refuse unless every URL git would use is an
-  `https://github.com/` one after git's rewrites, because any other transport
-  runs a program your repository's config can name, with the token in its
-  environment. The
+  remote. All three refuse unless every URL git would use is an
+  `https://github.com/` one after git's rewrites — for a push, the push URL,
+  which a `pushurl` or `pushInsteadOf` can send somewhere the fetch URL does
+  not say, and exactly one of it — because any other transport runs a program
+  your repository's config can name, with the token in its environment. The
   credential helper is scoped to `https://github.com`, so another host asking
-  for credentials gets none.
+  for credentials gets none. What none of them overrides is your
+  repository's `http.proxy`, `http.sslVerify` and `http.sslCAInfo`, which
+  still apply to the https push: `http.proxy` sends it through a host the
+  repository names, and `http.sslVerify=false` or an `http.sslCAInfo` it
+  supplies lets that host read the request, token included. A work cycle can
+  write all three into `.git/config`. Before you press Deliver or Push in a
+  repository a run has worked in, `git config --show-origin --get-regexp
+  '^http\.'` shows whether any is set.
 - *Which* token a work cycle gets is chosen from the repository it is working
   in. `UF_GITHUB_TOKENS` maps a folder to a credential; a run in that folder
   gets that one and no other, and a folder no entry names falls back to

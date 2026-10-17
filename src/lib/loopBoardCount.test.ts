@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -30,6 +31,13 @@ import { after, before, describe, it } from "node:test";
  * real door is — and is counted back through `loopBoardCount` off a node
  * spelled the way a saved graph spells one.
  *
+ * The save and start doors are here too, because they ask the same resolver
+ * the count does and the failure they stand in front of is the count's: a
+ * board folder nobody can resolve fails the loop at its first check, after
+ * every block in front of it has run and billed. So a graph naming one is
+ * refused where a block's own missing folder is — by `folderRefusal`, at save
+ * and at Run before an instance exists.
+ *
  * Its own file, with `DATA_DIR` and the workspace root named before the first
  * import, for `assistBudget.test.ts`'s reason — `config.ts` fixes both at
  * module load, and the assertion in `before` is what keeps a change to that
@@ -39,6 +47,8 @@ import { after, before, describe, it } from "node:test";
 let tasks: typeof import("./tasks");
 let workflows: typeof import("./workflows");
 let workflowGraph: typeof import("./workflowGraph");
+let orch: typeof import("./orchestrator");
+let dbMod: typeof import("./db");
 let root: string;
 let mountId: string;
 
@@ -46,7 +56,10 @@ let mountId: string;
 const MOUNT_DIR = "board-mount";
 
 before(async () => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), "uf-loop-board-"));
+  // `realpathSync` for the repository below: `resolveInMount` checks a
+  // checkout's containment against the resolved path, and on macOS
+  // `os.tmpdir()` is a symlink.
+  root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-loop-board-")));
   process.env.DATA_DIR = path.join(root, "data");
   process.env.CLAUDE_HOME = path.join(root, "claude");
   process.env.WORKSPACE_ROOT = path.join(root, MOUNT_DIR);
@@ -63,6 +76,27 @@ before(async () => {
   for (const folder of ["backlog", "backlog/docs", "backlogWeb", "elsewhere"]) {
     fs.mkdirSync(path.join(root, MOUNT_DIR, folder), { recursive: true });
   }
+  // The repository the loop's run member works in. Only a press of Run reads
+  // it, and it has to be a real one with a commit: `startWorkflow` refuses a
+  // repeated block whose folder cannot have a checkout of its own, and a press
+  // refused for that would pass the cases below without the board being asked.
+  const repo = path.join(root, MOUNT_DIR, "repo");
+  fs.mkdirSync(repo, { recursive: true });
+  const git = (...args: string[]) =>
+    execFileSync("git", args, {
+      cwd: repo,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "t",
+        GIT_AUTHOR_EMAIL: "t@example.com",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@example.com",
+      },
+    });
+  git("init", "-q", "-b", "main");
+  fs.writeFileSync(path.join(repo, "a.txt"), "one\n");
+  git("add", "-A");
+  git("commit", "-q", "-m", "first");
 
   const config = await import("./config");
   assert.equal(
@@ -74,10 +108,15 @@ before(async () => {
   mountId = config.WORKSPACE_MOUNTS[0].id;
   assert.equal(mountId, MOUNT_DIR, "the temp workspace is the only mount");
 
-  await import("./db");
+  dbMod = await import("./db");
   tasks = await import("./tasks");
+  orch = await import("./orchestrator");
   workflowGraph = await import("./workflowGraph");
   workflows = await import("./workflows");
+  // A press of Run reads a usage snapshot, and one that asked the provider
+  // would be a network call from a test.
+  const { saveSettings } = await import("./settings");
+  saveSettings({ planUsageFromApi: false });
 });
 
 after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -119,6 +158,47 @@ function fileTask(
   return created.task.id;
 }
 
+/** A workflow off the wire whose one loop counts `condition`'s board. */
+function loopWorkflow(
+  condition: Partial<import("./workflowGraph").LoopBoardCondition> | null,
+  folders?: Array<{ mountId: string; folder: string }>,
+): Record<string, unknown> {
+  return {
+    name: `Loop ${(seq += 1)}`,
+    instanceBudget: null,
+    ...(folders ? { folders } : {}),
+    graph: {
+      nodes: [
+        {
+          id: "a",
+          name: "Chip away at it",
+          kind: "loop",
+          maxPasses: 3,
+          stopWhenTasks: condition && {
+            mountId,
+            folder: "backlog",
+            statuses: ["open"],
+            thresholds: [{ priority: "any", atMost: 0 }],
+            ...condition,
+          },
+        },
+        {
+          id: "b",
+          name: "Take one off the board",
+          mountId,
+          folder: "repo",
+          task: "work",
+        },
+        { id: "m", name: "Land it", kind: "merge", mergeStrategy: "merge" },
+      ],
+      edges: [
+        { from: "a", to: "b", edge: "repeats", continueBranch: false },
+        { from: "b", to: "m", edge: "on-success", continueBranch: false },
+      ],
+    },
+  };
+}
+
 /**
  * A loop node as a saved graph carries one: the folder the condition counts is
  * inside the mount, and the loop itself is told nothing — it frames the section
@@ -127,46 +207,12 @@ function fileTask(
 function loopNode(
   condition: Partial<import("./workflowGraph").LoopBoardCondition> | null,
 ): import("./workflowGraph").WorkflowNode {
-  const value = workflowGraph.normalizeWorkflowInput(
-    {
-      name: `Loop ${(seq += 1)}`,
-      graph: {
-        nodes: [
-          {
-            id: "a",
-            name: "Chip away at it",
-            kind: "loop",
-            maxPasses: 3,
-            stopWhenTasks: condition && {
-              mountId,
-              folder: "backlog",
-              statuses: ["open"],
-              thresholds: [{ priority: "any", atMost: 0 }],
-              ...condition,
-            },
-          },
-          {
-            id: "b",
-            name: "Take one off the board",
-            mountId,
-            folder: "backlog",
-            task: "work",
-          },
-          { id: "m", name: "Land it", kind: "merge", mergeStrategy: "merge" },
-        ],
-        edges: [
-          { from: "a", to: "b", edge: "repeats", continueBranch: false },
-          { from: "b", to: "m", edge: "on-success", continueBranch: false },
-        ],
-      },
-    },
-    {
-      templates: new Map(),
-      mountIds: [mountId],
-      defaultIsolate: true,
-      agents: new Map(),
-    },
-  );
+  const value = workflowGraph.normalizeWorkflowInput(loopWorkflow(condition), {
+    templates: new Map(),
+    mountIds: [mountId],
+    defaultIsolate: true,
+    agents: new Map(),
+  });
   // Through the normalizer rather than hand-built, so the node under test is
   // the one a save would have written and not a shape only this file makes.
   if (!value.ok) throw new Error(value.error);
@@ -362,5 +408,87 @@ describe("loopBoardCount — counting a project's board from a node", () => {
     // find must not be able to produce it.
     assert.equal(reading.ok, false);
     assert.match(reading.ok ? "" : reading.error, /no-such/);
+  });
+});
+
+describe("a board folder that does not resolve, at the doors in front of the count", () => {
+  /**
+   * What every save door asks — `POST` and `PUT /api/workflows`, `/validate`
+   * and a proposal's approval: the normaliser, then the disk.
+   */
+  function saveVerdict(
+    condition: Partial<import("./workflowGraph").LoopBoardCondition>,
+    folders?: Array<{ mountId: string; folder: string }>,
+  ): { refusal: string | null; input: import("./workflowGraph").WorkflowInput } {
+    const parsed = workflowGraph.normalizeWorkflowInput(
+      loopWorkflow(condition, folders),
+      workflowGraph.currentKnowledge(),
+    );
+    if (!parsed.ok) throw new Error(parsed.error);
+    return {
+      refusal:
+        workflowGraph.folderRefusal(parsed.value.graph) ??
+        workflowGraph.listedFolderRefusal(parsed.value.folders),
+      input: parsed.value,
+    };
+  }
+
+  const instanceCount = () =>
+    (dbMod.db().prepare("SELECT COUNT(*) AS n FROM workflow_instances").get() as { n: number }).n;
+
+  it("is refused at save by the loop's name, missing or outside the mount", () => {
+    // Containment is `resolveTaskFolder`'s and holds either way; what the save
+    // adds is saying so before a press of Run bills the blocks in front.
+    for (const [folder, reason] of [
+      ["no-such", /No such folder/],
+      ["../../etc", /outside/],
+    ] as const) {
+      const { refusal } = saveVerdict({ folder });
+      assert.match(refusal ?? "accepted", /“Chip away at it” cannot count its tasks/, folder);
+      assert.match(refusal ?? "", reason, folder);
+    }
+    assert.equal(saveVerdict({}).refusal, null, "a board folder that resolves is saved");
+  });
+
+  it("refuses a press of Run, writing no instance, once the folder has gone", async () => {
+    const doomed = path.join(root, MOUNT_DIR, "doomed");
+    fs.mkdirSync(doomed, { recursive: true });
+    const { refusal, input } = saveVerdict({ folder: "doomed" });
+    assert.equal(refusal, null);
+    const saved = workflows.createWorkflow(input);
+    // Renamed or deleted after the save, which the editor's picker cannot
+    // prevent.
+    fs.rmSync(doomed, { recursive: true });
+
+    const before = instanceCount();
+    const started = workflows.startWorkflow(saved.id, await orch.currentSnapshot());
+    assert.equal(started.ok, false, "started a loop whose board cannot be counted");
+    assert.match(!started.ok ? started.reason : "", /“Chip away at it” cannot count its tasks: .*doomed/);
+    assert.equal(instanceCount(), before, "an instance was written for a press that was refused");
+  });
+
+  it("resolves a condition that follows the choice in the folder the press chose", async () => {
+    // Saved against two folders, the condition storing the first, which still
+    // resolves. Only the chosen one is gone, so a check asked before
+    // `withChosenFolder` — or of the stored pair — would let this press through.
+    const chosen = path.join(root, MOUNT_DIR, "chosen");
+    fs.mkdirSync(chosen, { recursive: true });
+    const folders = [
+      { mountId, folder: "backlog" },
+      { mountId, folder: "chosen" },
+    ];
+    const { refusal, input } = saveVerdict({ followsChosenFolder: true }, folders);
+    assert.equal(refusal, null);
+    const saved = workflows.createWorkflow(input);
+    fs.rmSync(chosen, { recursive: true });
+
+    const before = instanceCount();
+    const started = workflows.startWorkflow(saved.id, await orch.currentSnapshot(), {
+      kind: "manual",
+      folder: { mountId, folder: "chosen" },
+    });
+    assert.equal(started.ok, false, "started a loop counting a folder that has gone");
+    assert.match(!started.ok ? started.reason : "", /cannot count its tasks: .*chosen/);
+    assert.equal(instanceCount(), before);
   });
 });

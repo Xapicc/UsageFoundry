@@ -53,6 +53,7 @@ import {
   currentKnowledge,
   emitBlockRuns,
   emittedModelWork,
+  foldWorkflowName,
   folderRefusal,
   getWorkflow,
   instanceOwnsRun,
@@ -99,7 +100,7 @@ import {
 import { addTaskDep, depsForTask, depsForTasks } from "../../../lib/taskDeps";
 import { MAX_PROJECTS, MAX_UNPUSHED_LISTED, projectInventory } from "../../../lib/projects";
 import { releaseTask } from "../../../lib/taskRelease";
-import type { RunProviderDTO, TaskDepRefDTO } from "../../../lib/apiTypes";
+import type { RunProviderDTO, TaskDepRefDTO, WorkflowNodeKind } from "../../../lib/apiTypes";
 import { RUN_PROVIDER_LABEL, RUN_PROVIDERS } from "../../../lib/apiTypes";
 import { providerTerminusRefusal } from "../../../lib/budget";
 import { getLocalSignIn } from "../../../lib/localProvider";
@@ -169,6 +170,24 @@ const MAX_DIFF_TEXT_BYTES = 60_000;
  * same reason: it travels in messages and in refusals a person reads.
  */
 const SPEC_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * Every kind of block `propose_workflow` offers, and so every kind it takes.
+ *
+ * An allowlist rather than a list of refusals, because what makes a kind safe
+ * for a chat to draft is the approval card describing it truthfully, and the
+ * card is written kind by kind: a kind `normalizeWorkflowInput` gains later is
+ * refused here until somebody gives it a card, rather than saved under one that
+ * reads as something else. `deliver` and `loop` are the two it leaves out, each
+ * refused by name in `proposeWorkflow`.
+ */
+const PROPOSABLE_BLOCK_KINDS = [
+  "run",
+  "orchestrator",
+  "merge",
+  "review",
+  "gate",
+] as const satisfies readonly WorkflowNodeKind[];
 
 /**
  * The most `list_recurring_failures` returns per list.
@@ -1557,7 +1576,7 @@ const CHAT_TOOLS = [
               name: { type: "string", description: "What this step is called." },
               kind: {
                 type: "string",
-                enum: ["run", "orchestrator", "merge", "review", "gate"],
+                enum: [...PROPOSABLE_BLOCK_KINDS],
                 description:
                   "run (default) is a fixed task. orchestrator is a short turn " +
                   "that decides, when the workflow gets there, which runs to " +
@@ -3126,18 +3145,42 @@ function proposeWorkflow(args: Record<string, unknown>, chatId: string) {
     const notBlockString = nonStringEntry(`Block ${index + 1}`, b, "id", "kind", "name");
     if (notBlockString) return notBlockString;
     const to = String(b.id ?? "");
+    // `normalizeNode`'s own reading, so a kind is refused here exactly when it
+    // would have been saved as that kind.
+    const kind = String(b.kind ?? "run");
 
     // Not a kind a chat may draft, though `normalizeWorkflowInput` accepts it
     // from the editor. A deliver block publishes — it pushes branches and opens
     // pull requests — and approving this card saves the graph for a person to
     // press Run on, but the card would describe it as "no agent" beside blocks
     // that only write to disk. Left to be built where its consequence is stated.
-    if (String(b.kind ?? "") === "deliver") {
+    if (kind === "deliver") {
       return text(
         `“${String(b.name ?? to)}” is a deliver block, which pushes branches and ` +
           "opens pull requests. A chat cannot propose one: tell the operator to " +
           "add it in the workflow editor, after the blocks whose branches it " +
           "should publish.",
+        true,
+      );
+    }
+
+    // Refused for `deliver`'s reason with the understatement on the other
+    // axis: the card has no loop case. It sums `fanOut`, so a 10-pass loop round
+    // a fan-out of 4 read "up to 4 runs" over a graph whose worst case is 50,
+    // and it labelled the loop with guards and a folder it does not have.
+    if (kind === "loop") {
+      return text(
+        `“${String(b.name ?? to)}” is a loop block, which repeats the blocks ` +
+          "inside it, and a chat cannot propose one: the approval card would " +
+          "count the runs of a single pass. Propose the blocks for one pass, " +
+          "and tell the operator to put a loop round them in the workflow editor.",
+        true,
+      );
+    }
+    if (!(PROPOSABLE_BLOCK_KINDS as readonly string[]).includes(kind)) {
+      return text(
+        `“${String(b.name ?? to)}” has kind "${kind}", which a chat cannot ` +
+          `propose. A block is one of: ${PROPOSABLE_BLOCK_KINDS.join(", ")}.`,
         true,
       );
     }
@@ -3150,7 +3193,7 @@ function proposeWorkflow(args: Record<string, unknown>, chatId: string) {
     // here, exactly as `propose_run` requires a folder beside a mountId. `null`
     // is refused with it: it is how a model spells "no value", and the
     // normalizer's `?? ""` would read it as the mount root all the same.
-    const startsNoRun = ["merge", "review", "gate"].includes(String(b.kind ?? "run"));
+    const startsNoRun = ["merge", "review", "gate"].includes(kind);
     if (!startsNoRun && (b.folder === undefined || b.folder === null)) {
       return text(
         `“${String(b.name ?? to)}” names no folder. Pass it exactly as ` +
@@ -3180,6 +3223,18 @@ function proposeWorkflow(args: Record<string, unknown>, chatId: string) {
         "edge",
       );
       if (notEdgeString) return notEdgeString;
+      // What puts a block inside a loop, so it goes with the loop, and by name
+      // rather than as whatever the normalizer says of one out of a block that
+      // is not a loop.
+      if (String(d.edge ?? "") === "repeats") {
+        return text(
+          `“${String(b.name ?? to)}” is linked to “${String(d.id ?? "")}” by ` +
+            "repeats, which puts it inside a loop, and a chat cannot propose " +
+            "one. Link it with on-success, on-finish or on-failure, and tell " +
+            "the operator to add the loop in the workflow editor.",
+          true,
+        );
+      }
       edges.push({
         from: String(d.id ?? ""),
         to,
@@ -3219,6 +3274,34 @@ function proposeWorkflow(args: Record<string, unknown>, chatId: string) {
   }
 
   const pending = pendingProposals(chatId).filter((p) => p.id !== superseded?.id);
+  // The click saves through `idx_workflows_name`, and a card refused there is
+  // failed for good, so a name it would refuse is asked here, where the model
+  // can still rename it — `proposeSchedule`'s second-card refusal, for its
+  // reason. The card being replaced is not a rival, so a correction keeps its
+  // name. The click keeps its own catch: a person can save the name by hand
+  // while the card waits.
+  const nameKey = foldWorkflowName(name);
+  const holder = listWorkflows().find((w) => foldWorkflowName(w.name) === nameKey);
+  if (holder) {
+    return text(
+      `A workflow called “${holder.name}” is already saved (id ${holder.id}), ` +
+        "and no two may share a name in any letter case. Propose this under " +
+        "another name, or tell the operator what to change in that one, which " +
+        "a chat cannot edit. Nothing was proposed.",
+      true,
+    );
+  }
+  const rival = pending.find(
+    (p) => p.kind === "workflow" && foldWorkflowName(p.title) === nameKey,
+  );
+  if (rival) {
+    return text(
+      `“${rival.title}” is already waiting (proposalId ${rival.id}), and only ` +
+        "one workflow can be saved under that name. Pass that as supersedes " +
+        "to correct it, or give this one another name. Nothing was proposed.",
+      true,
+    );
+  }
   if (pending.length >= MAX_PENDING_PROPOSALS) {
     return text(pendingLimitMessage(pending.length), true);
   }

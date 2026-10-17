@@ -6,6 +6,8 @@ import { after, before, beforeEach, describe, it } from "node:test";
 
 import type Database from "better-sqlite3";
 
+import type { WorkflowNode } from "./workflowGraph";
+
 /**
  * Covers one thing: what picking up a failed deciding block writes, and which
  * failed blocks the instance page is offered it for.
@@ -26,6 +28,7 @@ import type Database from "better-sqlite3";
  */
 
 let root: string;
+let orch: typeof import("./orchestrator");
 let workflows: typeof import("./workflows");
 let settings: typeof import("./settings");
 let dbMod: typeof import("./db");
@@ -36,6 +39,9 @@ before(async () => {
   const workspace = path.join(root, "workspace");
   fs.mkdirSync(path.join(root, "claude", "projects"), { recursive: true });
   fs.mkdirSync(workspace, { recursive: true });
+  // The two saved folders of the shared-folder cases below.
+  fs.mkdirSync(path.join(workspace, "project"));
+  fs.mkdirSync(path.join(workspace, "second"));
   process.env.DATA_DIR = path.join(root, "data");
   process.env.CLAUDE_HOME = path.join(root, "claude");
   process.env.CLAUDE_CONFIG_DIR = path.join(root, "claude");
@@ -53,9 +59,12 @@ before(async () => {
       "to run against the real database",
   );
 
+  orch = await import("./orchestrator");
   workflows = await import("./workflows");
   settings = await import("./settings");
   dbMod = await import("./db");
+  // `currentSnapshot` would otherwise ask the provider's API for plan usage.
+  settings.saveSettings({ planUsageFromApi: false });
   // A turn holds a slot while it is `thinking`, and a block refused a slot stays
   // `waiting`, which would read as the retry not claiming it.
   assists = settings.getSettings().maxConcurrentAssists;
@@ -288,5 +297,131 @@ describe("picking up a failed deciding block", () => {
         .prepare("UPDATE workflow_instance_blocks SET status='emitted' WHERE instance_id='fine' AND node_id='o'")
         .run();
       assert.deepEqual(offered("fine"), []);
+    }));
+});
+
+/**
+ * Two presses of one workflow run at the same time only when they share no
+ * folder, and `startWorkflow` holds that at a press. A pick-up brings an idle
+ * press back as surely as Run starts one, and a newer press into its folder is
+ * exactly what that gate admits while it is idle — so without the check at the
+ * pick-up's own door, the older press is put back to work beside the newer.
+ *
+ * Driven through `startWorkflow` under the install-wide hold, so a held turn
+ * stays `waiting` (live) and nothing is ever claimed or spawned.
+ */
+describe("a pick-up on an older press of Run", () => {
+  const FOLDERS = [
+    { mountId: "workspace", folder: "project" },
+    { mountId: "workspace", folder: "second" },
+  ];
+
+  function node(id: string, kind: WorkflowNode["kind"]): WorkflowNode {
+    return {
+      id,
+      name: `Do ${id}`,
+      kind,
+      templateId: null,
+      mountId: "workspace",
+      folder: "project",
+      task: "do the thing",
+      promptOverride: null,
+      agentId: null,
+      fanOut: kind === "orchestrator" ? 2 : null,
+      mergeStrategy: null,
+      mergeAutoResolve: false,
+      maxPasses: null,
+      maxLoopCostUSD: null,
+      stopWhenTasks: null,
+      bodyNodeIds: [],
+      provider: null,
+      fixRounds: null,
+      followsChosenFolder: true,
+    };
+  }
+
+  /** A workflow of one block, pressed once into the first saved folder. */
+  async function firstPress(name: string, kind: WorkflowNode["kind"]) {
+    const workflow = workflows.createWorkflow({
+      name,
+      graph: { nodes: [node("O", kind)], edges: [] },
+      instanceBudget: { maxInstanceCostUSD: null, maxSessionFraction: null, maxWeeklyFraction: null },
+      folders: FOLDERS,
+    });
+    const snapshot = await orch.currentSnapshot();
+    const press = (folder: (typeof FOLDERS)[number]) => {
+      const started = workflows.startWorkflow(workflow.id, snapshot, { kind: "manual", folder });
+      assert.ok(started.ok, `a press was refused: ${!started.ok && started.reason}`);
+      return started.instance.id;
+    };
+    return { workflow, first: press(FOLDERS[0]), press };
+  }
+
+  /** Run `body` with new work held, so no turn or run of it ever starts. */
+  async function held(body: () => Promise<void>): Promise<void> {
+    settings.setNewWorkPaused(true);
+    try {
+      await body();
+    } finally {
+      settings.setNewWorkPaused(false);
+    }
+  }
+
+  const failTurn = (instanceId: string) =>
+    dbMod
+      .db()
+      .prepare(
+        "UPDATE workflow_instance_blocks SET status='failed', error='The turn failed.', finished_at=?" +
+          " WHERE instance_id=? AND node_id='O'",
+      )
+      .run(Date.now(), instanceId);
+
+  it("is refused, and not offered, while a newer press works in the same folder", () =>
+    held(async () => {
+      const { workflow, first, press } = await firstPress("Decide per project", "orchestrator");
+      failTurn(first); // decided nothing: what retryOrchestratorBlock exists to pick up
+      assert.equal(workflows.liveInstancesOf(workflow.id).length, 0);
+      press(FOLDERS[0]); // admitted, correctly: press 1 is not live
+
+      const pickUp = workflows.retryOrchestratorBlock(first, "O");
+      assert.equal(pickUp.ok, false, "the pick-up should be refused while press 2 works in project");
+      assert.equal(pickUp.status, 409);
+      assert.match(pickUp.error, /from another press of Run have not finished yet/);
+      assert.match(pickUp.error, /before picking this one up/);
+      assert.equal(workflows.liveInstancesOf(workflow.id).length, 1, "two presses live in one folder");
+      assert.equal(block(first, "O").status, "failed", "a refusal writes nothing");
+
+      const [offer] = workflows.pickUpsOf(workflows.getInstance(first)!);
+      assert.ok(offer?.kind === "orchestrator");
+      assert.equal(offer.retryRefusal, pickUp.error, "the list says what the door does");
+    }));
+
+  it("control: is allowed while the newer press works in the other saved folder", () =>
+    held(async () => {
+      const { first, press } = await firstPress("Decide alone", "orchestrator");
+      failTurn(first);
+      press(FOLDERS[1]);
+
+      assert.equal(workflows.pickUpsOf(workflows.getInstance(first)!)[0]?.kind, "orchestrator");
+      assert.deepEqual(workflows.retryOrchestratorBlock(first, "O"), { ok: true });
+    }));
+
+  it("refuses reopening a member run on its own page while a newer press works in its folder", () =>
+    held(async () => {
+      const { workflow, first, press } = await firstPress("Build per project", "run");
+      const member = workflows.getInstance(first)!.nodes[0];
+      assert.ok(member, "press 1 created its run");
+      dbMod
+        .db()
+        .prepare("UPDATE runs SET status='failed', iterations=1, finished_at=? WHERE id=?")
+        .run(Date.now(), member.runId);
+      assert.equal(workflows.liveInstancesOf(workflow.id).length, 0);
+      press(FOLDERS[0]);
+
+      const run = orch.getRun(member.runId)!;
+      const outcome = orch.reopenRun(run.id, JSON.parse(run.budget) as unknown);
+      assert.equal(outcome.ok, false, "the member was reopened beside press 2");
+      assert.match(!outcome.ok ? outcome.reason : "", /from another press of Run have not finished yet/);
+      assert.equal(orch.getRun(member.runId)!.status, "failed", "a refusal writes nothing");
     }));
 });
