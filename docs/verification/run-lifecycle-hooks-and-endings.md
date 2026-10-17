@@ -42,8 +42,8 @@ Phase 0 and Phase 2 of `proposals/ContinuousImprovement/`, because
   `ending_code` through the real run loop, 2026-10-17.** The built standalone
   server over a scratch `DATA_DIR`, `CLAUDE_BIN` a wrapper exec'ing the real
   2.1.280 at the stub API above, scratch hooks of four kinds: a `SessionStart`
-  echo, a silent `PreToolUse`, a `PostToolUse` replying `additionalContext` and
-  a silent `PostToolUse`. One run through `POST /api/runs`: the argv carried
+  echo, a silent `PreToolUse`, a `PostToolUse` replying `additionalContext`
+  with a warning on stderr, and a silent `PostToolUse`. One run through `POST /api/runs`: the argv carried
   `--include-hook-events`; the run ended `completed` with
   `ending_code = 'done'` on the row, the run DTO and the list DTO. Its
   `run_events` held one `hook_response` for `SessionStart` and three for the
@@ -54,7 +54,9 @@ Phase 0 and Phase 2 of `proposals/ContinuousImprovement/`, because
   "Ending: reported the task complete" and `/runs` "reported the task
   complete" under the status. With every `ending_code` in the answers rewritten
   to null at 390 px, they read "Ending: unknown" and "ending unknown". No
-  console error. `npm run smoke-pages` against the same build: 100 of 100 page
+  console error. The warning was in each stored row's `output` and in no
+  logged line, measured at `4388e6dc`, where the line is read off `stdout`.
+  `npm run smoke-pages` against the build before that change: 100 of 100 page
   loads clean, serving `.next/standalone/server.js`.
 
 ## Not yet verified by hand
@@ -74,8 +76,8 @@ Phase 0 and Phase 2 of `proposals/ContinuousImprovement/`, because
   Settle with the stub-API recipe and one hook of each kind, logging which
   marker reaches `/v1/messages`.
 
-- **A hook's stored row is as large as its stdout, twice.** `output` and
-  `stdout` both hold it and `raw` is stored whole, so a chatty hook firing on
+- **A hook's stored row holds what it printed twice.** `output` repeats
+  `stdout` and `stderr`, and `raw` is stored whole, so a chatty hook firing on
   every tool call costs that much per call. Unmeasured on any real hook.
 
 - **`ending_code` has met the real CLI on one ending, `done`.** The others are
