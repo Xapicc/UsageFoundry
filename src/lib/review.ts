@@ -10,7 +10,7 @@ import { agentsArgs, type AgentDefinition } from "./agents";
 import { installBudgetRefusal } from "./installBudget";
 import { clipToolInput } from "./logLine";
 import { dataDirRefusal } from "./serverLock";
-import { getSettings } from "./settings";
+import { getSettings, newWorkPaused } from "./settings";
 import {
   CERTIFICATION_PROMPT_LINES,
   isFrontierReviewModel,
@@ -286,6 +286,19 @@ export type ReviewOutcome =
        * a spent window into a wait.
        */
       busy?: true;
+      /**
+       * Set when the refusal is the install-wide hold on new work, for a caller
+       * that asked for it with `refuseWhileHeld`. Waited out like `busy`: the
+       * lift is what the operator pressed the hold to wait for.
+       */
+      held?: true;
+      /**
+       * Set when another review of this run is still running — the Review
+       * button's, or another block's. It ends on its own clock, so a review
+       * block waits it out and then runs its own, which asks the verdict the
+       * other may not have; the Review button only shows the sentence.
+       */
+      alreadyRunning?: true;
     };
 
 /**
@@ -312,6 +325,15 @@ export async function startReview(
      */
     stillWanted?: () => boolean;
     /**
+     * Refuse while new work is held, asked beside `stillWanted` after the last
+     * `await`. A workflow's review block passes it: its reviews are billed
+     * children nobody pressed for, which is what the hold stops, and its own
+     * door asked before the diff, the window scan and the checkout were read,
+     * so a hold pressed meanwhile was never asked about. Not asked of the Review
+     * button, which is somebody pressing for one.
+     */
+    refuseWhileHeld?: boolean;
+    /**
      * Refuse rather than review on a model that is not a frontier one. A
      * workflow's review block words a rejection "by the frontier review" and
      * marks the task needs-frontier on it, so a review it starts is one or it
@@ -332,7 +354,7 @@ export async function startReview(
   const run = getRun(runId);
   if (!run) return { ok: false, reason: "No such run." };
   if (assistRunning(runId, "review")) {
-    return { ok: false, reason: "A review of this run is already running." };
+    return { ok: false, reason: "A review of this run is already running.", alreadyRunning: true };
   }
 
   const diff = await runDiff(runId);
@@ -362,6 +384,13 @@ export async function startReview(
 
   if (opts.stillWanted && !opts.stillWanted()) {
     return { ok: false, reason: "The review was no longer wanted by the time it could start." };
+  }
+  if (opts.refuseWhileHeld && newWorkPaused()) {
+    return {
+      ok: false,
+      reason: "New work is held across this install, so no review is started until the hold is lifted.",
+      held: true,
+    };
   }
 
   // Last, with no `await` between it and `startAssist`, which reads the setting

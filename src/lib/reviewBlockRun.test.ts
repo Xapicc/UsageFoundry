@@ -494,6 +494,33 @@ describe("a review block handed more branches than there are assist slots", () =
   });
 });
 
+describe("a review block whose branch the operator is already reviewing", () => {
+  it("waits for that review to end, then runs its own, rather than setting the branch aside", async () => {
+    const review = await import("./review");
+    reviewScene("inst-dup", {
+      runs: [{ id: "dup-origin", prompt: "Do it. APPROVE-ME SLOW-ONE", branch: "uf/repo-good" }],
+    });
+    // The Review button on the run's own page; the stub takes `SLOW_REVIEW_MS`
+    // over it, and it asks no verdict of a Claude run, so the block cannot
+    // borrow it.
+    const manual = await review.startReview("dup-origin");
+    assert.ok(manual.ok, "the operator's review started");
+    await until("the operator's review to be running", () => reviewRunning("dup-origin"));
+    await settledWithin(workflows.startReviewBlock("inst-dup", "r", ["dup-origin"]), 30_000, "startReviewBlock");
+
+    assert.deepEqual(
+      workflows.reviewItemsOf("inst-dup", "r").map((i) => [i.status, i.note]),
+      [["approved", null]],
+      "the branch was set aside because a review of it was already running",
+    );
+    assert.deepEqual(
+      reviewsOf("dup-origin").map((r) => r.status),
+      ["completed", "completed"],
+      "the operator's review and the block's own",
+    );
+  });
+});
+
 describe("a review block whose workflow is halted", () => {
   it("starts no fix run for a rejection that lands just after the halt", async () => {
     // The reviewer answers at once, so the review is over while the block's
@@ -597,6 +624,50 @@ describe("a review block whose workflow is halted", () => {
   });
 });
 
+describe("a review block while the install's new work is held", () => {
+  it("spawns no reviewer when the hold lands while the review is being prepared, and reviews on the lift", async () => {
+    // The halt case above with the halt replaced by the hold: pressed inside
+    // `startReview`'s own snapshot read, after `driveReviewItem`'s door asked
+    // `newWorkPaused()` and before the child would be spawned.
+    const settings = await import("./settings");
+    reviewScene("inst-hold-gap", {
+      runs: [{ id: "hold-gap-origin", prompt: "Do it. APPROVE-ME", branch: "uf/repo-good" }],
+    });
+    let pressed = false;
+    duringSnapshot = () => {
+      if (workflows.reviewItemsOf("inst-hold-gap", "r").length === 0) return false;
+      settings.setNewWorkPaused(true);
+      pressed = true;
+      return true;
+    };
+    const driving = workflows.startReviewBlock("inst-hold-gap", "r", ["hold-gap-origin"]);
+    try {
+      await until("the hold to be pressed", () => pressed);
+      // Long enough for a stub reviewer spawned past the hold to have finished.
+      await sleep(1_500);
+      assert.deepEqual(
+        reviewsOf("hold-gap-origin").map((r) => r.status),
+        [],
+        "a billed reviewer was spawned after the operator held new work",
+      );
+      assert.deepEqual(
+        workflows.reviewItemsOf("inst-hold-gap", "r").map((i) => [i.status, i.note]),
+        [["reviewing", null]],
+        "the branch was set aside over the hold rather than waiting for the lift",
+      );
+    } finally {
+      duringSnapshot = null;
+      settings.setNewWorkPaused(false);
+      await settledWithin(driving, 30_000, "startReviewBlock");
+    }
+    assert.deepEqual(
+      workflows.reviewItemsOf("inst-hold-gap", "r").map((i) => [i.status, i.note]),
+      [["approved", null]],
+    );
+    assert.equal(reviewsOf("hold-gap-origin").length, 1, "the lift started the one review");
+  });
+});
+
 describe("a review block and its workflow's limit", () => {
   it("counts a finished review in the guard figure while the block is still working", async () => {
     reviewScene("inst-mid", {
@@ -653,11 +724,41 @@ describe("a review block and its workflow's limit", () => {
     const started = ids.filter((id) => reviewsOf(id).length > 0).length;
     const total = workflows.instanceSpend("inst-queued").spentUSD;
     assert.equal(started, 2, `${started} reviews started; $${total.toFixed(2)} against a $0.03 limit`);
+    // A sibling's guard read banks a review its own branch has not polled for
+    // yet, and the branch's poll then finds it banked: once, never twice.
+    const billed = ids.flatMap((id) => reviewsOf(id)).reduce((sum, r) => sum + r.cost_usd, 0);
+    assert.equal(total.toFixed(4), billed.toFixed(4), "a review was banked twice, or not at all");
     const stored = dbMod
       .db()
       .prepare("SELECT status, stop_cause AS cause FROM workflow_instances WHERE id='inst-queued'")
       .get() as { status: string; cause: string | null };
     assert.equal(stored.cause, "guard");
+  });
+
+  it("counts a review that has ended before its own branch's poll has noticed", async () => {
+    // What `driveReviewItem` leaves for up to `MERGE_POLL_MS`: the review's row
+    // is `completed`, so its assist slot is free, and the poll that banks it
+    // onto the block has not come round. A guard read in that window — a queued
+    // sibling's, a fix run's cycle boundary — is the one asked here.
+    reviewScene("inst-unbanked", {
+      budget: { maxInstanceCostUSD: 0.03 },
+      runs: [{ id: "unbanked-origin", prompt: "Do it. APPROVE-ME", branch: "uf/repo-good" }],
+    });
+    const db = dbMod.db();
+    db.prepare(
+      `INSERT INTO run_reviews (id, run_id, kind, created_at, finished_at, status, cost_usd)
+       VALUES ('rv-unbanked', 'unbanked-origin', 'review', ?, ?, 'completed', 0.05)`,
+    ).run(Date.now(), Date.now());
+    db.prepare(
+      `INSERT INTO workflow_review_items
+         (instance_id, block_id, origin_run_id, run_id, position, round, status, review_id, updated_at)
+       VALUES ('inst-unbanked', 'r', 'unbanked-origin', 'unbanked-origin', 0, 0, 'reviewing', 'rv-unbanked', ?)`,
+    ).run(Date.now());
+
+    const guard = workflows.enforceInstanceBudgetForBlock("inst-unbanked", await orch.currentSnapshot());
+    const spend = workflows.instanceSpend("inst-unbanked");
+    assert.equal(guard?.kind, "halted", `a $0.05 review passed a $0.03 limit: ${JSON.stringify(spend)}`);
+    assert.equal(spend.spentUSD.toFixed(4), "0.0500");
   });
 });
 

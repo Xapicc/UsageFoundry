@@ -50,6 +50,7 @@ let orch: typeof import("./orchestrator");
 let workflows: typeof import("./workflows");
 let settings: typeof import("./settings");
 let dbMod: typeof import("./db");
+let review: typeof import("./review");
 
 before(async () => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "uf-boot-blocks-"));
@@ -72,6 +73,7 @@ before(async () => {
   workflows = await import("./workflows");
   settings = await import("./settings");
   dbMod = await import("./db");
+  review = await import("./review");
 });
 
 after(() => {
@@ -86,6 +88,8 @@ after(() => {
  */
 beforeEach(() => {
   for (const table of [
+    "workflow_review_items",
+    "run_reviews",
     "workflow_instance_blocks",
     "workflow_instance_runs",
     "workflow_instances",
@@ -868,5 +872,97 @@ describe("a deliver block a restart or a halt caught working", () => {
 
     assert.match(blockOf(working, "D").error ?? "", /while it was delivering branches/);
     assert.match(blockOf(waiting, "D").error ?? "", /before it delivered anything/);
+  });
+});
+
+describe("a review block's reviews across a restart", () => {
+  /**
+   * One review block over one branch, and the branch's review row as the old
+   * process left it: the review `driveReviewItem` started, recorded on the item,
+   * and had not yet banked onto the block when the process died.
+   */
+  function reviewScene(
+    name: string,
+    block: { status: "thinking" | "failed"; instance: "started" | "stopping" },
+    row: { status: "running" | "completed"; cost: number },
+  ): string {
+    const now = Date.now();
+    const instanceId = `inst-${name}`;
+    const runId = `run-${name}`;
+    const reviewId = `rv-${name}`;
+    const graph = JSON.stringify({
+      nodes: [{ id: "R", name: "Review it", kind: "review", fixRounds: 0 }],
+      edges: [],
+    });
+    const db = dbMod.db();
+    db.prepare(
+      "INSERT INTO workflows (id, name, graph, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    ).run(`wf-${name}`, name, graph, now, now);
+    db.prepare(
+      `INSERT INTO workflow_instances (id, workflow_id, workflow_name, graph, created_at, status)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(instanceId, `wf-${name}`, name, graph, now, block.instance);
+    db.prepare(
+      "INSERT INTO workflow_instance_blocks (instance_id, node_id, node_name, position, kind, status, started_at)" +
+        " VALUES (?, 'R', 'Review it', 0, 'review', ?, ?)",
+    ).run(instanceId, block.status, now);
+    db.prepare(
+      `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations, created_at)
+       VALUES (?, ?, 'build it', 'completed', '{"maxIterations":1}', 1, 1, ?)`,
+    ).run(runId, path.join(root, "workspace"), now);
+    db.prepare(
+      "INSERT INTO run_reviews (id, run_id, kind, created_at, status, cost_usd) VALUES (?, ?, 'review', ?, ?, ?)",
+    ).run(reviewId, runId, now, row.status, row.cost);
+    db.prepare(
+      `INSERT INTO workflow_review_items
+         (instance_id, block_id, origin_run_id, run_id, position, round, status, review_id, updated_at)
+       VALUES (?, 'R', ?, ?, 0, 0, 'reviewing', ?, ?)`,
+    ).run(instanceId, runId, runId, reviewId, now);
+    return instanceId;
+  }
+
+  /** `boot()` with the review pass in front of the block one, `src/instrumentation.ts`'s order. */
+  async function bootWithReviews(): Promise<void> {
+    await orch.reconcileOnBoot();
+    review.reconcileReviewsOnBoot();
+    workflows.reconcileBlocksOnBoot();
+    workflows.reconcileHaltsOnBoot();
+  }
+
+  it("counts a review the restart killed under a working block as unreported", async () => {
+    const instanceId = reviewScene("Killed mid-review", { status: "thinking", instance: "started" }, {
+      status: "running",
+      cost: 0,
+    });
+    await bootWithReviews();
+    assert.equal(workflows.instanceSpend(instanceId).unmeasured, 1);
+  });
+
+  it("counts a review a halted block's reviewer was still dying in as unreported", async () => {
+    // The halt wrote the block `failed` and left the instance `stopping` until
+    // the signalled reviewer ended; the restart came first.
+    const instanceId = reviewScene("Halted mid-review", { status: "failed", instance: "stopping" }, {
+      status: "running",
+      cost: 0,
+    });
+    await bootWithReviews();
+    const spend = workflows.instanceSpend(instanceId);
+    assert.equal(spend.unmeasured, 1, `a killed reviewer reads as a measured total: ${JSON.stringify(spend)}`);
+  });
+
+  it("banks a review that reported before its block did, and only once across two restarts", async () => {
+    const instanceId = reviewScene("Reported, not banked", { status: "thinking", instance: "started" }, {
+      status: "completed",
+      cost: 0.05,
+    });
+    await bootWithReviews();
+    const first = workflows.instanceSpend(instanceId);
+    assert.deepEqual(
+      [first.spentUSD.toFixed(4), first.unmeasured],
+      ["0.0500", 0],
+      `a reported $0.05 review is missing from the instance total: ${JSON.stringify(first)}`,
+    );
+    await bootWithReviews();
+    assert.equal(workflows.instanceSpend(instanceId).spentUSD.toFixed(4), "0.0500", "the second restart banked it again");
   });
 });

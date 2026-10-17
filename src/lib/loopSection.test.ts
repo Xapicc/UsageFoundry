@@ -581,27 +581,41 @@ function reviewItems(instanceId: string): Array<{ status: string; committedNothi
 describe("DONE, over a pass whose review set the branch aside", () => {
   it("is not the work complete when the branch had work on it", async () => {
     // The pass from the report, through the tables rather than a literal: the
-    // run said DONE, its branch was set aside unlanded — here because a review
-    // of that run was already running, the quickest real refusal to stage —
-    // and the merge behind it had nothing to land. That pass ending the loop
-    // as done starts an `on-success` successor on a folder without the work.
-    const instanceId = scene({ ...REVIEWED, maxPasses: 1 });
-    await drive(instanceId, {
-      done: true,
-      branch: (runId) => {
-        dbMod
-          .db()
-          .prepare(
-            "INSERT INTO run_reviews (id, run_id, created_at, status, kind)" +
-              " VALUES (?, ?, ?, 'running', 'review')",
-          )
-          .run(`busy-${runId}`, runId, Date.now());
-        git(repoRoot(), "branch", "-f", `uf/${runId}`, "HEAD");
-        return `uf/${runId}`;
-      },
-    });
-    assert.deepEqual(reviewItems(instanceId), [{ status: "set-aside", committedNothing: 0 }]);
-    assert.match(loopBlock(instanceId).error ?? "", /limit of 1 pass\(es\) without reporting/);
+    // run said DONE, its branch was set aside unlanded with a commit on it —
+    // here because the only model its review could run on is a Haiku, the
+    // quickest real refusal to stage that spawns nothing — and the merge behind
+    // it had nothing to land. That pass ending the loop as done starts an
+    // `on-success` successor on a folder without the work. Not a review of the
+    // run already running, as it was staged until 2026-10-17: a review block
+    // now waits that out.
+    const HAIKU = "claude-haiku-4-5";
+    const settings = await import("./settings");
+    settings.saveSettings({ defaultModel: HAIKU });
+    try {
+      const instanceId = scene({ ...REVIEWED, maxPasses: 1 });
+      await drive(instanceId, {
+        done: true,
+        branch: (runId) => {
+          const branch = `uf/${runId}`;
+          git(repoRoot(), "switch", "-q", "-c", branch);
+          fs.writeFileSync(path.join(repoRoot(), `${runId}.txt`), "work\n");
+          git(repoRoot(), "add", `${runId}.txt`);
+          git(repoRoot(), "commit", "-q", "-m", runId);
+          git(repoRoot(), "switch", "-q", "main");
+          dbMod.db().prepare("UPDATE runs SET model = ? WHERE id = ?").run(HAIKU, runId);
+          return branch;
+        },
+      });
+      assert.deepEqual(reviewItems(instanceId), [{ status: "set-aside", committedNothing: 0 }]);
+      const { note } = dbMod
+        .db()
+        .prepare("SELECT note FROM workflow_review_items WHERE instance_id = ?")
+        .get(instanceId) as { note: string };
+      assert.match(note, /^it could not be reviewed: .*not a frontier model/, "staged by some other refusal");
+      assert.match(loopBlock(instanceId).error ?? "", /limit of 1 pass\(es\) without reporting/);
+    } finally {
+      settings.saveSettings({ defaultModel: null });
+    }
   });
 
   it("is the work complete when the branch had nothing on it", async () => {
