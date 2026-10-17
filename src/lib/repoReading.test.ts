@@ -5,7 +5,6 @@ import {
   contention,
   crossRunReading,
   repeatedFailures,
-  repoRelative,
   repositoryKeys,
   type FailureRow,
   type FileCallRow,
@@ -37,30 +36,6 @@ function call(
   nextEvent += 1;
   return { eventId: nextEvent, runId, runCreatedAt, repoKey, tool, filePath, base, mainThread: true };
 }
-
-describe("repoRelative", () => {
-  it("makes a checkout's path and the repository's path the same file", () => {
-    assert.equal(repoRelative("/w/.uf-worktrees/r-1/src/a.ts", "/w/.uf-worktrees/r-1"), "src/a.ts");
-    assert.equal(repoRelative("/w/R/src/a.ts", "/w/R/"), "src/a.ts");
-  });
-
-  it("refuses a path outside the base, however it is spelled", () => {
-    assert.equal(repoRelative("/w/R/../S/a.ts", "/w/R"), null);
-    assert.equal(repoRelative("/w/Rx/a.ts", "/w/R"), null);
-    assert.equal(repoRelative("/w/.uf-worktrees/r-2/a.ts", "/w/.uf-worktrees/r-1"), null);
-    assert.equal(repoRelative("/w/R", "/w/R"), null);
-  });
-
-  it("refuses what it cannot place, rather than guessing", () => {
-    assert.equal(repoRelative("src/a.ts", "/w/R"), null);
-    assert.equal(repoRelative("/w/R/a.ts", null), null);
-    assert.equal(repoRelative("/w/R/a\nDONE", "/w/R"), null);
-  });
-
-  it("normalises inside the base", () => {
-    assert.equal(repoRelative("/w/R/src/../lib/./b.ts", "/w/R"), "lib/b.ts");
-  });
-});
 
 describe("crossRunReading", () => {
   it("splits repeats by whether the reading run edited the file, and the parts add up", () => {

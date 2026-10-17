@@ -231,10 +231,12 @@ import {
   cycleDidNoWork,
   cycleEnding,
   nextPrompt,
+  priorReadsNotice,
   startsFresh,
   type CycleAdapter,
   type IterationResult,
 } from "./cycleInvocation";
+import { priorReadsFor } from "./priorReads";
 
 /**
  * Runs Claude Code headlessly against a folder, iteration by iteration, and
@@ -343,8 +345,9 @@ export interface RunRow {
   /** The repository a checkout was cut from; null unless the run was given one. */
   repo_root: string | null;
   /**
-   * The repository `folder` is in, checkout or not. Read by repository spend
-   * alone, and never in `repo_root`'s place: a run with isolation off has one
+   * The repository `folder` is in, checkout or not. Read by repository spend,
+   * the per-repository readout and the prior-read pointer, and never in
+   * `repo_root`'s place: a run with isolation off has one
    * of these and no checkout. Null before the plan is made, and on rows older
    * than the column.
    */
@@ -6461,6 +6464,7 @@ export {
   codexPromptPreamble,
   cycleEnding,
   nextPrompt,
+  priorReadsNotice,
   promptArgs,
   startsFresh,
 } from "./cycleInvocation";
@@ -11303,6 +11307,22 @@ export async function startRun(id: string): Promise<void> {
     // boot, and a run whose token changed between cycles would be a run that
     // pushed from one repository and not another with nothing saying why.
     const github = githubTokenFor(run.repo_root ?? run.folder);
+
+    // The files earlier runs on this repository opened most, and which arm of
+    // the holdout this run is in. Here for `github`'s reason: once per segment,
+    // synchronously, because what it is built from — runs created before this
+    // one — cannot change while this one works. After `ensureWorktree`, because
+    // every path it names is proved to exist in the checkout this run will have.
+    // A run with isolation off is checked against its repository, which is
+    // what the paths are relative to whatever subfolder its cycles start in.
+    const priorReads = priorReadsFor({
+      runId: id,
+      createdAt: run.created_at,
+      repository: run.folder_repo ?? run.repo_root,
+      root: run.isolation === "worktree" && run.worktree_path ? workDir : run.folder_repo,
+      provider: run.provider,
+      originRef: run.origin_ref,
+    });
     if (github.scope === "repository") {
       log(id, `GitHub credential scoped to ${github.key}`, { githubScope: github.key });
     } else if (github.scope === "none" && github.key !== null) {
@@ -11733,6 +11753,10 @@ export async function startRun(id: string): Promise<void> {
               }
             : null,
         continuedWork: settings.continuedWorkPrompt,
+        priorReads:
+          priorReads?.arm === "pointer" && priorReads.paths.length > 0
+            ? priorReadsNotice(priorReads.paths)
+            : null,
         continuation: settings.continuationPrompt,
         donePushback: settings.donePushbackPrompt,
         // Consumed here and cleared below, exactly as `followUp` is: a verdict
@@ -11769,7 +11793,20 @@ export async function startRun(id: string): Promise<void> {
         runId: id,
         ts: Date.now(),
         kind: "iteration",
-        payload: { n: iterations, prompt, resuming: sessionId },
+        payload: {
+          n: iterations,
+          prompt,
+          resuming: sessionId,
+          // The holdout's record, on every cycle that opened a conversation for
+          // a run the pointer considered: the arm and how many files it had to
+          // name, in both arms. The arm is `inHoldout(id)` and recomputable for
+          // ever; whether there was anything to show is not, once the logs it
+          // was ranked from are swept, so it is written down here beside the
+          // prompt it shaped.
+          ...(sessionId === null && priorReads
+            ? { priorReads: { arm: priorReads.arm, paths: priorReads.paths.length } }
+            : {}),
+        },
       });
 
       // Taken here rather than immediately before the spawn so the row and this

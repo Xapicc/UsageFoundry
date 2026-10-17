@@ -1,7 +1,7 @@
-import path from "node:path";
 import { db } from "./db";
 import { signatureOf } from "./dreaming";
 import { conflictKey, describeFolder } from "./orchestrator";
+import { repoRelative } from "./priorReads";
 import {
   keyOf,
   labelsOf,
@@ -66,31 +66,6 @@ export interface FileCallRow {
   base: string | null;
   /** False for a call a sub-agent made. */
   mainThread: boolean;
-}
-
-/**
- * A path relative to its run's base, or null when it is not inside it.
- *
- * Null rather than the absolute path, because the two callers want different
- * things from a path outside: the readout keys it as itself, and the pointer
- * must never name it. A read of another run's checkout is the common case —
- * `/workspace/.uf-worktrees/<repo>-2/…` read from slot `-1` — and as a
- * repository-relative path it would name a file in a tree this run is not in.
- *
- * Normalised first, so `a/../b` cannot climb out of the base by spelling, and a
- * path with a control character in it is refused: it is about to be printed on
- * a line of its own into a prompt.
- */
-export function repoRelative(filePath: string, base: string | null): string | null {
-  if (!base || !path.posix.isAbsolute(filePath) || !path.posix.isAbsolute(base)) {
-    return null;
-  }
-  const file = path.posix.normalize(filePath);
-  const root = path.posix.normalize(base).replace(/\/+$/, "");
-  if (!file.startsWith(`${root}/`)) return null;
-  const rel = file.slice(root.length + 1);
-  if (rel === "" || /[\u0000-\u001f\u007f]/.test(rel)) return null;
-  return rel;
 }
 
 /* ------------------------------------------------------------------ */

@@ -387,6 +387,13 @@ function statusTone(status: unknown): LogTone {
   return "neutral";
 }
 
+/** The `iteration` event's holdout record says this run had files to be shown and was not. */
+function isHeldOutWithPaths(v: unknown): boolean {
+  if (typeof v !== "object" || v === null) return false;
+  const r = v as { arm?: unknown; paths?: unknown };
+  return r.arm === "holdout" && typeof r.paths === "number" && r.paths > 0;
+}
+
 /**
  * Null for an event with nothing to show — a blank content block, or the CLI's
  * own `system:` chatter, which is noise *in a feed* once a run is underway.
@@ -410,7 +417,14 @@ export function describeEvent(e: RunEventDTO): LogEntry | null {
         voice: "cycle",
         tone: "neutral",
         label: `Work cycle ${p.n}`,
-        text: p.resuming ? "continuing the same conversation" : "",
+        text: p.resuming
+          ? "continuing the same conversation"
+          : // Said only of the arm that was not shown it: the shown arm's list
+            // is in the prompt below, and without this two runs on one
+            // repository read as if one had simply been given a shorter prompt.
+            isHeldOutWithPaths(p.priorReads)
+            ? "files earlier runs read held back, for the holdout"
+            : "",
         ...(typeof p.prompt === "string" && p.prompt !== ""
           ? { detail: p.prompt }
           : {}),

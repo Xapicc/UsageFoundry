@@ -277,6 +277,16 @@ export function nextPrompt(o: {
   continuedFrom: { runId: string; branch: string; base: string | null } | null;
   /** `settings.continuedWorkPrompt`, the editable half of that notice. */
   continuedWork: string;
+  /**
+   * `priorReadsNotice`'s block, for a run in the pointer's arm with something to
+   * show, or null.
+   *
+   * On the session-less branch only, like every orientation notice: a resumed
+   * conversation already holds it from the turn that opened it, and what earlier
+   * runs read cannot have changed since — the ranking is built from runs created
+   * before this one.
+   */
+  priorReads: string | null;
   continuation: string;
   donePushback: string;
   /**
@@ -333,6 +343,10 @@ export function nextPrompt(o: {
       // from where you stopped" before it has been told the work is not its own.
       o.continuedFrom ? continuedWorkNotice(o.continuedFrom, o.continuedWork) : null,
       o.priorCycles > 0 ? priorWorkNotice(o.priorCycles, o.worktreeBranch) : null,
+      // Last of the orientation and directly ahead of the task, the slot the
+      // proposal measured from: the notices above are about this branch and
+      // this run's own work, and this one is about the repository's.
+      o.priorReads,
       o.task,
       o.followUp,
       // After the task and before the completion notice: a run restarting
@@ -522,6 +536,35 @@ function priorWorkNotice(cycles: number, branch: string | null): string {
     `no conversation left to resume, so the task is repeated in full below. ` +
     `Before doing anything, ${look}, and carry on from where that attempt ` +
     `stopped rather than starting it again.`
+  );
+}
+
+/**
+ * The files earlier runs on this repository opened most, for a run in the
+ * pointer's arm (`priorReads.ts`).
+ *
+ * **A statement of fact, never an instruction to read them**, and the header
+ * carries that distinction because nothing else in the block can.
+ * `proposals/ContinuousImprovement/02-what-already-tries.md` measured the
+ * difference on this install: `continuedWorkNotice`, which names one command, is
+ * copied verbatim by 85% of the runs it reaches, while CLAUDE.md's "read this
+ * doc first", in the same message, is declined by 101 runs of 112. A list told
+ * to the agent as a reading assignment is the second kind of sentence and costs
+ * the files it names on every turn after; a list told as a fact competes with
+ * nothing the task says, and the agent opens what it needs.
+ *
+ * Generated rather than a `DEFAULT_*`: a stored default is pinned by the first
+ * Save that touches it, and a sentence about what the block is must not be able
+ * to drift from what it lists. Each path carries the number of earlier runs
+ * behind it, which is what "opened most" means in a form the agent can weigh.
+ */
+export function priorReadsNotice(paths: readonly { path: string; runs: number }[]): string {
+  const count = paths.length === 1 ? "The file" : `The ${paths.length} files`;
+  return (
+    `${count} that earlier runs on this repository opened most, most recent weighted, ` +
+    `relative to the repository's root. This is a record of where work has happened, ` +
+    `not an instruction to read any of them.\n\n` +
+    paths.map((p) => `    ${p.path} (${p.runs} ${p.runs === 1 ? "run" : "runs"})`).join("\n")
   );
 }
 

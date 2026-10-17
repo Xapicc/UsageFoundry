@@ -125,6 +125,7 @@ const {
   seedReport,
   needsLiveSpendTelemetry,
   nextPrompt,
+  priorReadsNotice,
   permissionDenials,
   hookInjection,
   refusalDisposition,
@@ -1194,6 +1195,7 @@ describe("prompt for the next work cycle", () => {
       base: string | null;
     } | null,
     continuedWork: "READ-FIRST",
+    priorReads: null as string | null,
     continuation: "CONTINUE",
     donePushback: "PUSHBACK",
     validation: null as string | null,
@@ -1382,6 +1384,34 @@ describe("prompt for the next work cycle", () => {
       both.indexOf("run bbbbbbbb") <
         both.indexOf("A previous attempt at this task already ran 2 work cycles"),
     );
+  });
+
+  it("names what earlier runs read directly ahead of the task, and only in a new conversation", () => {
+    // The slot is the measurement's: the last orientation before the task, after
+    // this branch's history and this run's own restart, which are about work
+    // that is already under the agent rather than about the repository.
+    const block = priorReadsNotice([
+      { path: "src/lib/orchestrator.ts", runs: 12 },
+      { path: "CLAUDE.md", runs: 1 },
+    ]);
+    const opened = nextPrompt({
+      ...base,
+      sessionId: null,
+      priorCycles: 2,
+      worktreeBranch: "uf/thing",
+      continuedFrom: { runId: "bbbbbbbb", branch: "uf/thing", base: "abc123" },
+      priorReads: block,
+    });
+    assert.ok(opened.indexOf("A previous attempt") < opened.indexOf(block));
+    assert.ok(opened.endsWith(wall(`${block}\n\nTASK`)));
+    // A statement of fact, with what each path is worth, and never a reading
+    // assignment: the gate CLAUDE.md asks for in the same message is declined
+    // by 101 runs of 112.
+    assert.match(block, /^The 2 files that earlier runs on this repository opened most/);
+    assert.match(block, /not an instruction to read any of them/);
+    assert.match(block, /\n {4}src\/lib\/orchestrator\.ts \(12 runs\)\n {4}CLAUDE\.md \(1 run\)$/);
+    // The resumed conversation already holds it from the turn that opened it.
+    assert.equal(nextPrompt({ ...base, priorReads: block }), wall("CONTINUE"));
   });
 
   it("says nothing about a continued branch once the session exists", () => {
@@ -4920,6 +4950,7 @@ describe("the previous cycle's stopped background tasks, read back from the log"
         worktreeBranch: null,
         continuedFrom: null,
         continuedWork: "READ-FIRST",
+        priorReads: null,
         continuation: "CONTINUE",
         donePushback: "PUSHBACK",
         validation: null,
