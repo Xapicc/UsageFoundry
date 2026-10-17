@@ -56,8 +56,16 @@ assert.equal(
     "run against the real database",
 );
 
-const { createRun, getRun, reconcileOnBoot, releaseDependents, releaseStackWaits, resumeRun, stopRun } =
-  require("./orchestrator") as typeof import("./orchestrator");
+const {
+  createRun,
+  getRun,
+  reconcileOnBoot,
+  releaseDependents,
+  releaseStackWaits,
+  reopenRun,
+  resumeRun,
+  stopRun,
+} = require("./orchestrator") as typeof import("./orchestrator");
 const { readReceipts, stackGrants } = require("./stacks") as typeof import("./stacks");
 const { declineStackRequest, recordStackRequest, stackRequestsOfRun, stackWaitOf } =
   require("./stackRequests") as typeof import("./stackRequests");
@@ -926,5 +934,61 @@ describe("a task check left in flight by a park", () => {
 
   it("acts on a verdict that landed while a guard had the run paused", async () => {
     assertVerdictBoughtACycle(await scenario("verdict-during-guard-pause", "guard", true), 3);
+  });
+
+  /**
+   * The same claim made in a cycle that ended `needs-review`, which sits above
+   * the boundary and so ends without waiting for the check, and the run picked
+   * up by the operator. A pick-up is a fresh segment, but the boundary read the
+   * verdict by when it finished alone: one that landed after the pick-up's
+   * first spawn overrode that cycle's DONE and bought a cycle out of
+   * `maxValidationCycles`, where the same verdict landing a moment before the
+   * pick-up bought nothing.
+   */
+  describe("and by a needs-review ending, then picked up", () => {
+    async function pickedUp(folder: string, verdictAfterPickupSpawn: boolean) {
+      settings.saveSettings({ validateTaskCompletion: true, maxValidationCycles: 2 });
+      let handles: { taskId: string; reviewId: string } | null = null;
+      const id = start(folder, [
+        {
+          during: () => {
+            handles = claimAndValidate(scriptedRun);
+          },
+          reply: "Called complete_task, then hit a wall I cannot pass.\nNEEDS_REVIEW",
+        },
+        {
+          during: () => {
+            if (verdictAfterPickupSpawn) verdictLands(handles!.reviewId);
+          },
+          reply: "Answered the operator's note.\nDONE",
+        },
+        { reply: "Wrote the tests.\nDONE" },
+      ]);
+      const first = await settled(id);
+      assert.equal(first.status, "needs-review", first.stop_reason ?? "");
+      if (!verdictAfterPickupSpawn) verdictLands(handles!.reviewId);
+      // A clock tick, so the pick-up cannot share the claim's millisecond.
+      await new Promise((r) => setTimeout(r, 20));
+      const picked = reopenRun(id, { maxIterations: 2 }, "Use the other compiler and carry on.");
+      assert.equal(picked.ok, true, JSON.stringify(picked));
+      const done = await settled(id);
+      const prompts = argvs.map((args) => args[args.indexOf("--") + 1]);
+      assert.equal(
+        prompts.length,
+        2,
+        `the previous segment's verdict bought the pick-up a cycle: run ${done.status} (${done.stop_reason})`,
+      );
+      assert.doesNotMatch(prompts[1], /PARKED-MARKER/);
+      assert.equal(done.status, "completed", done.stop_reason ?? "");
+      assert.equal(done.validation_cycles, 0);
+    }
+
+    it("control: a verdict that landed before the pick-up buys nothing", async () => {
+      await pickedUp("needs-review-verdict-before-pickup", false);
+    });
+
+    it("a verdict that lands after the pick-up's first spawn buys nothing either", async () => {
+      await pickedUp("needs-review-verdict-after-pickup", true);
+    });
   });
 });

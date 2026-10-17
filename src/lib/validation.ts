@@ -1055,10 +1055,23 @@ function runningValidation(runId: string): ReviewRow | null {
  * finished since the last boundary that read (`since`), so it buys a cycle
  * once; and the task is still claimed by this run, so an operator who took it
  * back, dropped it or closed it meanwhile outranks the verdict.
+ *
+ * And the check began in this segment: not before `segmentStart`, the last
+ * pick-up (`runs.reopened_at`), null for a run never picked up. A claim made in
+ * a cycle that ended `needs-review` is not waited for, so its verdict can land
+ * after the pick-up's first spawn, where `since` alone let it override the
+ * pick-up's DONE and buy a cycle the operator never asked for — and landing a
+ * minute earlier the same verdict bought nothing. A park is not a pick-up, so a
+ * claim carried across one on `since` is still this segment's.
  */
 export function verdictsToActOn<
   T extends Pick<ReviewRow, "task_id" | "created_at" | "finished_at" | "verdict">,
->(rows: readonly T[], since: number, heldTaskIds: ReadonlySet<string>): T[] {
+>(
+  rows: readonly T[],
+  since: number,
+  heldTaskIds: ReadonlySet<string>,
+  segmentStart: number | null,
+): T[] {
   const newestPerTask = new Map<string, T>();
   for (const row of rows) {
     if (!row.task_id) continue;
@@ -1071,6 +1084,7 @@ export function verdictsToActOn<
         row.verdict === "not-finished" &&
         row.finished_at !== null &&
         row.finished_at >= since &&
+        (segmentStart === null || row.created_at >= segmentStart) &&
         heldTaskIds.has(taskId),
     )
     .map(([, row]) => row)
@@ -1225,6 +1239,12 @@ export async function validationAtBoundary(
     await new Promise((resolve) => setTimeout(resolve, VERDICT_POLL_MS));
   }
 
+  // Re-read rather than trusting the row the caller holds: this function has
+  // just spent minutes awaiting, and `validation_cycles` is written straight to
+  // the row by every grant. Read ahead of the verdicts for `reopened_at`.
+  const run = getRun(runId);
+  if (!run) return null;
+
   const rows = listReviews(runId, "validate");
   // A task that went while it was being judged — the operator dropped it,
   // closed it, or took it back — is not held, and their decision outranks the
@@ -1236,18 +1256,13 @@ export async function validationAtBoundary(
       held.set(task.id, task);
     }
   }
-  const findings = verdictsToActOn(rows, since, new Set(held.keys())).flatMap((row) => {
+  const acted = verdictsToActOn(rows, since, new Set(held.keys()), run.reopened_at);
+  const findings = acted.flatMap((row) => {
     const task = row.task_id ? held.get(row.task_id) : undefined;
     const parsed = row.text ? parseVerdict(row.text) : null;
     return task && parsed ? [{ task, parsed }] : [];
   });
   if (findings.length === 0) return null;
-
-  // Re-read rather than trusting the row the caller holds: this function has
-  // just spent minutes awaiting, and `validation_cycles` is written straight to
-  // the row by every grant.
-  const run = getRun(runId);
-  if (!run) return null;
 
   // One grant for the boundary however many tasks it names. `maxValidationCycles`
   // is a bound on the run's cycles, and a grant per task would let a run holding

@@ -571,7 +571,11 @@ export interface RunRow {
   origin: RunOrigin | null;
   /** The record that authorised it: a proposal, an instance, a schedule. */
   origin_ref: string | null;
-  /** When an operator last put this terminal run back in the queue. */
+  /**
+   * When an operator last put this terminal run back in the queue, and so the
+   * floor below which a task check belongs to an earlier segment — see
+   * `verdictsToActOn`.
+   */
   reopened_at: number | null;
   /** `gitDirWatch.ts`'s `GitDirBaseline` as JSON, taken once before the first cycle. */
   git_dir_baseline: string | null;
@@ -15159,7 +15163,8 @@ export function reopenRun(
       // set, `needs-review` included, and a run that said it could not finish
       // must never be sent back into a cycle by a verdict — least of all on the
       // pick-up of the operator who came to answer it. A pick-up stays the
-      // fresh segment it has always been.
+      // fresh segment it has always been, and `reopened_at` is what keeps it
+      // one: a check the ending did not wait for began before it.
       `UPDATE runs SET status=?, queued_at=?, budget=?, max_iterations=?, follow_up=?,
          follow_up_is_note=?, reopened_at=?,
          started_at=NULL, finished_at=NULL, exit_code=NULL, stop_reason=NULL,
