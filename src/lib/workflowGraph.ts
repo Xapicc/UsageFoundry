@@ -23,6 +23,7 @@ import { jsonKind, notStringRefusal } from "./http";
 import { parseVerifyCommand } from "./verifyCommand";
 import { chatGuards } from "./settings";
 import { listTemplates } from "./templates";
+import { resolveTaskFolder } from "./tasks";
 import { WORKSPACE_MOUNTS } from "./config";
 import {
   MAX_FAN_OUT,
@@ -3025,6 +3026,24 @@ export function currentKnowledge(): WorkflowKnowledge {
 }
 
 /**
+ * Where a loop's board condition counts, through the board's own resolver.
+ *
+ * One function for the two moments that ask — `folderRefusal` before anything
+ * exists and `countBoardCondition` before every decision — so a folder the save
+ * accepted is the folder the count resolves.
+ */
+export function resolveBoardFolder(
+  condition: LoopBoardCondition,
+): ReturnType<typeof resolveTaskFolder> {
+  // `"."` rather than `""` for the mount root: `resolveTaskFolder` refuses a
+  // mount with no folder beside it, and the root is a folder — it is the path a
+  // run working there files its own tasks against. Going round that resolver to
+  // spell the root ourselves is what would put a second folder resolver in this
+  // app, which `tasks.ts` exists to prevent.
+  return resolveTaskFolder(condition.mountId, condition.folder || ".");
+}
+
+/**
  * Why a block's folder cannot be worked in, or null when every one resolves.
  *
  * Not part of `normalizeWorkflowInput`, which is pure — this is the filesystem
@@ -3033,18 +3052,27 @@ export function currentKnowledge(): WorkflowKnowledge {
  * from `run_templates`: a template records a folder as a preference that the
  * run form asks about again, where a workflow block's folder is what the run
  * will use and is never asked about a second time.
+ *
+ * A loop's board condition is asked too, for the same reason: it is the one
+ * other folder a graph names, and one that does not resolve fails the loop at
+ * its first check — after every block in front of it has run and billed.
  */
 export function folderRefusal(graph: WorkflowGraph): string | null {
   for (const node of graph.nodes) {
+    // A loop names no workspace — it frames the blocks it repeats and each of
+    // those resolves its own, so resolving the loop's `""` would be refusing the
+    // graph over a folder nobody chose. Its condition names one.
+    if (node.kind === "loop") {
+      const board = node.stopWhenTasks ? resolveBoardFolder(node.stopWhenTasks) : null;
+      if (board && !board.ok) return `“${node.name}” cannot count its tasks: ${board.error}`;
+      continue;
+    }
     // A merge block names no workspace: it works in whichever repository each
     // branch it lands came from, which `landRun` reads off that branch's own
-    // run. A loop names none either — it frames the blocks it repeats and each
-    // of those resolves its own, so asking here would be resolving `""` against
-    // no mount at all and refusing the graph over a folder nobody chose.
+    // run.
     if (
       node.kind === "merge" ||
       node.kind === "deliver" ||
-      node.kind === "loop" ||
       node.kind === "review" ||
       node.kind === "gate"
     ) {

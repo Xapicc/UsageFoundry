@@ -1448,6 +1448,33 @@ async function breakMidPass(instanceId: string, breakIt: () => void): Promise<vo
   );
 }
 
+/**
+ * A board condition over a folder beside the repository rather than in it, so
+ * taking the folder away touches nothing a member works in — and one open task
+ * on it, so "at most none" is not met and pass 1 starts.
+ */
+function openBoard(): { boardDir: string; stopWhenTasks: NodeBlob } {
+  const boardDir = path.join(root, MOUNT_DIR, "board");
+  fs.mkdirSync(boardDir, { recursive: true });
+  const input = tasks.normalizeTaskInput(
+    { title: "Still to do", body: "Work for the loop.", mountId, folder: "board" },
+    { origin: "operator", createdByRunId: null },
+  );
+  if (!input.ok) throw new Error(input.error);
+  const filed = tasks.createTask(input.value);
+  if (!filed.ok) throw new Error(filed.error);
+  return {
+    boardDir,
+    stopWhenTasks: {
+      mountId,
+      folder: "board",
+      includeSubfolders: false,
+      statuses: ["open"],
+      thresholds: [{ priority: "any", atMost: 0 }],
+    },
+  };
+}
+
 /** The pass landed first, and the loop ended on `reason` only after it. */
 function assertLandedThenFailed(instanceId: string, reason: RegExp): void {
   const merge = passMemberId("L", 1, "m");
@@ -1465,29 +1492,8 @@ function assertLandedThenFailed(instanceId: string, reason: RegExp): void {
 
 describe("a loop that cannot decide while a pass is working", () => {
   it("carries the pass to its landing when the board can no longer be counted", async () => {
-    // A folder beside the repository rather than in it, so taking it away
-    // touches nothing a member works in.
-    const boardDir = path.join(root, MOUNT_DIR, "board");
-    fs.mkdirSync(boardDir, { recursive: true });
-    // One open task, so "at most none" is not met and pass 1 starts.
-    const input = tasks.normalizeTaskInput(
-      { title: "Still to do", body: "Work for the loop.", mountId, folder: "board" },
-      { origin: "operator", createdByRunId: null },
-    );
-    if (!input.ok) throw new Error(input.error);
-    const filed = tasks.createTask(input.value);
-    if (!filed.ok) throw new Error(filed.error);
-
-    const instanceId = scene({
-      ...WITH_SUCCESSOR,
-      stopWhenTasks: {
-        mountId,
-        folder: "board",
-        includeSubfolders: false,
-        statuses: ["open"],
-        thresholds: [{ priority: "any", atMost: 0 }],
-      },
-    });
+    const { boardDir, stopWhenTasks } = openBoard();
+    const instanceId = scene({ ...WITH_SUCCESSOR, stopWhenTasks });
 
     // An agent in the pass renamed the folder, or the mount blipped.
     await breakMidPass(instanceId, () => fs.rmSync(boardDir, { recursive: true }));
@@ -1516,5 +1522,62 @@ describe("a loop that cannot decide while a pass is working", () => {
 
     await drive(instanceId);
     assertLandedThenFailed(instanceId, /has no pass cap/);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* A pass that already ended the loop, over a board it cannot count    */
+/* ------------------------------------------------------------------ */
+
+describe("a pass that ended the loop, with a board that can no longer be counted", () => {
+  // `on-success`, the link a failed loop writes off: an unreadable board that
+  // failed a loop its own pass had already ended would block this block, and
+  // `pickUpsOf` offers nothing for a pass with no blocked member.
+  const withSuccessor = {
+    ...WITH_SUCCESSOR,
+    edges: [
+      ...WITH_SUCCESSOR.edges.filter((e) => e.to !== "after"),
+      { from: "L", to: "after", edge: "on-success" },
+    ],
+  };
+
+  /** The loop ended `emitted` on `reason`, and the block behind it was started. */
+  function assertEndedOn(instanceId: string, reason: RegExp): void {
+    const loop = loopBlock(instanceId);
+    assert.equal(loop.status, "emitted", `the loop ended ${loop.status}: ${loop.error}`);
+    assert.match(loop.error ?? "", reason);
+    assert.ok(
+      membersOf(instanceId).some((m) => m.memberId === "after"),
+      "the block behind the loop was never created",
+    );
+  }
+
+  it("ends on DONE, which outranks the board", async () => {
+    const { boardDir, stopWhenTasks } = openBoard();
+    const instanceId = scene({ ...withSuccessor, stopWhenTasks });
+    // An agent in the pass renamed the folder, or the mount blipped.
+    await breakMidPass(instanceId, () => fs.rmSync(boardDir, { recursive: true }));
+    await drive(instanceId, { done: true });
+    assertEndedOn(instanceId, /reported the work complete on pass 1/);
+  });
+
+  it("ends as the operator asked, which outranks the board", async () => {
+    const { boardDir, stopWhenTasks } = openBoard();
+    const instanceId = scene({ ...withSuccessor, stopWhenTasks });
+    await breakMidPass(instanceId, () => fs.rmSync(boardDir, { recursive: true }));
+    assert.deepEqual(workflows.setLoopStopAfter(instanceId, "L", true), {
+      ok: true,
+      stopAfterPass: 1,
+    });
+    await drive(instanceId);
+    assertEndedOn(instanceId, /stopped after pass 1, as the operator asked/);
+  });
+
+  it("ends at its pass cap, which the board could only have ended sooner", async () => {
+    const { boardDir, stopWhenTasks } = openBoard();
+    const instanceId = scene({ ...withSuccessor, maxPasses: 1, stopWhenTasks });
+    await breakMidPass(instanceId, () => fs.rmSync(boardDir, { recursive: true }));
+    await drive(instanceId);
+    assertEndedOn(instanceId, /reached its limit of 1 pass\(es\)/);
   });
 });

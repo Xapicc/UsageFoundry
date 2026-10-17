@@ -181,14 +181,19 @@ Twenty-three are renderings rather than functions — every `*.test.tsx` in the 
 
 | Test file | Also in |
 |---|---|
-| `loopBoardCount.test.ts` |  |
 | `loopMergeOwnership.test.ts` |  |
 | `loopSection.test.ts` | [fleet] |
-| `workflows.test.ts` | [argv], [pricing], [workflows], [decider], [pick-ups], [cycle] |
+| `workflows.test.ts` | [argv], [pricing], [workflows], [decider], [pick-ups], [cycle], [loop-board] |
 
 Units that are about no test file in the tree:
 
 - Deliberately **not** tested: `STATUS_TONE`, `GLYPH` and `describeRun`, where the compiler is the test and a rendering earns one only when it pins something a reader would act on that is wrong in a …
+
+## [A loop's board condition](testing/workflow-loop-board.md)
+
+| Test file | Also in |
+|---|---|
+| `loopBoardCount.test.ts` |  |
 
 ## [Chat turns, threads and the request helpers](testing/chat-turns-and-threads.md)
 
@@ -533,6 +538,7 @@ It prints nothing as this is written. Whoever owns a file it names owes that fil
 [ceiling]: testing/context-samples-and-ceiling.md
 [workflows]: testing/workflow-instances.md
 [loops]: testing/workflow-loops.md
+[loop-board]: testing/workflow-loop-board.md
 [pick-ups]: testing/workflow-pick-ups.md
 [chat]: testing/chat-turns-and-threads.md
 [proposals]: testing/chat-proposals.md
