@@ -367,6 +367,25 @@ describe("the server's own git refuses a command a work cycle planted in .git", 
     );
   });
 
+  it("filter.<x>.clean: a working-tree `diff --name-only` runs nothing on a stat-dirty file", async () => {
+    // `conflictedFiles`' call shape. `--name-only` opens no blob for a diff
+    // driver, but deciding whether a stat-dirty file changed re-hashes it, and
+    // that runs the clean filter (measured, 2.39).
+    const { repo, marker, prog } = repoWithPlant("diffwt");
+    plain(repo, ["config", "filter.x.clean", prog]);
+    attribute(repo);
+    const past = new Date("2001-01-01T00:00:00Z");
+    fs.utimesSync(path.join(repo, "f.txt"), past, past);
+    const res = await git(repo, ["diff", "--name-only", "-z"]);
+
+    assert.equal(res.ok, true, `diff failed: ${res.stderr}`);
+    assert.equal(
+      fs.existsSync(marker),
+      false,
+      `planted clean filter ran: ${fs.existsSync(marker) ? fs.readFileSync(marker, "utf8") : ""}`,
+    );
+  });
+
   it("a dotted driver name keeps its case, so the override still matches", async () => {
     // git lower-cases the section and the key but preserves the subsection, so
     // `filter.Some.Name.clean` must be blanked with its case intact.
@@ -391,7 +410,12 @@ describe("the server's own git refuses a command a work cycle planted in .git", 
     attribute(repo);
     fs.writeFileSync(path.join(repo, "f.txt"), "five\n");
     plain(repo, ["add", "-A"]);
+    assert.equal(fs.existsSync(marker), true, "the planted clean filter did not fire on add");
 
-    assert.equal(fs.existsSync(marker), true, "the planted clean filter did not fire under plain git");
+    fs.rmSync(marker);
+    const past = new Date("2001-01-01T00:00:00Z");
+    fs.utimesSync(path.join(repo, "f.txt"), past, past);
+    plain(repo, ["diff", "--name-only"]);
+    assert.equal(fs.existsSync(marker), true, "the planted clean filter did not fire on diff");
   });
 });

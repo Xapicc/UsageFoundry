@@ -204,12 +204,15 @@ const FILTER_PROBE = ["config", "-z", "--includes", "--get-regexp", "^filter\\."
  * store, and so consult a filter driver. The enumeration costs one extra
  * `git config` child, so it is paid only here and not on the object-store reads
  * — `rev-parse`, `rev-list`, `merge-base`, `cat-file`, `ls-tree`, `log`,
- * `show`, a `diff` between commits — that are the bulk of this app's git calls
- * and never touch the working tree. `status` and `update-index --refresh` are
- * on the list because their stat-dirty check runs a clean filter to compare
- * content (measured for the chat's git). The gate reads `args[0]`, which every
- * call site passes as the subcommand; this app never puts a global flag before
- * it.
+ * `show` — that are the bulk of this app's git calls and never touch the
+ * working tree. `status`, `update-index --refresh` and `diff` are on the list
+ * because their stat-dirty check re-hashes a file through its clean filter:
+ * `conflictedFiles`' `diff --name-only --diff-filter=U` ran one three times
+ * mid-merge (measured, 2.39), though `--name-only` opens no blob for a diff
+ * driver. `diff` is gated whole rather than only against the working tree,
+ * since telling a range from a pathspec means parsing git's own grammar, and
+ * the probe is small beside a diff. The gate reads `args[0]`, which every call
+ * site passes as the subcommand; this app never puts a global flag before it.
  */
 const CONTENT_SUBCOMMANDS = new Set([
   "add",
@@ -231,6 +234,7 @@ const CONTENT_SUBCOMMANDS = new Set([
   "apply",
   "pull",
   "status",
+  "diff",
   "sparse-checkout",
 ]);
 
