@@ -183,7 +183,7 @@ export interface ReviewRow {
  * means the row is not what it claims and the honest answer is nothing rather
  * than a partial list.
  */
-export function reviewPaths(row: ReviewRow): string[] {
+export function reviewPaths(row: Pick<ReviewRow, "resolved_paths">): string[] {
   if (!row.resolved_paths) return [];
   try {
     const parsed: unknown = JSON.parse(row.resolved_paths);

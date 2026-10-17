@@ -8,6 +8,7 @@ import { InstallSpendCard } from "@/components/InstallSpendCard";
 import { LiveTelemetry } from "@/components/LiveTelemetry";
 import { Meter } from "@/components/Meter";
 import { RecentBlocksCard } from "@/components/RecentBlocksCard";
+import { RepoReadingCards } from "@/components/RepoReadingCards";
 import { RepoSpendCard } from "@/components/RepoSpendCard";
 import { PruneSavingsRows } from "@/components/PruneSavings";
 import {
@@ -1354,6 +1355,18 @@ export default function Dashboard() {
             each repository's own runs reported spending. The two are never
             added — see the card. */}
         <RepoSpendCard />
+      </SourceRegion>
+
+      {/* Its own band, because two of its three readings are counts and are no
+          cost source at all; the third is `run_reviews.cost_usd`, which no
+          card above sums. Beside the repository spend because it answers the
+          question that card raises — where a repository's money went over
+          and over again — and never adds to it. */}
+      <SourceRegion
+        heading="What runs keep re-deriving"
+        statement="Counted per repository from each run’s own log, and from the conflict resolutions this app paid for."
+      >
+        <RepoReadingCards />
       </SourceRegion>
 
       {/* Not a fourth cost source, and the heading has to carry that — the word

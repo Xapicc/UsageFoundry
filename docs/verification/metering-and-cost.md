@@ -167,6 +167,22 @@
   `error_during_execution` exits by the normal route was inferred, not traced.
   `cycleSpendOf` banks each resumed work cycle's increase on this reading.
 
+- **`repoReading()`'s query time over a synthetic corpus at the 2026-08 size,
+  2026-10-17, branch `uf/usagefoundry-721638d11c0b-22`.** The install's
+  database is not readable from a work cycle, so this was measured against a
+  scratch database built through `migrate()`. It held 294 runs and 124,950
+  `run_events` rows with a mean payload of 544 bytes; 4.7% were `Read`s, 1.6%
+  edits and 0.4% `tool_error`s, with 59 completed resolutions. Five calls took
+  30–36 ms in the two queries and 42–56 ms per call including the three pure
+  readings. That is one full scan, against 2026-08's 0.155 s for the unsplit
+  repeat query on the install's own table. Caveat: synthetic payloads, so it
+  bounds the shape of the cost and not this install's figure.
+
+- **The readout's three pure readings, 2026-10-17.** `repoReading.test.ts`,
+  14 cases. A mutation of the compiled module that turned off the edited test
+  failed one case, and one that dropped the runs-first ordering of failures
+  failed one case.
+
 ## Not yet verified by hand
 
 - **The instant Sonnet 5.5's cache read price fell is a choice, not a reading.**
@@ -271,3 +287,12 @@
 
 - **The Live from runs card, looked at on a real telemetry-enabled run**:
   whether it reads apart from the meters and moves within one cycle.
+
+- **What the per-repository readout shows on this install.** Not measured: no
+  run could read the database (`proposals/ContinuousImprovement/19-remeasure-2026-10.md`).
+  To settle it, open the dashboard's *What runs keep re-deriving* band and
+  compare its largest repository's repeat and addressable shares with
+  `docker exec -i -w /app usagefoundry node --input-type=module - /data/usagefoundry.db < proposals/ContinuousImprovement/scripts/remeasure.mjs`,
+  which uses the same definitions. They should agree except where the card
+  folds two mounts of one directory into one repository and the script, which
+  keys on the stored string, does not.

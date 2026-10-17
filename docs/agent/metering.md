@@ -3,7 +3,7 @@
 > Extracted verbatim from `CLAUDE.md`, which grew past the size Claude Code will
 > load into a session. Each paragraph records a correctness or safety decision
 > whose violation is silent — nothing throws, nothing fails to typecheck.
-> **Read before editing src/lib/windows.ts, transcripts.ts, pricing.ts, planUsage.ts, codexAccount.ts, codexRollout.ts, repoSpend.ts, otlp.ts.**
+> **Read before editing src/lib/windows.ts, transcripts.ts, pricing.ts, planUsage.ts, codexAccount.ts, codexRollout.ts, repoSpend.ts, repoReading.ts, otlp.ts.**
 
 This file is an index. Each line below is the lead claim of one paragraph, and the paragraph itself is in the topic file its heading links to.
 
@@ -56,6 +56,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - The cycle in flight is on the row, in its own column, and it is not a count.
 - What a run is spending *now* is a third reading on the dashboard, never a correction to the meters.
 - What each repository cost is a fifth reading, and it is a report rather than a source.
+- What runs on each repository keep re-deriving is a report beside it, and two of its three readings are not money at all.
 - A Codex run's spend is tokens wherever a report shows spend, and it is never folded into a dollar figure.
 - A loop's cost limit is checked on the guard figure and its card shows the floor with the pass blocks' turns added, and the card says so rather than showing the difference.
 

@@ -3829,6 +3829,61 @@ export interface RepoSpendDTO {
   totals: Omit<RepoSpendRowDTO, "key" | "label" | "isRepository">;
 }
 
+/**
+ * What runs on one repository keep re-deriving, from `repoReading.ts`.
+ *
+ * Two counts and one sum of `run_reviews.cost_usd`, which is what conflict
+ * resolutions were billed outside work cycles. Reporting and never a guard, and
+ * never added to `runs.spent_usd`, the transcript meters or telemetry.
+ */
+export interface RepoReadingRepositoryDTO {
+  key: string;
+  label: string;
+  /** False for the one bucket holding runs that were not in a repository. */
+  isRepository: boolean;
+  reading: {
+    runs: number;
+    reads: number;
+    /** Reads of a path an earlier run on this repository had already read. */
+    repeats: number;
+    /** …by a run that edited that file too, which nothing would have saved. */
+    repeatsEdited: number;
+    repeatsNotEdited: number;
+    /** The first few files behind `repeatsNotEdited`; the counts above are whole. */
+    reReadNotEdited: Array<{ path: string; reads: number; runs: number }>;
+    /** How many files that list had before it was clipped. */
+    reReadFiles: number;
+  } | null;
+  failures: {
+    rows: number;
+    runs: number;
+    /** The first few signatures more than one run hit, most runs first. */
+    recurring: Array<{ tool: string; signature: string; sample: string; runs: number; rows: number }>;
+    recurringCount: number;
+    singleRun: number;
+  } | null;
+  contention: {
+    resolutions: number;
+    /** Per repository and never per file: one resolution's cost covers every file it named. */
+    costUSD: number;
+    firstAt: number;
+    lastAt: number;
+    /** Files more than one resolution named, clipped; `fileCount` is the whole list. */
+    files: Array<{ path: string; resolutions: number }>;
+    fileCount: number;
+    namedOnce: number;
+  } | null;
+}
+
+export interface RepoReadingDTO {
+  until: number;
+  /** The earliest log row read, or null when there was none. */
+  eventsFrom: number | null;
+  eventRetentionDays: number | null;
+  repositories: RepoReadingRepositoryDTO[];
+  queryMs: number;
+}
+
 /** What the install is doing, and whether new work is held. */
 export interface FleetStateDTO {
   /**

@@ -480,6 +480,7 @@ Units that are about no test file in the tree:
 | `applyStacks.test.ts` |  |
 | `cycles.test.ts` | [run-page] |
 | `logLine.test.ts` |  |
+| `repoReading.test.ts` |  |
 | `repoSpend.test.ts` |  |
 | `stackRequests.test.ts` |  |
 | `stackWait.test.ts` | [budgets], [cycle] |

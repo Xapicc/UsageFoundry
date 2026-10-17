@@ -100,6 +100,11 @@ repoSpend.ts    what each repository cost, over a span — a rollup of
                 runs.spent_usd keyed by conflictKey's own mount identity.
                 Reporting and never a guard: it reaches no meter, no snapshot
                 and no verdict
+repoReading.ts  what runs on each repository keep reading, failing at and
+                colliding in — three pure readings over run_events and
+                run_reviews rows, the edited/not-edited split, Dreaming's
+                signatureOf, and the money per repository only. Reporting and
+                never a guard, and no cost source
 fleet.ts        the three controls that act on the whole install — stop
                 everything, hold new work, pick several runs back up. It owns no
                 transition of its own: it composes stopInstance, stopRun,
