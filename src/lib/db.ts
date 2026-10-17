@@ -1801,6 +1801,19 @@ function migrate(db: Database.Database) {
   // not one.
   addColumn(db, "runs", "needs_review_reason", "TEXT");
 
+  // How the run ended, as one of `RunEndingCode`'s members, written by the
+  // branch that ended it — because `status` cannot say it and `stop_reason`,
+  // which can, is prose that must never be parsed (see `restart_closed` above).
+  //
+  // Nullable with no default, and that is the load-bearing part. `reported_done`
+  // arrived `NOT NULL DEFAULT 0`, so a row written before it that did report
+  // DONE reads as one that did not, and nothing can tell the two apart. Null
+  // here says "not recorded" and nothing else, so a row older than this column
+  // reads as an unknown ending rather than as any code — and so does a row a
+  // later `break` forgot to label, which is the failure to look for. Not
+  // backfilled for the same reason: the only source for it is the prose.
+  addColumn(db, "runs", "ending_code", "TEXT");
+
   // Superseded by `run_tasks` below and no longer written or read; kept because
   // dropping it is a rebuild and a rolled-back image still reads it. What
   // follows is what it was.

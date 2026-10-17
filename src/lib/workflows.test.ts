@@ -21,6 +21,7 @@ import {
   sumMemberSpend,
   emittedFolderRefusal,
   gateContinueRefusal,
+  haltEnding,
   haltPlan,
   instanceStatus,
   loopBody,
@@ -3934,6 +3935,14 @@ describe("haltPlan — telling the three ways a run can be stopped apart", () =>
       decision.cause,
       "Stopped by the budget guard on workflow “Nightly”",
     );
+  });
+
+  it("labels a guard's halt as the workflow's, and the other two as a person's", () => {
+    // What `runs.ending_code` records on every member the halt reaches. The
+    // fleet's stop is a person too; `stop_reason` already says which press.
+    assert.equal(haltEnding({ kind: "guard", detail: "over" }), "workflow_guard");
+    assert.equal(haltEnding({ kind: "operator" }), "operator_stop");
+    assert.equal(haltEnding({ kind: "fleet" }), "operator_stop");
   });
 
   it("differs from what a run stopped on its own page says", () => {

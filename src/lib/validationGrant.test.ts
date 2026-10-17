@@ -175,6 +175,7 @@ describe("a work cycle a task check granted past the cycle cap", () => {
       "Agent reported the task complete.",
       "the run must end on what the granted cycle did, not on the cap",
     );
+    assert.equal(row.ending_code, "done");
   });
 
   it("ends at the widened cap, and says where the extra cycle came from", async () => {
@@ -204,6 +205,8 @@ describe("a work cycle a task check granted past the cycle cap", () => {
     assert.equal(spawned, 1);
     assert.equal(row.status, "completed");
     assert.equal(row.stop_reason, "Used all 1 work cycle allowed for this run.");
+    // The ending a status of `completed` cannot tell apart from the one above.
+    assert.equal(row.ending_code, "cycle_cap");
   });
 
   it("keeps the live guard reading the granted cycle as inside its cap", async () => {

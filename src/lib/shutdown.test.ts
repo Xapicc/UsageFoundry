@@ -312,6 +312,7 @@ describe("shutting down with a work cycle in flight", () => {
     // Closed out by the restart like the run above, and with the same ending,
     // but it had no cycle to cut off and must not be told it had one.
     assert.equal(settled.restart_closed, 1);
+    assert.equal(settled.ending_code, "restart");
     assert.equal(settled.restart_cut_cycle, 0);
     assert.equal(cycleCutByRestart(settled), false);
   });
@@ -416,6 +417,7 @@ describe("shutting down with a work cycle in flight", () => {
     assert.equal(row.active_started_at, null);
     assert.equal(row.status, "failed");
     assert.equal(row.restart_closed, 1);
+    assert.equal(row.ending_code, "restart");
     // No shutdown reached it to record a child, so `failed` is what says so.
     assert.equal(row.restart_cut_cycle, 0);
     assert.equal(cycleCutByRestart(row), true);
@@ -797,6 +799,7 @@ describe("shutting down while a run waits for its completion verdict", () => {
       const settled = getRun(run.id)!;
       assert.equal(settled.status, "completed");
       assert.equal(settled.reported_done, 1);
+      assert.equal(settled.ending_code, "done");
       assert.equal(
         settled.restart_closed,
         0,
@@ -1230,6 +1233,8 @@ describe("stopping a run while it waits for its completion verdict", () => {
       assert.match(settled.stop_reason ?? "", /Stopped by operator/);
       // Still what the agent replied: the column means that and nothing else.
       assert.equal(settled.reported_done, 1);
+      // How it ended is the Stop, not the DONE that came before it.
+      assert.equal(settled.ending_code, "operator_stop");
       assert.equal(settled.restart_closed, 0);
     } finally {
       nextChildSaysDone = false;

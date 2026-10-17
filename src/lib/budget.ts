@@ -1,7 +1,11 @@
 import type { UsageSnapshot, WindowState } from "./windows";
 // The provider vocabulary, from the one module both the form and this door may
 // import. Client-safe and pure; the dependency runs the permitted way round.
-import { RUN_PROVIDER_LABEL, type RunProviderDTO } from "./apiTypes";
+import {
+  RUN_PROVIDER_LABEL,
+  type RunEndingCode,
+  type RunProviderDTO,
+} from "./apiTypes";
 import { isJsonObject } from "./http";
 
 /**
@@ -242,6 +246,20 @@ export type BudgetVerdict =
       resumeAt: number;
       meters: BudgetMeter[];
     };
+
+/**
+ * The ending a run stopped on this verdict code records.
+ *
+ * `iterations` is the one that is not a guard ending: the cycle cap is the run
+ * having used what it was given, which `cycle_cap` names and which is the
+ * ending a count of runs most wants told apart from a tripped limit. Every
+ * other code is the guard it names. The template type is what keeps
+ * `RunEndingGuard` in step with this union — a code added here and not there
+ * stops this compiling.
+ */
+export function guardEnding(code: BudgetStopCode): RunEndingCode {
+  return code === "iterations" ? "cycle_cap" : `guard:${code}`;
+}
 
 /**
  * Codes a mid-cycle check may act on.

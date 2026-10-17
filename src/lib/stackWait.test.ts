@@ -227,6 +227,7 @@ describe("a run that asks for a stack", () => {
     assert.notEqual(parked.paused_at, null, "the wait has to be an open park, or it counts as worked time");
     assert.equal(parked.finished_at, null);
     assert.equal(parked.reported_done, 0, "a DONE said without the tool is not recorded as one");
+    assert.equal(parked.ending_code, null, "a park is not an ending");
 
     // Nothing is installed yet, so a sweep keeps it waiting.
     assert.deepEqual(releaseStackWaits(readReceipts(receiptsDir).receipts), { released: 0, waiting: 1 });
@@ -600,6 +601,7 @@ describe("a second run continuing a branch whose continuer was refunded", () => 
       assert.equal(getRun(fixer)!.status, "queued", getRun(fixer)!.stop_reason ?? "");
       assert.equal(getRun(fixer)!.worktree_branch, getRun(predecessor)!.worktree_branch);
       assert.equal(getRun(success)!.status, "blocked");
+      assert.equal(getRun(success)!.ending_code, "dependency");
       // The success run is the older row and is still on the branch's books, so
       // this is the readers' case: the chain has to follow the continuer that
       // can still commit, and the branch has one owner.
@@ -619,6 +621,7 @@ describe("a second run continuing a branch whose continuer was refunded", () => 
       orch.releaseDependents();
       assert.equal(getRun(success)!.status, "queued", getRun(success)!.stop_reason ?? "");
       assert.equal(getRun(fixer)!.status, "not-needed");
+      assert.equal(getRun(fixer)!.ending_code, "not_needed");
       assert.deepEqual(
         land.chainRuns(getRun(predecessor)!).map((r) => r.id),
         [predecessor, success],
@@ -640,6 +643,7 @@ describe("a second run continuing a branch whose continuer was refunded", () => 
       orch.releaseDependents();
       const row = getRun(fixer)!;
       assert.equal(row.status, "failed");
+      assert.equal(row.ending_code, "error");
       assert.match(row.stop_reason ?? "", new RegExp(`Run ${success.slice(0, 8)} already carries on run ${predecessor.slice(0, 8)}'s branch`));
     });
   });

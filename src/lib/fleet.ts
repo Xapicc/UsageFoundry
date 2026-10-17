@@ -150,8 +150,11 @@ export function stopFleet(): FleetStopReport {
 
   for (const step of steps) {
     if (step.action !== "block") continue;
-    if (stopWaitingRun(step.id, step.reason)) report.blocked.push(step.id);
-    else report.untouched.push(step.id);
+    if (stopWaitingRun(step.id, step.reason, "operator_stop")) {
+      report.blocked.push(step.id);
+    } else {
+      report.untouched.push(step.id);
+    }
   }
 
   for (const step of steps) {

@@ -1391,6 +1391,84 @@ export function pausedMsAt(
   return closed + open;
 }
 
+/**
+ * A guard or limit a run can be ended on, by its `BudgetStopCode`.
+ *
+ * Every member of that union but `iterations`, which ends a run as
+ * `cycle_cap` instead: running out of work cycles is the ending most runs
+ * have, and the one every reading of endings asks about first. Spelled out
+ * rather than imported, because this file imports nothing; `guardEnding` in
+ * `budget.ts` maps the one onto the other and stops compiling when they part.
+ */
+export type RunEndingGuard =
+  | "weekly_fraction"
+  | "session_fraction"
+  | "run_cost"
+  | "run_cost_outlier"
+  | "run_tokens"
+  | "duration"
+  | "instance_cost"
+  | "install_cost"
+  | "no_ceiling"
+  | "no_terminus";
+
+/**
+ * How a run ended: `runs.ending_code`, one closed set.
+ *
+ * `runs.status` cannot say it. `completed` covers both the agent reporting the
+ * task done and the run using every work cycle it had, `stopped` covers a
+ * person, a guard and a restart, and `failed` covers the provider, the CLI and
+ * this app — and the sentence in `stop_reason` that does say which is copy,
+ * never parsed (`db.ts`). So the branch that ends a run writes one of these
+ * beside it, at the moment the answer is a local variable rather than prose.
+ *
+ * Read across runs, not per run: the run page already says how *this* run
+ * ended in words. `reported_done` stays the field a pick-up, the run page's
+ * Resume and a loop's stop read, because the code is absent from rows older
+ * than itself and that boolean is not. It is present and wrong on the rows
+ * that said DONE before it was added, though, so a count of finished runs
+ * reads this instead, and calls the rows it cannot classify unknown.
+ */
+export type RunEndingCode =
+  /** The agent replied DONE and the run stopped there. */
+  | "done"
+  /** It used every work cycle it was allowed. */
+  | "cycle_cap"
+  /** The agent replied NEEDS_REVIEW: it could not finish, and asked for a person. */
+  | "needs_review"
+  /**
+   * A person stopped it: its own Stop, set aside, delete, or a stop of its
+   * whole workflow or of the fleet.
+   */
+  | "operator_stop"
+  /** Its workflow's own guard or limit; the instance names which, once. */
+  | "workflow_guard"
+  /** Its workflow took it down: the press could not be started or recorded in full. */
+  | "workflow_stop"
+  /** A guard or limit of its own, or the install's. */
+  | `guard:${RunEndingGuard}`
+  /** Claude Code ended the cycle at a spending limit of its own; the run had none. */
+  | "cli_budget"
+  /** The server restarted under it, or before it started. */
+  | "restart"
+  /** The work cycle went silent past its deadline and this app ended it. */
+  | "deadline"
+  /** The provider refused the work cycle and the run could not wait it out. */
+  | "refusal"
+  /** The CLI exited with an error. */
+  | "exit_code"
+  /** Its session could not be resumed. */
+  | "resume_failed"
+  /**
+   * This app could not carry on: a checkout gone, a folder changed under it, a
+   * workspace it could not prepare.
+   */
+  | "error"
+  /** A run it was waiting for ended in a way it could not start on. */
+  | "dependency"
+  /** Its branch of the workflow was not taken. */
+  | "not_needed";
+
 export interface RunDTO {
   id: string;
   /** Absolute, canonicalised folder the operator picked. */
@@ -1502,6 +1580,12 @@ export interface RunDTO {
    * the run.
    */
   needs_review_reason?: string | null;
+  /**
+   * How the ending this row records came about, written by the branch that
+   * ended it. Null while the run is unfinished or parked, and on every row that
+   * ended before the column existed — which reads as unknown, never as a code.
+   */
+  ending_code?: RunEndingCode | null;
   /**
    * 1 when this run ended because the server went down under it, rather than
    * for any reason of its own. Cleared when it is picked up again, so it says

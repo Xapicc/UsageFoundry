@@ -6070,29 +6070,65 @@ describe("what an interrupt makes of a run", () => {
   it("files a deadline as a failure and a decision as a stop", () => {
     assert.deepEqual(
       interruptOutcome({ kind: "deadline", reason: "no output", pause: false, at }),
-      { status: "failed", reason: "no output", resumeAt: null },
+      { status: "failed", reason: "no output", resumeAt: null, ending: "deadline" },
     );
     // Nobody decided the one above; somebody decided both of these.
     assert.deepEqual(
       interruptOutcome({ kind: "operator", reason: "Stopped.", pause: false, at }),
-      { status: "stopped", reason: "Stopped.", resumeAt: null },
+      { status: "stopped", reason: "Stopped.", resumeAt: null, ending: "operator_stop" },
     );
     assert.deepEqual(
-      interruptOutcome({ kind: "guard", reason: "over budget", pause: false, at }),
-      { status: "stopped", reason: "over budget", resumeAt: null },
+      interruptOutcome({
+        kind: "guard",
+        reason: "over budget",
+        code: "run_cost",
+        pause: false,
+        at,
+      }),
+      { status: "stopped", reason: "over budget", resumeAt: null, ending: "guard:run_cost" },
     );
   });
 
-  it("still parks a live-resume step-aside", () => {
+  /**
+   * `runs.ending_code` off the same interrupt. The status alone says `stopped`
+   * for a person, a workflow's guard and a restart, so this is the half that
+   * tells them apart across runs — and each wrong answer is a plausible code.
+   */
+  it("names who ended the run, and names nobody it cannot know", () => {
+    const ending = (it: Omit<Parameters<typeof interruptOutcome>[0], "at">) =>
+      interruptOutcome({ ...it, at }).ending;
+    assert.equal(
+      ending({ kind: "shutdown", reason: "Restarting.", pause: false }),
+      "restart",
+    );
+    // A workflow taking its members down comes through `stopRun` as an
+    // operator stop, and says it was not one.
+    assert.equal(
+      ending({ kind: "operator", reason: "Halted.", ending: "workflow_guard", pause: false }),
+      "workflow_guard",
+    );
+    // The cycle cap is the run having used what it was given, not a guard.
+    assert.equal(
+      ending({ kind: "guard", reason: "cap", code: "iterations", pause: false }),
+      "cycle_cap",
+    );
+    // A guard that does not say which, and a prune that arrives here only
+    // because the run ended some other way first: unknown, rather than a guess.
+    assert.equal(ending({ kind: "guard", reason: "over", pause: false }), null);
+    assert.equal(ending({ kind: "prune", reason: "pruning", pause: false }), null);
+  });
+
+  it("still parks a live-resume step-aside, which ends nothing", () => {
     assert.deepEqual(
       interruptOutcome({
         kind: "guard",
         reason: "window full",
+        code: "session_fraction",
         pause: true,
         resumeAt: at + 60_000,
         at,
       }),
-      { status: "paused", reason: "window full", resumeAt: at + 60_000 },
+      { status: "paused", reason: "window full", resumeAt: at + 60_000, ending: null },
     );
   });
 });
@@ -7459,6 +7495,8 @@ describe("the parked sweeper's decision", () => {
         assert.deepEqual(planPausedRun(stops(code, `refused: ${code}`), null), {
           action: "end",
           reason: `refused: ${code}`,
+          // The cap is the run having used what it was given, not a guard.
+          ending: code === "iterations" ? "cycle_cap" : `guard:${code}`,
         });
       });
     }
@@ -7467,6 +7505,7 @@ describe("the parked sweeper's decision", () => {
       assert.deepEqual(planPausedRun(stops("duration", "Out of time."), "holder-1"), {
         action: "end",
         reason: "Out of time.",
+        ending: "guard:duration",
       });
     });
 

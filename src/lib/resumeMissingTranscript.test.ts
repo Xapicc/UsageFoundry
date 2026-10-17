@@ -333,6 +333,7 @@ describe("a pick-up the CLI refuses to resume", () => {
       "the refused resume is retried once, on the same session",
     );
     assert.equal(row.status, "failed");
+    assert.equal(row.ending_code, "resume_failed");
     assert.ok(row.stop_reason?.includes(`claude --resume ${session}`), row.stop_reason ?? "");
     assert.equal(row.iterations, 2, "the attempt the retry replaced is not charged");
   });

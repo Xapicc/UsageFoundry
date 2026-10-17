@@ -190,6 +190,7 @@ describe("stopFleet", () => {
     const report = fleet.stopFleet();
 
     assert.deepEqual(report.blocked, [waiting]);
+    assert.equal(orch.getRun(waiting)!.ending_code, "operator_stop");
     // Every one of the four live statuses answers `cancelled` here because no
     // child is registered in this process; what matters is that each was
     // reached, and that none of them was skipped for being the wrong status.

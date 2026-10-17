@@ -339,6 +339,7 @@ describe("what bounds the refund of a cycle the live guard cut", () => {
       `the charged cut parked a run its cycle cap had already ended: ${row.stop_reason}`,
     );
     assert.match(row.stop_reason ?? "", /Used all 1 work cycle allowed/);
+    assert.equal(row.ending_code, "cycle_cap");
     assert.equal(row.resume_at, null, "nothing is scheduled to look at it again");
     assert.equal(spawned, MAX_PAUSES_PER_RUN + 1);
     assert.equal(row.iterations, 1);

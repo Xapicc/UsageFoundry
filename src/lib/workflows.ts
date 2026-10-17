@@ -148,6 +148,7 @@ import {
   providerReportsSpend,
   type LoopBoardCountsDTO,
   type LoopBoardReadingDTO,
+  type RunEndingCode,
   type RunProviderDTO,
   type TaskPriorityDTO,
   type WorkflowNodeKind,
@@ -4360,7 +4361,7 @@ export function startWorkflow(
     // was: not the operator, not a guard, but a graph that could not be built.
     const rolledBack = `Stopped because workflow “${workflow.name}” could not be started in full`;
     for (const runId of [...runIds.values()].reverse()) {
-      stopRun(runId, rolledBack);
+      stopRun(runId, rolledBack, "workflow_stop");
     }
     // The blocks too: nothing has spawned yet, so every one of them is
     // `waiting`, and a row left saying so under a `failed` instance is a block
@@ -4558,6 +4559,18 @@ export function haltCause(cause: HaltCause, workflowName: string): string {
   return cause.kind === "operator"
     ? `Stopped by the operator with all of workflow “${workflowName}”`
     : `Stopped by the budget guard on workflow “${workflowName}”`;
+}
+
+/**
+ * The ending a halt writes on each member it stops or blocks.
+ *
+ * `haltCause`'s three causes in two codes: the operator's stop of one workflow
+ * and the fleet's stop of everything are both a person, and `stop_reason`
+ * already says which; a guard is the workflow's own, named as such rather than
+ * as the verdict code, because the verdict lives on the instance, once.
+ */
+export function haltEnding(cause: HaltCause): RunEndingCode {
+  return cause.kind === "guard" ? "workflow_guard" : "operator_stop";
 }
 
 /**
@@ -4789,7 +4802,7 @@ export function stopInstance(instanceId: string, cause: HaltCause): HaltOutcome 
     };
   }
 
-  walkMembers(plan.steps, plan.cause, report, instanceId);
+  walkMembers(plan.steps, plan.cause, haltEnding(cause), report, instanceId);
   return { ok: true, report };
 }
 
@@ -4803,6 +4816,7 @@ export function stopInstance(instanceId: string, cause: HaltCause): HaltOutcome 
 function walkMembers(
   steps: readonly HaltStep[],
   cause: string,
+  ending: RunEndingCode,
   report: HaltReport,
   instanceId: string,
 ): void {
@@ -4817,13 +4831,16 @@ function walkMembers(
   // walk yields to the event loop.
   for (const step of steps) {
     if (step.action !== "block") continue;
-    if (blockWaitingRun(step.runId, step.reason)) report.blocked.push(step.runId);
-    else report.untouched.push(step.runId);
+    if (blockWaitingRun(step.runId, step.reason, ending)) {
+      report.blocked.push(step.runId);
+    } else {
+      report.untouched.push(step.runId);
+    }
   }
 
   for (const step of steps) {
     if (step.action !== "stop") continue;
-    const outcome = stopRun(step.runId, cause);
+    const outcome = stopRun(step.runId, cause, ending);
     if (outcome === "signalled") report.signalled.push(step.runId);
     else if (outcome === "cancelled") report.cancelled.push(step.runId);
     else report.untouched.push(step.runId);
@@ -5008,17 +5025,17 @@ export function reconcileHaltsOnBoot(): void {
     ) {
       continue;
     }
-    const cause = haltCause(
+    const halt: HaltCause =
       row.stop_cause === "guard"
         ? { kind: "guard", detail: "" }
         : row.stop_cause === "fleet"
           ? { kind: "fleet" }
-          : { kind: "operator" },
-      row.workflow_name,
-    );
+          : { kind: "operator" };
+    const cause = haltCause(halt, row.workflow_name);
     walkMembers(
       haltSteps(members, cause),
       cause,
+      haltEnding(halt),
       {
         instanceId: row.id,
         workflowName: row.workflow_name,
@@ -7243,6 +7260,7 @@ function stepPass(
       stopRun(
         runId,
         `Stopped because workflow “${instance.workflowName}” could not record it as one of its runs`,
+        "workflow_stop",
       );
       upsertBlock(
         instanceId,

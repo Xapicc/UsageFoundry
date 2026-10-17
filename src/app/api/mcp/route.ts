@@ -2561,6 +2561,10 @@ async function callTool(
               // the shape this file already uses for a field with no reading.
               spent: providerRecordsSpend(r.provider) ? fmtUSD(r.spent_usd) : null,
               stopReason: r.stop_reason,
+              // The code beside the sentence, so a model counting how runs
+              // ended reads a closed set rather than parsing prose. Null on a
+              // run still going and on one older than the column.
+              endingCode: r.ending_code,
               task: r.prompt.slice(0, 200),
             };
           }),
@@ -2805,6 +2809,7 @@ async function getRunDetail(args: Record<string, unknown>) {
         // See `list_runs`: unknown is null here rather than a formatted zero.
         spent: providerRecordsSpend(run.provider) ? fmtUSD(run.spent_usd) : null,
         stopReason: run.stop_reason,
+        endingCode: run.ending_code,
         landedAt: run.landed_at ? new Date(run.landed_at).toISOString() : null,
         task: run.prompt,
         changed: {

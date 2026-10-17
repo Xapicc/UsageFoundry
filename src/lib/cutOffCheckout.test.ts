@@ -269,6 +269,7 @@ describe("a pick-up into a checkout git never finished", () => {
 
     assert.equal(seen.length, 0, "the agent was spawned in a checkout reporting every file deleted");
     assert.equal(row.status, "failed");
+    assert.equal(row.ending_code, "error");
     assert.match(row.stop_reason ?? "", new RegExp(path.basename(slot)));
     assert.equal(statusLines(slot), TRACKED_FILES, "the refusal changed the checkout");
   });

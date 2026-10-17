@@ -61,6 +61,7 @@ import {
   cycleCapReason,
   enforceableForRun,
   evaluateBudget,
+  guardEnding,
   normalizePolicy,
   planReadingAgeMs,
 } from "./budget";
@@ -200,6 +201,7 @@ import {
   providerReportsSpend,
   type QueueBlockerDTO,
   type RunDependencyDTO,
+  type RunEndingCode,
   type RunProviderDTO,
   type LiveSubagentsDTO,
   type RunEventDTO,
@@ -458,6 +460,15 @@ export interface RunRow {
    * carry a reason describing an ending two segments old.
    */
   needs_review_reason: string | null;
+  /**
+   * How the ending this row records came about — see `RunEndingCode`.
+   *
+   * `needs_review_reason`'s invariant, for its reason: written by every branch
+   * that settles a final status, null on a park (a parked run has not ended)
+   * and cleared by `reopenRun` and by a revival. Null on rows older than the
+   * column, and never derived from `stop_reason`.
+   */
+  ending_code: RunEndingCode | null;
   /**
    * The operator's next message, waiting for the next spawn. Set by
    * `reopenRun`, cleared by the loop as soon as it is delivered.
@@ -771,6 +782,12 @@ export interface Interrupt {
   kind: "operator" | "guard" | "deadline" | "shutdown" | "prune";
   reason: string;
   code?: BudgetStopCode;
+  /**
+   * Who an `operator` stop was, when it was not a person: `stopRun`'s callers
+   * include a workflow taking its members down, and that is not this kind's
+   * default. Optional so an entry written before it existed still reads.
+   */
+  ending?: RunEndingCode;
   /** True only for a live-resume step-aside; the run parks rather than ends. */
   pause: boolean;
   resumeAt?: number;
@@ -804,21 +821,45 @@ export function interruptOutcome(it: Interrupt): {
   status: RunStatus;
   reason: string;
   resumeAt: number | null;
+  /** Null on a park, which is not an ending. */
+  ending: RunEndingCode | null;
 } {
   if (it.pause) {
-    return { status: "paused", reason: it.reason, resumeAt: it.resumeAt ?? null };
+    return {
+      status: "paused",
+      reason: it.reason,
+      resumeAt: it.resumeAt ?? null,
+      ending: null,
+    };
   }
   // `prune` is deliberately not given a case, and this is the safe direction
   // rather than an omission. The run loop consumes that kind before it reaches
   // here — it is the one interrupt that means "carry on" — so arriving with one
   // means the loop ended some other way first, and the run really has stopped.
   // A `status` invented for it here would be a run reported as still going by
-  // a function whose whole job is to say how it ended.
+  // a function whose whole job is to say how it ended. Its ending is null for
+  // the same reason: unknown is true, and any code would be a guess.
   return {
     status: it.kind === "deadline" ? "failed" : "stopped",
     reason: it.reason,
     resumeAt: null,
+    ending: interruptEnding(it),
   };
+}
+
+function interruptEnding(it: Interrupt): RunEndingCode | null {
+  switch (it.kind) {
+    case "operator":
+      return it.ending ?? "operator_stop";
+    case "guard":
+      return it.code ? guardEnding(it.code) : null;
+    case "deadline":
+      return "deadline";
+    case "shutdown":
+      return "restart";
+    case "prune":
+      return null;
+  }
 }
 
 /**
@@ -6029,7 +6070,7 @@ function releasePass(holdReleases: boolean = newWorkPaused()): boolean {
   let acted = false;
 
   for (const { id, reason } of block) {
-    if (blockWaitingRun(id, reason)) acted = true;
+    if (blockWaitingRun(id, reason, "dependency")) acted = true;
   }
   for (const { id, reason } of notNeeded) {
     if (passOverWaitingRun(id, reason)) acted = true;
@@ -6056,19 +6097,27 @@ function releasePass(holdReleases: boolean = newWorkPaused()): boolean {
  * callers now reach it — the dependency cascade and a workflow instance being
  * halted — and a row that left `waiting` between the decision and the write must
  * not be rewritten by the loser. False means the row moved; it is not an error.
+ *
+ * `ending` is required rather than defaulted for the same two callers: one
+ * blocks a run behind a dependency and the other behind a halt, and a default
+ * would label one of them as the other.
  */
-export function blockWaitingRun(id: string, reason: string): boolean {
+export function blockWaitingRun(
+  id: string,
+  reason: string,
+  ending: RunEndingCode,
+): boolean {
   const done = db()
     .prepare(
-      "UPDATE runs SET status='blocked', finished_at=?, stop_reason=? WHERE id=? AND status='waiting'",
+      "UPDATE runs SET status='blocked', finished_at=?, stop_reason=?, ending_code=? WHERE id=? AND status='waiting'",
     )
-    .run(Date.now(), reason, id);
+    .run(Date.now(), reason, ending, id);
   if (done.changes !== 1) return false;
   emit({
     runId: id,
     ts: Date.now(),
     kind: "status",
-    payload: { status: "blocked", stop_reason: reason },
+    payload: { status: "blocked", stop_reason: reason, ending_code: ending },
   });
   return true;
 }
@@ -6084,7 +6133,7 @@ function passOverWaitingRun(id: string, reason: string): boolean {
   const at = Date.now();
   const done = db()
     .prepare(
-      "UPDATE runs SET status='not-needed', finished_at=?, stop_reason=? WHERE id=? AND status='waiting'",
+      "UPDATE runs SET status='not-needed', finished_at=?, stop_reason=?, ending_code='not_needed' WHERE id=? AND status='waiting'",
     )
     .run(at, reason, id);
   if (done.changes !== 1) return false;
@@ -6092,7 +6141,12 @@ function passOverWaitingRun(id: string, reason: string): boolean {
     runId: id,
     ts: at,
     kind: "status",
-    payload: { status: "not-needed", finished_at: at, stop_reason: reason },
+    payload: {
+      status: "not-needed",
+      finished_at: at,
+      stop_reason: reason,
+      ending_code: "not_needed",
+    },
   });
   return true;
 }
@@ -6117,7 +6171,7 @@ function passOverWaitingRun(id: string, reason: string): boolean {
 function blockBehindRestartClosed(closedOut: ReadonlySet<string>): void {
   for (const link of allDependencyLinks()) {
     if (!closedOut.has(link.dependsOn)) continue;
-    blockWaitingRun(link.runId, restartClosedReason(link.dependsOn));
+    blockWaitingRun(link.runId, restartClosedReason(link.dependsOn), "dependency");
   }
 }
 
@@ -6135,21 +6189,30 @@ function blockBehindRestartClosed(closedOut: ReadonlySet<string>): void {
  * It leaves the release to the caller: `stopFleet` closes every waiting row
  * before it signals anything, and a release in the middle of that walk would
  * admit what it had not reached yet. Guarded on `status='waiting'` for
- * `blockWaitingRun`'s reason.
+ * `blockWaitingRun`'s reason, and `ending` is required for its reason too.
  */
-export function stopWaitingRun(id: string, reason: string): boolean {
+export function stopWaitingRun(
+  id: string,
+  reason: string,
+  ending: RunEndingCode,
+): boolean {
   const at = Date.now();
   const done = db()
     .prepare(
-      "UPDATE runs SET status='stopped', finished_at=?, stop_reason=? WHERE id=? AND status='waiting'",
+      "UPDATE runs SET status='stopped', finished_at=?, stop_reason=?, ending_code=? WHERE id=? AND status='waiting'",
     )
-    .run(at, reason, id);
+    .run(at, reason, ending, id);
   if (done.changes !== 1) return false;
   emit({
     runId: id,
     ts: at,
     kind: "status",
-    payload: { status: "stopped", finished_at: at, stop_reason: reason },
+    payload: {
+      status: "stopped",
+      finished_at: at,
+      stop_reason: reason,
+      ending_code: ending,
+    },
   });
   return true;
 }
@@ -6252,8 +6315,8 @@ export function reviveBlockedDependents(roots: readonly string[]): number {
     for (const id of revivableDependents(roots, candidates, links)) {
       const done = db()
         .prepare(
-          "UPDATE runs SET status='waiting', finished_at=NULL, stop_reason=NULL" +
-            " WHERE id=? AND status IN ('blocked','not-needed')",
+          "UPDATE runs SET status='waiting', finished_at=NULL, stop_reason=NULL," +
+            " ending_code=NULL WHERE id=? AND status IN ('blocked','not-needed')",
         )
         .run(id);
       if (done.changes !== 1) continue;
@@ -6336,7 +6399,7 @@ function admitWaiting(run: RunRow): boolean {
     }`;
     const failed = db()
       .prepare(
-        "UPDATE runs SET status='failed', finished_at=?, stop_reason=? WHERE id=? AND status='waiting'",
+        "UPDATE runs SET status='failed', finished_at=?, stop_reason=?, ending_code='error' WHERE id=? AND status='waiting'",
       )
       .run(Date.now(), reason, run.id);
     if (failed.changes !== 1) return false;
@@ -6344,7 +6407,7 @@ function admitWaiting(run: RunRow): boolean {
       runId: run.id,
       ts: Date.now(),
       kind: "status",
-      payload: { status: "failed", stop_reason: reason },
+      payload: { status: "failed", stop_reason: reason, ending_code: "error" },
     });
     return true;
   }
@@ -11011,6 +11074,13 @@ export async function startRun(id: string): Promise<void> {
   let finalStatus: RunStatus = "completed";
   /** Set only by the needs-review branch, so any other ending clears the row. */
   let needsReviewReason: string | null = null;
+  /**
+   * `runs.ending_code`, set beside `finalStatus` at every terminal branch and
+   * left null by every park. A terminal row reaching the `finally` with this
+   * still null is a `break` that forgot to say how the run ended — it reads as
+   * unknown, which is true, rather than as the default status's code.
+   */
+  let endingCode: RunEndingCode | null = null;
   let lastExit = 0;
   let workDir = workDirOf(run);
   let incompleteIteration = false;
@@ -11117,6 +11187,7 @@ export async function startRun(id: string): Promise<void> {
     const outcome = interruptOutcome(it);
     stopReason = outcome.reason;
     finalStatus = outcome.status;
+    endingCode = outcome.ending;
     pausedUntil = outcome.resumeAt;
     closedByRestart = it.kind === "shutdown";
   };
@@ -11383,6 +11454,7 @@ export async function startRun(id: string): Promise<void> {
           // from running out mid-task; surface it distinctly so it is not
           // mistaken for a completed run.
           finalStatus = iterations === 0 ? "blocked" : "stopped";
+          endingCode = guardEnding(verdict.code);
         }
         break;
       }
@@ -11412,6 +11484,7 @@ export async function startRun(id: string): Promise<void> {
         });
         stopReason = installVerdict.reason;
         finalStatus = iterations === 0 ? "blocked" : "stopped";
+        endingCode = guardEnding(installVerdict.code);
         break;
       }
 
@@ -12391,6 +12464,7 @@ export async function startRun(id: string): Promise<void> {
           // the one that admitted the cycle just cut.
           stopReason = cycleCapReason(policy.maxIterations, grantedCycles);
           finalStatus = "stopped";
+          endingCode = "cycle_cap";
           log(id, stopReason);
         }
         break;
@@ -12439,6 +12513,10 @@ export async function startRun(id: string): Promise<void> {
         // by the CLI rather than decided here.
         log(id, stopReason);
         finalStatus = "stopped";
+        // The run's own spending limit when it has one — the CLI only enforced
+        // what this app handed it — and the CLI's own limit otherwise.
+        endingCode =
+          policy.maxRunCostUSD === null ? "cli_budget" : "guard:run_cost";
         break;
       }
 
@@ -12579,6 +12657,7 @@ export async function startRun(id: string): Promise<void> {
 
         stopReason = refusalStopReason(plan.cause, refusal, run.provider);
         finalStatus = "failed";
+        endingCode = "refusal";
         break;
       }
 
@@ -12668,6 +12747,7 @@ export async function startRun(id: string): Promise<void> {
           ? `Could not resume this run's Claude Code session (exit ${res.exitCode}). Its work is still on disk; pick it up by hand with: claude --resume ${resumeTarget}`
           : `Claude Code exited with code ${res.exitCode}.`;
         finalStatus = "failed";
+        endingCode = looksLikeResumeFailure ? "resume_failed" : "exit_code";
         break;
       }
 
@@ -12725,6 +12805,7 @@ export async function startRun(id: string): Promise<void> {
         // changed status reads there like a cycle that stopped for no reason.
         log(id, stopReason);
         finalStatus = "needs-review";
+        endingCode = "needs_review";
         break;
       }
 
@@ -12794,6 +12875,7 @@ export async function startRun(id: string): Promise<void> {
                 }.`
               : "Agent reported the task complete.";
           finalStatus = "completed";
+          endingCode = "done";
           break;
         }
         // The operator asked for the budget to be spent rather than for the
@@ -12822,6 +12904,7 @@ export async function startRun(id: string): Promise<void> {
       ) {
         stopReason = cycleCapReason(policy.maxIterations, grantedCycles);
         finalStatus = "completed";
+        endingCode = "cycle_cap";
         break;
       }
 
@@ -12866,6 +12949,7 @@ export async function startRun(id: string): Promise<void> {
   } catch (err) {
     stopReason = err instanceof Error ? err.message : String(err);
     finalStatus = "failed";
+    endingCode = "error";
     emit({
       runId: id,
       ts: Date.now(),
@@ -12949,6 +13033,9 @@ export async function startRun(id: string): Promise<void> {
       // describes the ending this row records, so a run picked up and finished
       // some other way must not keep the reason its previous segment left.
       needs_review_reason: needsReviewReason,
+      // On every ending and on a park too, for the same reason: a parked row
+      // must not read as having ended the way its previous segment did.
+      ending_code: endingCode,
       work_dir: workDir,
       session_id: sessionId,
       // No cycle is in flight once this function is unwinding, on any path —
@@ -13194,8 +13281,15 @@ const OPERATOR_CAUSE = "Stopped by operator";
  * something like `Stopped with workflow “Nightly” by its budget guard`; the
  * detail behind a guard's verdict belongs on the instance, once, rather than
  * repeated across ten rows.
+ *
+ * `ending` is the same attribution as a code, for `runs.ending_code`: a person
+ * by default, and whatever a caller that is not one says it is.
  */
-export function stopRun(id: string, cause: string = OPERATOR_CAUSE): StopOutcome {
+export function stopRun(
+  id: string,
+  cause: string = OPERATOR_CAUSE,
+  ending: RunEndingCode = "operator_stop",
+): StopOutcome {
   const run = getRun(id);
   if (!run) return "not-active";
 
@@ -13215,6 +13309,7 @@ export function stopRun(id: string, cause: string = OPERATOR_CAUSE): StopOutcome
     setStatus(id, "stopped", {
       finished_at: Date.now(),
       stop_reason: `${cause} before it started.`,
+      ending_code: ending,
     });
     releaseDependents();
     promoteQueued();
@@ -13227,7 +13322,7 @@ export function stopRun(id: string, cause: string = OPERATOR_CAUSE): StopOutcome
   // ends with its own reason rather than starting on top of work that never
   // happened.
   if (run.status === "waiting") {
-    stopWaitingRun(id, `${cause} while it was waiting for another run.`);
+    stopWaitingRun(id, `${cause} while it was waiting for another run.`, ending);
     releaseDependents();
     promoteQueued();
     return "cancelled";
@@ -13241,6 +13336,7 @@ export function stopRun(id: string, cause: string = OPERATOR_CAUSE): StopOutcome
     setStatus(id, "stopped", {
       finished_at: at,
       stop_reason: `${cause} while it was waiting for the next 5-hour window.`,
+      ending_code: ending,
       resume_at: null,
       ...pauseClosedAt(run, at),
     });
@@ -13256,6 +13352,7 @@ export function stopRun(id: string, cause: string = OPERATOR_CAUSE): StopOutcome
     setStatus(id, "stopped", {
       finished_at: at,
       stop_reason: `${cause} while it was waiting for a stack.`,
+      ending_code: ending,
       ...pauseClosedAt(run, at),
     });
     releaseStackWait(id, at);
@@ -13269,6 +13366,7 @@ export function stopRun(id: string, cause: string = OPERATOR_CAUSE): StopOutcome
   return interruptRun(id, {
     kind: "operator",
     reason: `${cause}.`,
+    ending,
     pause: false,
     at: Date.now(),
   });
@@ -14073,7 +14171,7 @@ export type PausedRunPlan =
   /** Still refused, by the one refusal that clears on its own. */
   | { action: "park"; resumeAt: number; reason: string }
   /** Refused by something that can never clear: end it. */
-  | { action: "end"; reason: string };
+  | { action: "end"; reason: string; ending: RunEndingCode };
 
 /**
  * Why a parked run whose window has cleared is still parked.
@@ -14148,7 +14246,11 @@ export function planPausedRun(
   // A guard that never clears — the clock, this run's own spend, the weekly
   // window — has caught up with a parked run. End it rather than leave it
   // holding a folder indefinitely for a resume that can never happen.
-  return { action: "end", reason: verdict.reason };
+  return {
+    action: "end",
+    reason: verdict.reason,
+    ending: guardEnding(verdict.code),
+  };
 }
 
 /**
@@ -14351,6 +14453,7 @@ export async function sweepPaused(): Promise<void> {
             {
               finished_at: now,
               stop_reason: plan.reason,
+              ending_code: plan.ending,
               resume_at: null,
               ...pauseClosedAt(run, now),
             },
@@ -14968,7 +15071,8 @@ export function reopenRun(
       // column describes the ending the row records, and a reopened run may end
       // without re-entering the loop at all — stopped while queued, closed out
       // by a boot — after which a reason left behind would be describing an
-      // ending two segments old.
+      // ending two segments old. `ending_code=NULL` beside both, for the same
+      // reason: every way of ending the new segment writes its own.
       //
       // `paused_ms=0` travels with `started_at=NULL` and may never be separated
       // from it: the accumulator is a correction to the span since that instant,
@@ -14994,7 +15098,7 @@ export function reopenRun(
       `UPDATE runs SET status=?, queued_at=?, budget=?, max_iterations=?, follow_up=?,
          follow_up_is_note=?, reopened_at=?,
          started_at=NULL, finished_at=NULL, exit_code=NULL, stop_reason=NULL,
-         needs_review_reason=NULL, paused_ms=0, paused_at=NULL, refusal_pauses=0,
+         needs_review_reason=NULL, ending_code=NULL, paused_ms=0, paused_at=NULL, refusal_pauses=0,
          resume_at=NULL, restart_closed=0, restart_cut_cycle=0, set_aside_at=NULL,
          verdicts_unread_since=NULL
          WHERE id=? AND status=?`,
@@ -15863,6 +15967,7 @@ export async function reconcileOnBoot(): Promise<void> {
           "Start it again if it is still wanted.",
         resume_at: null,
         restart_closed: 1,
+        ending_code: "restart",
         ...pauseClosedAt(run, closedAt),
       });
       closedHere.add(run.id);
@@ -15875,6 +15980,7 @@ export async function reconcileOnBoot(): Promise<void> {
         finished_at: Date.now(),
         stop_reason: "The server restarted before this run started. Start it again.",
         restart_closed: 1,
+        ending_code: "restart",
       });
       closedHere.add(run.id);
       closed += 1;
@@ -15890,6 +15996,7 @@ export async function reconcileOnBoot(): Promise<void> {
       finished_at: Date.now(),
       stop_reason: `The server restarted while this run was in progress.${resume}`,
       restart_closed: 1,
+      ending_code: "restart",
     });
     closedHere.add(run.id);
     closed += 1;
