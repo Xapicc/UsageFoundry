@@ -490,7 +490,9 @@ export type CompletionOutcome =
  * which a model issues in parallel as readily as in sequence, both saw nothing
  * running and both started a check. Set before the first await and cleared
  * once the row is written or the claim is closed, which leaves no instant where
- * a run's check is neither here nor `running`. Its own `globalThis` key for
+ * a run's check is neither here nor `running`. A queued claim keeps its
+ * `validation_queue` row for the same span, because this map dies with the
+ * process and the boot can only find a row. Its own `globalThis` key for
  * CLAUDE.md's reason.
  */
 const startingChecks = ((globalThis as unknown as {
@@ -699,6 +701,11 @@ async function startCheck(task: Task, run: RunRow): Promise<CompletionAnswer> {
     return { kind: "checking", task, reviewId: started.id };
   } finally {
     startingChecks.delete(runId);
+    // A queued claim leaves the queue here, after its check row or its close
+    // and with no await between, rather than when the drain took it: a process
+    // killed during the diff read or the window scan left neither row, and the
+    // boot closed nothing. A door's claim has no row and this deletes nothing.
+    dequeueCheck(runId, task.id);
     if (!spawned) setImmediate(() => void drainValidationQueue(runId));
   }
 }
@@ -707,13 +714,24 @@ async function startCheck(task: Task, run: RunRow): Promise<CompletionAnswer> {
 /* Claims waiting their turn                                           */
 /* ------------------------------------------------------------------ */
 
-/** This run's queued claims, oldest first. */
+/**
+ * This run's claims waiting their turn, oldest first: not the one `startCheck`
+ * is taking, whose row stays until its check row is written.
+ */
 function queuedChecks(runId: string): string[] {
+  const starting = startingChecks.get(runId);
   return (
     db()
       .prepare("SELECT task_id FROM validation_queue WHERE run_id = ? ORDER BY asked_at, rowid")
       .all(runId) as { task_id: string }[]
-  ).map((row) => row.task_id);
+  )
+    .map((row) => row.task_id)
+    .filter((taskId) => taskId !== starting);
+}
+
+/** Take a claim off the queue, once something else names it or it is closed. */
+function dequeueCheck(runId: string, taskId: string): void {
+  db().prepare("DELETE FROM validation_queue WHERE run_id = ? AND task_id = ?").run(runId, taskId);
 }
 
 /**
@@ -745,15 +763,16 @@ function queueCheck(runId: string, task: Task): number {
  *
  * Reached from a settle, from a claim that got no child, and from the door, so
  * it is called more often than there is anything to start and the first test
- * is the cheap no. Nothing awaits between taking the row and `startCheck`
+ * is the cheap no. Nothing awaits between reading the row and `startCheck`
  * taking the run's place in `startingChecks`, so two drains cannot both start
- * one.
+ * one. The row itself stays until the claim's check row is written or its task
+ * closed, so the boot always finds one of the two.
  *
  * **It never throws**, for `settleValidation`'s reason, and because every
- * caller drops its promise: once the claim has left the queue a failure that
- * escaped would leave its task claimed for good by a run that believed it was
- * being checked, so the task is closed on the run's word instead. One before
- * that leaves the claim queued, where the next drain or the boot finds it.
+ * caller drops its promise: a failure that escaped would leave its task claimed
+ * for good by a run that believed it was being checked, so the task is closed
+ * on the run's word instead. One before a claim was read leaves it queued,
+ * where the next drain or the boot finds it.
  */
 async function drainValidationQueue(runId: string): Promise<void> {
   let taskId: string | undefined;
@@ -761,9 +780,6 @@ async function drainValidationQueue(runId: string): Promise<void> {
     if (startingChecks.has(runId) || runningValidation(runId)) return;
     taskId = queuedChecks(runId)[0];
     if (!taskId) return;
-    db()
-      .prepare("DELETE FROM validation_queue WHERE run_id = ? AND task_id = ?")
-      .run(runId, taskId);
     await startQueuedCheck(taskId, runId);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -772,6 +788,9 @@ async function drainValidationQueue(runId: string): Promise<void> {
       return;
     }
     try {
+      // Off the queue ahead of the close, or a close that throws would leave
+      // the row for the drain below to take again, and again.
+      dequeueCheck(runId, taskId);
       closeAfterVerdict(
         taskId,
         runId,
@@ -797,6 +816,7 @@ async function drainValidationQueue(runId: string): Promise<void> {
 async function startQueuedCheck(taskId: string, runId: string): Promise<void> {
   const task = getTask(taskId);
   if (!task || task.status !== "claimed" || task.claimedByRunId !== runId) {
+    dequeueCheck(runId, taskId);
     logRun(
       runId,
       task
@@ -814,10 +834,13 @@ async function startQueuedCheck(taskId: string, runId: string): Promise<void> {
     isolation: run?.isolation ?? null,
     worktreeBranch: run?.worktree_branch ?? null,
   });
-  const outcome =
-    !settings.validateTaskCompletion || skip !== null || !run
-      ? closeNow(taskId, runId, skip ?? (run ? "completion checks were switched off" : null))
-      : await startCheck(task, run);
+  let outcome: CompletionAnswer;
+  if (!settings.validateTaskCompletion || skip !== null || !run) {
+    outcome = closeNow(taskId, runId, skip ?? (run ? "completion checks were switched off" : null));
+    dequeueCheck(runId, taskId);
+  } else {
+    outcome = await startCheck(task, run);
+  }
 
   if (outcome.kind === "closed") {
     logRun(
@@ -832,7 +855,8 @@ async function startQueuedCheck(taskId: string, runId: string): Promise<void> {
 }
 
 /**
- * Close every claim a restart left waiting, as its check would have.
+ * Close every claim a restart left waiting, or cut off while its check was
+ * being started, as its check would have.
  *
  * A restart is one more way of having no verdict, and the settle that would
  * have started these died with the old process — `closeStrandedValidations`'
