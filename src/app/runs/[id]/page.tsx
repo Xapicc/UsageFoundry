@@ -1661,7 +1661,7 @@ export default function RunDetail({
                 headline reads. Gated on `finished_at`, which a park leaves
                 null, because a parked run has not ended. */}
             {run.finished_at != null && (
-              <p className="mt-1 text-xs text-ink-faint">
+              <p className="mt-1 text-xs text-ink-muted">
                 Ending: {endingLabel(run.ending_code) ?? "unknown"}
               </p>
             )}
