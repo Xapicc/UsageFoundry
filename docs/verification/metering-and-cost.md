@@ -178,6 +178,16 @@
   repeat query on the install's own table. Caveat: synthetic payloads, so it
   bounds the shape of the cost and not this install's figure.
 
+- **The readout's band on the dashboard, standalone build, 2026-10-17, seeded
+  state.** One repository with nine reads by two runs (one repeat, not
+  edited), 44 failures across two runs (one signature 41 times, one long
+  path-laden text twice, one seen once) and three completed resolutions at
+  $12.50. Opened in Chromium at 1280 and 390px. `/api/repo-reading` answered
+  each count as seeded. The card drew the three sections, with the long
+  failure sample wrapped inside its row at 390px, the per-file table with no
+  dollar column, and the resolutions' $12.50 once. `scrollWidth` equalled
+  `clientWidth` at both widths, with no console error.
+
 - **The readout's three pure readings, 2026-10-17.** `repoReading.test.ts`,
   14 cases. A mutation of the compiled module that turned off the edited test
   failed one case, and one that dropped the runs-first ordering of failures

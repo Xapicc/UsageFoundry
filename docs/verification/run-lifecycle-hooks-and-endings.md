@@ -77,6 +77,15 @@ Phase 0 and Phase 2 of `proposals/ContinuousImprovement/`, because
   matched `inHoldout(id)`. Caveat: a stub reads only the argv, so this proves
   what the CLI was handed and nothing about what an agent does with it.
 
+- **The pointer on the run page, standalone build, 2026-10-17, seeded state.**
+  The two runs above, served by `.next/standalone/server.js` over their
+  scratch `DATA_DIR` and opened in Chromium at 1280 and 390px. The pointer
+  run's *Prompt* fold drew the block between the checkout notice and the
+  task, its two paths indented on lines of their own. The holdout run's
+  cycle row read "files earlier runs read held back, for the holdout", and
+  its fold went from the checkout notice to the task. No console error at
+  either width.
+
 - **`priorReads.test.ts`, 14 cases, and the slot case in `orchestrator.test.ts`,
   2026-10-17.** Mutations of the compiled module that reversed the decay,
   dropped the experiment name from the hash's preimage and removed the base
@@ -120,5 +129,5 @@ Phase 0 and Phase 2 of `proposals/ContinuousImprovement/`, because
 
 - **The pointer has not met a billed cycle or the real CLI.** It rides the
   prompt after `--`, like every other notice, so nothing about the argv is
-  new. But no real run has yet opened with it, and nobody has read a real
-  run page showing one.
+  new. But no real run has yet opened with it: the run pages above were
+  seeded through a stub child.
