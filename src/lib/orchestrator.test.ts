@@ -4330,6 +4330,50 @@ describe("handleCodexStreamLine", () => {
     assert.equal(acc.sawResult, false);
   });
 
+  it("reads a reconnect notice on a turn that went on to complete as log-only", () => {
+    const { acc, logs } = run([
+      { type: "thread.started", thread_id: "t" },
+      { type: "turn.started" },
+      { type: "error", message: "Reconnecting… 1/5" },
+      { type: "item.completed", item: { type: "agent_message", text: "All four tests pass.\n\nDONE" } },
+      // An item-level notice on the same turn, which latched just the same
+      // before the CLI said the turn completed.
+      { type: "item.completed", item: { type: "error", message: "a tool failed" } },
+      { type: "turn.completed", usage: { input_tokens: 12_000, output_tokens: 900 } },
+      // And one after the verdict, which is no more a refusal than the ones before.
+      { type: "error", message: "Reconnecting… 2/5" },
+    ]);
+    // `apiError` is what the run loop reads as the cycle's refusal, and
+    // `recovered` only matches Claude's wordings — a latched notice here ended
+    // a run that had finished its work `failed`, "Codex refused the request:
+    // Reconnecting… 1/5", before the `DONE` test was reached.
+    assert.equal(acc.apiError, null);
+    assert.equal(acc.sawResult, true);
+    assert.equal(acc.isError, false);
+    assert.equal(acc.finalText, "All four tests pass.\n\nDONE");
+    // Still on the log: a run that spent its cycle reconnecting should say so.
+    assert.deepEqual(logs, ["Reconnecting… 1/5", "Reconnecting… 2/5"]);
+  });
+
+  it("keeps an allowance or policy refusal latched even when the turn completed", () => {
+    // The control for the case above, and the Claude `recovered` rule's own
+    // exclusion: a wall that somehow exits 0 must still stop the run rather
+    // than re-spawn into itself, and only the notices are read as log-only.
+    const wall = "You've hit your usage limit. Visit chatgpt.com/codex/settings/usage to purchase more credits.";
+    const walled = run([
+      { type: "error", message: wall },
+      { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } },
+    ]);
+    assert.equal(walled.acc.apiError, wall);
+
+    const flagged = "This content was flagged for possible cybersecurity risk.";
+    const filtered = run([
+      { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } },
+      { type: "error", message: flagged },
+    ]);
+    assert.equal(filtered.acc.apiError, flagged);
+  });
+
   it("takes the last agent message as the cycle's last word", () => {
     const { acc } = run([
       { type: "item.completed", item: { type: "agent_message", text: "thinking" } },

@@ -10486,6 +10486,39 @@ export function readCodexItem(
 }
 
 /**
+ * Latch an `error` event or error item as the cycle's refusal, the way the
+ * Claude parser latches `apiError` — and retire it when the turn completed.
+ */
+function latchCodexNotice(acc: IterationResult, message: string): void {
+  acc.apiError ??= message;
+  if (acc.sawResult) settleCodexNotice(acc);
+}
+
+/**
+ * Read a notice on a turn that `turn.completed` reported as finished as
+ * log-only, which is the Claude path's `recovered` rule for the wording that
+ * rule cannot match.
+ *
+ * Codex's `error` events include the transport retries ("Reconnecting… n/5")
+ * that precede a successful connection as well as a failure, and an error item
+ * is a notice about one tool. Left latched, either one was read by the run loop
+ * as the cycle's refusal and ended a run that had finished its work `failed`,
+ * "Codex refused the request: Reconnecting… 1/5", before the `DONE` test was
+ * reached. Success is read from the CLI's own verdict — `turn.completed`, and
+ * no `turn.failed` — and never from the notice's text; `turn.failed` is the
+ * verdict that files a real reason, so it is left alone.
+ *
+ * The allowance wall and the content refusal are kept by name, for the reason
+ * `recovered` excludes the wall: one that somehow came with a completed turn
+ * must still stop the run rather than re-spawn into itself.
+ */
+function settleCodexNotice(acc: IterationResult): void {
+  if (acc.isError || acc.apiError === null) return;
+  if (isCodexUsageLimit(acc.apiError) || isCodexPolicyRefusal(acc.apiError)) return;
+  acc.apiError = null;
+}
+
+/**
  * Interpret one line of `codex exec --json` output.
  *
  * A different vocabulary from `handleStreamLine`'s and not a translation of it.
@@ -10560,6 +10593,7 @@ function handleCodexStreamLine(
       // The cycle's terminal event, and the counterpart of Claude's `result`.
       acc.sawResult = true;
       acc.subtype = "success";
+      settleCodexNotice(acc);
 
       // **Assigned, never accumulated.** One `codex exec` invocation is one
       // turn, so at most one of these arrives per cycle and the two shapes agree
@@ -10615,10 +10649,11 @@ function handleCodexStreamLine(
       // the message of a failure that never reaches `turn.failed`. Latched only
       // when nothing better has been said, so `turn.failed` can still replace
       // it, and logged either way because a run that spent five minutes
-      // reconnecting should say so.
+      // reconnecting should say so. A turn that went on to complete retires it
+      // — see `settleCodexNotice`.
       const message = typeof ev.message === "string" ? ev.message : "";
       if (message) {
-        acc.apiError ??= message;
+        latchCodexNotice(acc, message);
         log(runId, message, { stream: "stdout" });
       }
       return;
@@ -10637,7 +10672,7 @@ function handleCodexStreamLine(
         if (typeof text === "string" && text) acc.finalText = text;
       } else if (itemType === "error") {
         const message = item.message;
-        if (typeof message === "string" && message) acc.apiError ??= message;
+        if (typeof message === "string" && message) latchCodexNotice(acc, message);
       } else {
         noteCodexItem(runId, ev, true, acc);
       }

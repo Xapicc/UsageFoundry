@@ -27,7 +27,7 @@ Twenty-three are renderings rather than functions — every `*.test.tsx` in the 
 | `cutOffCheckout.test.ts` | [cycle] |
 | `diff.test.ts` |  |
 | `land.test.ts` | [landing], [merge-queue], [harnesses] |
-| `orchestrator.test.ts` | [cycle], [argv], [ceiling], [pruning], [parsers], [budgets], [pricing], [landing], [merge-queue], [sandbox], [harnesses] |
+| `orchestrator.test.ts` | [cycle], [argv], [ceiling], [pruning], [parsers], [codex-cycle], [budgets], [pricing], [landing], [merge-queue], [sandbox], [harnesses] |
 | `patch.test.ts` |  |
 | `planUsage.test.ts` |  |
 | `queueOrder.test.ts` |  |
@@ -337,6 +337,10 @@ Units that are about no test file in the tree:
 | `readGuard.test.ts` |  |
 | `sandboxMountPoints.test.ts` |  |
 
+## [What a Codex cycle's stream and exit are read as](testing/codex-cycle-readings.md)
+
+Its cases are in `orchestrator.test.ts`; see that file's row above.
+
 ## [Stream parsers, assist output and the outbound webhook](testing/stream-parsers-and-webhook.md)
 
 | Test file | Also in |
@@ -553,6 +557,7 @@ It prints nothing as this is written. Whoever owns a file it names owes that fil
 [chat-child]: testing/chat-child-lookups-and-config.md
 [sandbox]: testing/sandbox-and-read-guard.md
 [parsers]: testing/stream-parsers-and-webhook.md
+[codex-cycle]: testing/codex-cycle-readings.md
 [auth]: testing/auth-config-and-status-routes.md
 [status]: testing/health-and-status-routes.md
 [sign-in]: testing/sign-in-limits.md
