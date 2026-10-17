@@ -87,6 +87,14 @@ Phase 0 and Phase 2 of `proposals/ContinuousImprovement/`, because
   either width. `npm run smoke-pages` against the same build (`fb9c8617`):
   100 of 100 page loads clean, serving `.next/standalone/server.js`.
 
+- **The pointer's query is a lookup, not a scan, 2026-10-17, synthetic
+  database.** On `repoReading`'s synthetic 124,950-row corpus (294 runs, 200
+  on one repository), `EXPLAIN QUERY PLAN` reads `runs` through
+  `idx_runs_created` and `run_events` through `idx_run_events_run (run_id=?)`.
+  Over the 100 most recent runs, 2,223 rows, it took 22.3 ms cold and
+  8.7–9.6 ms warm. Caveat: synthetic payloads; it runs once per segment, on
+  the path that starts a run.
+
 - **`priorReads.test.ts`, 14 cases, and the slot case in `orchestrator.test.ts`,
   2026-10-17.** Mutations of the compiled module that reversed the decay,
   dropped the experiment name from the hash's preimage and removed the base
