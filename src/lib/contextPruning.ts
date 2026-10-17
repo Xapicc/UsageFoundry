@@ -13,10 +13,9 @@ import {
   CACHE_WRITE_1H_MULTIPLIER,
   CACHE_WRITE_5M_MULTIPLIER,
   cacheReadMultiplierOf,
-  cacheWriteTokens,
   resolveFlatPrice,
 } from "./pricing";
-import { scanUsage, type UsageEntry } from "./transcripts";
+import { billedAnything, scanUsage, type UsageEntry } from "./transcripts";
 import type {
   ContextCheckDTO,
   ContextCompositionDTO,
@@ -4280,18 +4279,6 @@ function firstBilledTurn(
     if (!best || e.ts < best.ts) best = e;
   }
   return best;
-}
-
-/**
- * Whether a turn read or wrote any cache at all.
- *
- * The one test every reader here shares, so that the resume a cut is priced
- * off and the turns its saving is counted over cannot come to disagree about
- * what a turn is. The CLI's `<synthetic>` record — written at a restart or an
- * API error, its usage block present and entirely zero — fails it.
- */
-function billedAnything(e: UsageEntry): boolean {
-  return e.tokens.cacheRead + cacheWriteTokens(e.tokens) > 0;
 }
 
 /** The cache traffic of the turn a resume is read off. */

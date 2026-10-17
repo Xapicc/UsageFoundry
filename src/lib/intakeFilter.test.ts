@@ -9,6 +9,7 @@ import type {
   RequestAnchor,
   UniqueResult,
 } from "./intakeFilter";
+import type { UsageEntry } from "./transcripts";
 
 /**
  * The three decisions behind the intake-filter figure, all of which fail
@@ -540,6 +541,63 @@ describe("resultsSince", () => {
     );
   });
 });
+describe("requestAnchors", () => {
+  const START = Date.UTC(2026, 7, 20, 10, 0, 0);
+
+  const turn = (over: Partial<UsageEntry> & { ts: number }): UsageEntry => ({
+    key: `msg:${over.requestId ?? over.ts}`,
+    requestId: "",
+    model: "claude-opus-5",
+    tokens: {
+      input: 10,
+      output: 20,
+      cacheRead: 50_000,
+      cacheWrite5m: 0,
+      cacheWrite1h: 1_000,
+      cacheWriteUnattributed: 0,
+    },
+    costUSD: 0.1,
+    costGuardUSD: 0.1,
+    project: "/work/repo",
+    sessionId: SESSION,
+    isSidechain: false,
+    unpriced: false,
+    ...over,
+  });
+
+  // The CLI writes a `<synthetic>` record at a restart or an API error with its
+  // usage block present and entirely zero. It is kept as a turn so it stays out
+  // of the unpriced banner, and counted as one it read nothing and avoided no
+  // re-read: each such frame after a filtered result added a turn to that
+  // result's `turnsAfter` and 0.1·D to "re-reads avoided". Always upward, and
+  // invisible on the card — the same defect `priceReceipts` had until it read
+  // `billedAnything`.
+  it("counts only the turns that billed as turns a filtered result was carried through", () => {
+    const zero = { input: 0, output: 0, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0, cacheWriteUnattributed: 0 };
+    const mainThread = [
+      turn({ ts: START, requestId: "req_filtered" }),
+      ...[1, 2, 3, 4, 5].map((n) => turn({ ts: START + n * 60_000 })),
+      turn({ ts: START + 3.5 * 60_000, model: "<synthetic>", tokens: zero, costUSD: 0, costGuardUSD: 0 }),
+    ];
+
+    const anchorOf = intakeFilter.requestAnchors(mainThread);
+    const anchor = anchorOf("req_filtered");
+
+    assert.equal(anchor?.turnsAfter, 5, "the all-zero frame was counted as a sixth turn");
+
+    const requests = intakeFilter.parseLedger(line("req_filtered", [{ bytes: 36_000 }]));
+    const net = intakeFilter.netFilterSavings(intakeFilter.dedupeResults(requests, anchorOf));
+    assert.equal(
+      Math.round(net.cacheReadAvoidedUSD * 1e6),
+      Math.round(Math.round(36_000 / BYTES_PER_TOKEN) * 5 * (OPUS_INPUT / 1_000_000) * 0.1 * 1e6),
+    );
+  });
+
+  it("does not join a request no turn carries", () => {
+    assert.equal(intakeFilter.requestAnchors([turn({ ts: START })])("req_missing"), null);
+  });
+});
+
 describe("readFilterSavings", () => {
   /** A minute boundary, since the horizon is floored to `LEDGER_TTL_MS`. */
   const GRAIN = Date.UTC(2026, 7, 20, 10, 0, 0);
