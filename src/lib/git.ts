@@ -110,16 +110,129 @@ export function gitEnv(): NodeJS.ProcessEnv {
  * the time `probeIsolation` sees it. The check it disables guards against
  * repositories reached by surprise on a shared host; every path that gets here
  * has already been proved to sit inside a configured mount by `resolveInMount`.
+ *
+ * The four signing keys below are the same class again: `commit.gpgSign=true`
+ * with `gpg.program=<path>` in a repository's `.git/config` makes `git commit`
+ * run that path — commitPending's commit and land's `commit --no-edit` both hit
+ * it, inside the operator's own checkout — so `commit.gpgSign` is forced off and
+ * the three signing programs are pinned to git's own defaults, exactly the pins
+ * `CHAT_GIT_CONFIG` carries in `chat.ts`. They are on the command line, which
+ * outranks `.git/config`; verified against 2.39. `credential.helper` and
+ * `core.sshCommand` are deliberately *not* pinned here: an empty
+ * `-c credential.helper=` resets the whole helper list at the highest
+ * precedence and would take `githubEnv`'s scoped `credential.https://github.com`
+ * helper with it (measured for the chat's block, `chat-child-config-files.md`),
+ * so those two belong to Deliver's own fetch/push env, not to every git child.
+ *
+ * `extraConfig` is where `git()`/`gitSync()` splice the filter neutralisers for
+ * the content-moving subcommands (see `filterNeutralizers`); it precedes the
+ * subcommand because it is config, and defaults to none so a read call is
+ * unchanged.
  */
-export const gitArgs = (args: string[]) => [
+export const gitArgs = (args: string[], extraConfig: string[] = []) => [
   "-c",
   "core.fsmonitor=",
   "-c",
   "core.hooksPath=/dev/null",
   "-c",
   "safe.directory=*",
+  "-c",
+  "commit.gpgSign=false",
+  "-c",
+  "gpg.program=gpg",
+  "-c",
+  "gpg.x509.program=gpgsm",
+  "-c",
+  "gpg.ssh.program=ssh-keygen",
+  ...extraConfig,
   ...args,
 ];
+
+/**
+ * Blanking the filter drivers is what the signing pins above cannot be: a flat
+ * `-c` list. A `filter.<x>.clean`/`smudge`/`process` is run whenever git
+ * converts a file between the working tree and the object store, and the driver
+ * `<x>` is named by the repository — in `.git/config` paired with a
+ * `* filter=x` line in `.git/info/attributes`, both of which a work cycle can
+ * write. git 2.39 has no `-c` pair or flag that turns filtering off wholesale
+ * (`.git/info/attributes` outranks every attributes file a variable can name),
+ * so the names must be read from the repository and each one's clean, smudge and
+ * process blanked on the call. An empty value is "no filter" — identity — and
+ * for a `filter.<x>.required=true` driver git then fails the operation rather
+ * than running the planted program (measured, 2.39), which is the right failure:
+ * nothing of the repository's choosing runs either way.
+ *
+ * `-z` output is `key\nvalue` per record; the driver name is the subsection,
+ * whose case git preserves and which the override must match, so it is captured
+ * verbatim and never lower-cased.
+ */
+function filterNeutralizers(configOutput: string): string[] {
+  const names = new Set<string>();
+  for (const record of configOutput.split("\0")) {
+    if (!record) continue;
+    const key = record.split("\n", 1)[0];
+    const match = /^filter\.(.+)\.(?:clean|smudge|process|required)$/i.exec(key);
+    if (match) names.add(match[1]);
+  }
+  const out: string[] = [];
+  for (const name of names) {
+    out.push(
+      "-c",
+      `filter.${name}.clean=`,
+      "-c",
+      `filter.${name}.smudge=`,
+      "-c",
+      `filter.${name}.process=`,
+    );
+  }
+  return out;
+}
+
+/**
+ * Reads the repository's filter drivers, without running any of them.
+ *
+ * `config` is a read that runs nothing the repository chose, so it is never
+ * itself a content subcommand and the enumeration never recurses. `--includes`
+ * because a driver reached through an `include.path` would fire too. It exits
+ * non-zero when no driver is defined, which is the common case and reads as an
+ * empty list, so the status is not checked.
+ */
+const FILTER_PROBE = ["config", "-z", "--includes", "--get-regexp", "^filter\\."];
+
+/**
+ * The subcommands that convert content between the working tree and the object
+ * store, and so consult a filter driver. The enumeration costs one extra
+ * `git config` child, so it is paid only here and not on the object-store reads
+ * — `rev-parse`, `rev-list`, `merge-base`, `cat-file`, `ls-tree`, `log`,
+ * `show`, a `diff` between commits — that are the bulk of this app's git calls
+ * and never touch the working tree. `status` and `update-index --refresh` are
+ * on the list because their stat-dirty check runs a clean filter to compare
+ * content (measured for the chat's git). The gate reads `args[0]`, which every
+ * call site passes as the subcommand; this app never puts a global flag before
+ * it.
+ */
+const CONTENT_SUBCOMMANDS = new Set([
+  "add",
+  "commit",
+  "merge",
+  "checkout",
+  "switch",
+  "restore",
+  "worktree",
+  "reset",
+  "read-tree",
+  "checkout-index",
+  "update-index",
+  "stash",
+  "cherry-pick",
+  "revert",
+  "rebase",
+  "am",
+  "apply",
+  "pull",
+  "status",
+  "sparse-checkout",
+]);
 
 /**
  * The longest one synchronous git call may hold the event loop.
@@ -143,7 +256,10 @@ export const GIT_SYNC_TIMEOUT_MS = 20_000;
  * below.
  */
 export function gitSync(cwd: string, args: string[]): GitResult {
-  const res = spawnSync(GIT_BIN, gitArgs(args), {
+  const extra = CONTENT_SUBCOMMANDS.has(args[0])
+    ? filterNeutralizers(gitSync(cwd, FILTER_PROBE).stdout)
+    : [];
+  const res = spawnSync(GIT_BIN, gitArgs(args, extra), {
     cwd,
     env: gitEnv(),
     ...childCredentials(),
@@ -201,7 +317,7 @@ export function gitSync(cwd: string, args: string[]): GitResult {
  * worker's loop and left the row it was landing stuck on `landing` for ever.
  * A child that could not be started is reported as the failed call it is.
  */
-export function git(
+export async function git(
   cwd: string,
   args: string[],
   opts: {
@@ -240,6 +356,15 @@ export function git(
 ): Promise<GitResult & { overflowed: boolean }> {
   const { timeoutMs = 20_000, maxBytes = 0, trim = true } = opts;
 
+  // The probe is a `config` read, never a content subcommand, so this recurses
+  // exactly one level and never for a read call. `git()` never rejects, so the
+  // await cannot throw. `trim: false` keeps the `-z` record separators intact.
+  const extra = CONTENT_SUBCOMMANDS.has(args[0])
+    ? filterNeutralizers(
+        (await git(cwd, FILTER_PROBE, { env: opts.env, trim: false })).stdout,
+      )
+    : [];
+
   return new Promise((resolve) => {
     let stdout = "";
     let stderr = "";
@@ -268,8 +393,8 @@ export function git(
       };
       const child =
         opts.input === undefined
-          ? spawn(GIT_BIN, gitArgs(args), { ...options, stdio: ["ignore", "pipe", "pipe"] })
-          : spawn(GIT_BIN, gitArgs(args), { ...options, stdio: ["pipe", "pipe", "pipe"] });
+          ? spawn(GIT_BIN, gitArgs(args, extra), { ...options, stdio: ["ignore", "pipe", "pipe"] })
+          : spawn(GIT_BIN, gitArgs(args, extra), { ...options, stdio: ["pipe", "pipe", "pipe"] });
 
       if (opts.input !== undefined && child.stdin) {
         // A child that exits before reading all of it makes this write fail
