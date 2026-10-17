@@ -409,6 +409,103 @@ function heldDecision(name: string): string {
   return instanceId;
 }
 
+/**
+ * An instance whose block `M` the restart caught working, with a gate `X` hung
+ * off it `on-finish` — the condition a failed merge or delivery satisfies —
+ * and a run `A` on no edge of theirs, whose status picks the boot's arm. The
+ * gate makes "released" a column, `held_at`, rather than a spawn.
+ */
+function cutOffScene(
+  name: string,
+  kind: "merge" | "deliver",
+  run: { status: string; pausedAt?: number | null },
+): { instanceId: string; runId: string } {
+  const now = Date.now();
+  const instanceId = `inst-${name}`;
+  const runId = `run-${name}`;
+  const graph = JSON.stringify({
+    nodes: [
+      { id: "A", name: "Build it", kind: "run" },
+      { id: "M", name: "Hand it on", kind },
+      { id: "X", name: "After it", kind: "gate" },
+    ],
+    edges: [{ from: "M", to: "X", edge: "on-finish", continueBranch: false }],
+  });
+  const db = dbMod.db();
+  db.prepare(
+    "INSERT INTO workflows (id, name, graph, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+  ).run(`wf-${name}`, name, graph, now, now);
+  db.prepare(
+    `INSERT INTO workflow_instances (id, workflow_id, workflow_name, graph, created_at, status)
+     VALUES (?, ?, ?, ?, ?, 'started')`,
+  ).run(instanceId, `wf-${name}`, name, graph, now);
+  db.prepare(
+    `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
+                       created_at, started_at, paused_at, work_dir)
+     VALUES (?, ?, 'build it', ?, '{"maxIterations":1,"permissionMode":"acceptEdits"}', 1, 1, ?, ?, ?, NULL)`,
+  ).run(runId, path.join(root, "workspace"), run.status, now, now, run.pausedAt ?? null);
+  db.prepare(
+    "INSERT INTO workflow_instance_runs (instance_id, node_id, node_name, position, run_id)" +
+      " VALUES (?, 'A', 'Build it', 0, ?)",
+  ).run(instanceId, runId);
+  db.prepare(
+    "INSERT INTO workflow_instance_blocks (instance_id, node_id, node_name, position, kind, status, started_at)" +
+      " VALUES (?, 'M', 'Hand it on', 1, ?, 'thinking', ?)",
+  ).run(instanceId, kind, now);
+  db.prepare(
+    "INSERT INTO workflow_instance_blocks (instance_id, node_id, node_name, position, kind, status)" +
+      " VALUES (?, 'X', 'After it', 2, 'gate', 'waiting')",
+  ).run(instanceId);
+  return { instanceId, runId };
+}
+
+describe("a block hung off one the restart cut off, in an instance the boot spared", () => {
+  it("is blocked, not reached, beside a run the boot kept paused", async () => {
+    const { instanceId, runId } = cutOffScene("Kept beside a landing", "merge", {
+      status: "paused",
+      pausedAt: Date.now() - HOUR,
+    });
+
+    await boot();
+    assert.equal(orch.getRun(runId)!.status, "paused");
+    assert.equal(blockOf(instanceId, "M").status, "failed");
+    // Any run ending anywhere advances every started instance.
+    workflows.advanceInstances();
+
+    const x = workflows.blocksOf(instanceId).find((b) => b.nodeId === "X")!;
+    assert.equal(x.heldAt, null, "the gate was reached off a landing the restart killed");
+    assert.equal(x.status, "blocked");
+    assert.match(x.error ?? "", /“Hand it on”, which the server restart cut off/);
+  });
+
+  it("is closed out under the hold, and the delivery's retry is still offered", async () => {
+    // No run of it was closed out, so read off the runs alone this was the
+    // lift's to decide — and lifting the hold advances it, reaching the gate
+    // on a delivery that died with the container.
+    const { instanceId } = cutOffScene("Held beside a delivery", "deliver", {
+      status: "completed",
+    });
+
+    settings.setNewWorkPaused(true);
+    try {
+      await boot();
+      workflows.advanceInstances();
+    } finally {
+      settings.setNewWorkPaused(false);
+    }
+
+    assert.equal(blockOf(instanceId, "M").status, "failed");
+    const x = blockOf(instanceId, "X");
+    assert.equal(x.status, "blocked");
+    assert.match(x.error ?? "", /closed out by the same restart/);
+    const retry = workflows
+      .pickUpsOf(workflows.getInstance(instanceId)!)
+      .find((p) => p.kind === "deliver");
+    assert.ok(retry?.kind === "deliver", "the failed delivery is offered as a pick-up");
+    assert.equal(retry.retryRefusal, null, "and nothing behind it started, so it is not refused");
+  });
+});
+
 describe("a waiting block across a restart taken while new work is held", () => {
   it("is left waiting for the lift when the restart closed none of its workflow", async () => {
     // The restart is the usual reason the hold is pressed. The run half keeps

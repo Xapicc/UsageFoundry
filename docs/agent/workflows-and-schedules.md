@@ -22,6 +22,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - A gate is a block that waits for a person, and it is a ledger row that never has a turn.
 - It is `waiting` the whole time, and `held_at` is the only thing that says it was reached.
 - A gate hands on no runs, and that is the cost the diagram pays.
+- A restart spares an instance with a held gate, and a block the restart failed releases nothing beside it.
 - Whether a chat may propose one: yes.
 
 ## [Orchestrator blocks](workflows-and-schedules/orchestrator-and-merge-blocks.md)

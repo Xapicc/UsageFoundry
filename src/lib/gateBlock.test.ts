@@ -317,6 +317,117 @@ describe("a restart leaves a held gate alone", () => {
   });
 });
 
+/**
+ * What the boot spares for a held gate is the instance, and what sits *beside*
+ * the gate is decided by the next advance — which reads a failed merge or loop
+ * as satisfying `on-finish`. `X` hangs off one the restart cut off, so unless
+ * the restart's failure is a fact the verdict can read, the advance after the
+ * boot reaches `X` on work that died with the container. `X` is a gate so
+ * that "reached" is `held_at` rather than a spawn.
+ */
+describe("a restart that spares a held gate releases nothing beside it", () => {
+  const SIDE = [
+    gate("G", "Look first"),
+    gate("G2", "Look again"),
+    gate("X", "After it"),
+  ];
+  const sideEdges = (head: string) => [
+    { from: "G", to: "G2", edge: "on-success", continueBranch: false },
+    { from: head, to: "X", edge: "on-finish", continueBranch: false },
+  ];
+  const sideRows = (heldAt: number) => [
+    { id: "G", name: "Look first", kind: "gate", heldAt },
+    { id: "G2", name: "Look again", kind: "gate" },
+    { id: "X", name: "After it", kind: "gate" },
+  ];
+
+  /** Every advance in the app advances every started instance, so one is enough. */
+  function assertNothingBeside(id: string, heldAt: number, cutOff: RegExp) {
+    workflows.advanceInstances();
+    const x = row(id, "X")!;
+    assert.equal(x.held_at, null, `X was reached off work the restart killed (status=${x.status})`);
+    assert.equal(x.status, "blocked");
+    assert.match(x.error ?? "", cutOff);
+    assert.equal(row(id, "G")!.held_at, heldAt, "the gate is still held, not re-announced");
+    assert.equal(row(id, "G2")!.status, "waiting", "and what is behind it is still its own");
+    const runs = dbMod.db().prepare("SELECT COUNT(*) AS n FROM workflow_instance_runs").get() as {
+      n: number;
+    };
+    assert.equal(runs.n, 1, "nothing beside the gate was created");
+  }
+
+  it("blocks what hangs off a merge the restart cut off", () => {
+    const heldAt = Date.now() - 60_000;
+    const id = seed(
+      "beside-merge",
+      { nodes: [...SIDE, { id: "M", name: "Land A", kind: "merge" }], edges: sideEdges("M") },
+      [...sideRows(heldAt), { id: "M", name: "Land A", kind: "merge", status: "thinking" }],
+    );
+    // A member of no consequence, so the count above has a floor to hold.
+    insertRun(id, "A", "Unrelated", "completed", 0);
+
+    workflows.reconcileBlocksOnBoot();
+    assert.equal(row(id, "M")!.status, "failed");
+    assert.equal(row(id, "X")!.status, "waiting", "the boot spared the instance for its gate");
+
+    assertNothingBeside(id, heldAt, /“Land A”, which the server restart cut off/);
+  });
+
+  it("blocks what hangs off a loop whose pass the restart closed out", () => {
+    // Spared `looping` with the instance, and failed by the next advance, which
+    // finds its pass closed out — so the mark is written there, not at boot.
+    const heldAt = Date.now() - 60_000;
+    const id = seed(
+      "beside-loop",
+      {
+        nodes: [
+          ...SIDE,
+          { id: "L", name: "Keep at it", kind: "loop", maxPasses: 3, bodyNodeIds: ["b"] },
+          { id: "b", name: "Do it", kind: "run" },
+        ],
+        edges: [
+          ...sideEdges("L"),
+          { from: "L", to: "b", edge: "repeats", continueBranch: false },
+        ],
+      },
+      [...sideRows(heldAt), { id: "L", name: "Keep at it", kind: "loop", status: "looping" }],
+    );
+    insertRun(id, passMemberId("L", 1, "b"), "Do it — pass 1", "failed", 1, "L");
+
+    workflows.reconcileBlocksOnBoot();
+    assert.equal(row(id, "L")!.status, "looping", "the boot spared the loop with the instance");
+
+    assertNothingBeside(id, heldAt, /“Keep at it”, whose pass the server restart cut off/);
+    assert.equal(row(id, "L")!.status, "failed");
+  });
+});
+
+/**
+ * One member run, ended as `reconcileOnBoot` leaves one it found running when
+ * `restartClosed` is 1, and as an ordinary ending when it is 0.
+ */
+function insertRun(
+  instanceId: string,
+  memberId: string,
+  name: string,
+  status: string,
+  restartClosed: number,
+  emittedBy: string | null = null,
+): void {
+  const now = Date.now();
+  const runId = `run-${instanceId}-${memberId}`;
+  const db = dbMod.db();
+  db.prepare(
+    `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
+                       created_at, finished_at, restart_closed)
+     VALUES (?, ?, 'do it', ?, '{}', 1, 1, ?, ?, ?)`,
+  ).run(runId, path.join(root, "workspace"), status, now, now, restartClosed);
+  db.prepare(
+    `INSERT INTO workflow_instance_runs (instance_id, node_id, node_name, position, run_id, emitted_by)
+     VALUES (?, ?, ?, 100, ?, ?)`,
+  ).run(instanceId, memberId, name, runId, emittedBy);
+}
+
 describe("a loop's gate holds every pass", () => {
   it("opens a gate row per pass, and a press on one releases nothing of the next", () => {
     const id = seed("loop", LOOPED, [{ id: "L", name: "Keep at it", kind: "loop" }]);
