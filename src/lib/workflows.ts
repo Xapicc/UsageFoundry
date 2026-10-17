@@ -112,7 +112,6 @@ import {
   listTasks,
   readTaskLinks,
   reopenRejectedTask,
-  resolveTaskFolder,
   tasksLinkedToRun,
   updateTask,
   type TaskLinkReading,
@@ -272,6 +271,7 @@ import {
   normalizeBoardCondition,
   normalizeWorkflowFolders,
   normalizeWorkflowInput,
+  resolveBoardFolder,
   sharedFolderRefusal,
   withChosenFolder,
   workingFolders,
@@ -3271,12 +3271,7 @@ export function loopBoardCount(node: WorkflowNode): LoopBoardReading {
 export function countBoardCondition(
   condition: LoopBoardCondition,
 ): LoopBoardReading {
-  // `"."` rather than `""` for the mount root: `resolveTaskFolder` refuses a
-  // mount with no folder beside it, and the root is a folder — it is the path a
-  // run working there files its own tasks against. Going round that resolver to
-  // spell the root ourselves is what would put a second folder resolver in this
-  // app, which `tasks.ts` exists to prevent.
-  const resolved = resolveTaskFolder(condition.mountId, condition.folder || ".");
+  const resolved = resolveBoardFolder(condition);
   if (!resolved.ok) return { ok: false, error: resolved.error };
 
   const where = {
@@ -4199,7 +4194,9 @@ export function startWorkflow(
 
   // The same resolution `createRun` performs, run early so a folder that has
   // been moved or deleted since the workflow was saved names its block instead
-  // of aborting a half-built graph.
+  // of aborting a half-built graph. A loop's board folder is asked here too, off
+  // the chosen graph, or it would fail the loop at its first check — after
+  // every block in front of the loop had run.
   const missing = folderRefusal(graph);
   if (missing) return { ok: false, reason: missing };
 
