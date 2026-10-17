@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { getRun } from "@/lib/orchestrator";
-import { scanUsage } from "@/lib/transcripts";
-import { agentOriginIndex, agentSpend } from "@/lib/windows";
-import { listAgents, listAmbientAgents } from "@/lib/agents";
-import { getSettings } from "@/lib/settings";
+// Relative, not "@/lib/…" — see the note in the login route.
+import { getRun } from "../../../../../lib/orchestrator";
+import { scanUsage } from "../../../../../lib/transcripts";
+import { agentOriginIndex, agentSpend } from "../../../../../lib/windows";
+import { listAgents, listAmbientAgents } from "../../../../../lib/agents";
+import { getSettings } from "../../../../../lib/settings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,6 +31,22 @@ export async function GET(_req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
   const run = getRun(id);
   if (!run) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  // Nothing under `PROJECTS_DIR` belongs to these runs, so filtering it for
+  // their session answers a reading of zero turns — drawn as "No turns were
+  // recorded" about an agent that worked. A local cycle writes under its own
+  // config directory, kept out of every meter on purpose (`local-provider.md`),
+  // and reading it here would be one more reader of the tree that decision
+  // keeps apart; a Codex session is not a Claude Code transcript at all.
+  if (run.provider === "local" || run.provider === "codex") {
+    return NextResponse.json({
+      spend: null,
+      reason:
+        run.provider === "local"
+          ? "A local run's turns are written under its own config directory, which this reading does not look in."
+          : "A Codex run's session is not a Claude Code transcript.",
+    });
+  }
 
   // No session id is "there is nothing to read yet", not "$0.00": the column is
   // written the moment the stream first names a session, so a run without one

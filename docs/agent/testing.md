@@ -369,6 +369,7 @@ Units that are about no test file in the tree:
 | `localProvider.test.ts` |  |
 | `reviewBlock.test.ts` |  |
 | `reviewBlockRun.test.ts` | [workflows], [harnesses] |
+| `src/app/api/runs/[id]/agent-cost/route.test.ts` |  |
 
 ## [Auth, credentials, config, settings and the run streams](testing/auth-config-and-status-routes.md)
 
