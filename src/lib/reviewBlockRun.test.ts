@@ -494,6 +494,33 @@ describe("a review block handed more branches than there are assist slots", () =
   });
 });
 
+describe("a review block whose branch the operator is already reviewing", () => {
+  it("waits for that review to end, then runs its own, rather than setting the branch aside", async () => {
+    const review = await import("./review");
+    reviewScene("inst-dup", {
+      runs: [{ id: "dup-origin", prompt: "Do it. APPROVE-ME SLOW-ONE", branch: "uf/repo-good" }],
+    });
+    // The Review button on the run's own page; the stub takes `SLOW_REVIEW_MS`
+    // over it, and it asks no verdict of a Claude run, so the block cannot
+    // borrow it.
+    const manual = await review.startReview("dup-origin");
+    assert.ok(manual.ok, "the operator's review started");
+    await until("the operator's review to be running", () => reviewRunning("dup-origin"));
+    await settledWithin(workflows.startReviewBlock("inst-dup", "r", ["dup-origin"]), 30_000, "startReviewBlock");
+
+    assert.deepEqual(
+      workflows.reviewItemsOf("inst-dup", "r").map((i) => [i.status, i.note]),
+      [["approved", null]],
+      "the branch was set aside because a review of it was already running",
+    );
+    assert.deepEqual(
+      reviewsOf("dup-origin").map((r) => r.status),
+      ["completed", "completed"],
+      "the operator's review and the block's own",
+    );
+  });
+});
+
 describe("a review block whose workflow is halted", () => {
   it("starts no fix run for a rejection that lands just after the halt", async () => {
     // The reviewer answers at once, so the review is over while the block's

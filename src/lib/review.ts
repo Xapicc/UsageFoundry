@@ -292,6 +292,13 @@ export type ReviewOutcome =
        * lift is what the operator pressed the hold to wait for.
        */
       held?: true;
+      /**
+       * Set when another review of this run is still running — the Review
+       * button's, or another block's. It ends on its own clock, so a review
+       * block waits it out and then runs its own, which asks the verdict the
+       * other may not have; the Review button only shows the sentence.
+       */
+      alreadyRunning?: true;
     };
 
 /**
@@ -347,7 +354,7 @@ export async function startReview(
   const run = getRun(runId);
   if (!run) return { ok: false, reason: "No such run." };
   if (assistRunning(runId, "review")) {
-    return { ok: false, reason: "A review of this run is already running." };
+    return { ok: false, reason: "A review of this run is already running.", alreadyRunning: true };
   }
 
   const diff = await runDiff(runId);

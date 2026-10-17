@@ -9286,7 +9286,9 @@ async function driveReviewItem(
       // a halt or a shutdown ends this wait at the top of the loop. The hold is
       // asked again there too, after its last await, since one pressed while the
       // diff was read passed the check above: `held`, waited out for the lift.
-      if (started.busy || started.held) {
+      // And another review of this same run, the operator's or another block's:
+      // set aside over it, the branch was judged by a collision, not a review.
+      if (started.busy || started.held || started.alreadyRunning) {
         await pause();
         continue;
       }
