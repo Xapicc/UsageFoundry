@@ -126,6 +126,7 @@ const {
   needsLiveSpendTelemetry,
   nextPrompt,
   permissionDenials,
+  hookInjection,
   refusalDisposition,
   refusalStopReason,
   refusalKind,
@@ -3679,6 +3680,9 @@ describe("the cycle adapter", () => {
       "-p",
       "--output-format",
       "--verbose",
+      // On a resumed cycle too, which this one is: without it a tool hook's
+      // injection reaches the agent and leaves nothing on the run's log.
+      "--include-hook-events",
       "--model",
       "--permission-mode",
       "--forward-subagent-text",
@@ -6089,6 +6093,63 @@ describe("what an interrupt makes of a run", () => {
         at,
       }),
       { status: "paused", reason: "window full", resumeAt: at + 60_000 },
+    );
+  });
+});
+
+/**
+ * Covers what a hook is logged as having put in front of the agent.
+ *
+ * The outputs are the `hook_response` shapes the pinned CLI wrote when it was
+ * driven against a stub API, and the expectations are what that stub saw reach
+ * the model: a reader that took `output` at its word would log a tool hook's
+ * plain stdout as context on every tool call, and one that only read plain text
+ * would miss every structured injection.
+ */
+describe("hookInjection", () => {
+  const context = (event: string, text: string) =>
+    `${JSON.stringify({
+      hookSpecificOutput: { hookEventName: event, additionalContext: text },
+    })}\n`;
+  const injected = (event: string, output?: string) =>
+    hookInjection({ hook_event: event, output });
+
+  it("reads a structured injection off any event", () => {
+    assert.equal(
+      injected("PostToolUse", context("PostToolUse", "Run the tests.")),
+      "Run the tests.",
+    );
+    assert.equal(
+      injected("SessionStart", context("SessionStart", "Branch is main.")),
+      "Branch is main.",
+    );
+  });
+
+  it("counts plain text only where the CLI injects it", () => {
+    assert.equal(
+      injected("SessionStart", "winnow: guard active\n"),
+      "winnow: guard active",
+    );
+    assert.equal(
+      injected("UserPromptSubmit", "Today is Friday.\n"),
+      "Today is Friday.",
+    );
+    // Measured not to reach the model.
+    assert.equal(injected("PostToolUse", "checked\n"), null);
+  });
+
+  it("finds nothing in a reply that injects nothing", () => {
+    assert.equal(injected("PostToolUse", ""), null);
+    assert.equal(injected("PostToolUse"), null);
+    // A JSON reply that only steers is not plain text, whatever the event.
+    assert.equal(injected("SessionStart", '{"continue":true}'), null);
+    assert.equal(injected("PostToolUse", context("PostToolUse", "  ")), null);
+  });
+
+  it("reads a brace that is not JSON as plain text", () => {
+    assert.equal(
+      injected("SessionStart", "{draft} is stale"),
+      "{draft} is stale",
     );
   });
 });

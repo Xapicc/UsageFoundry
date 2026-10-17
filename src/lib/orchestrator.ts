@@ -193,7 +193,7 @@ import { clipToolInput, MAX_LOG_CHARS, toolArgs } from "./logLine";
 // Same direction, same reason: the cycle deadline says how long it waited in
 // the words the run page already uses for every other span.
 import { fmtDuration, fmtTokens, shortId } from "./format";
-import { jsonKind } from "./http";
+import { isJsonObject, jsonKind } from "./http";
 import {
   RUN_PROVIDER_LABEL,
   pausedMsAt,
@@ -6462,6 +6462,7 @@ const ARGV_ARITY: Record<string, "none" | "one" | "many"> = {
   "-p": "none",
   "--output-format": "one",
   "--verbose": "none",
+  "--include-hook-events": "none",
   "--model": "one",
   "--effort": "one",
   "--permission-mode": "one",
@@ -6486,6 +6487,7 @@ const CARRIES_NO_CONTEXT = new Set([
   // text: it changes how the model thinks, never what is in its window.
   "--output-format",
   "--verbose",
+  "--include-hook-events",
   "--model",
   "--effort",
   "--forward-subagent-text",
@@ -9038,6 +9040,51 @@ export function contextAfterPrune(
   return Math.max(0, before - outcome.tokensRemoved);
 }
 
+/**
+ * What a hook put into the agent's context, off the `hook_response` the CLI
+ * reports it with — or null when it put nothing there.
+ *
+ * `output` is the hook's stdout verbatim, and which part of it reaches the
+ * model depends on the event, measured against the pinned CLI rather than read
+ * off its docs (`docs/verification/run-lifecycle-hook-events.md`): a JSON
+ * object's `hookSpecificOutput.additionalContext` reached it from `PreToolUse`
+ * and `PostToolUse` alike, and plain text reached it from `SessionStart` and
+ * `UserPromptSubmit` and did **not** from `PostToolUse`. So a JSON reply is read
+ * for that one field whatever the event, and plain text counts only for the two
+ * events that inject it.
+ *
+ * Pure and tested because both ways of being wrong are silent: a reader of
+ * `output` alone logs a tool hook's plain stdout as context the agent never
+ * saw, on every tool call, and a reader of plain text alone prints a JSON
+ * envelope and misses that it injected anything.
+ */
+export function hookInjection(ev: {
+  hook_event?: unknown;
+  output?: unknown;
+}): string | null {
+  const output = typeof ev.output === "string" ? ev.output.trim() : "";
+  if (!output) return null;
+  let reply: unknown = null;
+  if (output.startsWith("{")) {
+    try {
+      reply = JSON.parse(output);
+    } catch {
+      // Not JSON after all, so it is plain text and the event decides below.
+    }
+  }
+  if (isJsonObject(reply)) {
+    const specific = reply.hookSpecificOutput;
+    const context =
+      isJsonObject(specific) && typeof specific.additionalContext === "string"
+        ? specific.additionalContext.trim()
+        : "";
+    return context || null;
+  }
+  return ev.hook_event === "SessionStart" || ev.hook_event === "UserPromptSubmit"
+    ? output
+    : null;
+}
+
 /** How much of a refused command is kept. Long enough to name it, not to log it. */
 const DENIAL_COMMAND_CHARS = 60;
 
@@ -10018,7 +10065,27 @@ function handleStreamLine(
     // `task_notification` are now the source `runTasks.ts` reduces into the run
     // page's background-task panel, and these rows are the only record of them.
     // That the log feed drops the line is not evidence the row is unread.
-    if (ev.subtype !== "thinking_tokens") {
+    //
+    // The hook lifecycle is the other exception, and it is a volume one too.
+    // `--include-hook-events` makes the CLI report every hook it runs as a
+    // `hook_started` and a `hook_response`, and this install's catch-all
+    // `PostToolUse` hook fires on every tool call: two rows per call, against
+    // roughly one per call the log holds today, so the median cycle's log would
+    // have grown 2.7-fold with rows the feed never draws — rows that also take
+    // the live tile's fifty-event tail and the run page's replay budget from
+    // the lines that are drawn. What is dropped is a hook that succeeded and
+    // printed nothing, and the `hook_started` before every response, which
+    // carries nothing its response does not. Anything a hook printed is kept,
+    // not only what `hookInjection` reads as context: a `PreToolUse` deny or a
+    // `PostToolUse` block is a JSON reply with no `additionalContext` in it,
+    // and it is the one record of a guard hook such as `readGuard` firing.
+    const hookNoise =
+      ev.subtype === "hook_started" ||
+      ev.subtype === "hook_progress" ||
+      (ev.subtype === "hook_response" &&
+        ev.outcome === "success" &&
+        (typeof ev.output !== "string" || ev.output.trim() === ""));
+    if (ev.subtype !== "thinking_tokens" && !hookNoise) {
       emit({
         runId,
         ts: Date.now(),
@@ -10038,17 +10105,18 @@ function handleStreamLine(
     // record: `iteration` holds the prompt, and hook output is the half of what
     // the session opened with that the prompt does not contain.
     //
-    // Only the two events whose stdout the CLI documents as reaching the model.
-    // A `PreToolUse` hook that merely returns an exit code fires on every tool
-    // call, and logging those would bury the run's own output.
+    // Any event, because a tool hook injects too: `hookInjection` reads what
+    // reached the model rather than what the hook printed, so a `PostToolUse`
+    // hook that fires on every tool call and prints nothing the agent sees —
+    // the case that used to justify naming two events here — still logs
+    // nothing.
     if (ev.subtype === "hook_response") {
-      const injects =
-        ev.hook_event === "SessionStart" || ev.hook_event === "UserPromptSubmit";
-      const output = typeof ev.output === "string" ? ev.output.trim() : "";
-      if (injects && output) {
+      const injected = hookInjection(ev);
+      if (injected) {
         // Under `MAX_LOG_CHARS`, so this is the only cut and the line does not
         // arrive already shortened for storage and then shortened again.
-        const shown = output.length > 2000 ? `${output.slice(0, 2000)}…` : output;
+        const shown =
+          injected.length > 2000 ? `${injected.slice(0, 2000)}…` : injected;
         log(
           runId,
           `${String(ev.hook_name ?? ev.hook_event)} hook added this to the agent's context:\n${shown}`,

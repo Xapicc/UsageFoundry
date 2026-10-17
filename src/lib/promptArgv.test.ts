@@ -57,6 +57,7 @@ const OPTIONS = {
   "-p": "boolean", "--print": "boolean",
   "--output-format": "required",
   "--verbose": "boolean",
+  "--include-hook-events": "boolean",
   "--model": "required",
   "--permission-mode": "required",
   "--forward-subagent-text": "boolean",

@@ -1366,7 +1366,18 @@ export function buildArgs(opts: {
   // means nothing on this argv.
   const claudeTaskboard =
     opts.taskboard && "mcpConfigPath" in opts.taskboard ? opts.taskboard : null;
-  const args = ["-p", "--output-format", "stream-json", "--verbose"];
+  // `--include-hook-events` on every cycle, not the opening one: without it the
+  // CLI reports `SessionStart`'s hooks and no other, so a hook that injected
+  // context on a tool call — or on the prompt — reached the agent and left
+  // nothing on the run's log. `handleStreamLine` keeps only the responses that
+  // injected something or failed, which is what makes the flag affordable.
+  const args = [
+    "-p",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--include-hook-events",
+  ];
   if (opts.model) args.push("--model", opts.model);
   if (opts.permissionMode) args.push("--permission-mode", opts.permissionMode);
   if (opts.forwardSubAgentText) args.push("--forward-subagent-text");
