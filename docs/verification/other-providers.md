@@ -246,6 +246,19 @@
 
 ## Not yet verified by hand
 
+- **No Codex cycle has been killed mid-flight and read back (2026-10-17).** A
+  cycle that ends without `turn.completed` banks its rollout's final
+  `token_count` total into `spent_tokens_est`, and a restart reads the thread's
+  file from `active_started_at` by each line's own timestamp. Both are covered
+  against a stubbed child and a hand-written rollout, not a real `codex`. Open:
+  whether the CLI has flushed its last `token_count` by the time a `SIGINT` or
+  `SIGTERM` ends it, how far a killed cycle's file lags the tokens it billed,
+  and whether a resumed thread's lines carry timestamps after the spawn.
+  Settles with a two-cycle Codex run in a scratch `CODEX_HOME`, the second cycle
+  killed with `kill -INT` mid-request: compare `spent_tokens_est` on the row
+  with the last `token_count` in the rollout and with the usage the CLI's own
+  account shows for it.
+
 - **No local cycle has been seen compacting under a sign-in window
   (2026-09-28).** The threshold is read off `/context`, not off a compaction,
   and whether Splash answers the summary request at ~98,000 tokens is open. A
