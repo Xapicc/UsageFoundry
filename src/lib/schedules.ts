@@ -407,6 +407,11 @@ export interface ScheduleDecision {
 export interface ScheduleContext {
   spec: ScheduleSpec;
   timeZone: string;
+  /**
+   * The install-wide hold on new work. A schedule's own pause never reaches the
+   * decision: `activeSchedules` filters those rows out in SQL and `pauseSchedule`
+   * moves the cursor on resume.
+   */
   paused: boolean;
   /** `WorkflowSchedule.cursorAt`. */
   lastFireAt: number | null;
@@ -416,6 +421,22 @@ export interface ScheduleContext {
    */
   liveCount: number;
   now: number;
+}
+
+/** The occurrences after `after` up to `now`, oldest first, and the one after those. */
+function windowsThrough(
+  spec: ScheduleSpec,
+  timeZone: string,
+  after: number,
+  now: number,
+): { passed: number[]; next: number } {
+  const passed: number[] = [];
+  let at = nextOccurrence(spec, timeZone, after);
+  while (at <= now && passed.length < MAX_CATCHUP) {
+    passed.push(at);
+    at = nextOccurrence(spec, timeZone, at);
+  }
+  return { passed, next: at };
 }
 
 /**
@@ -435,11 +456,18 @@ export interface ScheduleContext {
 export function decideSchedule(ctx: ScheduleContext): ScheduleDecision {
   const { spec, timeZone, now } = ctx;
 
+  // Every window that passes under the hold is missed, the newest included, and
+  // the cursor moves past it. Left behind, the cursor handed the newest window
+  // to `FIRE_GRACE_MS` on the tick after the hold was lifted, which read it as a
+  // tick that ran late and started it: an unattended instance recorded "started"
+  // on time under a card that said it would be recorded as missed.
   if (ctx.paused) {
+    const passed =
+      ctx.lastFireAt === null ? [] : windowsThrough(spec, timeZone, ctx.lastFireAt, now).passed;
     return {
       action: { kind: "paused" },
-      missed: [],
-      cursorAt: ctx.lastFireAt,
+      missed: passed,
+      cursorAt: passed.length > 0 ? passed[passed.length - 1] : ctx.lastFireAt,
       // Still answered, so the page can say what resuming would mean.
       nextFireAt: nextOccurrence(spec, timeZone, now),
     };
@@ -458,12 +486,7 @@ export function decideSchedule(ctx: ScheduleContext): ScheduleDecision {
     };
   }
 
-  const passed: number[] = [];
-  let at = nextOccurrence(spec, timeZone, ctx.lastFireAt);
-  while (at <= now && passed.length < MAX_CATCHUP) {
-    passed.push(at);
-    at = nextOccurrence(spec, timeZone, at);
-  }
+  const { passed, next: at } = windowsThrough(spec, timeZone, ctx.lastFireAt, now);
 
   if (passed.length === 0) {
     return {
@@ -779,21 +802,6 @@ function claimWindow(schedule: WorkflowSchedule, cursorAt: number): boolean {
   );
 }
 
-/**
- * Put the cursor back to `cursorAt`, which is where `claimWindow` found it or
- * the newest window the fire already recorded as missed. Conditional for the
- * same reason `claimWindow` is: an edit writes its own cursor, and this must
- * not overwrite one.
- */
-function releaseWindow(schedule: WorkflowSchedule, cursorAt: number | null): void {
-  db()
-    .prepare(
-      `UPDATE workflow_schedules SET cursor_at=?
-        WHERE id=? AND paused=0 AND updated_at=?`,
-    )
-    .run(cursorAt, schedule.id, schedule.updatedAt);
-}
-
 /** The row still exists, is still running and has not been edited since it was read. */
 function isUnchangedSince(schedule: WorkflowSchedule): boolean {
   const current = getSchedule(schedule.workflowId);
@@ -856,9 +864,17 @@ function recordOutcome(
   return true;
 }
 
-function missedSentence(missed: number[], timeZone: string): string {
+function missedSentence(missed: number[], timeZone: string, held = false): string {
   const last = missed[missed.length - 1];
   const when = fmtDateTimeInZone(last, timeZone);
+  if (held) {
+    return missed.length === 1
+      ? `Missed the occurrence at ${when} (${timeZone}). New work was held, so it ` +
+          "was not started, and it is not made up once the hold is lifted."
+      : `Missed ${missed.length} occurrences, the last at ${when} (${timeZone}). New ` +
+          "work was held, so none of them was started, and none is made up once the " +
+          "hold is lifted.";
+  }
   return missed.length === 1
     ? `Missed the occurrence at ${when} (${timeZone}). Not started late — a ` +
         "server coming back up does not press Run for a window that has passed."
@@ -1005,7 +1021,8 @@ function overlapCount(workflow: Workflow): number {
  * is in, and a fire the operator overtook starts nothing and records nothing.
  * That loses the window rather than retrying it, which is the direction every
  * other rule here takes. The install-wide hold is the same kind of press and
- * is asked again at the same point, except that it gives the cursor back.
+ * is asked again at the same point, except that the window it overtakes is
+ * recorded as missed.
  */
 async function fireIfDue(schedule: WorkflowSchedule, now: number): Promise<void> {
   const workflow = getWorkflow(schedule.workflowId);
@@ -1013,24 +1030,26 @@ async function fireIfDue(schedule: WorkflowSchedule, now: number): Promise<void>
   // concurrent delete removed between the read and here. Nothing to say.
   if (!workflow) return;
 
+  const held = newWorkPaused();
   const decision = decideSchedule({
     spec: schedule.spec,
     timeZone: schedule.timeZone,
     // The install-wide hold reaches this route through the argument that
     // already means "do not fire, and do not make the window up afterwards" —
-    // the cursor stays put, so clearing the hold records the windows that
-    // passed as missed rather than pressing Run for each of them. A schedule's
-    // own pause is not this argument: `activeSchedules` filters those out in
-    // SQL, and `claimWindow` below refuses one pressed since that read.
-    paused: newWorkPaused(),
+    // the windows that pass under it are recorded as missed on this tick and the
+    // cursor moves past them, so that lifting the hold cannot hand one to the
+    // grace as a late tick. A schedule's own pause is not this argument:
+    // `activeSchedules` filters those out in SQL, and `claimWindow` below
+    // refuses one pressed since that read.
+    paused: held,
     lastFireAt: schedule.cursorAt,
     liveCount: overlapCount(workflow),
     now,
   });
 
-  // An idle tick or the install-wide hold: nothing was decided about, so there
-  // is no window to claim and nothing to record. Every answer that records or
-  // fires moves the cursor, since `nextOccurrence` is strictly after it.
+  // An idle tick, or a hold with no window passed: nothing was decided about, so
+  // there is no window to claim and nothing to record. Every answer that records
+  // or fires moves the cursor, since `nextOccurrence` is strictly after it.
   if (decision.cursorAt === null || decision.cursorAt === schedule.cursorAt) return;
   if (!claimWindow(schedule, decision.cursorAt)) return;
 
@@ -1038,7 +1057,7 @@ async function fireIfDue(schedule: WorkflowSchedule, now: number): Promise<void>
     recordOutcome(
       schedule,
       "missed",
-      missedSentence(decision.missed, schedule.timeZone),
+      missedSentence(decision.missed, schedule.timeZone, held),
       decision.missed[decision.missed.length - 1],
       null,
       now,
@@ -1071,12 +1090,19 @@ async function fireIfDue(schedule: WorkflowSchedule, now: number): Promise<void>
   // instance's rows under a hold by design — the run would sit queued and be
   // promoted the moment the hold is lifted, a window made up after the hold
   // with the card saying it started on time. Unlike a Pause, the hold promises
-  // the window is recorded as missed, which needs the cursor back behind it:
-  // `claimWindow` already moved it. Back to the newest window recorded above,
-  // not to where it started, or the next decision records those twice. Nothing
-  // is awaited between this read of the hold and the start below.
+  // the window is recorded as missed, so it is recorded here and the cursor
+  // `claimWindow` moved stays on it. Putting the cursor back behind the window
+  // would hand it to the grace on the tick after the hold is lifted. Nothing is
+  // awaited between this read of the hold and the start below.
   if (newWorkPaused()) {
-    releaseWindow(schedule, decision.missed[decision.missed.length - 1] ?? schedule.cursorAt);
+    recordOutcome(
+      schedule,
+      "missed",
+      missedSentence([action.fireAt], schedule.timeZone, true),
+      action.fireAt,
+      null,
+      now,
+    );
     return;
   }
 

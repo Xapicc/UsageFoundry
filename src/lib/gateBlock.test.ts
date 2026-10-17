@@ -35,6 +35,8 @@ import { passMemberId } from "./passIds";
 let root: string;
 let workflows: typeof import("./workflows");
 let dbMod: typeof import("./db");
+let orch: typeof import("./orchestrator");
+let settings: typeof import("./settings");
 
 before(async () => {
   root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-gate-block-")));
@@ -60,6 +62,8 @@ before(async () => {
 
   workflows = await import("./workflows");
   dbMod = await import("./db");
+  orch = await import("./orchestrator");
+  settings = await import("./settings");
 });
 
 after(() => {
@@ -464,5 +468,180 @@ describe("a loop's gate holds every pass", () => {
     for (let i = 0; i < 3; i += 1) workflows.advanceInstances();
     assert.equal(row(id, "L")!.status, "looping");
     assert.equal(row(id, passMemberId("L", 2, "g")), undefined, "no second pass while the first is held");
+  });
+});
+
+describe("a gate is not reached while the run in front of it is being redone", () => {
+  /**
+   * `R (run) -> G (gate) -> X (gate)`, with R already completed. X is a gate so
+   * that what is "released" is a column and nothing spawns.
+   */
+  function seedBehindARun(id: string): string {
+    seed(
+      id,
+      {
+        nodes: [{ id: "R", name: "Build", kind: "run" }, gate("G", "Look at the build"), gate("X", "Ship it")],
+        edges: [
+          { from: "R", to: "G", edge: "on-success", continueBranch: false },
+          { from: "G", to: "X", edge: "on-success", continueBranch: false },
+        ],
+      },
+      [
+        { id: "G", name: "Look at the build", kind: "gate" },
+        { id: "X", name: "Ship it", kind: "gate" },
+      ],
+    );
+    const db = dbMod.db();
+    db.prepare(
+      `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations, created_at, finished_at)
+       VALUES (?, ?, 'build', 'completed', '{"maxIterations":3}', 3, 1, ?, ?)`,
+    ).run(`run-${id}`, path.join(root, "workspace"), Date.now(), Date.now());
+    db.prepare(
+      `INSERT INTO workflow_instance_runs (instance_id, node_id, node_name, position, run_id)
+       VALUES (?, 'R', 'Build', 0, ?)`,
+    ).run(id, `run-${id}`);
+    return `run-${id}`;
+  }
+
+  /** What the instance page reads to offer the button: `isHeldGate`. */
+  function offersContinue(id: string, nodeId: string): boolean {
+    const block = workflows.getInstance(id)!.blocks.find((b) => b.nodeId === nodeId)!;
+    return block.kind === "gate" && block.status === "waiting" && block.heldAt !== null;
+  }
+
+  function assertRefused(id: string): void {
+    assert.equal(row(id, "G")!.held_at, null, "the gate is no longer held");
+    assert.equal(offersContinue(id, "G"), false, "so the page does not offer Continue");
+    const outcome = workflows.continueGate(id, "G");
+    assert.equal(outcome.ok, false);
+    if (outcome.ok) return;
+    assert.equal(outcome.status, 409);
+    assert.match(outcome.error, /has not reached “Look at the build”/);
+    assert.equal(row(id, "G")!.status, "waiting", "and the press changed nothing");
+    assert.equal(row(id, "X")!.held_at, null, "so what is behind the gate was not reached");
+  }
+
+  it("refuses Continue while the run is working again, and holds the gate afresh when it ends", () => {
+    const id = "redo";
+    const runId = seedBehindARun(id);
+    workflows.advanceInstances();
+    assert.notEqual(row(id, "G")!.held_at, null, "R completed, so G is held");
+
+    // A sentinel rather than the clock, for the once-guard's reason above: a
+    // second write inside one millisecond would otherwise read as no write.
+    dbMod.db().prepare("UPDATE workflow_instance_blocks SET held_at = 1234 WHERE instance_id=? AND node_id='G'").run(id);
+    dbMod.db().prepare("UPDATE runs SET status='queued', finished_at=NULL WHERE id=?").run(runId);
+    workflows.advanceInstances();
+    assertRefused(id);
+
+    dbMod.db().prepare("UPDATE runs SET status='completed', finished_at=?, iterations=2 WHERE id=?").run(Date.now(), runId);
+    workflows.advanceInstances();
+    const again = row(id, "G")!.held_at;
+    assert.notEqual(again, null, "the run ended again, so the gate is reached again");
+    assert.notEqual(again, 1234, "and by a write of its own, which is what tells a person");
+    assert.equal(workflows.continueGate(id, "G").ok, true);
+  });
+
+  it("does the same when the run is picked up through reopenRun", async () => {
+    const id = "reopen";
+    const runId = seedBehindARun(id);
+    workflows.advanceInstances();
+    assert.notEqual(row(id, "G")!.held_at, null);
+
+    // Held, so the run the pick-up queues is not promoted and spawns nothing.
+    settings.setNewWorkPaused(true);
+    try {
+      const outcome = orch.reopenRun(runId, { maxIterations: 3 });
+      assert.deepEqual(outcome, { ok: true });
+      assert.equal(orch.getRun(runId)!.status, "queued");
+      // Not an advance: nothing advances an instance when a run is queued, so
+      // the pick-up's own revive (`reviveBlockedBlocks`, reached in a later
+      // turn) is what takes the hold back while the redo is still running.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      assertRefused(id);
+
+      dbMod.db().prepare("UPDATE runs SET status='completed', finished_at=? WHERE id=?").run(Date.now(), runId);
+      workflows.advanceInstances();
+      assert.notEqual(row(id, "G")!.held_at, null, "reached again when the redo ends");
+    } finally {
+      settings.setNewWorkPaused(false);
+    }
+  });
+
+  it("leaves a gate held while the run in front of it is still done", () => {
+    const id = "steady";
+    seedBehindARun(id);
+    workflows.advanceInstances();
+    dbMod.db().prepare("UPDATE workflow_instance_blocks SET held_at = 1234 WHERE instance_id=? AND node_id='G'").run(id);
+    workflows.advanceInstances();
+    workflows.advanceInstances();
+    assert.equal(row(id, "G")!.held_at, 1234, "an unchanged predecessor leaves the once-guard alone");
+    assert.equal(workflows.continueGate(id, "G").ok, true);
+  });
+});
+
+describe("a loop pass's gate follows the member in front of it too", () => {
+  /** Pass 1 of a loop whose body is `r -> g`, as `stepPass` leaves it once `r` has finished. */
+  function seedPassBehindARun(id: string): { runId: string; held: string } {
+    const graph = {
+      nodes: [
+        { id: "L", name: "Keep at it", kind: "loop", maxPasses: 2, bodyNodeIds: ["r", "g"] },
+        { id: "r", name: "Build", kind: "run" },
+        gate("g", "Look each time"),
+      ],
+      edges: [
+        { from: "L", to: "r", edge: "repeats", continueBranch: false },
+        { from: "L", to: "g", edge: "repeats", continueBranch: false },
+        { from: "r", to: "g", edge: "on-success", continueBranch: false },
+      ],
+    };
+    seed(id, graph, [{ id: "L", name: "Keep at it", kind: "loop", status: "looping" }]);
+    const member = passMemberId("L", 1, "r");
+    const held = passMemberId("L", 1, "g");
+    // The run is a member of the pass and the gate behind it a ledger row of the
+    // pass; inserted rather than created, because creating `r` would spawn.
+    insertRun(id, member, "Build", "completed", 0, "L");
+    dbMod
+      .db()
+      .prepare(
+        `INSERT INTO workflow_instance_blocks (instance_id, node_id, node_name, position, kind, status)
+         VALUES (?, ?, 'Look each time', 101, 'gate', 'waiting')`,
+      )
+      .run(id, held);
+    return { runId: `run-${id}-${member}`, held };
+  }
+
+  it("withdraws the hold when that member is picked up again, and holds it afresh when it ends", () => {
+    const id = "pass-redo";
+    const { runId, held } = seedPassBehindARun(id);
+
+    workflows.advanceInstances();
+    assert.notEqual(row(id, held)!.held_at, null, "r completed, so the pass's gate is held");
+
+    dbMod.db().prepare("UPDATE workflow_instance_blocks SET held_at = 1234 WHERE instance_id=? AND node_id=?").run(id, held);
+    dbMod.db().prepare("UPDATE runs SET status='queued', finished_at=NULL WHERE id=?").run(runId);
+    workflows.advanceInstances();
+    assert.equal(row(id, held)!.held_at, null, "r is being redone, so the pass has not reached its gate");
+    const refused = workflows.continueGate(id, held);
+    assert.equal(refused.ok, false);
+    if (!refused.ok) assert.match(refused.error, /has not reached/);
+
+    dbMod.db().prepare("UPDATE runs SET status='completed', finished_at=? WHERE id=?").run(Date.now(), runId);
+    workflows.advanceInstances();
+    const again = row(id, held)!.held_at;
+    assert.notEqual(again, null);
+    assert.notEqual(again, 1234);
+  });
+
+  it("withdraws it at the pick-up itself, without waiting for an advance", () => {
+    const id = "pass-pick-up";
+    const { runId, held } = seedPassBehindARun(id);
+    workflows.advanceInstances();
+    assert.notEqual(row(id, held)!.held_at, null);
+
+    dbMod.db().prepare("UPDATE runs SET status='queued', finished_at=NULL WHERE id=?").run(runId);
+    workflows.reviveBlockedBlocks([runId]);
+    assert.equal(row(id, held)!.held_at, null);
+    assert.equal(row(id, passMemberId("L", 1, "g"))!.status, "waiting");
   });
 });

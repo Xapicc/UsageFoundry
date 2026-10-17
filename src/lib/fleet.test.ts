@@ -450,12 +450,22 @@ describe("the hold on new work", () => {
       .db()
       .prepare("SELECT last_code FROM workflow_schedules WHERE workflow_id='wf-sched'")
       .get() as { last_code: string | null };
-    assert.equal(held.last_code, null, "a held tick must decide nothing at all");
+    // The window is recorded as missed (it used to be left undecided, which let
+    // the first tick after the hold start it as a late one), and the tick never
+    // reaches the door below.
+    assert.equal(held.last_code, "missed", "a held tick must record the window and start nothing");
 
-    // Unheld, the same tick reaches the door and is refused there instead — this
-    // workflow sets no instance budget, which `scheduleRefusal` will not allow a
-    // schedule to press Run under. Nothing is started either way; what the two
-    // answers separate is a tick that never looked from one that did.
+    // The same window again, with the cursor back behind it: unheld, the tick
+    // reaches the door and is refused there instead — this workflow sets no
+    // instance budget, which `scheduleRefusal` will not allow a schedule to press
+    // Run under. Nothing is started either way; what the two answers separate is
+    // a tick that never looked from one that did.
+    schedules.putSchedule(
+      "wf-sched",
+      { kind: "everyHours", hours: 1, anchorAt: now - 60 * 60 * 1000 - 60_000 },
+      "UTC",
+      now - 60 * 60 * 1000 - 60_000,
+    );
     settings.setNewWorkPaused(false);
     await schedules.tickSchedules();
     const open = dbMod
