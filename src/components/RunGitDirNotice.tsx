@@ -27,12 +27,15 @@ import { Notice } from "./ui/Notice";
 const RUNS_WHEN: Record<GitDirCommandClassDTO, string> = {
   fsmonitor: "runs on git status, diff and blame",
   "hooks-path": "chooses the directory git runs hooks from",
+  "config-hook":
+    "defines a hook that git 2.54 and later runs on the event it names, beside .git/hooks",
   "attribute-driver":
     "runs on the files an attributes file assigns it to, on status, diff, log -p and commit",
   "external-diff": "runs on git diff",
   remote: "runs on fetch, pull, push, clone or submodule update",
   signing: "runs when a commit or tag is signed, or a signature is shown",
-  interactive: "runs when git pages output, opens an editor or starts a tool",
+  interactive:
+    "runs when git pages output, opens an editor, starts a tool, adds a trailer or sends mail",
   alias: "runs when you type that alias, and outranks your own of the same name",
   include: "pulls another file's settings into this repository's",
 };

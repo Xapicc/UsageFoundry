@@ -146,6 +146,19 @@ describe("one case per class of key that runs a command", () => {
     assertEachFound([["core.hookspath", "/tmp/elsewhere"]], "hooks-path");
   });
 
+  it("a hook defined in configuration, which git 2.54 and later runs", () => {
+    assertEachFound(
+      [
+        ["hook.lint.command", "sh -c evil"],
+        ["hook.lint.event", "pre-commit"],
+        ["hook.Some.Name.enabled", "true"],
+      ],
+      "config-hook",
+    );
+    // Not a hook of its own, so not one either.
+    assert.equal(commandClassOf("hook.command", "sh -c evil"), null);
+  });
+
   it("a filter, diff or merge driver an attributes file can name", () => {
     assertEachFound(
       [
@@ -213,9 +226,24 @@ describe("one case per class of key that runs a command", () => {
         ["mergetool.x.cmd", "sh -c evil"],
         ["browser.x.cmd", "sh -c evil"],
         ["man.x.cmd", "sh -c evil"],
+        // For a tool git knows, the path is the command it runs.
+        ["difftool.vimdiff.path", "/tmp/evil"],
+        ["mergetool.vimdiff.path", "/tmp/evil"],
+        ["browser.firefox.path", "/tmp/evil"],
+        ["man.woman.path", "/tmp/evil"],
+        ["trailer.x.cmd", "sh -c evil"],
+        ["trailer.x.command", "sh -c evil"],
+        ["sendemail.tocmd", "sh -c evil"],
+        ["sendemail.work.sendmailcmd", "sh -c evil"],
+        ["sendemail.smtpserver", "/tmp/evil"],
       ],
       "interactive",
     );
+    // Choosing a tool runs that tool's own `cmd` or `path`, already watched,
+    // or what is installed; a mail server's host name runs nothing.
+    assert.equal(commandClassOf("diff.tool", "vimdiff"), null);
+    assert.equal(commandClassOf("merge.tool", "vimdiff"), null);
+    assert.equal(commandClassOf("sendemail.smtpserver", "smtp.example.com"), null);
   });
 
   it("an alias, which outranks the operator's own of the same name", () => {

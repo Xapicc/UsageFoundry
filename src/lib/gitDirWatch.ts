@@ -115,10 +115,11 @@ function isExtUrl(value: string | null): boolean {
  *
  * Section and variable compare case-insensitively and the subsection exactly,
  * as git does; the subsection is everything between the first and last dot,
- * because a driver or URL name may itself contain dots. Three keys run a
+ * because a driver or URL name may itself contain dots. Four keys run a
  * command only for some values — a remote URL or `insteadOf` base of the
- * `ext::` transport, and a submodule `update` starting with `!` — and the rest
- * are on the list whatever they hold.
+ * `ext::` transport, a submodule `update` starting with `!`, and a
+ * `sendemail.smtpServer` that is an absolute path — and the rest are on the
+ * list whatever they hold.
  */
 export function commandClassOf(key: string, value: string | null): CommandClass | null {
   const first = key.indexOf(".");
@@ -179,7 +180,22 @@ export function commandClassOf(key: string, value: string | null): CommandClass 
     case "mergetool":
     case "browser":
     case "man":
-      return subsection !== null && variable === "cmd" ? "interactive" : null;
+      // `diff.tool` and `merge.tool` are not watched: choosing a tool runs its
+      // own `cmd` or `path`, watched here, or what the operator installed.
+      return subsection !== null && (variable === "cmd" || variable === "path")
+        ? "interactive"
+        : null;
+    case "trailer":
+      return subsection !== null && (variable === "cmd" || variable === "command")
+        ? "interactive"
+        : null;
+    case "sendemail":
+      if (["tocmd", "cccmd", "headercmd", "sendmailcmd"].includes(variable)) return "interactive";
+      return variable === "smtpserver" && value?.trimStart().startsWith("/") ? "interactive" : null;
+    case "hook":
+      // Every variable, not just `command` and `event`: all a named hook's
+      // section holds is what runs and when, and this app writes none of it.
+      return subsection !== null ? "config-hook" : null;
     case "alias":
       return "alias";
     case "include":

@@ -1714,6 +1714,7 @@ export interface RunDTO {
 export type GitDirCommandClassDTO =
   | "fsmonitor"
   | "hooks-path"
+  | "config-hook"
   | "attribute-driver"
   | "external-diff"
   | "remote"
