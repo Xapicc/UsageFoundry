@@ -2108,13 +2108,24 @@ export default function RunDetail({
               <Section title="Agent work">
                 {/* A Codex run has nothing this split is made of: its session
                     is not a Claude Code transcript, it names no sub-agents, and
-                    it reports tokens without cost. Said in a sentence rather
-                    than left as an empty card, which would read as a run whose
-                    agents did nothing. */}
+                    it reports tokens without cost. A local run's transcripts are
+                    written under its own config directory, which the reading
+                    behind this card does not look in, and its model has no
+                    price. Each is said in a sentence rather than left as an
+                    empty card, which would read as a run whose agents did
+                    nothing. */}
                 {run.provider === "codex" ? (
                   <p className="max-w-[68ch] text-xs leading-snug text-ink-muted">
                     Not split for a Codex run: Codex reports tokens, not cost, and
                     names no sub-agents. It has used{" "}
+                    <span className="tabular-nums">{fmtTokens(run.spent_tokens)}</span>{" "}
+                    tokens over its finished work cycles.
+                  </p>
+                ) : run.provider === "local" ? (
+                  <p className="max-w-[68ch] text-xs leading-snug text-ink-muted">
+                    Not split for a local run: its turns are kept apart from the
+                    transcripts this split is read from, and its model has no
+                    price here. It has used{" "}
                     <span className="tabular-nums">{fmtTokens(run.spent_tokens)}</span>{" "}
                     tokens over its finished work cycles.
                   </p>
