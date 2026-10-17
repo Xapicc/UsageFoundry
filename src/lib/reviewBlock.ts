@@ -161,6 +161,12 @@ export type FixStep =
  * fix, which is what needs-frontier is for. One the operator stopped, or that
  * never started, is a person or this app intervening, and says nothing about
  * the model, so it is set aside unmarked.
+ *
+ * "Never started" is asked before "failed", because a run that fails before
+ * its first work cycle — the local provider signed out, the worktree not made,
+ * the Codex rules refused — ends `failed` with no model ever asked anything.
+ * `iterations` is `ranWorkCycle`'s count, refunded cycles included, so a fix
+ * whose only cycle worked and was then handed back still counts as having run.
  */
 export function afterFixRun(
   status: string,
@@ -169,7 +175,7 @@ export function afterFixRun(
   if ((status === "completed" || status === "needs-review") && iterations > 0) {
     return { kind: "review" };
   }
-  if (status === "failed") {
+  if (status === "failed" && iterations > 0) {
     return {
       kind: "set-aside",
       reason: "the fix run failed",

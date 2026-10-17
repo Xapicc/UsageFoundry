@@ -27,9 +27,11 @@ import { after, before, beforeEach, describe, it } from "node:test";
  * pushed every branch again would update each pull request's branch and then be
  * refused by GitHub, and nothing else would notice.
  *
- * The last is the halt: **a Stop that lands while a branch is in its verify
- * command pushes nothing**, though the page already reads Stopped and nothing
- * on the instance would say a push had happened.
+ * Then the halt: **a Stop that lands while a branch is in its verify command
+ * pushes nothing**, though the page already reads Stopped and nothing on the
+ * instance would say a push had happened. And last the shutdown: **a block
+ * reached during one is not claimed**, so it neither fails on a refusal nor
+ * releases the block behind it.
  *
  * The pure half — what the outcome of several branches reads as — is pinned in
  * `workflows.test.ts`. This is the join those cannot reach: a real instance
@@ -269,10 +271,16 @@ function branchScene(name: string, opts: { commits?: boolean } = {}): Branch {
   return { runId, repo, slot, branch, remote };
 }
 
-/** A workflow instance with a deliver block `ship` waiting behind the given builds. */
+/**
+ * A workflow instance with a deliver block `ship` waiting behind the given
+ * builds — and, with `afterOnFinish`, a run node `after` set to start once
+ * `ship` finishes either way, held as the `waiting` row `startWorkflow` writes
+ * for a node deferred behind a block.
+ */
 function instanceFor(
   name: string,
   builds: ReadonlyArray<{ id: string; branch: Branch }>,
+  opts: { afterOnFinish?: boolean } = {},
 ): string {
   const now = Date.now();
   const db = dbMod.db();
@@ -281,13 +289,19 @@ function instanceFor(
     nodes: [
       ...builds.map((b) => graphNode(b.id, `Build ${b.id}`, "run")),
       graphNode("ship", "Open the PR", "deliver"),
+      ...(opts.afterOnFinish ? [graphNode("after", "Then this", "run")] : []),
     ],
-    edges: builds.map((b) => ({
-      from: b.id,
-      to: "ship",
-      edge: "on-success",
-      continueBranch: false,
-    })),
+    edges: [
+      ...builds.map((b) => ({
+        from: b.id,
+        to: "ship",
+        edge: "on-success",
+        continueBranch: false,
+      })),
+      ...(opts.afterOnFinish
+        ? [{ from: "ship", to: "after", edge: "on-finish", continueBranch: false }]
+        : []),
+    ],
   });
   db.prepare(
     "INSERT INTO workflows (id, name, graph, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
@@ -306,6 +320,12 @@ function instanceFor(
     "INSERT INTO workflow_instance_blocks (instance_id, node_id, node_name, position, kind, status)" +
       " VALUES (?, 'ship', 'Open the PR', ?, 'deliver', 'waiting')",
   ).run(instanceId, builds.length);
+  if (opts.afterOnFinish) {
+    db.prepare(
+      "INSERT INTO workflow_instance_blocks (instance_id, node_id, node_name, position, kind, status)" +
+        " VALUES (?, 'after', 'Then this', ?, 'run', 'waiting')",
+    ).run(instanceId, builds.length + 1);
+  }
   return instanceId;
 }
 
@@ -625,5 +645,65 @@ while (!fs.existsSync(path.join(dir, "go"))) {
     assert.equal(land.deliveredPullRequest(s.runId), null);
     assert.match(ship().error ?? "", /^Stopped by the operator .* while it was delivering branches\.$/);
     assert.equal(workflows.getInstance(s.instanceId)!.status, "stopped");
+  });
+});
+
+/**
+ * A deliver block whose inputs are ready while the server is shutting down —
+ * a build that finished inside the shutdown's grace.
+ *
+ * Measured on 02f3b764 by bug hunt 3/6 (board task 083064a8): the claim asked
+ * nothing about the shutdown, so the block was claimed, `deliverRun` refused
+ * its branch with "Try again once it has restarted", the block settled
+ * `failed`, and `on-finish` — satisfied by a block that finished either way —
+ * created "Then this" during the shutdown. After the restart the retry that
+ * sentence asks for was refused with a 409, because a block behind it had
+ * started, and nothing had ever been pushed.
+ */
+describe("a deliver block reached while the server is shutting down", () => {
+  it("is left waiting, releases nothing behind it, and delivers once the flag is down", async () => {
+    const a = branchScene("shut-a");
+    const instanceId = instanceFor("shut", [{ id: "build", branch: a }], { afterOnFinish: true });
+    const flag = (globalThis as unknown as { __ufShutdown: { active: boolean } }).__ufShutdown;
+    const members = () => workflows.getInstance(instanceId)!.nodes.map((n) => n.nodeId);
+    const successor = () => workflows.blocksOf(instanceId).find((x) => x.nodeId === "after")!;
+
+    flag.active = true; // what `shutdownRuns` sets first
+    try {
+      workflows.advanceInstances();
+      // A claimed block reads `thinking` until `deliverRun` answers, so this
+      // waits out the refusal when the claim was made and is instant when not.
+      const deadline = Date.now() + 20_000;
+      while (shipBlock(instanceId).status === "thinking") {
+        if (Date.now() > deadline) assert.fail("the deliver block never left thinking");
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      assert.equal(
+        shipBlock(instanceId).status,
+        "waiting",
+        `the block was claimed during the shutdown: ${shipBlock(instanceId).error ?? ""}`,
+      );
+      assert.equal(
+        successor().status,
+        "waiting",
+        `the on-finish successor was decided behind a delivery nobody tried: ${successor().error ?? ""}`,
+      );
+      assert.deepEqual(members(), ["build"]);
+      assert.equal(remoteTip(a), null);
+      assert.deepEqual(opened, []);
+    } finally {
+      flag.active = false;
+    }
+
+    // What decides a `waiting` block across the restart is
+    // `reconcileBlocksOnBoot`'s rule, not this one. Here the advance that would
+    // follow a hold's lift or a surviving member's ending: the block was left
+    // intact, so it delivers, and only then is the successor decided — refused
+    // by name here, since this harness has no mount for a run node to start in.
+    const block = await settleBlock({ instanceId });
+    assert.equal(block.status, "emitted", block.error ?? "");
+    assert.equal(remoteTip(a), git(a.slot, "rev-parse", "HEAD").trim());
+    assert.deepEqual(opened, [{ head: a.branch, base: "main" }]);
+    assert.notEqual(successor().status, "waiting");
   });
 });
