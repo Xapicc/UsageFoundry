@@ -6147,8 +6147,8 @@ describe("hookInjection", () => {
     `${JSON.stringify({
       hookSpecificOutput: { hookEventName: event, additionalContext: text },
     })}\n`;
-  const injected = (event: string, output?: string) =>
-    hookInjection({ hook_event: event, output });
+  const injected = (event: string, stdout?: string) =>
+    hookInjection({ hook_event: event, stdout, outcome: "success" });
 
   it("reads a structured injection off any event", () => {
     assert.equal(
@@ -6180,6 +6180,39 @@ describe("hookInjection", () => {
     // A JSON reply that only steers is not plain text, whatever the event.
     assert.equal(injected("SessionStart", '{"continue":true}'), null);
     assert.equal(injected("PostToolUse", context("PostToolUse", "  ")), null);
+  });
+
+  // `output` is stderr and stdout together; only stdout reached the model,
+  // and nothing a failing hook printed did.
+  it("reads stdout alone, and only from a hook that succeeded", () => {
+    assert.equal(
+      hookInjection({
+        hook_event: "SessionStart",
+        output: "a warning\nBranch is main.\n",
+        stdout: "Branch is main.\n",
+        outcome: "success",
+      }),
+      "Branch is main.",
+    );
+    const reply = context("PostToolUse", "Run the tests.");
+    assert.equal(
+      hookInjection({
+        hook_event: "PostToolUse",
+        output: `${reply}a warning\n`,
+        stdout: reply,
+        outcome: "success",
+      }),
+      "Run the tests.",
+    );
+    assert.equal(
+      hookInjection({
+        hook_event: "SessionStart",
+        output: "Branch is main.\n",
+        stdout: "Branch is main.\n",
+        outcome: "error",
+      }),
+      null,
+    );
   });
 
   it("reads a brace that is not JSON as plain text", () => {

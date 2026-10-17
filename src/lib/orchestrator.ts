@@ -9107,25 +9107,34 @@ export function contextAfterPrune(
  * What a hook put into the agent's context, off the `hook_response` the CLI
  * reports it with — or null when it put nothing there.
  *
- * `output` is the hook's stdout verbatim, and which part of it reaches the
- * model depends on the event, measured against the pinned CLI rather than read
- * off its docs (`docs/verification/run-lifecycle-hooks-and-endings.md`): a JSON
- * object's `hookSpecificOutput.additionalContext` reached it from `PreToolUse`
- * and `PostToolUse` alike, and plain text reached it from `SessionStart` and
- * `UserPromptSubmit` and did **not** from `PostToolUse`. So a JSON reply is read
- * for that one field whatever the event, and plain text counts only for the two
- * events that inject it.
+ * Measured against the pinned CLI rather than read off its docs
+ * (`docs/verification/run-lifecycle-hooks-and-endings.md`). Only `stdout`, and
+ * only from a hook whose `outcome` is `success`: `output` is stderr and stdout
+ * together, in arrival order, and neither a hook's stderr nor what a failing
+ * hook printed reached the model. Which part of that stdout reaches it depends
+ * on the event: a JSON object's `hookSpecificOutput.additionalContext` reached
+ * it from `PreToolUse` and `PostToolUse` alike, and plain text reached it from
+ * `SessionStart` and `UserPromptSubmit` and did **not** from `PostToolUse`. So a
+ * JSON reply is read for that one field whatever the event, and plain text
+ * counts only for the two events that inject it.
  *
- * Pure and tested because both ways of being wrong are silent: a reader of
- * `output` alone logs a tool hook's plain stdout as context the agent never
- * saw, on every tool call, and a reader of plain text alone prints a JSON
- * envelope and misses that it injected anything.
+ * Pure and tested because every way of being wrong is silent: a reader of
+ * `output` logs a hook's warnings as context, and breaks a JSON reply that has
+ * any stderr beside it into text that injects nothing; a reader of plain text
+ * alone prints a JSON envelope and misses that it injected anything.
  */
 export function hookInjection(ev: {
   hook_event?: unknown;
+  stdout?: unknown;
   output?: unknown;
+  outcome?: unknown;
 }): string | null {
-  const output = typeof ev.output === "string" ? ev.output.trim() : "";
+  if (ev.outcome !== undefined && ev.outcome !== "success") return null;
+  // `output` only where a reply carries no `stdout` at all, which the pinned
+  // CLI's schema never sends; it is what this read before `stdout` was found
+  // to be the part the CLI parses.
+  const printed = typeof ev.stdout === "string" ? ev.stdout : ev.output;
+  const output = typeof printed === "string" ? printed.trim() : "";
   if (!output) return null;
   let reply: unknown = null;
   if (output.startsWith("{")) {

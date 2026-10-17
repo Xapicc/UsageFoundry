@@ -18,10 +18,14 @@ Phase 0 and Phase 2 of `proposals/ContinuousImprovement/`, because
   both `SessionStart`, and none for the `UserPromptSubmit`, `PreToolUse` and
   `PostToolUse` hooks that ran. With it: one of each per hook per firing, for
   every event, `Stop` included; no `hook_progress` from hooks this short.
-  `output` and `stdout` both carry the hook's stdout verbatim. Logged per
-  request, what reached the model: a JSON `hookSpecificOutput.additionalContext`
-  from `PreToolUse` and from `PostToolUse`, plain stdout from `SessionStart`
-  and `UserPromptSubmit`, and **not** a `PostToolUse` hook's plain stdout.
+  `stdout` and `stderr` are each the hook's own stream, and `output` is both
+  together in arrival order. Logged per request, what reached the model: a
+  JSON `hookSpecificOutput.additionalContext` from `PreToolUse` and from
+  `PostToolUse`, plain stdout from `SessionStart` and `UserPromptSubmit`, and
+  **not** a `PostToolUse` hook's plain stdout, any hook's stderr, or the
+  stdout of a `SessionStart` hook that exited 1 (`outcome: "error"`). A JSON
+  reply with stderr beside it still injected, which a reader of `output`
+  would have missed.
   Under this container's own `settings.json` hooks (whose `winnow` binary is
   absent, so they print nothing but the `SessionStart` line) the same cycle went
   from 11 stdout lines to 19.
