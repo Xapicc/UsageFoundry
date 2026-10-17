@@ -45,6 +45,7 @@ import {
   isShuttingDown,
   probeIsolation,
   promoteQueued,
+  refundedCyclesOf,
   refundedCyclesSql,
   releaseDependents,
   restartClosedSql,
@@ -9304,7 +9305,7 @@ async function driveReviewItem(
       run = getRun(fix.id);
     }
     if (!run || !open()) return;
-    const after = afterFixRun(run.status, run.iterations);
+    const after = afterFixRun(run.status, run.iterations + refundedCyclesOf(run));
     if (after.kind === "set-aside") {
       setAside(instanceId, blockId, originRunId, run.id, after.reason, after.needsFrontier, node.name);
       return;
