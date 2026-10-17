@@ -53,6 +53,8 @@ const { createRun, getRun, reopenRun, runEvents } =
 const { DEFAULT_CONTINUATION_PROMPT, DEFAULT_DONE_PUSHBACK_PROMPT } =
   require("./settings") as typeof import("./settings");
 const { transcriptPresence } = require("./transcripts") as typeof import("./transcripts");
+const { recordForkAttempt } = require("./contextPruning") as typeof import("./contextPruning");
+const { db } = require("./db") as typeof import("./db");
 
 // One project directory holding a transcript nobody resumes, so the tree is
 // a populated one: an empty tree is answered as unknown, which resumes.
@@ -68,8 +70,14 @@ fs.writeFileSync(path.join(projectDir, "unrelated-session.jsonl"), "");
  */
 const REFUSES = { refuses: true } as const;
 
+/**
+ * A reply with stream lines ahead of its text: the background-task events a
+ * cycle's own log is read back from.
+ */
+type Streamed = { text: string; stream: unknown[] };
+
 /** What each child the loop spawns says, in spawn order. */
-let replies: Array<string | typeof REFUSES> = [];
+let replies: Array<string | typeof REFUSES | Streamed> = [];
 /** What each child was asked to `--resume`, and the prompt it was handed. */
 let spawns: Array<{ resumed: string | null; prompt: string }> = [];
 /** Across tests, so no two runs ever share a fresh session's id. */
@@ -103,7 +111,7 @@ childProcess.spawn = (bin: string, args: readonly string[], options: unknown) =>
     kill: () => true,
   });
 
-  if (typeof reply !== "string") {
+  if (typeof reply !== "string" && "refuses" in reply) {
     const refusal = `No conversation found with session ID: ${resumed}`;
     stdout.on("end", () => {
       child.emit("exit", 1, null);
@@ -135,15 +143,17 @@ childProcess.spawn = (bin: string, args: readonly string[], options: unknown) =>
   // loop's to notice before the spawn, and a child that failed here would only
   // make the failing-first case fail for a different reason.
   const session = resumed ?? `session-${++sessionsOpened}`;
+  const text = typeof reply === "string" ? reply : reply.text;
   const events = [
     { type: "system", subtype: "init", session_id: session },
+    ...(typeof reply === "string" ? [] : reply.stream),
     {
       type: "assistant",
       session_id: session,
       message: {
         id: `msg_${spawns.length}`,
         role: "assistant",
-        content: [{ type: "text", text: reply }],
+        content: [{ type: "text", text }],
         usage: { input_tokens: 10, output_tokens: 5 },
       },
     },
@@ -151,7 +161,7 @@ childProcess.spawn = (bin: string, args: readonly string[], options: unknown) =>
       type: "result",
       subtype: "success",
       session_id: session,
-      result: reply,
+      result: text,
       num_turns: 1,
       total_cost_usd: 0.01,
       usage: { input_tokens: 10, output_tokens: 5 },
@@ -336,6 +346,150 @@ describe("a pick-up the CLI refuses to resume", () => {
     assert.equal(row.ending_code, "resume_failed");
     assert.ok(row.stop_reason?.includes(`claude --resume ${session}`), row.stop_reason ?? "");
     assert.equal(row.iterations, 2, "the attempt the retry replaced is not charged");
+  });
+});
+
+/**
+ * One finished cycle, then a pick-up whose first resume the CLI refuses and
+ * whose retry it accepts — and what the retry was handed is what is read.
+ *
+ * The pick-up's message is cleared at the spawn, on the premise that a spawned
+ * cycle delivered it. A zero-turn refusal delivered nothing, and the retry used
+ * to be sent the plain continuation: the operator's note never reached any
+ * model, and a run that had said DONE was billed a cycle that said it again.
+ */
+async function pickUpRefusedOnce(o: {
+  firstReply: string | Streamed;
+  note?: string;
+  /** The run adopted a fork at that boundary and never resumed it. */
+  forked?: boolean;
+}) {
+  replies = [o.firstReply, REFUSES, "Still working."];
+  spawns = [];
+  const run = createRun({
+    folder: "project",
+    mountId: null,
+    prompt: TASK,
+    budget: { maxIterations: 1 },
+    origin: "form",
+  });
+  const first = await settled(run.id);
+  assert.equal(first.status, "completed", first.stop_reason ?? "");
+  const session = first.session_id;
+  assert.ok(session, "the fixture's first cycle must leave a session to resume");
+  fs.writeFileSync(path.join(projectDir, `${session}.jsonl`), "");
+  let picked = session;
+  if (o.forked) {
+    // As the boundary leaves it: the fork's row with no verdict, and the run
+    // on the fork's id, which is what `startRun` recovers the rollback from.
+    picked = `${session}-fork`;
+    const fork = {
+      written: true,
+      newSessionId: picked,
+      out: path.join(projectDir, `${picked}.jsonl`),
+      refusedBy: null,
+      reason: null,
+      removedBytes: 24_029,
+      netBytes: 22_725,
+      suffixBytes: 122_902,
+      breakEvenTurns: 82.8,
+      coldAgeSeconds: 12.5,
+    };
+    assert.ok(recordForkAttempt(run.id, session, fork, 0, "boundary", null, null));
+    db().prepare("UPDATE runs SET session_id = ? WHERE id = ?").run(picked, run.id);
+  }
+
+  const reopened = reopenRun(run.id, { maxIterations: 2 }, o.note);
+  assert.ok(reopened.ok, JSON.stringify(reopened));
+  const row = await settled(run.id);
+  assert.deepEqual(
+    spawns.map((s) => s.resumed),
+    [null, picked, session],
+    o.forked
+      ? "the refused fork rolls back to the conversation it was cut from"
+      : "the refused resume is retried once, on the same session",
+  );
+  return { row, refused: spawns[1], retried: spawns[2] };
+}
+
+describe("a pick-up the CLI refuses once and then resumes", () => {
+  it("delivers the operator's note on the retry", async () => {
+    const note = "Also update the README.";
+    const { row, refused, retried } = await pickUpRefusedOnce({
+      firstReply: "Still working.",
+      note,
+    });
+
+    assert.equal(refused.prompt, note, "the refused attempt was handed the note");
+    assert.equal(retried.prompt, note, "the retry carries the note the refusal never delivered");
+    assert.equal(row.status, "completed", row.stop_reason ?? "");
+    assert.equal(row.iterations, 2, "the refused attempt is not charged");
+    assert.equal(row.follow_up, null, "delivered once, by the cycle that ran");
+  });
+
+  it("delivers the DONE pushback on the retry", async () => {
+    const { refused, retried } = await pickUpRefusedOnce({ firstReply: "All finished.\n\nDONE" });
+
+    assert.ok(refused.prompt.includes(DEFAULT_DONE_PUSHBACK_PROMPT), refused.prompt);
+    assert.ok(
+      retried.prompt.includes(DEFAULT_DONE_PUSHBACK_PROMPT),
+      `the retry was sent: ${retried.prompt}`,
+    );
+    assert.ok(!retried.prompt.startsWith(DEFAULT_CONTINUATION_PROMPT), retried.prompt);
+  });
+
+  it("delivers the operator's note on the conversation a refused fork rolls back to", async () => {
+    const note = "Also update the README.";
+    const { row, refused, retried } = await pickUpRefusedOnce({
+      firstReply: "Still working.",
+      note,
+      forked: true,
+    });
+
+    assert.equal(refused.prompt, note);
+    assert.equal(retried.prompt, note, "the rollback carries the note the refusal never delivered");
+    assert.equal(row.follow_up, null);
+  });
+
+  it("tells the retry which background tasks the last cycle left stopped", async () => {
+    // No note and no DONE, so the pick-up writes no follow-up and the note is
+    // read off the log at the spawn — where the refused attempt's own
+    // `iteration` event is the boundary by the time the retry asks.
+    const { refused, retried } = await pickUpRefusedOnce({
+      firstReply: {
+        text: "Still working.",
+        stream: [
+          {
+            type: "system",
+            subtype: "task_started",
+            task_id: "a1",
+            tool_use_id: "toolu_a1",
+            description: "bg sleeper",
+            subagent_type: "general-purpose",
+            is_backgrounded: true,
+            task_type: "local_agent",
+          },
+          {
+            type: "system",
+            subtype: "task_updated",
+            task_id: "a1",
+            patch: { status: "killed", end_time: 1 },
+          },
+          {
+            type: "system",
+            subtype: "task_notification",
+            task_id: "a1",
+            tool_use_id: "toolu_a1",
+            status: "stopped",
+            output_file: "/tmp/tasks/a1.output",
+            summary: "bg sleeper",
+          },
+        ],
+      },
+    });
+
+    assert.ok(refused.prompt.includes("bg sleeper"), refused.prompt);
+    assert.ok(retried.prompt.includes("bg sleeper"), `the retry was sent: ${retried.prompt}`);
   });
 });
 
