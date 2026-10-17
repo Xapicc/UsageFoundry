@@ -433,7 +433,14 @@ describe("what a cut is priced at, and over which turns", () => {
   const HOUR = 3_600_000;
   const cutAt = Date.now() - HOUR;
   const projectDir = path.join(TMP, "claude", "projects", "-workspace-money");
-  const turn = (sessionId: string, ts: number, cacheRead: number, cacheWrite1h: number) =>
+  const turn = (
+    sessionId: string,
+    ts: number,
+    cacheRead: number,
+    cacheWrite1h: number,
+    model = "claude-opus-5",
+    speed?: string,
+  ) =>
     JSON.stringify({
       type: "assistant",
       uuid: `u-${sessionId}-${ts}`,
@@ -443,13 +450,14 @@ describe("what a cut is priced at, and over which turns", () => {
       cwd: "/workspace/money",
       message: {
         id: `msg_${sessionId}_${ts}`,
-        model: "claude-opus-5",
+        model,
         usage: {
           input_tokens: 10,
           output_tokens: 200,
           cache_read_input_tokens: cacheRead,
           cache_creation_input_tokens: cacheWrite1h,
           cache_creation: { ephemeral_1h_input_tokens: cacheWrite1h },
+          ...(speed ? { speed } : {}),
         },
       },
     });
@@ -521,6 +529,62 @@ describe("what a cut is priced at, and over which turns", () => {
     assert.ok((named?.netUSD ?? 0) !== 0, "so the equality below is not zero against zero");
     assert.deepEqual(byRun.get("money-null"), named);
     assert.equal(byRun.get("money-pending")?.pricedPrunes, 1);
+  });
+
+  it("prices a fast-mode run's cuts at the fast rate, on both engines", async () => {
+    // Fast mode bills Claude Opus 5.5 at $8/$40 against the base $4/$20, and
+    // the speed is on every turn a cut is netted over. Priced off the model
+    // alone, every saving and every restart on a fast run read at half of what
+    // those turns cost.
+    const { pruneSavingsByRun } = await import("./contextPruning.js");
+    const opus = "claude-opus-5-5";
+    for (const speed of ["fast", undefined]) {
+      const id = `money-${speed ?? "base"}`;
+      await addRun(id, opus, `s-${id}`);
+      await addReceipt(id, opus);
+      writeSession(`s-${id}`, [
+        turn(`s-${id}`, cutAt + 60_000, 16_000, 90_000, opus, speed),
+        turn(`s-${id}`, cutAt + 120_000, 106_000, 0, opus, speed),
+        turn(`s-${id}`, cutAt + 180_000, 108_000, 0, opus, speed),
+      ]);
+      await addRun(`${id}-fk`, opus, `fk-${id}`);
+      await addFork(`${id}-fk`, `fk-${id}`, 150_000);
+      writeSession(`fk-${id}`, [
+        turn(`fk-${id}`, cutAt + 60_000, 16_000, 160_000, opus, speed),
+        turn(`fk-${id}`, cutAt + 120_000, 170_000, 0, opus, speed),
+      ]);
+    }
+
+    const byRun = await pruneSavingsByRun([
+      "money-fast",
+      "money-base",
+      "money-fast-fk",
+      "money-base-fk",
+    ]);
+    const receipt = byRun.get("money-fast");
+    // 50,000 tokens not re-read on each of three later turns, at Opus 5.5's
+    // 0.05x cache read of the $8 fast input — in the order `netReceipt`
+    // multiplies, so the comparison is exact.
+    assert.equal(receipt?.turnsAfter, 3);
+    assert.equal(receipt?.cacheSavedUSD, 50_000 * 3 * (8 / 1_000_000) * 0.05);
+    for (const engine of ["", "-fk"]) {
+      const fast = byRun.get(`money-fast${engine}`);
+      const base = byRun.get(`money-base${engine}`);
+      assert.ok((base?.cacheSavedUSD ?? 0) > 0 && (base?.invalidationUSD ?? 0) > 0);
+      assert.deepEqual(
+        {
+          saved: fast?.cacheSavedUSD,
+          restart: fast?.invalidationUSD,
+          net: fast?.netUSD,
+        },
+        {
+          saved: 2 * (base?.cacheSavedUSD ?? 0),
+          restart: 2 * (base?.invalidationUSD ?? 0),
+          net: 2 * (base?.netUSD ?? 0),
+        },
+        `engine${engine || " in place"}`,
+      );
+    }
   });
 
   it("counts only the turns that billed something as turns the cut saved on", async () => {

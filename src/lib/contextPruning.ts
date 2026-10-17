@@ -3964,6 +3964,11 @@ export interface NettableCut {
    * replace it with the model the resume billed at — see `atResumeModel`.
    */
   model: string | null;
+  /**
+   * The `speed` the resume billed at, set beside `model` by `atResumeModel`.
+   * Absent until a turn has followed: no column records a run's speed.
+   */
+  speed?: string;
 }
 
 /**
@@ -4303,7 +4308,7 @@ function resumeWriteOf(e: UsageEntry): ResumeWrite {
 }
 
 /**
- * The cut as it is priced: at the model its resume actually billed at.
+ * The cut as it is priced: at the model and speed its resume actually billed at.
  *
  * A cut's own `model` is `runs.model`, and that column is NULL for every run
  * started on Claude Code's own default — the stock install, where
@@ -4313,9 +4318,13 @@ function resumeWriteOf(e: UsageEntry): ResumeWrite {
  * with a price, and the run page blamed the price table. The first billed turn
  * is the one the invalidation is read off, so its model is the rate; the
  * run's column stands in only until a turn has followed.
+ *
+ * The speed comes with it because fast mode replaces the model's whole row —
+ * Claude Opus 5.5 at $8 input against $4 — and a fast run's cuts priced at the
+ * base row read every saving and every restart at half what those turns cost.
  */
 function atResumeModel(cut: NettableCut, resume: UsageEntry | null): NettableCut {
-  return resume ? { ...cut, model: resume.model } : cut;
+  return resume ? { ...cut, model: resume.model, speed: resume.speed } : cut;
 }
 
 /** The clean boundaries in a window, newest last. */
@@ -4422,14 +4431,14 @@ export function netReceipt(
   resumeWrite: ResumeWrite | null = null,
   control: ResumeControl | null = null,
 ): PruneNet {
-  // Priced at `row.model`, which `atResumeModel` has set to the model the
-  // resume billed at wherever one has, and `at` is the receipt's own
+  // Priced at `row.model` and `row.speed`, which `atResumeModel` has set to
+  // what the resume billed at wherever one has, and `at` is the receipt's own
   // timestamp rather than now — `byAgent.counterfactualUSD`'s rule: a rate
   // looked up at read time prices last week's prune at this week's list.
   // `resolveFlatPrice`: this values a *difference in tokens* over turns whose
   // prompts it never sees, so a model priced by prompt length has no rate to
   // read here and is reported unpriced rather than at a tier nothing chose.
-  const price = resolveFlatPrice(row.model ?? undefined, { at: row.ts });
+  const price = resolveFlatPrice(row.model ?? undefined, { at: row.ts, speed: row.speed });
   if (!price) {
     return {
       turnsAfter,
