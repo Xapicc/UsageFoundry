@@ -40,6 +40,8 @@ import {
   type LoopBoardConditionDTO,
   type LoopBoardThresholdDTO,
   RUN_PROVIDERS,
+  RUN_PROVIDER_LABEL,
+  blockReportsNoCost,
   type RunProviderDTO,
   type TaskPriorityDTO,
   type TaskStatusDTO,
@@ -243,6 +245,9 @@ export interface WorkflowNode {
    * from anything a model emits, and it never widens the workflow-wide limit —
    * `evaluateInstanceBudget` does not read it, and that guard still halts the
    * whole instance at every member's cycle boundary whatever this says.
+   *
+   * Refused over a section holding a run whose provider reports no cost, which
+   * this could never count — see `loopBodyRefusal`.
    */
   maxLoopCostUSD: number | null;
   /**
@@ -2176,6 +2181,29 @@ export function commandVerdictRefusal(graph: WorkflowGraph): string | null {
 }
 
 /**
+ * The blocks whose runs no dollar limit can see, in graph order.
+ *
+ * `sumMemberSpend` skips every run on a provider that reports no cost, so a
+ * dollar figure over these blocks is $0 however much they spend. One list for a
+ * loop's cap and a schedule's bound, so the two refusals cannot disagree about
+ * which blocks a dollar limit is blind to.
+ */
+export function blocksReportingNoCost(
+  nodes: readonly WorkflowNode[],
+): WorkflowNode[] {
+  return nodes.filter(blockReportsNoCost);
+}
+
+/** "“A” runs on Codex", or what an orchestrator block's runs go to. */
+export function reportsNoCostClause(node: WorkflowNode): string {
+  const provider =
+    node.provider === "local" ? "the local model" : RUN_PROVIDER_LABEL[node.provider ?? "claude"];
+  return node.kind === "orchestrator"
+    ? `“${node.name}” sends its runs to ${provider}`
+    : `“${node.name}” runs on ${provider}`;
+}
+
+/**
  * The blocks one loop repeats, in the order its pass will create them.
  *
  * Empty for a loop that repeats its own task, which is every loop saved before
@@ -2481,6 +2509,29 @@ function loopBodyRefusal(
           "guards work directly in the folder instead."
         );
       }
+    }
+
+    // A spending cap over a run it cannot see. `loopSpend` adds up what each
+    // pass reported, so a member on a provider that reports no cost is $0 to
+    // the cap for every pass and the loop runs to `maxPasses` under a block
+    // that says it stops at a figure. Any such member, not only a section of
+    // nothing else: the members that do report can stay under the cap while
+    // that one spends. Refused rather than flagged per pass, because here is
+    // where the person who can take the cap off is pressing Save, and the pass
+    // cap is still there to terminate the loop when they do.
+    const cap = loop.maxLoopCostUSD;
+    const blind =
+      cap === null
+        ? undefined
+        : blocksReportingNoCost(bodyOf(loop).map((id) => byId.get(id)!))[0];
+    if (cap !== null && blind) {
+      return (
+        `“${loop.name}” stops once its passes have spent $${cap.toFixed(2)}, ` +
+        `but ${reportsNoCostClause(blind)}, ` +
+        "which reports no cost — so nothing spent there counts towards that " +
+        `limit. Take the spending limit off and let the pass limit bound the ` +
+        `loop, or run “${blind.name}” on Claude.`
+      );
     }
   }
 

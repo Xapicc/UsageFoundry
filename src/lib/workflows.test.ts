@@ -73,6 +73,8 @@ import {
   type WorkflowFolder,
 } from "./workflowGraph";
 import { releasableRuns, topologicalOrder, type RunStatus } from "./orchestrator";
+import { evaluateInstanceBudget } from "./budget";
+import { buildSnapshot } from "./windows";
 import { readTaskLinks } from "./tasks";
 import type { QueueStatus } from "./mergeQueue";
 import {
@@ -2787,6 +2789,50 @@ describe("normalizeWorkflowInput — loop blocks", () => {
     assert.equal(v.graph.nodes[0].kind, "loop");
     assert.equal(v.graph.nodes[0].maxPasses, 3);
     assert.equal(v.graph.nodes[0].maxLoopCostUSD, 12.5);
+  });
+
+  it("refuses a spending cap over a section whose runs report no cost, and names the block", () => {
+    // `loopSpend` adds up what each pass's runs reported, and a Codex or local
+    // run reports nothing — `sumMemberSpend` skips it — so a cap over Codex
+    // passes compared $0 with its limit after every pass, and the loop ran to
+    // `maxPasses` under a block that said it would stop at a figure. Refused at
+    // save rather than flagged per pass, because the section is known here and
+    // the person who can take the cap off is the one pressing Save.
+    const section = (members: unknown[], extra: Record<string, unknown> = {}) =>
+      graph(
+        [repeater("l", { maxLoopCostUSD: 5, ...extra }), ...members, merger("lm")],
+        [
+          ...members.map((m) => repeats("l", (m as { id: string }).id)),
+          ...members.map((m) => edge((m as { id: string }).id, "lm")),
+        ],
+      );
+
+    const codex = error(section([node("la", { provider: "codex" })]));
+    assert.match(codex, /“L”/);
+    assert.match(codex, /“LA”/);
+    assert.match(codex, /reports no cost/);
+
+    // Any member the cap cannot see, not only a section of nothing else: what
+    // the Claude member reports can stay under the cap for every pass while
+    // the Codex one spends without bound.
+    assert.match(
+      error(section([node("la"), node("lb", { provider: "local" })])),
+      /“LB”/,
+    );
+    // An orchestrator member's deciding turn reports; the runs it emits do not.
+    assert.match(
+      error(section([decider("ld", { provider: "codex" })])),
+      /“LD”/,
+    );
+
+    // The pass cap alone still bounds the same section, and a section the cap
+    // can see keeps its cap.
+    assert.equal(
+      value(section([node("la", { provider: "codex" })], { maxLoopCostUSD: null }))
+        .graph.nodes[0].maxLoopCostUSD,
+      null,
+    );
+    assert.equal(value(section([node("la")])).graph.nodes[0].maxLoopCostUSD, 5);
   });
 
   it("refuses a loop with no pass cap", () => {
@@ -5520,7 +5566,7 @@ describe("blockTurnSpend — a turn's cost, measured apart from estimated", () =
  * exists to prevent. Both typecheck and neither shows on the page.
  */
 describe("addBlockSpend — which figure a block's columns may reach", () => {
-  const noMembers = { spentUSD: 0, spentGuardUSD: 0, subjects: 0, unmeasured: 0 };
+  const noMembers = { spentUSD: 0, spentGuardUSD: 0, subjects: 0, unmeasured: 0, unmetered: 0 };
 
   it("puts a killed turn's estimate in the guard's figure and not the shown one", () => {
     const spend = addBlockSpend(noMembers, {
@@ -5552,7 +5598,7 @@ describe("addBlockSpend — which figure a block's columns may reach", () => {
 
   it("adds to what the members already spent rather than replacing it", () => {
     const spend = addBlockSpend(
-      { spentUSD: 2, spentGuardUSD: 3, subjects: 4, unmeasured: 1 },
+      { spentUSD: 2, spentGuardUSD: 3, subjects: 4, unmeasured: 1, unmetered: 1 },
       { spent: 1, est: 0.5, unreported: 2, paying: 3 },
     );
     assert.deepEqual(spend, {
@@ -5560,6 +5606,7 @@ describe("addBlockSpend — which figure a block's columns may reach", () => {
       spentGuardUSD: 4.5,
       subjects: 7,
       unmeasured: 3,
+      unmetered: 1,
     });
   });
 });
@@ -5611,6 +5658,41 @@ describe("sumMemberSpend — a member whose provider reports no cost", () => {
     assert.equal(spend.spentUSD, 1.5);
     assert.equal(spend.spentGuardUSD, 1.75, "its estimate still reaches the guard");
     assert.equal(spend.unmeasured, 0);
+  });
+
+  it("hands the guard what it skipped, so a dollar limit over Codex members is not passed in silence", () => {
+    // The skip is right for both figures and was wrong for the guard: the guard
+    // read `spentGuardUSD` alone, so an all-Codex press of Run compared $0
+    // with its limit at every boundary and admitted every block. The count has
+    // to survive `addBlockSpend` — which is the shape `instanceSpend` hands
+    // `guardInstance` — and a killed block turn must not join it, since its
+    // estimate *is* in the guard's figure.
+    const spend = addBlockSpend(
+      sumMemberSpend([member("codex", 0), member("codex", 0), member("local", 0)]),
+      { spent: 0, est: 0.2, unreported: 1, paying: 1 },
+    );
+    const snapshot = buildSnapshot(
+      [],
+      {
+        sessionCostLimit: null,
+        weeklyCostLimit: null,
+        sessionTokenLimit: null,
+        weeklyTokenLimit: null,
+        weeklyAnchor: null,
+      },
+      Date.UTC(2026, 9, 16, 12),
+    );
+    const verdict = evaluateInstanceBudget(
+      { maxInstanceCostUSD: 0.5, maxSessionFraction: null, maxWeeklyFraction: null },
+      snapshot,
+      spend,
+    );
+    assert.notEqual(
+      verdict.allowed,
+      true,
+      "a $0.50 instance limit admits every further block of an all-Codex press of Run",
+    );
+    assert.match(verdict.allowed ? "" : verdict.reason, /3 of its runs/);
   });
 });
 

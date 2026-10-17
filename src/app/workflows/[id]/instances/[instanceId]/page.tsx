@@ -1290,6 +1290,8 @@ export default function WorkflowInstancePage() {
     budget.maxInstanceCostUSD === null &&
     budget.maxSessionFraction === null &&
     budget.maxWeeklyFraction === null;
+  const nothingReported =
+    instance.spentSubjects > 0 && instance.spentUnmeasured === instance.spentSubjects;
 
   /**
    * What each kind of block is, for a reader meeting one for the first time.
@@ -1490,16 +1492,19 @@ export default function WorkflowInstancePage() {
             band past it is the figure the guard acts on, which adds reconciled
             estimates for killed cycles and what telemetry has seen of the
             cycles in flight. Same split, same rendering, as an unpriced model
-            widens a window meter. */}
+            widens a window meter. Hatched as well when no block reported a
+            cost at all — an all-Codex press of Run — because its $0.00 is not
+            a share of the limit, and an empty bar under "of $20.00" is the
+            instance that spent nothing. */}
         <Meter
           label="Spent across blocks"
           fraction={
-            budget.maxInstanceCostUSD === null
+            budget.maxInstanceCostUSD === null || nothingReported
               ? null
               : instance.spentUSD / budget.maxInstanceCostUSD
           }
           upperFraction={
-            budget.maxInstanceCostUSD === null
+            budget.maxInstanceCostUSD === null || nothingReported
               ? null
               : instance.spentGuardUSD / budget.maxInstanceCostUSD
           }
@@ -1509,7 +1514,11 @@ export default function WorkflowInstancePage() {
           upperHint="including work still running and work that stopped before reporting its cost"
           value={fmtUSD(instance.spentUSD)}
           upperValue={fmtUSD(instance.spentGuardUSD)}
-          unknownHint="no workflow spending limit"
+          unknownHint={
+            budget.maxInstanceCostUSD === null
+              ? "no workflow spending limit"
+              : "no block reported a cost"
+          }
           detail={
             budget.maxInstanceCostUSD === null
               ? // "measured" is a claim, and it is false as soon as one block
@@ -1526,8 +1535,11 @@ export default function WorkflowInstancePage() {
                 // said by the live-blocks hint below and, to a screen reader, by
                 // `upperHint`. `InstallSpendCard` keeps the clause because its
                 // head is percentages and its detail is the only place its
-                // dollar figures appear.
-                `of ${fmtUSD(budget.maxInstanceCostUSD)}`
+                // dollar figures appear. With nothing reported the head holds
+                // no figure for "of" to complete.
+                nothingReported
+                ? `${fmtUSD(budget.maxInstanceCostUSD)} limit`
+                : `of ${fmtUSD(budget.maxInstanceCostUSD)}`
           }
         />
 

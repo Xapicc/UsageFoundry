@@ -1359,6 +1359,25 @@ export function providerReportsSpend(
 }
 
 /**
+ * Whether a workflow block's runs report no cost: a run block's own run, or
+ * every run an orchestrator block emits (its deciding turn is Claude either
+ * way). A dollar limit over such a block counts nothing it spends.
+ *
+ * Here for `providerReportsSpend`'s reason: the server refuses a loop's cap and
+ * a schedule's bound on it, and the editor and the workflow page say it beside
+ * the limit, and the two must name the same blocks. Takes a plain string
+ * because the editor's draft holds `""` for the default, which is Claude.
+ */
+export function blockReportsNoCost(block: {
+  kind: string;
+  provider?: string | null;
+}): boolean {
+  if (block.kind !== "run" && block.kind !== "orchestrator") return false;
+  const provider = RUN_PROVIDERS.find((p) => p === block.provider) ?? null;
+  return !providerReportsSpend(provider);
+}
+
+/**
  * The local provider's sign-in as the page may see it: never the token, only
  * whether there is one.
  */
@@ -1410,7 +1429,8 @@ export type RunEndingGuard =
   | "instance_cost"
   | "install_cost"
   | "no_ceiling"
-  | "no_terminus";
+  | "no_terminus"
+  | "unmetered";
 
 /**
  * How a run ended: `runs.ending_code`, one closed set.

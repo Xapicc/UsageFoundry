@@ -13,6 +13,7 @@ import type {
 import { boardThresholds } from "@/lib/apiTypes";
 import {
   EDGE_CHIP_LABEL,
+  costBlindNote,
   fmtBoardThresholds,
   fmtDateTime,
   fmtPct,
@@ -327,6 +328,10 @@ export default function WorkflowPage() {
         (r.folder ? folderKey(r.folder) : null) ===
         (runFolder ? folderKey(runFolder) : null),
     ) ?? null;
+  const costBlind =
+    workflow.instanceBudget.maxInstanceCostUSD === null
+      ? null
+      : costBlindNote(workflow.nodes);
 
   return (
     <>
@@ -490,7 +495,12 @@ export default function WorkflowPage() {
             bulleted block: the value is what is being checked, so it belongs at
             the right edge where the eye can run down it. */}
         <ListGroup>
-          <ListRow label="Spending across the blocks">
+          <ListRow
+            label="Spending across the blocks"
+            description={
+              costBlind && <span className="text-warn">{costBlind}</span>
+            }
+          >
             <LimitValue set={workflow.instanceBudget.maxInstanceCostUSD !== null}>
               {workflow.instanceBudget.maxInstanceCostUSD === null
                 ? "No limit"

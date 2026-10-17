@@ -4,7 +4,13 @@ import { getProposal, markProposal } from "./chat";
 import { db } from "./db";
 import { fmtDateTimeInZone } from "./format";
 import { mayWriteDataDir } from "./serverLock";
-import { chooseFolder, withChosenFolder, type WorkflowGraph } from "./workflowGraph";
+import {
+  blocksReportingNoCost,
+  chooseFolder,
+  reportsNoCostClause,
+  withChosenFolder,
+  type WorkflowGraph,
+} from "./workflowGraph";
 import { currentSnapshot } from "./orchestrator";
 import { newWorkPaused } from "./settings";
 import { isTimeZone, zonedParts, zoneOffset } from "./windows";
@@ -533,6 +539,18 @@ export function decideSchedule(ctx: ScheduleContext): ScheduleDecision {
  * `startWorkflow`'s door — which is why this asks `instanceBudgetIsOff` rather
  * than asking for a cost limit by name.
  *
+ * **A spending limit is not that bound over a block whose runs report no
+ * cost.** Codex and the local model report tokens and no money, so
+ * `sumMemberSpend` leaves their runs out of the figure the limit compares and a
+ * dollar limit over them reads $0 for ever. Any such block, because the blocks
+ * that do report can stay under the limit while that one spends. The run
+ * form's answer to `maxRunCostUSD` on a Codex run is a warning, since a person
+ * is there to read it; here nobody is, which is this function's whole reason.
+ * A window guard still satisfies the rule, as before — what that guard reads
+ * for a Codex block is left open in
+ * `docs/agent/workflows-and-schedules/schedules.md`, and so is whether an
+ * instance-level token limit should exist.
+ *
  * **A workflow with a deliver block is refused too**, and that one is not about
  * money. A deliver block pushes branches to a remote and opens pull requests,
  * which is the one thing this app does that leaves the machine, and
@@ -558,6 +576,17 @@ export function scheduleRefusal(workflow: {
       `“${workflow.name}” sets no limit for a whole press of Run, and a schedule ` +
       "presses Run with nobody there to see what it cost. Set a spending limit " +
       "or a window guard under “Limits for the whole workflow” first."
+    );
+  }
+  const { maxSessionFraction, maxWeeklyFraction } = workflow.instanceBudget;
+  const blind = blocksReportingNoCost(workflow.graph.nodes)[0];
+  if (blind && maxSessionFraction === null && maxWeeklyFraction === null) {
+    return (
+      `“${workflow.name}” limits a whole press of Run only by what it spends, ` +
+      `but ${reportsNoCostClause(blind)}, which reports no cost — so that limit ` +
+      "never counts what it spends, and a schedule presses Run with nobody " +
+      `there to see what it cost. Run “${blind.name}” on Claude, or press Run ` +
+      "yourself."
     );
   }
   const deliver = workflow.graph.nodes.find((n) => n.kind === "deliver");
