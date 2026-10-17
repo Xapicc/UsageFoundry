@@ -6,7 +6,7 @@ import path from "node:path";
 import { after, before, describe, it } from "node:test";
 
 import { HOOKS_PATH_PREFIX } from "./apiTypes";
-import { compareGitDir, type GitDirBaseline } from "./gitDirWatch";
+import { compareGitDir, type GitDirBaseline, type GitDirReport } from "./gitDirWatch";
 
 /**
  * Covers reading a run's repository git directory, against a real repository
@@ -167,6 +167,227 @@ describe("reading a planted repository", () => {
     plainGit(repo, ["status", "--short"]);
     assert.ok(markersWritten().includes("ran-fsmonitor"), markersWritten().join(", "));
     assert.ok(markersWritten().includes("ran-clean"), markersWritten().join(", "));
+  });
+});
+
+describe("a submodule's git directory, which the superproject's git status runs from", () => {
+  it("compares what a run plants there, keyed by the module, and runs none of it", async () => {
+    const lib = path.join(root, "lib-source");
+    fs.mkdirSync(lib);
+    setupGit(lib, ["init", "-q", "-b", "main"]);
+    setupGit(lib, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "l"]);
+    const { repo, worktree } = makeRepository(workspace, "super");
+    const baseline = await read.readGitDirBaseline(worktree, 1_000);
+    assert.ok(baseline?.ok, JSON.stringify(baseline));
+    setupGit(repo, ["-c", "protocol.file.allow=always", "submodule", "add", "-q", lib, "lib"]);
+    // A name with a slash in it, which git keeps as nested directories.
+    setupGit(repo, [
+      "-c",
+      "protocol.file.allow=always",
+      "submodule",
+      "add",
+      "-q",
+      "--name",
+      "vendor/two",
+      lib,
+      "two",
+    ]);
+    setupGit(repo, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "s"]);
+    // Adding a submodule is not itself a warning: git sets no watched key or hook.
+    const added = compareGitDir(baseline, await read.readGitDirAgain(baseline), [], 2_000);
+    assert.deepEqual(added.state === "unchanged" && added.notRead, undefined, JSON.stringify(added));
+
+    // Inside the run's own common git directory, so the run can write it.
+    const moduleDir = path.join(repo, ".git", "modules", "lib");
+    setupGit(repo, [
+      "config",
+      "-f",
+      path.join(moduleDir, "config"),
+      "core.fsmonitor",
+      `touch ${marker("submodule-fsmonitor")} #`,
+    ]);
+    const slashed = path.join(repo, ".git", "modules", "vendor", "two");
+    writeHook(path.join(slashed, "hooks"), "pre-commit", `touch ${marker("submodule-hook")}`);
+    const report = compareGitDir(baseline, await read.readGitDirAgain(baseline), [], 3_000);
+    assert.equal(report.state, "changed", JSON.stringify(report));
+    assert.deepEqual(
+      report.state === "changed" &&
+        report.findings.map((f) => [f.module, f.kind === "config" ? f.key : f.kind, f.change]),
+      [
+        ["modules/lib", "core.fsmonitor", "added"],
+        ["modules/vendor/two", "hook", "added"],
+      ],
+    );
+    assert.equal(report.state === "changed" && report.notRead, undefined);
+    assert.ok(!markersWritten().includes("ran-submodule-fsmonitor"), "reading ran the fsmonitor");
+
+    // The control: the superproject's own status recurses into the submodule
+    // and runs what was planted in its git directory.
+    plainGit(repo, ["status", "--short"]);
+    assert.ok(markersWritten().includes("ran-submodule-fsmonitor"), markersWritten().join(", "));
+  });
+});
+
+describe("a hooks directory holding more than this app reads", () => {
+  const pad = (hooks: string) => {
+    // Names that sort before every hook git runs.
+    for (let i = 0; i < 300; i++) {
+      fs.writeFileSync(path.join(hooks, `a${String(i).padStart(3, "0")}`), "x");
+    }
+  };
+  const preCommitOf = (report: GitDirReport) =>
+    report.state === "changed"
+      ? report.findings.find((f) => f.kind === "hook" && f.name === "pre-commit")
+      : undefined;
+
+  it("still compares git's own hooks, and says the rest were not", async () => {
+    for (const padFirst of [false, true]) {
+      const { repo, worktree } = makeRepository(workspace, `padded-${padFirst}`);
+      const hooks = path.join(repo, ".git", "hooks");
+      writeHook(hooks, "pre-commit", "true");
+      if (padFirst) pad(hooks);
+      const baseline = await read.readGitDirBaseline(worktree, 1_000);
+      assert.ok(baseline?.ok, JSON.stringify(baseline));
+      if (!padFirst) pad(hooks);
+      writeHook(hooks, "pre-commit", "exit 3");
+      const report = compareGitDir(baseline, await read.readGitDirAgain(baseline), [], 2_000);
+      const label = `padded ${padFirst ? "before" : "after"} the start`;
+      assert.deepEqual(
+        preCommitOf(report),
+        { kind: "hook", name: "pre-commit", change: "changed", executable: true },
+        `${label}: ${JSON.stringify(report).slice(0, 300)}`,
+      );
+      assert.match(
+        (report.state === "changed" ? (report.notRead ?? []) : []).join("\n"),
+        padFirst
+          ? /At the run's start and end: hooks holds 300 entries that are not git's own hook names/
+          : /At the run's end: hooks holds 300 entries that are not git's own hook names/,
+        label,
+      );
+      // The control: the hook compared is the one git runs.
+      assert.throws(
+        () => plainGit(repo, ["hook", "run", "pre-commit"]),
+        (err: { status?: number }) => err.status === 3,
+        label,
+      );
+    }
+  });
+});
+
+describe("a symlinked hooks/, info/ or hook, which git follows", () => {
+  /** `git hook run`'s exit status, which is the hook's. */
+  function hookRunStatus(repo: string, hook: string): number {
+    try {
+      plainGit(repo, ["hook", "run", hook]);
+      return 0;
+    } catch (err) {
+      return (err as { status: number }).status;
+    }
+  }
+
+  it("reads one inside a configured folder through, so a rewrite of its target is a change", async () => {
+    // C: the whole hooks directory, as `ln -s ../.githooks .git/hooks` leaves it.
+    const linkedDir = makeRepository(workspace, "linked-hooks");
+    const shared = path.join(linkedDir.repo, ".githooks");
+    fs.mkdirSync(shared);
+    writeHook(shared, "pre-commit", "true");
+    const hooks = path.join(linkedDir.repo, ".git", "hooks");
+    fs.rmSync(hooks, { recursive: true, force: true });
+    fs.symlinkSync("../.githooks", hooks);
+    // D: info/, and with it info/attributes.
+    const linkedInfo = makeRepository(workspace, "linked-info");
+    const gitinfo = path.join(linkedInfo.repo, ".gitinfo");
+    fs.mkdirSync(gitinfo);
+    fs.writeFileSync(path.join(gitinfo, "attributes"), "*.md text\n");
+    fs.rmSync(path.join(linkedInfo.repo, ".git", "info"), { recursive: true, force: true });
+    fs.symlinkSync("../.gitinfo", path.join(linkedInfo.repo, ".git", "info"));
+    // E: one hook.
+    const linkedHook = makeRepository(workspace, "linked-hook");
+    const scripts = path.join(linkedHook.repo, "scripts");
+    fs.mkdirSync(scripts);
+    writeHook(scripts, "pre-commit", "true");
+    fs.symlinkSync(
+      "../../scripts/pre-commit",
+      path.join(linkedHook.repo, ".git", "hooks", "pre-commit"),
+    );
+
+    const baselines = await Promise.all(
+      [linkedDir, linkedInfo, linkedHook].map(async ({ worktree }) => {
+        const baseline = await read.readGitDirBaseline(worktree, 1_000);
+        assert.ok(baseline?.ok, JSON.stringify(baseline));
+        return baseline;
+      }),
+    );
+    writeHook(shared, "pre-commit", "exit 3");
+    writeHook(shared, "post-checkout", "exit 4");
+    fs.writeFileSync(path.join(gitinfo, "attributes"), "* filter=lfs diff=lfs\n");
+    writeHook(scripts, "pre-commit", "exit 3");
+    const [dirReport, infoReport, hookReport] = await Promise.all(
+      baselines.map(async (baseline) =>
+        compareGitDir(baseline, await read.readGitDirAgain(baseline), [], 2_000),
+      ),
+    );
+    const findingsOf = (report: GitDirReport) => {
+      assert.equal(report.state, "changed", JSON.stringify(report));
+      return report.state === "changed" ? report.findings : [];
+    };
+    assert.deepEqual(findingsOf(dirReport), [
+      { kind: "hook", name: "post-checkout", change: "added", executable: true },
+      { kind: "hook", name: "pre-commit", change: "changed", executable: true },
+    ]);
+    assert.deepEqual(findingsOf(infoReport), [
+      { kind: "attributes", change: "changed", driverLines: ["* filter=lfs diff=lfs"] },
+    ]);
+    assert.deepEqual(findingsOf(hookReport), [
+      { kind: "hook", name: "pre-commit", change: "changed", executable: true },
+    ]);
+
+    // The controls: git runs, and reads, the rewritten targets.
+    assert.equal(hookRunStatus(linkedDir.repo, "pre-commit"), 3);
+    assert.equal(plainGit(linkedInfo.repo, ["check-attr", "filter", "--", "a.txt"]), "a.txt: filter: lfs\n");
+    assert.equal(hookRunStatus(linkedHook.repo, "pre-commit"), 3);
+  });
+
+  it("says which it did not read when the target is outside every configured folder", async () => {
+    const elsewhere = path.join(root, "elsewhere-linked");
+    fs.mkdirSync(elsewhere);
+    writeHook(elsewhere, "pre-commit", "true");
+    fs.writeFileSync(path.join(elsewhere, "attributes"), "* filter=x\n");
+    const cases: Array<[string, (gitDir: string) => void, RegExp]> = [
+      [
+        "hooks",
+        (gitDir) => {
+          fs.rmSync(path.join(gitDir, "hooks"), { recursive: true, force: true });
+          fs.symlinkSync(elsewhere, path.join(gitDir, "hooks"));
+        },
+        /^At the run's start and end: hooks is a symlink to .*elsewhere-linked, which is outside every configured folder, so /,
+      ],
+      [
+        "info",
+        (gitDir) => {
+          fs.rmSync(path.join(gitDir, "info"), { recursive: true, force: true });
+          fs.symlinkSync(elsewhere, path.join(gitDir, "info"));
+        },
+        /^At the run's start and end: info is a symlink to .*elsewhere-linked, which is outside every configured folder, so /,
+      ],
+      [
+        "hook",
+        // A host path the container does not have, whose absence is not the host's.
+        (gitDir) => fs.symlinkSync("/Users/someone/pre-commit", path.join(gitDir, "hooks", "pre-commit")),
+        /^At the run's start and end: hooks\/pre-commit is a symlink to \/Users\/someone\/pre-commit, which is outside every configured folder and does not exist in the container, so /,
+      ],
+    ];
+    for (const [name, link, reason] of cases) {
+      const { repo, worktree } = makeRepository(workspace, `linked-out-${name}`);
+      link(path.join(repo, ".git"));
+      const baseline = await read.readGitDirBaseline(worktree, 1_000);
+      assert.ok(baseline?.ok, JSON.stringify(baseline));
+      writeHook(elsewhere, "pre-commit", `exit ${name.length}`);
+      const report = compareGitDir(baseline, await read.readGitDirAgain(baseline), [], 2_000);
+      const notRead = report.state === "unchanged" ? (report.notRead ?? []) : [];
+      assert.equal(notRead.length, 1, `${name}: ${JSON.stringify(report)}`);
+      assert.match(notRead[0], reason);
+    }
   });
 });
 

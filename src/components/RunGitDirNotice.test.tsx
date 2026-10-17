@@ -147,3 +147,23 @@ test("a core.hooksPath directory not read is drawn in both places, never as unch
     }
   }
 });
+
+test("a finding in a submodule's git directory is drawn in both places, with the directory", () => {
+  const report: GitDirReportDTO = {
+    state: "changed",
+    commonDir: COMMON,
+    since: 1_000,
+    checkedAt: 2_000,
+    findings: [
+      { kind: "hook", name: "pre-commit", change: "added", executable: true, module: "modules/lib" },
+    ],
+    concurrentRunIds: [],
+  };
+  for (const placement of ["inspector", "land"] as const) {
+    assert.match(
+      render(gitDir(report), placement),
+      /In the submodule git directory <span[^>]*>modules\/lib<\/span>: Hook <code>pre-commit<\/code> added/,
+      placement,
+    );
+  }
+});

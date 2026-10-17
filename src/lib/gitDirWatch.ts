@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  HOOKS_PATH_PREFIX,
   hooksPathEntryOf,
   type GitDirChangeDTO,
   type GitDirCommandClassDTO,
@@ -55,7 +56,11 @@ export interface WatchedConfigEntry {
  */
 export interface HookEntry {
   name: string;
-  /** `file:<sha256>`, `large:<size>:<mtime>`, `symlink:<target>`, `dir` or `other`. */
+  /**
+   * `file:<sha256>`, `large:<size>:<mtime>`, `dir`, `other`, or
+   * `symlink:<target>` followed, when the target was read, by `THROUGH_LINK`
+   * and the target's own identity.
+   */
   identity: string;
   executable: boolean;
 }
@@ -77,6 +82,26 @@ export interface GitDirSnapshot {
    * before this app read that directory at all.
    */
   hooksPathUnread?: string | null;
+  /**
+   * Each submodule git directory under `modules/`, in path order; null when
+   * there were too many directories there to look through, which `unread`
+   * then says. Absent, with `unread`, from a snapshot taken before this app
+   * read them.
+   */
+  modules?: ModuleSnapshot[] | null;
+  /** What else this reading did not read, a sentence each. */
+  unread?: string[];
+}
+
+/**
+ * A submodule's own git directory, which git keeps inside the superproject's
+ * and runs from whenever the superproject's `git status` recurses into it.
+ */
+export interface ModuleSnapshot {
+  /** Relative to the common directory: `modules/<name>`, `modules/<name>/modules/<nested>`. */
+  dir: string;
+  /** Null when it was not read, which the snapshot's `unread` says. */
+  reading: Pick<GitDirSnapshot, "config" | "hooks" | "attributes"> | null;
 }
 
 /**
@@ -97,6 +122,48 @@ export type GitDirChange = GitDirChangeDTO;
 export type GitDirFinding = GitDirFindingDTO;
 export type GitDirReport = GitDirReportDTO;
 
+/**
+ * Between a symlink's text and its target's identity in a hook's identity or
+ * an attributes digest. NUL, because a link's text can hold anything else.
+ */
+export const THROUGH_LINK = "\0";
+
+/**
+ * Every hook git runs by name (githooks(5); each is in git 2.39.5's binary).
+ * Read whatever the size of the directory, so that padding it cannot push one
+ * past the cap on everything else there.
+ */
+export const GIT_HOOK_NAMES: ReadonlySet<string> = new Set([
+  "applypatch-msg",
+  "pre-applypatch",
+  "post-applypatch",
+  "pre-commit",
+  "pre-merge-commit",
+  "prepare-commit-msg",
+  "commit-msg",
+  "post-commit",
+  "pre-rebase",
+  "post-checkout",
+  "post-merge",
+  "pre-push",
+  "pre-receive",
+  "update",
+  "proc-receive",
+  "post-receive",
+  "post-update",
+  "reference-transaction",
+  "push-to-checkout",
+  "pre-auto-gc",
+  "post-rewrite",
+  "sendemail-validate",
+  "fsmonitor-watchman",
+  "p4-changelist",
+  "p4-prepare-changelist",
+  "p4-post-changelist",
+  "p4-pre-submit",
+  "post-index-change",
+]);
+
 /** Long enough to read a planted command, short enough that a pasted script is not stored whole. */
 export const SHOWN_CHARS = 200;
 /** Of the attributes lines kept for showing. The digest still covers the whole file. */
@@ -115,10 +182,11 @@ function isExtUrl(value: string | null): boolean {
  *
  * Section and variable compare case-insensitively and the subsection exactly,
  * as git does; the subsection is everything between the first and last dot,
- * because a driver or URL name may itself contain dots. Three keys run a
+ * because a driver or URL name may itself contain dots. Four keys run a
  * command only for some values — a remote URL or `insteadOf` base of the
- * `ext::` transport, and a submodule `update` starting with `!` — and the rest
- * are on the list whatever they hold.
+ * `ext::` transport, a submodule `update` starting with `!`, and a
+ * `sendemail.smtpServer` that is an absolute path — and the rest are on the
+ * list whatever they hold.
  */
 export function commandClassOf(key: string, value: string | null): CommandClass | null {
   const first = key.indexOf(".");
@@ -179,7 +247,22 @@ export function commandClassOf(key: string, value: string | null): CommandClass 
     case "mergetool":
     case "browser":
     case "man":
-      return subsection !== null && variable === "cmd" ? "interactive" : null;
+      // `diff.tool` and `merge.tool` are not watched: choosing a tool runs its
+      // own `cmd` or `path`, watched here, or what the operator installed.
+      return subsection !== null && (variable === "cmd" || variable === "path")
+        ? "interactive"
+        : null;
+    case "trailer":
+      return subsection !== null && (variable === "cmd" || variable === "command")
+        ? "interactive"
+        : null;
+    case "sendemail":
+      if (["tocmd", "cccmd", "headercmd", "sendmailcmd"].includes(variable)) return "interactive";
+      return variable === "smtpserver" && value?.trimStart().startsWith("/") ? "interactive" : null;
+    case "hook":
+      // Every variable, not just `command` and `event`: all a named hook's
+      // section holds is what runs and when, and this app writes none of it.
+      return subsection !== null ? "config-hook" : null;
     case "alias":
       return "alias";
     case "include":
@@ -300,13 +383,37 @@ function configFindings(
   return findings;
 }
 
+/** A hook entry's directory, as the prefix its name carries, and its name there. */
+function splitHookName(name: string): { prefix: string; entry: string } {
+  const inHooksPath = hooksPathEntryOf(name);
+  return inHooksPath
+    ? { prefix: `${HOOKS_PATH_PREFIX}${inHooksPath.dir}/`, entry: inHooksPath.entry }
+    : { prefix: "", entry: name };
+}
+
+/** The `"…"` entry a reader leaves for a directory it did not list whole. */
+function isCut(hook: HookEntry): boolean {
+  return splitHookName(hook.name).entry === "…" && hook.identity.startsWith("more:");
+}
+
 function hookFindings(before: HookEntry[], after: HookEntry[]): GitDirFinding[] {
   const was = new Map(before.map((hook) => [hook.name, hook]));
   const now = new Map(after.map((hook) => [hook.name, hook]));
+  const cutOf = (hooks: HookEntry[]) =>
+    new Set(hooks.filter(isCut).map((hook) => splitHookName(hook.name).prefix));
+  const wasCut = cutOf(before);
+  const nowCut = cutOf(after);
   const findings: GitDirFinding[] = [];
   for (const name of [...new Set([...was.keys(), ...now.keys()])].sort()) {
     const old = was.get(name);
     const cur = now.get(name);
+    // Past a directory's cut nothing is known, so neither the count there nor
+    // a name only one end listed is a change; the reading's `unread` says so.
+    // git's own hook names are listed whatever the size.
+    if ((old && isCut(old)) || (cur && isCut(cur))) continue;
+    const { prefix, entry } = splitHookName(name);
+    const unlisted = (old === undefined && wasCut.has(prefix)) || (cur === undefined && nowCut.has(prefix));
+    if (unlisted && !GIT_HOOK_NAMES.has(entry)) continue;
     if (old && cur && old.identity === cur.identity && old.executable === cur.executable) continue;
     findings.push({
       kind: "hook",
@@ -330,6 +437,32 @@ function attributesFindings(
       driverLines: after?.driverLines ?? [],
     },
   ];
+}
+
+/**
+ * Each submodule git directory compared as the repository's own is, its
+ * findings marked with it. One present at a single end is compared against
+ * nothing, so what it would run reads as added or removed; one either end did
+ * not read is left out, and that end's `unread` says so.
+ */
+function moduleFindings(before: ModuleSnapshot[], after: ModuleSnapshot[]): GitDirFinding[] {
+  const was = new Map(before.map((module) => [module.dir, module]));
+  const now = new Map(after.map((module) => [module.dir, module]));
+  const none: NonNullable<ModuleSnapshot["reading"]> = { config: [], hooks: [], attributes: null };
+  const findings: GitDirFinding[] = [];
+  for (const dir of [...new Set([...was.keys(), ...now.keys()])].sort()) {
+    const old = was.has(dir) ? was.get(dir)!.reading : none;
+    const cur = now.has(dir) ? now.get(dir)!.reading : none;
+    if (old === null || cur === null) continue;
+    findings.push(
+      ...[
+        ...configFindings(old.config, cur.config),
+        ...hookFindings(old.hooks, cur.hooks),
+        ...attributesFindings(old.attributes, cur.attributes),
+      ].map((finding) => ({ ...finding, module: dir })),
+    );
+  }
+  return findings;
 }
 
 /**
@@ -372,16 +505,38 @@ export function compareGitDir(
   const nowHooks = predates
     ? now.hooks.filter((hook) => hooksPathEntryOf(hook.name) === null)
     : now.hooks;
+  // A baseline from before symlinks were read through has a symlinked hook,
+  // hooks/ or info/ as its link's text alone, and nothing behind it.
+  const linksPredate = was.unread === undefined;
+  const endHooks = linksPredate ? asLinkTextOnly(nowHooks) : nowHooks;
+  const endAttributes =
+    linksPredate && now.attributes !== null
+      ? { ...now.attributes, digest: now.attributes.digest.split(THROUGH_LINK)[0] }
+      : now.attributes;
   const findings = [
     ...configFindings(was.config, now.config),
-    ...hookFindings(was.hooks, nowHooks),
-    ...attributesFindings(was.attributes, now.attributes),
+    ...hookFindings(was.hooks, endHooks),
+    ...attributesFindings(was.attributes, endAttributes),
+    ...(was.modules && now.modules ? moduleFindings(was.modules, now.modules) : []),
   ];
   const notRead = notReadOf(
-    predates && nowHooks.length < now.hooks.length
-      ? "this app did not yet read the directory core.hooksPath names, so the hooks there were not compared."
-      : (was.hooksPathUnread ?? null),
-    now.hooksPathUnread ?? null,
+    [
+      predates && nowHooks.length < now.hooks.length
+        ? "this app did not yet read the directory core.hooksPath names, so the hooks there were not compared."
+        : (was.hooksPathUnread ?? null),
+      // A baseline from before submodules were read has none of them.
+      was.modules === undefined && (now.modules === null || (now.modules?.length ?? 0) > 0)
+        ? "this app did not yet read submodules' git directories, so theirs were not compared."
+        : null,
+      linksPredate &&
+      (endHooks.length < nowHooks.length ||
+        nowHooks.some((hook) => hook.identity.includes(THROUGH_LINK)) ||
+        endAttributes?.digest !== now.attributes?.digest)
+        ? "this app did not yet read through a symlinked hook, hooks/ or info/, so what it points to was not compared."
+        : null,
+      ...(was.unread ?? []),
+    ],
+    [now.hooksPathUnread ?? null, ...(now.unread ?? [])],
   );
   const since = baseline.takenAt;
   if (findings.length === 0) {
@@ -398,16 +553,32 @@ export function compareGitDir(
   };
 }
 
+/** The end's hooks as a reader that did not follow symlinks recorded them. */
+function asLinkTextOnly(hooks: HookEntry[]): HookEntry[] {
+  const linkedDir = hooks.some((hook) => hook.name === "." && hook.identity.startsWith("symlink:"));
+  return hooks
+    .filter((hook) => !linkedDir || hook.name === "." || hooksPathEntryOf(hook.name) !== null)
+    .map((hook) => ({ ...hook, identity: hook.identity.split(THROUGH_LINK)[0] }));
+}
+
 /**
- * What git runs hooks from that either end could not read, as the report
+ * What git runs commands from that either end could not read, as the report
  * keeps it. Never folded into "unchanged": that is a claim this app can only
  * make about what it read twice.
  */
-function notReadOf(start: string | null, end: string | null): { notRead?: string[] } {
-  if (start !== null && start === end) return { notRead: [`At the run's start and end: ${start}`] };
+function notReadOf(
+  startSentences: Array<string | null>,
+  endSentences: Array<string | null>,
+): { notRead?: string[] } {
+  const start = startSentences.filter((sentence): sentence is string => sentence !== null);
+  const end = endSentences.filter((sentence): sentence is string => sentence !== null);
   const notRead = [
-    ...(start === null ? [] : [`At the run's start: ${start}`]),
-    ...(end === null ? [] : [`At the run's end: ${end}`]),
+    ...start.map((sentence) =>
+      end.includes(sentence)
+        ? `At the run's start and end: ${sentence}`
+        : `At the run's start: ${sentence}`,
+    ),
+    ...end.filter((sentence) => !start.includes(sentence)).map((s) => `At the run's end: ${s}`),
   ];
   return notRead.length === 0 ? {} : { notRead };
 }

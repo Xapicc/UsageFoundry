@@ -202,6 +202,9 @@ read — reaches something that is not this run's business.
     `diff.*` or `merge.*` driver, or a hook without `.sample`. If the
     repository sets `core.hooksPath` of its own (husky sets `.husky/_`), git
     runs hooks from that directory instead of `.git/hooks`, so `ls -la` it too.
+    In a repository with submodules, look in each `.git/modules/<name>` the
+    same way: your superproject's `git status` recurses into a submodule and
+    runs the `core.fsmonitor` set there.
   - The app now does that look for you at the end of every run, and **warns
     on the run's page and on its Land card** when something changed. Before
     a run's first work cycle it reads the repository's shared git directory.
@@ -213,7 +216,9 @@ read — reaches something that is not this run's business.
     added, changed or made executable, in `.git/hooks` and in the directory a
     `core.hooksPath` your repository already set names, and any change to
     `.git/info/attributes`. That directory is husky's `.husky/_` in the common
-    case, which is gitignored and so in no branch or diff either. Branch, remote and worktree settings this app
+    case, which is gitignored and so in no branch or diff either. It reads each
+    submodule's git directory under `.git/modules/` the same way and names the
+    submodule on what it finds there. Branch, remote and worktree settings this app
     writes itself are not listed. It names the other runs that worked in the
     same repository in that time, because they share the directory. It cannot
     tell a run's change from yours or the chat's, and says so. If either
@@ -222,7 +227,9 @@ read — reaches something that is not this run's business.
     change is already on disk when you read the warning. A `core.hooksPath`
     directory it cannot read — outside every folder you configured, or a path
     under `~` that only your host can expand — is reported as not checked, on
-    both the run's page and its Land card. It does not see a repository other
+    both the run's page and its Land card. So is a symlinked `.git/hooks`,
+    hook or `.git/info` that points outside those folders; one that points
+    inside them is read through, since git runs what it points to. It does not see a repository other
     than the run's own, or another checkout's copy of a relative
     `core.hooksPath`: git resolves that against whichever checkout it runs in,
     and only your main checkout's is read. Nothing about it has been measured

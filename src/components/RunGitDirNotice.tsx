@@ -27,12 +27,15 @@ import { Notice } from "./ui/Notice";
 const RUNS_WHEN: Record<GitDirCommandClassDTO, string> = {
   fsmonitor: "runs on git status, diff and blame",
   "hooks-path": "chooses the directory git runs hooks from",
+  "config-hook":
+    "defines a hook that git 2.54 and later runs on the event it names, beside .git/hooks",
   "attribute-driver":
     "runs on the files an attributes file assigns it to, on status, diff, log -p and commit",
   "external-diff": "runs on git diff",
   remote: "runs on fetch, pull, push, clone or submodule update",
   signing: "runs when a commit or tag is signed, or a signature is shown",
-  interactive: "runs when git pages output, opens an editor or starts a tool",
+  interactive:
+    "runs when git pages output, opens an editor, starts a tool, adds a trailer or sends mail",
   alias: "runs when you type that alias, and outranks your own of the same name",
   include: "pulls another file's settings into this repository's",
 };
@@ -56,8 +59,9 @@ function Inspect() {
 }
 
 function findingKey(finding: GitDirFindingDTO): string {
-  if (finding.kind === "config") return `config:${finding.key}`;
-  return finding.kind === "hook" ? `hook:${finding.name}` : "attributes";
+  const where = finding.module ? `${finding.module}:` : "";
+  if (finding.kind === "config") return `${where}config:${finding.key}`;
+  return finding.kind === "hook" ? `${where}hook:${finding.name}` : `${where}attributes`;
 }
 
 function within(commonDir: string, file: string): string {
@@ -110,27 +114,27 @@ function HooksPathRow({
   );
   if (entry === ".") {
     return (
-      <li>
+      <>
         The directory <code>core.hooksPath</code> has git run hooks from,{" "}
         <span className="mono break-all">{dir}</span>, was itself {CHANGE_WORD[finding.change]}
-      </li>
+      </>
     );
   }
   if (entry === "…") {
-    return <li>More entries in {where} than this app reads at once, so some were not compared</li>;
+    return <>More entries in {where} than this app reads at once, so some were not compared</>;
   }
   return (
-    <li>
+    <>
       <code>{entry}</code> {CHANGE_WORD[finding.change]} in {where}
       {finding.change !== "removed" &&
         (finding.executable
           ? " — git runs it on the command it is named for, and any hook there can run it"
           : " — not executable, so git does not run it as a hook, but a hook there can source it")}
-    </li>
+    </>
   );
 }
 
-/** What git runs hooks from that this app could not read, as the report words it. */
+/** What git runs commands from that this app could not read, as the report words it. */
 function NotRead({ notRead }: { notRead: string[] }) {
   return (
     <>
@@ -143,10 +147,10 @@ function NotRead({ notRead }: { notRead: string[] }) {
   );
 }
 
-function FindingRow({ finding, commonDir }: { finding: GitDirFindingDTO; commonDir: string }) {
+function FindingText({ finding, commonDir }: { finding: GitDirFindingDTO; commonDir: string }) {
   if (finding.kind === "config") {
     return (
-      <li>
+      <>
         <code>{finding.key}</code> {CHANGE_WORD[finding.change]} — {RUNS_WHEN[finding.commandClass]}
         {finding.now.length > 0 && (
           <ul className="ml-4 list-disc">
@@ -157,30 +161,30 @@ function FindingRow({ finding, commonDir }: { finding: GitDirFindingDTO; commonD
             ))}
           </ul>
         )}
-      </li>
+      </>
     );
   }
   if (finding.kind === "hook") {
     const inHooksPath = hooksPathEntryOf(finding.name);
     if (inHooksPath) return <HooksPathRow finding={finding} {...inHooksPath} />;
     if (finding.name === ".") {
-      return <li>The hooks directory itself was {CHANGE_WORD[finding.change]}</li>;
+      return <>The hooks directory itself was {CHANGE_WORD[finding.change]}</>;
     }
     if (finding.name === "…") {
-      return <li>More hooks than this app reads at once, so some were not compared</li>;
+      return <>More hooks than this app reads at once, so some were not compared</>;
     }
     return (
-      <li>
+      <>
         Hook <code>{finding.name}</code> {CHANGE_WORD[finding.change]}
         {finding.change !== "removed" &&
           (finding.executable
             ? " — git runs it on the command it is named for"
             : ", not executable, so git skips it until it is")}
-      </li>
+      </>
     );
   }
   return (
-    <li>
+    <>
       <code>info/attributes</code> {CHANGE_WORD[finding.change]} — it assigns drivers to files
       {finding.driverLines.length > 0 && (
         <ul className="ml-4 list-disc">
@@ -191,6 +195,24 @@ function FindingRow({ finding, commonDir }: { finding: GitDirFindingDTO; commonD
           ))}
         </ul>
       )}
+    </>
+  );
+}
+
+/**
+ * A finding from a submodule's git directory names it first: the operator
+ * looks for it there, not in the repository's own `.git`, and git runs it
+ * from inside that submodule.
+ */
+function FindingRow({ finding, commonDir }: { finding: GitDirFindingDTO; commonDir: string }) {
+  return (
+    <li>
+      {finding.module && (
+        <>
+          In the submodule git directory <span className="mono break-all">{finding.module}</span>:{" "}
+        </>
+      )}
+      <FindingText finding={finding} commonDir={commonDir} />
     </li>
   );
 }
@@ -223,7 +245,7 @@ export function RunGitDirNotice({
     return (
       <Notice tone="warn" className="mt-3">
         <p>
-          <strong>Part of where your own git runs hooks from was not checked.</strong> Nothing
+          <strong>Part of where your own git runs commands from was not checked.</strong> Nothing
           this app did read in <span className="mono break-all">{report.commonDir}</span> changed
           between{" "}
           {fmtDateTime(report.since)} and {fmtDateTime(report.checkedAt)}.

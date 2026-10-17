@@ -13,6 +13,8 @@ import {
   type GitDirReport,
   type GitDirSnapshot,
   type HookEntry,
+  type ModuleSnapshot,
+  THROUGH_LINK,
 } from "./gitDirWatch";
 
 /**
@@ -69,6 +71,8 @@ function snapshot(
     hooks,
     attributes: attributes === null ? null : attributesFileOf(attributes),
     hooksPathUnread: null,
+    modules: [],
+    unread: [],
   };
 }
 
@@ -146,6 +150,19 @@ describe("one case per class of key that runs a command", () => {
     assertEachFound([["core.hookspath", "/tmp/elsewhere"]], "hooks-path");
   });
 
+  it("a hook defined in configuration, which git 2.54 and later runs", () => {
+    assertEachFound(
+      [
+        ["hook.lint.command", "sh -c evil"],
+        ["hook.lint.event", "pre-commit"],
+        ["hook.Some.Name.enabled", "true"],
+      ],
+      "config-hook",
+    );
+    // Not a hook of its own, so not one either.
+    assert.equal(commandClassOf("hook.command", "sh -c evil"), null);
+  });
+
   it("a filter, diff or merge driver an attributes file can name", () => {
     assertEachFound(
       [
@@ -213,9 +230,24 @@ describe("one case per class of key that runs a command", () => {
         ["mergetool.x.cmd", "sh -c evil"],
         ["browser.x.cmd", "sh -c evil"],
         ["man.x.cmd", "sh -c evil"],
+        // For a tool git knows, the path is the command it runs.
+        ["difftool.vimdiff.path", "/tmp/evil"],
+        ["mergetool.vimdiff.path", "/tmp/evil"],
+        ["browser.firefox.path", "/tmp/evil"],
+        ["man.woman.path", "/tmp/evil"],
+        ["trailer.x.cmd", "sh -c evil"],
+        ["trailer.x.command", "sh -c evil"],
+        ["sendemail.tocmd", "sh -c evil"],
+        ["sendemail.work.sendmailcmd", "sh -c evil"],
+        ["sendemail.smtpserver", "/tmp/evil"],
       ],
       "interactive",
     );
+    // Choosing a tool runs that tool's own `cmd` or `path`, already watched,
+    // or what is installed; a mail server's host name runs nothing.
+    assert.equal(commandClassOf("diff.tool", "vimdiff"), null);
+    assert.equal(commandClassOf("merge.tool", "vimdiff"), null);
+    assert.equal(commandClassOf("sendemail.smtpserver", "smtp.example.com"), null);
   });
 
   it("an alias, which outranks the operator's own of the same name", () => {
@@ -276,6 +308,30 @@ describe("one case per class of key that runs a command", () => {
       compare(snapshot(ORDINARY, [hook("file:a")]), snapshot(ORDINARY, [hook("file:a")])).state,
       "unchanged",
     );
+  });
+
+  it("a hooks directory too big to list whole: git's own names compared, the rest not guessed", () => {
+    const sentence = "hooks holds 300 entries that are not git's own hook names, so …";
+    // As the reader leaves it: the cut's entry, and the sentence saying so.
+    const cut = (hooks: HookEntry[]): GitDirSnapshot => ({
+      ...snapshot(ORDINARY, [...hooks, { name: "…", identity: "more:300", executable: false }]),
+      unread: [sentence],
+    });
+    const sourced: HookEntry = { name: "h", identity: "file:a", executable: false };
+    const preCommit = (identity: string): HookEntry => ({ name: "pre-commit", identity, executable: true });
+
+    // Listed at the start and past the cut at the end is not known to be gone.
+    const past = compare(snapshot(ORDINARY, [sourced, preCommit("file:a")]), cut([preCommit("file:a")]));
+    assert.equal(past.state, "unchanged", JSON.stringify(past));
+    assert.deepEqual(past.state === "unchanged" && past.notRead, [`At the run's end: ${sentence}`]);
+    // git's own names are listed whatever the size, so one missing is removed,
+    assert.deepEqual(findingsOf(compare(cut([preCommit("file:a")]), cut([]))), [
+      { kind: "hook", name: "pre-commit", change: "removed", executable: false },
+    ]);
+    // and the start listed everything, so a name new at the end is added.
+    assert.deepEqual(findingsOf(compare(snapshot(ORDINARY), cut([sourced]))), [
+      { kind: "hook", name: "h", change: "added", executable: false },
+    ]);
   });
 
   it("info/attributes added or changed, with the lines that name a driver", () => {
@@ -353,6 +409,94 @@ describe("the directory a core.hooksPath the repository already had names", () =
     assert.deepEqual(notReadOf(compare(unread("away."), unread("away."))), [
       "At the run's start and end: away.",
     ]);
+  });
+});
+
+describe("a symlinked hook, hooks/ or info/, read through", () => {
+  it("is not compared against a baseline that only kept the link, and says so", () => {
+    const linkedDir: HookEntry = { name: ".", identity: "symlink:../.githooks", executable: false };
+    const behind: HookEntry = { name: "pre-commit", identity: "file:a", executable: true };
+    const older = (hooks: HookEntry[], attributes: GitDirSnapshot["attributes"] = null) => {
+      const { modules: _, unread: __, ...rest } = { ...snapshot(ORDINARY, hooks), attributes };
+      return rest;
+    };
+    const now = (hooks: HookEntry[], attributes: GitDirSnapshot["attributes"] = null) => ({
+      ...snapshot(ORDINARY, hooks),
+      attributes,
+    });
+    const said = /^At the run's start: this app did not yet read through a symlinked hook/;
+    for (const report of [
+      compare(older([linkedDir]), now([linkedDir, behind])),
+      compare(
+        older([{ name: "pre-commit", identity: "symlink:../x", executable: true }]),
+        now([{ name: "pre-commit", identity: `symlink:../x${THROUGH_LINK}file:a`, executable: true }]),
+      ),
+      compare(
+        older([], { digest: "symlinked-info:../.gitinfo", driverLines: [] }),
+        now([], { digest: `symlinked-info:../.gitinfo${THROUGH_LINK}d`, driverLines: ["* filter=x"] }),
+      ),
+    ]) {
+      assert.equal(report.state, "unchanged", JSON.stringify(report));
+      assert.match((report.state === "unchanged" ? report.notRead ?? [] : []).join(), said);
+    }
+    // A link repointed is still a change, whatever the baseline kept.
+    const repointed = { ...linkedDir, identity: "symlink:/elsewhere" };
+    assert.equal(findingsOf(compare(older([linkedDir]), now([repointed])))[0].kind, "hook");
+  });
+});
+
+describe("a submodule's git directory", () => {
+  const MODULE_CONFIG = `${COMMON}/modules/lib/config`;
+  const clean: ModuleSnapshot["reading"] = { config: [], hooks: [], attributes: null };
+  const planted: ModuleSnapshot["reading"] = {
+    config: watchedConfigOf(listing([["local", MODULE_CONFIG, "core.fsmonitor", "evil"]])),
+    hooks: [],
+    attributes: null,
+  };
+  const withModules = (modules: ModuleSnapshot[] | null, unread: string[] = []): GitDirSnapshot => ({
+    ...snapshot(ORDINARY),
+    modules,
+    unread,
+  });
+  const lib = (reading: ModuleSnapshot["reading"]): ModuleSnapshot => ({ dir: "modules/lib", reading });
+
+  it("is compared as the repository's own is, each finding marked with it", () => {
+    const expected = {
+      kind: "config",
+      commandClass: "fsmonitor",
+      key: "core.fsmonitor",
+      change: "added",
+      now: [{ scope: "local", origin: MODULE_CONFIG, shown: "evil" }],
+      module: "modules/lib",
+    };
+    assert.deepEqual(findingsOf(compare(withModules([lib(clean)]), withModules([lib(planted)]))), [
+      expected,
+    ]);
+    // One that arrives with a plant in it is the same finding.
+    assert.deepEqual(findingsOf(compare(withModules([]), withModules([lib(planted)]))), [expected]);
+  });
+
+  it("is never removed or unchanged when either end did not read it", () => {
+    const notReadOf = (report: GitDirReport) => {
+      assert.equal(report.state, "unchanged", JSON.stringify(report));
+      return report.state === "unchanged" ? report.notRead : undefined;
+    };
+    // Past the cap at the end, or too many entries to look through.
+    assert.deepEqual(
+      notReadOf(compare(withModules([lib(planted)]), withModules([lib(null)], ["Past the cap."]))),
+      ["At the run's end: Past the cap."],
+    );
+    assert.deepEqual(
+      notReadOf(compare(withModules([lib(planted)]), withModules(null, ["Too many."]))),
+      ["At the run's end: Too many."],
+    );
+    // A baseline from before submodules were read has none of them.
+    const { modules: _, unread: __, ...older } = snapshot(ORDINARY);
+    assert.match(
+      (notReadOf(compare(older, withModules([lib(planted)]))) ?? []).join(),
+      /^At the run's start: this app did not yet read submodules' git directories/,
+    );
+    assert.equal(notReadOf(compare(older, withModules([]))), undefined);
   });
 });
 
