@@ -308,35 +308,39 @@ describe("a schedule's fire, against what the operator presses during it", () =>
  * The hold is pressed through `setFleetPaused`, which is what the button calls.
  */
 describe("a schedule's fire, against the install-wide hold on new work", () => {
-  it("control: starts nothing, and moves nothing, when the hold is set before the tick", async () => {
+  it("control: starts nothing, and records the window as missed, when the hold is set before the tick", async () => {
     const id = dueSchedule("Held before", "one");
-    const cursorBefore = rowOf(id)?.cursor_at;
+    const cursorBefore = rowOf(id)?.cursor_at as number;
     settings.setNewWorkPaused(true);
 
     await schedules.tickSchedules();
 
     assert.equal(instancesOf(id), 0);
-    assert.deepEqual(rowOf(id), { cursor_at: cursorBefore, last_code: null });
+    // Moved past the window and recorded, where it used to be left behind it:
+    // a cursor left behind is a window the grace takes for a late tick once the
+    // hold is lifted. The fixture's occurrence is one millisecond past the cursor.
+    assert.deepEqual(rowOf(id), { cursor_at: cursorBefore + 1, last_code: "missed" });
   });
 
   it("starts nothing when the hold is set during the fire's own snapshot", async () => {
     const id = dueSchedule("Held during", "one");
-    const cursorBefore = rowOf(id)?.cursor_at;
+    const cursorBefore = rowOf(id)?.cursor_at as number;
     pressDuringSnapshot = () => fleet.setFleetPaused(true);
 
     await schedules.tickSchedules();
 
     assert.equal(instancesOf(id), 0, "a fire decided before the hold started an instance while held");
     assert.equal(runCount(), 0, "the held fire still wrote a run for the hold's release to promote");
-    // The cursor stays where the hold found it, so lifting the hold records the
-    // window as missed rather than the card saying nothing happened at all.
-    assert.deepEqual(rowOf(id), { cursor_at: cursorBefore, last_code: null });
+    // The window the fire had claimed is recorded as missed and the cursor stays
+    // on it, rather than being put back behind it for the grace to take.
+    assert.deepEqual(rowOf(id), { cursor_at: cursorBefore + 1, last_code: "missed" });
   });
 
-  it("puts the cursor back only as far as the windows it already recorded as missed", async () => {
+  it("leaves the cursor on the newest window, and records the older one only once", async () => {
     // One older occurrence ahead of the one being fired. The tick records it as
-    // missed before the snapshot, and a cursor put back past it would have the
-    // next decision record the same window again.
+    // missed before the snapshot, and the window the hold overtakes after it is
+    // recorded on top, so the cursor ends on the newest and the older window is
+    // not decided about a second time.
     const id = dueSchedule("Held after a miss", "one", 10, 1);
     const cursorBefore = rowOf(id)?.cursor_at as number;
     pressDuringSnapshot = () => fleet.setFleetPaused(true);
@@ -344,7 +348,46 @@ describe("a schedule's fire, against the install-wide hold on new work", () => {
     await schedules.tickSchedules();
 
     assert.equal(instancesOf(id), 0);
-    // The older occurrence is one millisecond past the cursor the fixture set.
-    assert.deepEqual(rowOf(id), { cursor_at: cursorBefore + 1, last_code: "missed" });
+    // The older occurrence is one millisecond past the cursor the fixture set,
+    // and the newest is an hour after it.
+    assert.deepEqual(rowOf(id), { cursor_at: cursorBefore + HOUR_MS + 1, last_code: "missed" });
+    const streak = dbMod
+      .db()
+      .prepare("SELECT streak FROM workflow_schedules WHERE workflow_id = ?")
+      .get(id) as { streak: number };
+    assert.equal(streak.streak, 2, "two windows recorded once each");
+  });
+
+  it("records a window that passed under the hold as missed, and does not start it when the hold is lifted inside the grace", async () => {
+    // The hold's own promise, on the card: the next start "will be recorded as
+    // missed and not made up afterwards". A tick under the hold used to leave the
+    // cursor behind the window, so lifting the hold seconds later found it inside
+    // `FIRE_GRACE_MS` and read it as a tick that ran late: an instance started
+    // with nobody present, recorded "started" on time.
+    const id = dueSchedule("Held then lifted", "one");
+    settings.setNewWorkPaused(true);
+    await schedules.tickSchedules();
+    assert.equal(instancesOf(id), 0, "control: nothing starts under the hold");
+
+    settings.setNewWorkPaused(false);
+    await schedules.tickSchedules();
+
+    assert.equal(instancesOf(id), 0, "a window that passed under the hold was started once it was lifted");
+    assert.equal(rowOf(id)?.last_code, "missed");
+  });
+
+  it("does the same for a hold set during the fire's own snapshot", async () => {
+    // `releaseWindow` used to put the cursor back behind the window, which is the
+    // same hand-back to the grace by another door.
+    const id = dueSchedule("Held during, then lifted", "one");
+    pressDuringSnapshot = () => fleet.setFleetPaused(true);
+    await schedules.tickSchedules();
+    assert.equal(instancesOf(id), 0, "control: nothing starts under the hold");
+
+    settings.setNewWorkPaused(false);
+    await schedules.tickSchedules();
+
+    assert.equal(instancesOf(id), 0, "a window that passed under the hold was started once it was lifted");
+    assert.equal(rowOf(id)?.last_code, "missed");
   });
 });

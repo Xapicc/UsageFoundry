@@ -409,7 +409,7 @@ describe("decideSchedule", () => {
     assert.equal(d.nextFireAt, Date.UTC(2026, 6, 3, 7, 0));
   });
 
-  it("starts nothing while paused, and still says when it would", () => {
+  it("starts nothing while the install is held, and still says when it would", () => {
     const d = decideSchedule(
       ctx({
         spec: DAILY_0900,
@@ -419,11 +419,39 @@ describe("decideSchedule", () => {
       }),
     );
     assert.deepEqual(d.action, { kind: "paused" });
-    // Nothing is missed by a schedule somebody switched off, and the cursor is
-    // left where it was — `pauseSchedule` moves it on resume instead.
-    assert.deepEqual(d.missed, []);
-    assert.equal(d.cursorAt, JUL_1_0900);
+    // A window that passes under the hold is missed, and the cursor moves past
+    // it — inside the grace too. Left behind, the tick after the hold was lifted
+    // read it as a tick that ran late and started it. (A schedule's own pause
+    // never reaches this: `pauseSchedule` moves the cursor on resume.)
+    assert.deepEqual(d.missed, [JUL_2_0900]);
+    assert.equal(d.cursorAt, JUL_2_0900);
     assert.equal(d.nextFireAt, Date.UTC(2026, 6, 3, 7, 0));
+  });
+
+  it("records every window that passed under the hold, and none before the first one", () => {
+    const jul3 = Date.UTC(2026, 6, 3, 7, 0);
+    const held = decideSchedule(
+      ctx({ spec: DAILY_0900, lastFireAt: JUL_1_0900, paused: true, now: jul3 + 1_000 }),
+    );
+    assert.deepEqual(held.missed, [JUL_2_0900, jul3]);
+    assert.equal(held.cursorAt, jul3);
+
+    const between = decideSchedule(
+      ctx({
+        spec: DAILY_0900,
+        lastFireAt: JUL_1_0900,
+        paused: true,
+        now: Date.UTC(2026, 6, 1, 12, 0),
+      }),
+    );
+    assert.deepEqual(between.missed, []);
+    assert.equal(between.cursorAt, JUL_1_0900, "nothing passed, so the cursor stays");
+
+    const unstamped = decideSchedule(
+      ctx({ spec: DAILY_0900, lastFireAt: null, paused: true, now: JUL_2_0900 + 5_000 }),
+    );
+    assert.deepEqual(unstamped.missed, []);
+    assert.equal(unstamped.cursorAt, null, "a row with no cursor has no history to reason about");
   });
 
   it("does not fire the occurrence a brand-new schedule just missed", () => {
