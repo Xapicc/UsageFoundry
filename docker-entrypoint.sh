@@ -129,22 +129,67 @@ fi
 
 # The Codex CLI's home, `CODEX_HOME`, in its own named volume so the sign-in the
 # Settings panel writes and the threads a picked-up Codex run resumes outlive an
-# `up --build`. The same ownership guard, with one directory handed back: `rules/`
-# is the server's, written as root every cycle by `codexRules.ts`, because it
-# holds the `pkill`/`killall` denial and an agent able to rewrite it could lift
-# that denial for every sibling. `-R` changes links rather than what they name.
+# `up --build`.
+#
+# **Root's, sticky and writable by the agents' group — 1770 `0:<agent gid>` —
+# on every boot.** `rules/` holds the `pkill`/`killall` denial `codexRules.ts`
+# writes as root every cycle, and root owning `rules/` alone kept nothing:
+# renaming a directory is a write to the directory holding it, and while the
+# agents owned this one any work cycle could move `rules/` aside and leave a
+# file or a dangling link at the name, which refused every later Codex cycle
+# across restarts, or a link into its own tree, which put the denial where the
+# agent can edit it. The sticky bit refuses an agent that rename, exactly as it
+# guards `settings.json` under UF_LOCK_CLAUDE_HOME below, and the group bit is
+# what lets Codex go on creating `auth.json`, `sessions/`, its SQLite files and
+# the rest as the agents' own. `prepareCodexRules` refuses a cycle on anything
+# else, and `ensureCodexHome` (`codexAuth.ts`) re-asserts this at sign-in.
+#
+# This used to run only when the volume root's owner differed from the agents',
+# which on a stock install it never does, so `rules/` was never protected. What
+# stays guarded is the recursive re-own of the agents' entries: one `stat` per
+# top-level entry and `-R` only on one in other hands (a changed UF_AGENT_UID),
+# because `sessions/` grows with every Codex run. Root's own entries — `rules/`,
+# and the `AGENTS.md` `codexInstructions.ts` rewrites every cycle — stay root's.
+# `-R` changes links rather than what they name.
 CODEX_HOME_VOLUME=/home/node/.codex
 if [ -n "${UF_AGENT_UID:-}" ] && [ -d "$CODEX_HOME_VOLUME" ]; then
   want="${UF_AGENT_UID}:${UF_AGENT_GID:-$UF_AGENT_UID}"
-  have="$(stat -c '%u:%g' "$CODEX_HOME_VOLUME" 2>/dev/null || echo '')"
-  if [ "$have" != "$want" ]; then
-    if ! chown -R "$want" "$CODEX_HOME_VOLUME" 2>/dev/null; then
-      echo "[usagefoundry] cannot give $CODEX_HOME_VOLUME to $want — a Codex" \
-           "sign-in and every Codex work cycle will fail on a directory they cannot write." >&2
-    elif [ -d "$CODEX_HOME_VOLUME/rules" ] && ! chown -R 0:0 "$CODEX_HOME_VOLUME/rules" 2>/dev/null; then
-      echo "[usagefoundry] cannot hand $CODEX_HOME_VOLUME/rules back to root — an" \
-           "agent can now rewrite the rules file that denies it pkill and killall." >&2
+  codex_rules="$CODEX_HOME_VOLUME/rules"
+  for codex_entry in "$CODEX_HOME_VOLUME"/* "$CODEX_HOME_VOLUME"/.[!.]* "$CODEX_HOME_VOLUME"/..?*; do
+    { [ -e "$codex_entry" ] || [ -L "$codex_entry" ]; } || continue
+    [ "$codex_entry" = "$codex_rules" ] && continue
+    have="$(stat -c '%u:%g' "$codex_entry" 2>/dev/null || echo '')"
+    case "$have" in "$want"|0:*) continue ;; esac
+    if ! chown -R "$want" "$codex_entry" 2>/dev/null; then
+      echo "[usagefoundry] cannot give $codex_entry to $want — a Codex" \
+           "sign-in or work cycle will fail on a file it cannot write." >&2
     fi
+  done
+
+  # Anything at `rules` that is not a real directory is moved aside rather than
+  # trusted or deleted. Neither Codex nor this app puts a file or a link there,
+  # so it is a work cycle's doing, and the operator may want to see what it was.
+  # `-T` because the name moved to is one a cycle can predict and plant a link
+  # to a directory at: without it, root would move the cycle's file *into*
+  # whatever that link names. Nothing but this script is running yet, so
+  # nothing can race the `mkdir`.
+  if [ -L "$codex_rules" ] || { [ -e "$codex_rules" ] && [ ! -d "$codex_rules" ]; }; then
+    codex_rules_aside="$codex_rules.moved-aside.$(date +%s)"
+    if mv -T -- "$codex_rules" "$codex_rules_aside" 2>/dev/null; then
+      echo "[usagefoundry] $codex_rules was not a directory; moved it to" \
+           "$codex_rules_aside and made a directory only root can write." >&2
+    fi
+  fi
+  if [ -L "$codex_rules" ] || ! mkdir -p "$codex_rules" 2>/dev/null ||
+     ! chown -R 0:0 "$codex_rules" 2>/dev/null ||
+     ! chmod -R go-w "$codex_rules" 2>/dev/null; then
+    echo "[usagefoundry] cannot make $codex_rules a directory only root can" \
+         "write — every Codex work cycle will be refused until it is one." >&2
+  fi
+  if ! chown "0:${UF_AGENT_GID:-$UF_AGENT_UID}" "$CODEX_HOME_VOLUME" 2>/dev/null ||
+     ! chmod 1770 "$CODEX_HOME_VOLUME" 2>/dev/null; then
+    echo "[usagefoundry] cannot make $CODEX_HOME_VOLUME root's and sticky — every" \
+         "Codex work cycle will be refused, because a cycle could replace its rules/." >&2
   fi
 fi
 

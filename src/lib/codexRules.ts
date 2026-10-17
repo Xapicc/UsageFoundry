@@ -41,6 +41,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { CODEX_HOME } from "./config";
+import { privilegeSeparated } from "./privsep";
 
 /**
  * The commands a work cycle may not run, and the reason each is on the list.
@@ -95,6 +96,86 @@ export type CodexRulesDelivery =
   | { kind: "unavailable"; reason: string };
 
 /**
+ * The uid `CODEX_HOME` and its `rules/` must belong to, or null when there is
+ * nobody to keep out of them.
+ *
+ * Null without a uid split — `npm run dev`, the suite, a container pinned to
+ * one uid — because there the cycle *is* the server's uid and can rewrite the
+ * file whoever owns the directory. A check would refuse cycles while protecting
+ * nothing, and a `~/.codex/rules` linked into an operator's dotfiles is an
+ * ordinary shape on a laptop that is a hostile one in the container.
+ */
+function rulesOwner(): number | null {
+  return privilegeSeparated() ? (process.getuid?.() ?? 0) : null;
+}
+
+/**
+ * Why a work cycle could change what Codex finds at `target`, or null.
+ *
+ * `lstat`, never `stat`: a link is a name the agents can repoint, so it is
+ * refused whatever it names. A write bit for group or others is refused unless
+ * `stickyWillDo` and the directory is sticky. For `CODEX_HOME` the sticky bit
+ * is what stops a rename of root's `rules/` while the agents' group still
+ * creates `auth.json` and `sessions/` beside it; for `rules/` no write bit is
+ * safe, because a cycle that can write there can delete the denial.
+ */
+function untrustedBecause(
+  target: string,
+  owner: number,
+  stickyWillDo: boolean,
+): string | null {
+  const stat = fs.lstatSync(target);
+  if (stat.isSymbolicLink()) return `${target} is a symbolic link`;
+  if (!stat.isDirectory()) return `${target} is not a directory`;
+  if (stat.uid !== owner) {
+    return `${target} is owned by uid ${stat.uid}, not by this server's uid ${owner}`;
+  }
+  const mode = stat.mode & 0o7777;
+  const sticky = (mode & 0o1000) !== 0;
+  if ((mode & 0o022) !== 0 && !(stickyWillDo && sticky)) {
+    return (
+      `${target} is mode ${mode.toString(8).padStart(4, "0")}, writable by group or ` +
+      `others${stickyWillDo ? " and not sticky" : ""}`
+    );
+  }
+  return null;
+}
+
+/**
+ * Make `rules/` if it is missing, and say what is wrong with it or with
+ * `CODEX_HOME` — or null when only this server can change either.
+ *
+ * The parent first, and before anything is made in it: while the agents can
+ * rename entries in `CODEX_HOME`, nothing found in `rules/` stays what it was
+ * found to be. Once the parent holds they cannot touch root's `rules/`, so the
+ * check and the write after it see the same directory. Refused rather than
+ * repaired, because a repair at cycle time races a cycle that is still running;
+ * the entrypoint repairs at boot, before there is one.
+ */
+function tamperedBecause(dir: string, owner: number): string | null {
+  let reason = untrustedBecause(CODEX_HOME, owner, true);
+  if (!reason) {
+    makeDirectory(dir);
+    reason = untrustedBecause(dir, owner, false);
+  }
+  if (!reason) return null;
+  return (
+    `${reason}, so the denial would not be where only this server can write it. ` +
+    `Restarting the container puts the default CODEX_HOME back: ` +
+    `docker-entrypoint.sh makes it root's and sticky, and its rules/ root's alone, at every boot.`
+  );
+}
+
+/** `mkdir` that leaves whatever is already at the name for the caller to describe. */
+function makeDirectory(dir: string): void {
+  try {
+    fs.mkdirSync(dir, { mode: 0o755 });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+  }
+}
+
+/**
  * Put the denial where Codex will find it, or say why it is not there.
  *
  * Rewritten per cycle rather than once per install, `plugins.ts`' reason: the
@@ -103,16 +184,33 @@ export type CodexRulesDelivery =
  * reason `readGuard.ts`' is — a cycle spawning while a half-written file is on
  * disk would load a rules file that parses to nothing.
  *
+ * **A successful write is not enough to answer `ready` under a uid split.**
+ * Root owning `rules/` protected nothing while the agents owned the directory
+ * holding it, since a rename needs write on the parent only: a cycle could move
+ * `rules/` aside and leave a link into its own tree, which this used to follow
+ * and answer `ready` with the denial somewhere the agent can edit. So both
+ * directories are checked, and the refusal names the one that is wrong.
+ *
  * The caller must **refuse the cycle** on `unavailable` rather than log it and
  * carry on. That is the one place this differs from the read guard, which
  * degrades to a cycle that re-reads files: this degrades to a cycle that can
  * kill the supervisor, and the Claude equivalent is not optional either.
+ *
+ * @param owner the uid both directories must belong to, or null to check
+ *   nothing; `rulesOwner()` says which, and the tests pass their own.
  */
-export function prepareCodexRules(): CodexRulesDelivery {
+export function prepareCodexRules(
+  owner: number | null = rulesOwner(),
+): CodexRulesDelivery {
   const dir = path.dirname(CODEX_RULES_FILE);
   const tmp = `${CODEX_RULES_FILE}.tmp-${randomBytes(6).toString("hex")}`;
   try {
-    fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
+    if (owner === null) {
+      fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
+    } else {
+      const tampered = tamperedBecause(dir, owner);
+      if (tampered) return { kind: "unavailable", reason: tampered };
+    }
     fs.writeFileSync(tmp, codexRulesText());
     // World-readable on purpose: the process that writes it is the server, and
     // the process that has to read it is the cycle, under a different uid.

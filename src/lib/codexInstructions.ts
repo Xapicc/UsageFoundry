@@ -20,9 +20,11 @@ import { CLAUDE_CONFIG_DIR, CODEX_HOME } from "./config";
  * read it where a repository has no `AGENTS.md`.
  *
  * **Rewritten every cycle, as `codexRules.ts` rewrites the pkill denial**, and
- * for a sharper reason here: `CODEX_HOME` is the agents' own directory, so a
- * cycle can replace this file, and a run that wrote itself standing
- * instructions would otherwise hand them to every Codex run after it. Rewriting
+ * for a sharper reason here: the agents' group writes in `CODEX_HOME`, so a
+ * cycle can put a file at this name whenever it is absent — and on a
+ * `CODEX_HOME` that is not sticky, replace it outright — and a run that wrote
+ * itself standing instructions would otherwise hand them to every Codex run
+ * after it. Rewriting
  * bounds that to the cycle that did it. **So the file is this app's, whatever
  * is in it:** one that lacked the header line used to be left alone as the
  * operator's, and that is exactly the shape a planted file would take to

@@ -48,7 +48,54 @@
   the container's own host, `lsof -nP -iTCP:3000 -sTCP:LISTEN` showed Docker on
   `*:3000` and the macOS application firewall was confirmed disabled.
 
+- **A running install's `/home/node/.codex` was the agents' 0755, 2026-10-17**,
+  read from inside a work cycle's sandbox on this install's
+  `usagefoundry_usagefoundry-codex` volume, on the image before board task
+  `57d1c7d6`: `stat` gave `1000:1000 755` for the directory and an unmapped
+  owner (65534 in the sandbox; the server writes it as root) for `rules/` and
+  `AGENTS.md`. So `rules/` sat in a directory every cycle could rename it out
+  of. Through the sandbox's user namespace, so only "not 1000" is known there.
+
+- **Codex 0.153.4 leaves a 1770 home's mode alone, 2026-10-17**: against a
+  scratch `CODEX_HOME` at 1770, `login --with-api-key`, `login status` and
+  `exec` up to its first network call left it 1770 and made only entries of
+  its own (`auth.json`, `sessions/`, `log/`, `.tmp/`, six SQLite files with
+  `-wal`/`-shm`). Run as the directory's owner, not as a group member of a
+  root-owned one, so an owner-only call other than `chmod` (whose effect
+  would have shown) would have succeeded unseen.
+
+- **A planted `allow` does not lift the denial, 2026-10-17**: `codex
+  execpolicy check` (0.153.4) with this app's rules file and a
+  `prefix_rule(pattern=["pkill"], decision="allow")` file answered
+  `"decision":"forbidden"` in both orders. Adding a file that does not parse
+  made the check fail with `failed to parse policy`; what a cycle's own rule
+  discovery does with such a file is not measured.
+
+- **A mount point cannot be renamed or removed from its own namespace,
+  2026-10-17**: under `unshare -Urm`, `mv` and `rmdir` of a directory with a
+  tmpfs mounted on it both failed `Device or resource busy`. That is what keeps
+  a cycle from renaming `/home/node/.codex` out of the agent-owned `/home/node`;
+  a namespace the volume is not mounted in was not tried.
+
 ## Not yet verified by hand
+
+- **That a container on this image leaves `/home/node/.codex` root's and
+  sticky, and that an agent cannot rename `rules/` out of it** (board task
+  `57d1c7d6`). `deployment.test.ts` runs the entrypoint block with `chown` and
+  `chmod` stubbed and pins the Dockerfile's text; no container has booted it.
+  ```bash
+  docker compose up --build -d
+  docker compose exec usagefoundry ls -ld /home/node/.codex /home/node/.codex/rules
+  # expect: drwxrwx--T root <agent group> … /home/node/.codex
+  #         drwxr-xr-x root root          … /home/node/.codex/rules
+  uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)
+  gid=$(docker compose exec -T usagefoundry printenv UF_AGENT_GID)
+  docker compose exec -u "$uid:$gid" usagefoundry \
+    mv /home/node/.codex/rules /home/node/.codex/rules.x   # expect: Operation not permitted
+  docker compose exec -u "$uid:$gid" usagefoundry codex login status  # still signed in
+  docker compose logs usagefoundry | grep -i codex    # no "cannot … .codex" line
+  ```
+  Then one Codex work cycle, which must start rather than be refused.
 
 - **That the next boot after a failed restore comes up green on an empty path
   was not executed**; it follows from `db.ts`'s unconditional

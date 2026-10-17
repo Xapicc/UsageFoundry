@@ -697,11 +697,15 @@ COPY scripts/apply-stacks.mjs ./scripts/
 # directory, so it ships owned by `node` and a fresh volume inherits that.
 # Nothing is put in it here; `ensureLocalConfigDir` fills it per cycle.
 #
-# `/home/node/.codex` is the same arrangement for the Codex CLI: the agent uid
-# signs in there and every Codex cycle authenticates from it, so it ships owned
-# by `node`. Its `rules/` is the exception and is not made here — the server
-# writes it as root every cycle, and `docker-entrypoint.sh` hands it back to
-# root after any recursive re-own.
+# `/home/node/.codex` is where the agent uid signs in to Codex and every Codex
+# cycle authenticates from, but it does **not** ship as the agents': it is
+# root's, group `node`, 1770, re-asserted by `docker-entrypoint.sh` at every
+# boot. Its `rules/` holds the `pkill`/`killall` denial the server writes as
+# root, and a rename needs write on the parent only, so a directory the agents
+# owned was one any work cycle could move `rules/` out of. The group bit still
+# lets them create their own entries and the sticky bit keeps them off root's.
+# `rules/` itself is not made here: the entrypoint makes it root's at boot, and
+# an install pinned to one non-root uid has to be able to make it itself.
 #
 # **`/app` is not on that list and must never be put back on it.** It is this
 # server's own bundle — `server.js`, `.next/`, the standalone `node_modules/`
@@ -729,6 +733,8 @@ RUN mkdir -p /data /workspace /workspace2 /workspace3 /workspace4 /home/node/.cl
       /home/node/pytools/tools /home/node/pytools/bin /home/node/pytools/python \
       /var/lib/winnow /home/node/.claude-local /home/node/.codex \
  && chown -R node:node /workspace /workspace2 /workspace3 /workspace4 /home/node \
+ && chown root:node /home/node/.codex \
+ && chmod 1770 /home/node/.codex \
  && chown root:root /data \
  && chmod 0700 /data
 

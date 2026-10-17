@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 
@@ -2629,7 +2631,8 @@ describe("a local-model run's session survives the rebuild", () => {
  * it to survive `docker compose up --build`.
  *
  * `config.ts` defaults `CODEX_HOME` to `$HOME/.codex`, compose mounts a volume
- * there, the image creates it as the agents' and the entrypoint re-owns it.
+ * there, the image creates it and the entrypoint keeps it writable by the
+ * agents' group.
  * While it was the writable layer every rebuild signed the install out of Codex
  * and took every thread a Codex run resumes with it, with nothing failing until
  * the next Codex cycle reported "Not logged in".
@@ -2665,19 +2668,180 @@ describe("the Codex sign-in survives the rebuild", () => {
     );
   });
 
-  it("ships that directory in the image, so a fresh volume is not root's", () => {
+  it("ships that directory in the image, so a fresh volume is one the agents can write", () => {
     const target = codexHomeVolume();
     assert.match(
       dockerfile,
       new RegExp(`mkdir -p[^\\n]*(\\\\\\s*\\n[^\\n]*)*${target.replace(/\./g, "\\.")}`),
-      `the image never creates ${target}, so the volume created over it belongs to ` +
-        `root and the agent uid cannot sign in to it`,
+      `the image never creates ${target}, so the volume created over it is root's ` +
+        `0755 and the agent uid cannot sign in to it`,
     );
   });
 
-  it("hands rules/ back to root after re-owning the rest", () => {
-    // The denial an agent must not be able to rewrite lives in that directory;
-    // a plain recursive re-own would give it to the agent uid.
-    assert.match(entrypoint, /chown -R 0:0 "\$CODEX_HOME_VOLUME\/rules"/);
+});
+
+/**
+ * `CODEX_HOME` is root's and sticky, so no work cycle can take `rules/` away
+ * from the server — board task `57d1c7d6`, and a privilege-separation pin.
+ *
+ * `rules/` holds the `pkill`/`killall` denial `codexRules.ts` writes as root,
+ * and root owning `rules/` was all that protected it. That kept nothing:
+ * renaming a directory is a write to the directory holding it, the image made
+ * `/home/node/.codex` the agents' at 0755, and the entrypoint's hand-back ran
+ * only when the volume root's owner changed, which on a stock install it never
+ * does. So any work cycle could move `rules/` aside and leave a file or a
+ * dangling link there, which made `prepareCodexRules` refuse every later Codex
+ * cycle across restarts, or a link into its own tree, which put the denial
+ * where it can edit it. Nothing fails or warns on the open shape, and Docker is
+ * not here, so the image half is pinned over text.
+ *
+ * The entrypoint half is *run*, with `chown` and `chmod` recorded rather than
+ * performed: the defect was a condition on when the block acts, which no match
+ * over its text can express, and the suite is not root. What is recorded is
+ * which owners and modes the boot asks for; whether the kernel grants them is
+ * what `docs/verification/` leaves to a running container.
+ */
+describe("a work cycle cannot take the Codex denial's directory away from root", () => {
+  const entrypoint = fs.readFileSync(path.join(root, "docker-entrypoint.sh"), "utf8");
+  const codexHome = /^CODEX_HOME_VOLUME=(\S+)$/m.exec(entrypoint)?.[1];
+  const uid = process.getuid!();
+  const gid = process.getgid!();
+
+  /** The entrypoint's `CODEX_HOME` block, from its assignment to the `fi` closing it. */
+  function codexHomeBlock(): string {
+    const start = entrypoint.search(/^CODEX_HOME_VOLUME=/m);
+    assert.notEqual(start, -1, "docker-entrypoint.sh no longer names the Codex home");
+    const end = entrypoint.slice(start).search(/^fi$/m);
+    assert.notEqual(end, -1, "the Codex home block has no closing `fi` at column 0");
+    return entrypoint.slice(start, start + end + "fi".length);
+  }
+
+  /**
+   * One boot of that block against `home`, as the stock install: the volume
+   * and everything in it already belong to `UF_AGENT_UID`, which is the state
+   * the old gate read as "nothing to do".
+   */
+  function boot(home: string, extraStubs: string[] = []): string[] {
+    const calls = path.join(path.dirname(home), "calls.log");
+    fs.rmSync(calls, { force: true });
+    const block = codexHomeBlock().replace(
+      /^CODEX_HOME_VOLUME=\S+$/m,
+      `CODEX_HOME_VOLUME='${home}'`,
+    );
+    const stubs = [
+      'chown() { printf "chown %s\\n" "$*" >> "$UF_TEST_CALLS"; }',
+      'chmod() { printf "chmod %s\\n" "$*" >> "$UF_TEST_CALLS"; }',
+      ...extraStubs,
+    ].join("\n");
+    const result = spawnSync("sh", ["-c", `${stubs}\n${block}`], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        UF_AGENT_UID: String(uid),
+        UF_AGENT_GID: String(gid),
+        UF_TEST_CALLS: calls,
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return fs.existsSync(calls)
+      ? fs.readFileSync(calls, "utf8").split("\n").filter(Boolean)
+      : [];
+  }
+
+  /** A volume as the agents leave it: a sign-in, a thread, and whatever `extra` adds. */
+  function scratchHome(extra?: (home: string) => void): string {
+    const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-codex-home-")));
+    const home = path.join(base, ".codex");
+    fs.mkdirSync(path.join(home, "sessions", "2026"), { recursive: true });
+    fs.writeFileSync(path.join(home, "auth.json"), "{}");
+    extra?.(home);
+    return home;
+  }
+
+  it("ships the Codex home root's and sticky, so a fresh volume starts that way", () => {
+    assert.ok(codexHome, "docker-entrypoint.sh no longer names the Codex home");
+    const reaching = chownGrants().filter(
+      (g) => g.target === codexHome || codexHome.startsWith(`${g.target}/`),
+    );
+    const last = reaching.at(-1);
+    assert.ok(last, `nothing in the runner stage chowns ${codexHome}`);
+    assert.equal(
+      last.target,
+      codexHome,
+      `the last chown to reach ${codexHome} is \`${last.owner}\` over ${last.target}, ` +
+        `so a fresh volume is the agents' and a work cycle can rename rules/`,
+    );
+    assert.match(last.owner, /^(root|0)(:|$)/, `${codexHome} ships owned by ${last.owner}`);
+
+    const mode = chmodGrants().filter((g) => g.target === codexHome).at(-1)?.mode;
+    assert.ok(mode !== undefined, `the image never sets ${codexHome}'s mode`);
+    assert.equal(mode & 0o1000, 0o1000, `${codexHome} ships ${mode.toString(8)}, not sticky`);
+    assert.equal(mode & 0o002, 0, `${codexHome} ships world-writable`);
+  });
+
+  it("locks the Codex home on a boot where no owner changed", () => {
+    const home = scratchHome();
+    const calls = boot(home);
+    for (const wanted of [
+      `chown 0:${gid} ${home}`,
+      `chmod 1770 ${home}`,
+      `chown -R 0:0 ${home}/rules`,
+      `chmod -R go-w ${home}/rules`,
+    ]) {
+      assert.equal(calls.includes(wanted), true, `the boot never ran \`${wanted}\`: ${JSON.stringify(calls)}`);
+    }
+    // A fresh volume from this image has no rules/, and a name nobody holds is
+    // one the agents' group bit lets a cycle take first.
+    assert.equal(fs.lstatSync(path.join(home, "rules")).isDirectory(), true);
+    // And the agents' own entries are one stat each: `sessions/` grows with
+    // every Codex run, and re-owning it on every boot would sit in front of
+    // the healthcheck.
+    assert.deepEqual(
+      calls.filter((c) => c.startsWith(`chown -R ${uid}:`)),
+      [],
+      "re-owned entries that were already the agents'",
+    );
+  });
+
+  it("puts a directory back wherever a work cycle left something else at rules/", () => {
+    const leftovers: [string, (home: string) => void][] = [
+      ["a link to a directory the agent owns", (home) => {
+        fs.mkdirSync(path.join(home, "mine"));
+        fs.symlinkSync(path.join(home, "mine"), path.join(home, "rules"));
+      }],
+      ["a dangling link", (home) => fs.symlinkSync("/no/such/directory", path.join(home, "rules"))],
+      ["a regular file", (home) => fs.writeFileSync(path.join(home, "rules"), "x")],
+    ];
+    for (const [what, plant] of leftovers) {
+      const home = scratchHome(plant);
+      const calls = boot(home);
+      const rules = fs.lstatSync(path.join(home, "rules"));
+      assert.equal(rules.isDirectory() && !rules.isSymbolicLink(), true, `rules/ is still ${what}`);
+      assert.equal(
+        fs.readdirSync(home).some((name) => name.startsWith("rules.moved-aside.")),
+        true,
+        `${what} was deleted rather than moved aside where the operator can see it`,
+      );
+      assert.deepEqual(
+        calls.filter((c) => c.includes(`${home}/mine`)),
+        [],
+        `the boot changed the owner or mode of what ${what} named`,
+      );
+    }
+  });
+
+  it("moves a leftover aside within the Codex home, never into a directory a link names", () => {
+    // The name it moves to is one a work cycle can predict, so it can plant a
+    // link to any directory there first. A plain `mv` would then have root put
+    // the cycle's own file into that directory — `/etc/profile.d` as easily as
+    // anywhere — which is a privilege escalation rather than a tidy-up.
+    const elsewhere = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-codex-elsewhere-")));
+    const home = scratchHome((home) => {
+      fs.writeFileSync(path.join(home, "rules"), "planted");
+      fs.symlinkSync(elsewhere, path.join(home, "rules.moved-aside.1234567890"));
+    });
+    boot(home, ["date() { echo 1234567890; }"]);
+    assert.deepEqual(fs.readdirSync(elsewhere), [], "root moved the planted file through the link");
+    assert.equal(fs.lstatSync(path.join(home, "rules")).isDirectory(), true);
   });
 });
