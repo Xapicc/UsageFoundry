@@ -1,13 +1,16 @@
 "use client";
 
+// Relative, not "@/…": tsconfig.test.json emits plain CommonJS and nothing
+// rewrites the path alias at runtime, so a tested component has to import the
+// way `ContextControl` already does.
 import type {
   ContextPrunerDTO,
   PruneActivityDTO,
   PruneSavingsDTO,
-} from "@/lib/apiTypes";
-import { fmtTokens, fmtUSD, signedUSD } from "@/lib/format";
-import { TBody, Table, Td, Tr } from "@/components/ui/Table";
-import { netBound, pruneStatement, prunerLine } from "@/lib/pruneStatement";
+} from "../lib/apiTypes";
+import { fmtTokens, fmtUSD, signedUSD } from "../lib/format";
+import { netBound, pruneStatement, prunerLine } from "../lib/pruneStatement";
+import { TBody, Table, Td, Tr } from "./ui/Table";
 
 /**
  * One span's pruning figures.
@@ -66,6 +69,7 @@ export function PruneSavingsRows({
     netUSD,
   } = savings;
   const bound = netBound(savings);
+  const priced = pricedPrunes > 0;
   // An unmeasured removal credits $0, so a saving of exactly that is unknown
   // rather than a floor worth printing.
   const savedKnown = unmeasuredPrunes === 0 || cacheSavedUSD > 0;
@@ -104,46 +108,72 @@ export function PruneSavingsRows({
               over {prunes} {prunes === 1 ? "prune" : "prunes"}
             </Td>
           </Tr>
-          <Tr>
-            <Td>Re-reads it avoided</Td>
-            <Td className="tabular-nums text-right">
-              {savedKnown ? (
-                <>
-                  {unmeasuredPrunes > 0 && "at least "}+{fmtUSD(cacheSavedUSD)}{" "}
-                  <span className="text-ink-muted">
-                    over {turnsAfter} later {turnsAfter === 1 ? "turn" : "turns"}
-                  </span>
-                </>
-              ) : (
-                <span className="text-ink-muted">not measured yet</span>
+          {/* The money rows are omitted whole rather than printed at zero, on
+              `FilterSavingsRows`' reasoning. A prune nothing could price is in
+              neither half, so every dollar field is 0 on the wire, and "+$0.00
+              … nothing — measured" asserts pruning earned nothing — while the
+              runs list prints `?` for the same run. The tokens above are a
+              measurement and stay. */}
+          {priced ? (
+            <>
+              <Tr>
+                <Td>Re-reads it avoided</Td>
+                <Td className="tabular-nums text-right">
+                  {savedKnown ? (
+                    <>
+                      {unmeasuredPrunes > 0 && "at least "}+{fmtUSD(cacheSavedUSD)}{" "}
+                      <span className="text-ink-muted">
+                        over {turnsAfter} later {turnsAfter === 1 ? "turn" : "turns"}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-ink-muted">not measured yet</span>
+                  )}
+                </Td>
+              </Tr>
+              <Tr>
+                <Td>Restarts it paid for</Td>
+                <Td className="tabular-nums text-right">
+                  {invalidationUSD > 0 ? (
+                    <>&minus;{fmtUSD(invalidationUSD)}</>
+                  ) : unsettledPrunes > 0 ? (
+                    /* The zero that used to say "nothing — all at cycle
+                       boundaries". It asserted a cause the value does not
+                       carry: the same 0 is produced by a boundary prune nobody
+                       has measured yet, and stating it as an observed nothing
+                       is what made a loss unrepresentable on this panel. */
+                    <span className="text-ink-muted">not settled yet</span>
+                  ) : (
+                    <span className="text-ink-muted">nothing — measured</span>
+                  )}
+                </Td>
+              </Tr>
+              <Tr>
+                <Td className="font-medium">
+                  {bound === "exact" ? "Net" : `Net, ${bound}`}
+                </Td>
+                <Td className="tabular-nums text-right font-medium">
+                  {signedUSD(netUSD)}
+                </Td>
+              </Tr>
+              {pricedPrunes < prunes && (
+                <Tr>
+                  <Td className="text-ink-muted" colSpan={2}>
+                    Money covers {pricedPrunes} of {prunes} prunes; the rest ran
+                    on a model with no price here, so what they saved is
+                    unknown rather than nothing.
+                  </Td>
+                </Tr>
               )}
-            </Td>
-          </Tr>
-          <Tr>
-            <Td>Restarts it paid for</Td>
-            <Td className="tabular-nums text-right">
-              {invalidationUSD > 0 ? (
-                <>&minus;{fmtUSD(invalidationUSD)}</>
-              ) : unsettledPrunes > 0 ? (
-                /* The zero that used to say "nothing — all at cycle
-                   boundaries". It asserted a cause the value does not carry:
-                   the same 0 is produced by a boundary prune nobody has
-                   measured yet, and stating it as an observed nothing is what
-                   made a loss unrepresentable on this panel. */
-                <span className="text-ink-muted">not settled yet</span>
-              ) : (
-                <span className="text-ink-muted">nothing — measured</span>
-              )}
-            </Td>
-          </Tr>
-          <Tr>
-            <Td className="font-medium">
-              {bound === "exact" ? "Net" : `Net, ${bound}`}
-            </Td>
-            <Td className="tabular-nums text-right font-medium">
-              {signedUSD(netUSD)}
-            </Td>
-          </Tr>
+            </>
+          ) : (
+            <Tr>
+              <Td className="text-ink-muted" colSpan={2}>
+                What that came to is unknown: every one of them ran on a model
+                with no price here.
+              </Td>
+            </Tr>
+          )}
           {/* An upper bound wearing a net's clothes is the one way this panel
               could mislead in the direction it was built to prevent, so it says
               so on the row and again underneath. */}
@@ -165,7 +195,7 @@ export function PruneSavingsRows({
                 {unmeasuredPrunes} of {prunes}{" "}
                 {prunes === 1 ? "prune has" : "prunes have"} a removal not
                 measured yet
-                {bound === "at least" ? ", so the net above is a floor." : "."}
+                {priced && bound === "at least" ? ", so the net above is a floor." : "."}
               </Td>
             </Tr>
           )}

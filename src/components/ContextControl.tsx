@@ -32,10 +32,11 @@ function spanLabel(totalFrom: number | null): string {
  *
  * An *unpriced* prune is a different fault and deliberately not this one — it
  * is missing from both halves, which makes the figure incomplete rather than
- * high, and it gets the coverage line at the foot of the card instead.
+ * high. And a span none of whose prunes could be priced has no pruning figure
+ * at all (`combinedUSD`), so there is nothing for a bound to qualify.
  */
 function spanCaption(label: string, pruning: PruneSavingsDTO): string {
-  const bound = pruning.prunes > 0 ? netBound(pruning) : "exact";
+  const bound = pruning.pricedPrunes > 0 ? netBound(pruning) : "exact";
   return bound === "exact" ? label : `${label}, ${bound}`;
 }
 
@@ -116,13 +117,19 @@ function filterShareUSD(
  * requests, swept transcripts, unpriced models — and a row that vanished
  * because one of two mechanisms had no reading would hide the other one's
  * work. Null only when neither half has anything to say.
+ *
+ * Pruning has a reading only where a prune was priced, on `filterShareUSD`'s
+ * rule: a prune nothing could price has every dollar field 0, and adding that
+ * printed `+$0.00` — a claim that pruning earned nothing — where the runs list
+ * prints `?` for the same run.
  */
 function combinedUSD(
   pruning: PruneSavingsDTO,
   share: number | null,
 ): number | null {
-  if (pruning.prunes === 0 && share === null) return null;
-  return (pruning.prunes > 0 ? pruning.netUSD : 0) + (share ?? 0);
+  const prunedUSD = pruning.pricedPrunes > 0 ? pruning.netUSD : null;
+  if (prunedUSD === null && share === null) return null;
+  return (prunedUSD ?? 0) + (share ?? 0);
 }
 
 /**

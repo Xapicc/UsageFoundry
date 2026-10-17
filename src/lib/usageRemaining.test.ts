@@ -232,9 +232,54 @@ test("Codex windows carry their own lengths and are judged by their own resets",
 
 test("Codex's own word for a hit wall is carried, and Claude's is always null", () => {
   const out = usageRemaining(
-    inputs({ codex: { signedIn: true, plan: codexPlan({ limitReached: "primary" }) } }),
+    inputs({
+      codex: {
+        signedIn: true,
+        plan: codexPlan({
+          session: { utilization: 1.0, resetsAt: NOW + HOUR },
+          limitReached: "primary",
+        }),
+      },
+    }),
     NOW,
   );
   assert.equal(out.providers[1].limitReached, "primary");
   assert.equal(out.providers[0].limitReached, null);
+});
+
+test("a wall named before its window reset is not carried past the reset", () => {
+  // Fetched four minutes ago, inside `REFRESH_MS`, so served as it stands. The
+  // full 5-hour window reset a minute ago; the weekly one is open at 40%.
+  const full = codexPlan({
+    session: { utilization: 1.0, resetsAt: NOW - 60_000 },
+    weekly: { utilization: 0.4, resetsAt: NOW + 3 * 24 * HOUR },
+    fetchedAt: NOW - 4 * 60_000,
+    limitReached: "rate_limit_reached",
+  });
+  const after = usageRemaining(inputs({ codex: { signedIn: true, plan: full } }), NOW)
+    .providers[1];
+  assert.equal(after.windows[0].used, null);
+  assert.equal(after.windows[1].used, 0.4);
+  assert.equal(after.limitReached, null, "60% left would be tinted as a hit wall");
+
+  // A verdict with no open window at the wall is not one this reading still
+  // supports, whatever the backend named.
+  const under = usageRemaining(
+    inputs({ codex: { signedIn: true, plan: codexPlan({ limitReached: "primary" }) } }),
+    NOW,
+  ).providers[1];
+  assert.equal(under.limitReached, null);
+
+  // An open window at or over the wall keeps it, the over-the-wall figure too.
+  const over = usageRemaining(
+    inputs({
+      codex: {
+        signedIn: true,
+        plan: { ...full, weekly: { utilization: 1.02, resetsAt: NOW + 3 * 24 * HOUR } },
+      },
+    }),
+    NOW,
+  ).providers[1];
+  assert.equal(over.limitReached, "rate_limit_reached");
+  assert.equal(over.windows[1].used, 1.02);
 });

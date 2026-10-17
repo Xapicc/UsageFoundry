@@ -4,6 +4,7 @@ import { Meter } from "./Meter";
 import { Badge } from "./ui/Badge";
 import { CardTitle } from "./ui/Card";
 import type { CodexUsageDTO, PlanWindowDTO } from "../lib/apiTypes";
+import { currentCodexReading } from "../lib/codexReading";
 import { fmtDateTime, fmtRelative } from "../lib/format";
 
 const DAY_MINUTES = 24 * 60;
@@ -35,14 +36,43 @@ function resetLine(window: PlanWindowDTO, minutes: number | null, now: number): 
 }
 
 /**
+ * One window's meter: its figure while open, unknown once it has reset.
+ *
+ * `reported` is the window as the cached reading holds it and `open` is what
+ * `currentCodexReading` kept, so the two differ only for a window whose reset
+ * has passed — which says so rather than "not reported", because it was.
+ */
+function windowMeter(
+  reported: PlanWindowDTO | null,
+  open: PlanWindowDTO | null,
+  minutes: number | null,
+  now: number,
+): { fraction: number | null; unknownHint: string; detail: string | undefined } {
+  if (open) {
+    return {
+      fraction: open.utilization,
+      unknownHint: "not reported",
+      detail: resetLine(open, minutes, now),
+    };
+  }
+  return {
+    fraction: null,
+    unknownHint: reported ? "reset since this reading" : "not reported",
+    detail: undefined,
+  };
+}
+
+/**
  * The Codex account's own windows, under the Claude ones in the window card.
  *
  * Another provider's percentages, read off the Codex CLI's app server: never
  * added to, compared with or guarded by the Claude meters above them. An
- * unreadable window is the hatched unknown meter, never 0%.
+ * unreadable window is the hatched unknown meter, never 0%, and so is one that
+ * has reset since the cached reading was taken.
  */
 export function CodexWindows({ codex, now }: { codex: CodexUsageDTO; now: number }) {
-  const plan = codex.plan;
+  const reported = codex.plan;
+  const plan = reported ? currentCodexReading(reported, now) : null;
   return (
     <div className="mt-5 border-t border-line pt-4">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -56,20 +86,16 @@ export function CodexWindows({ codex, now }: { codex: CodexUsageDTO; now: number
         {plan?.limitReached && <Badge tone="danger">limit reached</Badge>}
       </div>
 
-      {plan ? (
+      {reported && plan ? (
         <>
           <div className="mt-2 grid gap-x-6 gap-y-3 sm:grid-cols-2">
             <Meter
               label={`${codexWindowName(plan.sessionMinutes, "Short")} window`}
-              fraction={plan.session?.utilization ?? null}
-              unknownHint="not reported"
-              detail={plan.session ? resetLine(plan.session, plan.sessionMinutes, now) : undefined}
+              {...windowMeter(reported.session, plan.session, plan.sessionMinutes, now)}
             />
             <Meter
               label={`${codexWindowName(plan.weeklyMinutes, "Long")} window`}
-              fraction={plan.weekly?.utilization ?? null}
-              unknownHint="not reported"
-              detail={plan.weekly ? resetLine(plan.weekly, plan.weeklyMinutes, now) : undefined}
+              {...windowMeter(reported.weekly, plan.weekly, plan.weeklyMinutes, now)}
             />
           </div>
           <div className="mt-3 text-xs text-ink-muted">
