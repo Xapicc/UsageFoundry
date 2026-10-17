@@ -18,6 +18,7 @@ import { RUN_PROVIDER_LABEL } from "@/lib/apiTypes";
 import { chatRequest } from "@/lib/chatRequest";
 import {
   draftAfterSend,
+  failedTurnEnding,
   hasLeftThread,
   mergeMessages,
   threadItems,
@@ -285,8 +286,8 @@ const QUESTION_EDGE: Record<"open" | "settled", string> = {
  * them is something to act on.
  *
  * **The page infers which is which, because the row does not say.**
- * `chat_messages` carries no kind, so a failure is "the last message of a
- * `failed` chat, saying what the row's `error` says" — right about the ending
+ * `chat_messages` carries no kind, so a failure is "the last `system` message
+ * of a `failed` chat saying what the row's `error` says" — right about the ending
  * being looked at now, and wrong about the ones behind it: `claimTurn` clears
  * both on the next message, so an older failure in a thread that was re-sent
  * reverts to grey. The durable answer is a column on the table, which is a
@@ -1127,23 +1128,16 @@ export function ChatPanel({ layout, openChatId = null, compose = null }: ChatPan
 
   const lastMessage = messageCount > 0 ? chat?.messages[messageCount - 1] : undefined;
   // A turn that ends badly is written to the row *and* appended to the thread,
-  // so rendering both says it twice. This is the belt for the case where only
-  // the row carries it — and it belongs at the end of the conversation, where
-  // the turn failed, rather than at the top of the page.
-  const turnFailure =
-    chat?.status === "failed" && chat.error && chat.error !== lastMessage?.text
-      ? chat.error
-      : null;
-  // Which message in the thread is the failure note — see `SYSTEM_EDGE` for
-  // what this inference is right and wrong about. Paired with `turnFailure`
-  // above on the same comparison, so exactly one of the two draws the ending:
-  // the note when the thread carries it, the belt when only the row does.
-  const failureMessageId =
-    chat?.status === "failed" &&
-    lastMessage?.role === "system" &&
-    lastMessage.text === chat.error
-      ? lastMessage.id
-      : null;
+  // so rendering both says it twice. `turnFailure` is the belt for the case
+  // where only the row carries it — and it belongs at the end of the
+  // conversation, where the turn failed, rather than at the top of the page.
+  // `failureMessageId` is which message is the failure note — see `SYSTEM_EDGE`
+  // for what that inference is right and wrong about.
+  const { failureMessageId, turnFailure } = failedTurnEnding(
+    chat?.status,
+    chat?.error,
+    chat?.messages ?? [],
+  );
   // The words the failed turn was answering, offered back to the composer. They
   // are still in the thread; what is gone is the turn. `at(-1)` over a filter
   // rather than `findLast`, which is ES2023 and this target is ES2022.

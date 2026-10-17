@@ -162,6 +162,13 @@
 - **The chat page recovering from a dropped request, in a browser.** Unit
   tested; no one has stopped the server and pressed Send.
 
+- **The composer keeping text typed during a send, and a failure drawn once
+  under a later note, in a browser (2026-10-17).** `draftAfterSend` and
+  `failedTurnEnding` are unit tested; their call sites in `ChatPanel.tsx` are
+  not. Delay `POST /api/chat/<id>/message` 3 s by route interception, type
+  during it, and check the text survives; then answer `GET /api/chat/<id>` with
+  a `failed` chat whose failure note is followed by "Rejected 1 proposal(s).".
+
 - **The chat page's failed-poll notice, in a browser.** Its sentence is unit
   tested; its appearing and clearing are unwatched.
 

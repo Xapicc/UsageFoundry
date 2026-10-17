@@ -2,6 +2,7 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import {
   draftAfterSend,
+  failedTurnEnding,
   hasLeftThread,
   mergeMessages,
   threadItems,
@@ -269,4 +270,52 @@ test("a send that succeeds leaves text written while it was out", () => {
   // without ever having been sent.
   assert.equal(draftAfterSend("first\n\nsecond", "first"), "first\n\nsecond");
   assert.equal(draftAfterSend("second", "first"), "second");
+});
+
+function note(id: string, ts: number, text: string): ChatMessageDTO {
+  return { ...msg(id, "system", ts), text };
+}
+
+test("a failure followed by the refused-tool-calls note is drawn once, as the note", () => {
+  // `finishTurn` appends that note after the failure on any failed turn that
+  // had a denial. Compared with the last message, the failure was drawn grey
+  // in the thread and again in red under the unrelated note.
+  const error = "The chat failed (error_max_budget_usd).";
+  const ending = failedTurnEnding("failed", error, [
+    msg("ask", "user", 1_000),
+    note("failure", 2_000, error),
+    note("refused", 2_001, "Refused tool calls this turn: Bash."),
+  ]);
+  assert.deepEqual(ending, { failureMessageId: "failure", turnFailure: null });
+});
+
+test("a failure followed by a decision note is drawn once, as the note", () => {
+  // The red copy sat directly under "Rejected 1 proposal(s).", which reads as
+  // the rejection having failed.
+  const error = "The chat produced no readable output (exit 0).";
+  const ending = failedTurnEnding("failed", error, [
+    msg("ask", "user", 1_000),
+    note("failure", 2_000, error),
+    note("decision", 3_000, "Rejected 1 proposal(s)."),
+  ]);
+  assert.deepEqual(ending, { failureMessageId: "failure", turnFailure: null });
+});
+
+test("a failure only the row carries is drawn at the foot, and nothing in the thread is", () => {
+  const error = "The chat failed (error_max_turns).";
+  const thread = [msg("ask", "user", 1_000), msg("reply", "assistant", 2_000)];
+  assert.deepEqual(failedTurnEnding("failed", error, thread), {
+    failureMessageId: null,
+    turnFailure: error,
+  });
+  // The operator's own words are not the note, whatever they say.
+  assert.deepEqual(
+    failedTurnEnding("failed", error, [{ ...msg("ask", "user", 1_000), text: error }]),
+    { failureMessageId: null, turnFailure: error },
+  );
+  // And a chat that is not failed draws no ending, whatever the thread holds.
+  assert.deepEqual(failedTurnEnding("idle", error, [note("old", 1_000, error)]), {
+    failureMessageId: null,
+    turnFailure: null,
+  });
 });

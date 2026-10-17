@@ -1,4 +1,4 @@
-import type { ChatMessageDTO, ChatQuestionDTO } from "./apiTypes";
+import type { ChatDTO, ChatMessageDTO, ChatQuestionDTO } from "./apiTypes";
 
 /**
  * One thing the chat page draws in the transcript.
@@ -171,4 +171,35 @@ export function hasLeftThread(opened: string | null, actedOn: string): boolean {
  */
 export function draftAfterSend(draft: string, sent: string): string {
   return draft.trim() === sent ? "" : draft;
+}
+
+/**
+ * How a failed turn's ending is drawn: as the failure note in the thread, or as
+ * the red block at the foot when no note in the thread carries it — never both.
+ *
+ * The note is the last `system` message saying what the row's `error` says,
+ * and not merely the last message. Both halves used to compare with the last
+ * message, which holds only until a note follows the failure while the chat
+ * stays `failed` — `finishTurn` appends the refused-tool-calls note after it,
+ * and an approval or rejection appends its tally — and then the note was drawn
+ * grey and the red copy drawn again under it, reading as the decision above it
+ * having failed. Both are decided off the one search, so exactly one of them
+ * draws the ending whatever follows it.
+ *
+ * Pure and unit-tested on `hasLeftThread`'s grounds: getting it wrong draws a
+ * page rather than an error, one that says a failure twice or not at all.
+ */
+export function failedTurnEnding(
+  status: ChatDTO["status"] | undefined,
+  error: string | null | undefined,
+  messages: readonly ChatMessageDTO[],
+): { failureMessageId: string | null; turnFailure: string | null } {
+  if (status !== "failed" || !error) return { failureMessageId: null, turnFailure: null };
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message.role === "system" && message.text === error) {
+      return { failureMessageId: message.id, turnFailure: null };
+    }
+  }
+  return { failureMessageId: null, turnFailure: error };
 }
