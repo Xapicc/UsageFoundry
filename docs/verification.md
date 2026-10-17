@@ -72,3 +72,4 @@ measurement under *Verified* and cut the item down to what is still open.
 | Interface | [interface-narrow-viewports.md](verification/interface-narrow-viewports.md) — pages at 390px, layout sweeps and smoke-pages |
 | Interface | [interface-canvases.md](verification/interface-canvases.md) — the graph canvases, touched map and replay |
 | Interface | [interface-pages-and-api.md](verification/interface-pages-and-api.md) — pages, panels and API payloads |
+| Interface | [interface-run-pages.md](verification/interface-run-pages.md) — the runs list's Fleet card and the run page's Agent work |
