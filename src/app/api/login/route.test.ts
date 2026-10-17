@@ -410,6 +410,36 @@ test("a sign-out names the session it ended, once", async () => {
   assert.equal(opsEvents().length, 1);
 });
 
+test("signing out everywhere is one row for the press that ended something", async () => {
+  dbMod.db().prepare("DELETE FROM ops_events").run();
+  const value = cookieValue(setCookie(await post(TOKEN)));
+
+  // The all branch checks the cookie's signature and never its `revoked_at`,
+  // so the cookie whose session the first press ended passes it every time
+  // after. Each of those used to write a `closed: 0` warning, and five hundred
+  // of them empty the durable trail.
+  for (let i = 0; i < 5; i++) {
+    const res = await logout.POST(
+      new Request("http://localhost/api/logout", {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie: `uf_session=${value}` },
+        body: JSON.stringify({ all: true }),
+      }),
+    );
+    assert.equal(res.status, 200);
+  }
+
+  const rows = opsEvents();
+  assert.deepEqual(
+    rows.map((e) => e.event),
+    ["auth.sessions_revoked"],
+  );
+  assert.ok(
+    (rows[0].detail.closed as number) >= 1,
+    `the row is the press that revoked, not a replay: ${JSON.stringify(rows[0].detail)}`,
+  );
+});
+
 test("a caller who proved nothing writes no row at all", async () => {
   dbMod.db().prepare("DELETE FROM ops_events").run();
   dbMod.db().prepare("DELETE FROM request_log").run();

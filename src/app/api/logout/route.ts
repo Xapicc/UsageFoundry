@@ -83,7 +83,14 @@ export async function POST(req: Request) {
       // else can do, and nothing else in the app would say it happened. Written
       // after the 401 above, so the caller of this line has presented either a
       // signature-valid cookie or the master bearer.
-      recordDurableMutation(req, "warn", "auth.sessions_revoked", { closed });
+      //
+      // Guarded on `closed` for the other branch's reason. The 401 checks the
+      // cookie's signature and not its `revoked_at`, so the cookie whose own
+      // session the first press ended passes it on every replay after, and each
+      // replay closes nothing.
+      if (closed > 0) {
+        recordDurableMutation(req, "warn", "auth.sessions_revoked", { closed });
+      }
     } else if (claim && revokeSession(claim.id)) {
       // The session id is the whole of "which object", and on this install it is
       // also the whole of "who": one credential, no user model, so a name here
