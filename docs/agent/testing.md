@@ -386,8 +386,6 @@ Units that are about no test file in the tree:
 | Test file | Also in |
 |---|---|
 | `authGuard.test.ts` |  |
-| `claudeAuth.test.ts` |  |
-| `codexAuth.test.ts` |  |
 | `config.test.ts` |  |
 | `configCheck.test.ts` |  |
 | `credential-audit.test.ts` |  |
@@ -403,6 +401,13 @@ Units that are about no test file in the tree:
 | `src/app/api/runs/live/stream/route.test.ts` | [harnesses] |
 | `src/app/api/settings/route.test.ts` | [harnesses] |
 | `src/middleware.test.ts` | [sign-in] |
+
+## [Provider sign-in: the Claude and Codex auth modules](testing/provider-sign-in.md)
+
+| Test file | Also in |
+|---|---|
+| `claudeAuth.test.ts` |  |
+| `codexAuth.test.ts` |  |
 
 ## [The health and status routes](testing/health-and-status-routes.md)
 

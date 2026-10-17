@@ -51,6 +51,8 @@ let codexApiKey: typeof import("./codex-auth/api-key/route");
 let codexLogin: typeof import("./codex-auth/login/route");
 let codexLogout: typeof import("./codex-auth/logout/route");
 let localProvider: typeof import("./local-provider/route");
+let claudeAuth: typeof import("../../lib/claudeAuth");
+let codexAuth: typeof import("../../lib/codexAuth");
 let dbMod: typeof import("../../lib/db");
 
 /**
@@ -59,25 +61,40 @@ let dbMod: typeof import("../../lib/db");
  * Node scripts with a shebang rather than shell, because the whole point of the
  * pair is that the credential reaches them on **stdin** and nothing about that
  * is testable through a mock of the module that spawns them.
+ *
+ * Each keeps its credential in a file, so a status read reports what the last
+ * sign-in or sign-out actually did — and reads it at spawn, so a read held open
+ * by `STUB_STATUS_DELAY_MS` answers with the state from before a change made
+ * while it waited, which is what a status poll already in flight does.
  */
 function writeStubs(dir: string): { claude: string; codex: string } {
   const claude = path.join(dir, "claude-stub.js");
   fs.writeFileSync(
     claude,
     `#!/usr/bin/env node
+const fs = require("node:fs");
 const args = process.argv.slice(2);
-const loggedIn = process.env.CLAUDE_STUB_LOGGED_IN === "1";
+const state = process.env.CLAUDE_STUB_STATE;
+const loggedIn = process.env.CLAUDE_STUB_LOGGED_IN === "1" || fs.existsSync(state);
 if (args[0] === "auth" && args[1] === "status") {
-  process.stdout.write(
-    JSON.stringify({ loggedIn, authMethod: loggedIn ? "claude.ai" : "none" }) + "\\n",
-  );
-  process.exit(0);
+  if (process.env.STUB_STATUS_FAIL === "1") {
+    process.stdout.write("segfault-ish garbage\\n");
+    process.exit(1);
+  }
+  setTimeout(() => {
+    process.stdout.write(
+      JSON.stringify({ loggedIn, authMethod: loggedIn ? "claude.ai" : "none" }) + "\\n",
+    );
+    process.exit(0);
+  }, Number(process.env.STUB_STATUS_DELAY_MS || 0));
+  return;
 }
 if (args[0] === "auth" && args[1] === "logout") {
   if (process.env.CLAUDE_STUB_FAIL === "1") {
     process.stdout.write("Logout failed\\n");
     process.exit(1);
   }
+  fs.rmSync(state, { force: true });
   process.stdout.write("Signed out\\n");
   process.exit(0);
 }
@@ -91,7 +108,11 @@ if (args[0] === "auth" && args[1] === "login") {
   let buffered = "";
   process.stdin.on("data", (chunk) => {
     buffered += chunk.toString();
-    if (buffered.includes("\\n")) process.exit(0);
+    if (!buffered.includes("\\n")) return;
+    // An exchange that exits 0 having written nothing, for the check that a
+    // sign-in is not reported over a status still saying signed out.
+    if (process.env.CLAUDE_STUB_EXCHANGE !== "forget") fs.writeFileSync(state, "creds");
+    process.exit(0);
   });
   return;
 }
@@ -104,12 +125,31 @@ process.exit(0);
   fs.writeFileSync(
     codex,
     `#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
 const args = process.argv.slice(2);
+const file = path.join(process.env.CODEX_HOME, "auth.json");
 if (args[0] === "login" && args[1] === "status") {
-  process.stdout.write((process.env.CODEX_STUB_STATUS || "Not logged in") + "\\n");
-  process.exit(0);
+  const stored = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+  if (process.env.STUB_STATUS_FAIL === "1") {
+    process.stdout.write("Error checking login status: resource temporarily unavailable\\n");
+    process.exit(1);
+  }
+  const answer =
+    process.env.CODEX_STUB_STATUS ||
+    (stored === null
+      ? "Not logged in"
+      : stored.includes("apikey")
+        ? "Logged in using an API key - sk-proj-***12345"
+        : "Logged in using ChatGPT");
+  setTimeout(() => {
+    process.stdout.write(answer + "\\n");
+    process.exit(0);
+  }, Number(process.env.STUB_STATUS_DELAY_MS || 0));
+  return;
 }
 if (args[0] === "logout") {
+  fs.rmSync(file, { force: true });
   process.stdout.write("Successfully logged out\\n");
   process.exit(0);
 }
@@ -117,7 +157,12 @@ if (args[0] === "login" && args[1] === "--with-api-key") {
   let buffered = "";
   process.stdin.on("data", (chunk) => (buffered += chunk.toString()));
   process.stdin.on("end", () => {
-    process.stdout.write(buffered.trim() === "" ? "No API key provided via stdin.\\n" : "Saved\\n");
+    if (buffered.trim() === "") {
+      process.stdout.write("No API key provided via stdin.\\n");
+      process.exit(0);
+    }
+    fs.writeFileSync(file, JSON.stringify({ auth_mode: "apikey" }));
+    process.stdout.write("Saved\\n");
     process.exit(0);
   });
   return;
@@ -125,7 +170,7 @@ if (args[0] === "login" && args[1] === "--with-api-key") {
 if (args[0] === "login" && args[1] === "--device-auth") {
   // The pinned CLI deletes the credential first and asks OpenAI for a code
   // second, so a start can sign the container out and still never print one.
-  require("node:fs").rmSync(require("node:path").join(process.env.CODEX_HOME, "auth.json"), { force: true });
+  fs.rmSync(file, { force: true });
   if (process.env.CODEX_STUB_DEVICE === "unreachable") {
     process.stderr.write("Error logging in with device code: error sending request for url (https://auth.openai.com/api/accounts/deviceauth/usercode)\\n");
     process.exit(1);
@@ -154,6 +199,7 @@ before(async () => {
   const stubs = writeStubs(root);
   process.env.DATA_DIR = path.join(root, "data");
   process.env.CLAUDE_HOME = path.join(root, "claude");
+  process.env.CLAUDE_STUB_STATE = path.join(root, "claude-credential");
   // One proxy in front, so `post`'s header names an address: with none
   // declared, `sourceAddress` reads no forwarding header at all.
   process.env.UF_TRUSTED_PROXY_HOPS = "1";
@@ -179,6 +225,8 @@ before(async () => {
   codexLogin = await import("./codex-auth/login/route");
   codexLogout = await import("./codex-auth/logout/route");
   localProvider = await import("./local-provider/route");
+  claudeAuth = await import("../../lib/claudeAuth");
+  codexAuth = await import("../../lib/codexAuth");
   dbMod = await import("../../lib/db");
 });
 
@@ -191,7 +239,16 @@ beforeEach(() => {
   delete process.env.CLAUDE_STUB_LOGGED_IN;
   delete process.env.CODEX_STUB_STATUS;
   delete process.env.CODEX_STUB_DEVICE;
+  delete process.env.CLAUDE_STUB_EXCHANGE;
+  delete process.env.STUB_STATUS_DELAY_MS;
+  delete process.env.STUB_STATUS_FAIL;
+  fs.rmSync(claudeCredential(), { force: true });
+  fs.rmSync(path.join(process.env.CODEX_HOME as string, "auth.json"), { force: true });
 });
+
+function claudeCredential(): string {
+  return process.env.CLAUDE_STUB_STATE as string;
+}
 
 interface OpsRow {
   level: string;
@@ -242,6 +299,16 @@ async function until(check: () => boolean, what: string): Promise<void> {
   }
 }
 
+/**
+ * Start a Claude sign-in and return the id its code has to be sent beside:
+ * `login/code` refuses a code that names any sign-in but the pending one.
+ */
+async function startClaudeSignIn(): Promise<string> {
+  const res = await claudeLogin.POST(post("http://localhost/api/claude-auth/login"));
+  assert.equal(res.status, 200);
+  return ((await res.json()) as { loginId: string }).loginId;
+}
+
 function post(url: string, body?: unknown): Request {
   return new Request(url, {
     method: "POST",
@@ -257,10 +324,7 @@ function post(url: string, body?: unknown): Request {
 
 describe("a provider credential that changed leaves a durable row", () => {
   it("names the provider and the method a Claude sign-in landed", async () => {
-    assert.equal(
-      (await claudeLogin.POST(post("http://localhost/api/claude-auth/login"))).status,
-      200,
-    );
+    const loginId = await startClaudeSignIn();
     // The link and the code are two presses that may be minutes apart, so they
     // are two rows: a trail with only the completion cannot say when the link
     // was minted or how many were.
@@ -272,7 +336,7 @@ describe("a provider credential that changed leaves a durable row", () => {
 
     process.env.CLAUDE_STUB_LOGGED_IN = "1";
     const res = await claudeCode.POST(
-      post("http://localhost/api/claude-auth/login/code", { code: CODE }),
+      post("http://localhost/api/claude-auth/login/code", { code: CODE, loginId }),
     );
     assert.equal(res.status, 200);
 
@@ -289,9 +353,9 @@ describe("a provider credential that changed leaves a durable row", () => {
 
   it("carries neither the authorize code nor the API key into either table", async () => {
     process.env.CLAUDE_STUB_LOGGED_IN = "1";
-    await claudeLogin.POST(post("http://localhost/api/claude-auth/login"));
+    const loginId = await startClaudeSignIn();
     await claudeCode.POST(
-      post("http://localhost/api/claude-auth/login/code", { code: CODE }),
+      post("http://localhost/api/claude-auth/login/code", { code: CODE, loginId }),
     );
 
     process.env.CODEX_STUB_STATUS = "Logged in using an API key - sk-proj-***here";
@@ -413,6 +477,157 @@ describe("a provider credential that changed leaves a durable row", () => {
   });
 });
 
+/**
+ * What `GET /api/{claude,codex}-auth` does first — a status read — spawned
+ * before a change and still running after it: a second tab, a script, or the
+ * Settings block's own reload. The stubs read their credential at spawn.
+ */
+async function readInFlight(
+  read: () => Promise<unknown>,
+): Promise<{ done: Promise<unknown> }> {
+  process.env.STUB_STATUS_DELAY_MS = "1500";
+  // Both modules spawn synchronously inside the call, so the delay is in this
+  // child's environment and in no later one's.
+  const done = read();
+  delete process.env.STUB_STATUS_DELAY_MS;
+  // Long enough for the child to boot and read its credential. Without it the
+  // change can land first, and the read answers for the state after it.
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  return { done };
+}
+
+/**
+ * The mutation's own exit decides whether the credential changed, and a fresh
+ * read decides what the page is told. Both used to come from one status read
+ * that could join a read begun before the change, and so answer for the
+ * credential as it was.
+ */
+describe("a status read already in flight does not answer for a change made after it began", () => {
+  it("confirms a stored Codex key rather than refusing it", async () => {
+    const poll = await readInFlight(() => codexAuth.readAuthStatus());
+    const res = await codexApiKey.POST(
+      post("http://localhost/api/codex-auth/api-key", { apiKey: API_KEY }),
+    );
+    await poll.done;
+    assert.ok(fs.existsSync(path.join(process.env.CODEX_HOME as string, "auth.json")));
+    assert.equal(res.status, 200);
+    assert.deepEqual(
+      opsRows().map((r) => [r.event, r.detail.method]),
+      [["auth.provider_signed_in", "apikey"]],
+    );
+  });
+
+  it("answers a Claude sign-in as signed in, and audits the method that landed", async () => {
+    const loginId = await startClaudeSignIn();
+    const poll = await readInFlight(() => claudeAuth.readAuthStatus());
+    const res = await claudeCode.POST(
+      post("http://localhost/api/claude-auth/login/code", { code: CODE, loginId }),
+    );
+    const body = (await res.json()) as { auth?: { loggedIn: boolean } };
+    await poll.done;
+    assert.ok(fs.existsSync(claudeCredential()));
+    assert.equal(res.status, 200);
+    assert.equal(body.auth?.loggedIn, true);
+    assert.deepEqual(
+      opsRows().map((r) => [r.event, r.detail.method ?? null]),
+      [
+        ["auth.provider_login_started", null],
+        ["auth.provider_signed_in", "claude.ai"],
+      ],
+    );
+  });
+
+  it("answers a Codex sign-out as signed out", async () => {
+    storedCodexCredential();
+    const poll = await readInFlight(() => codexAuth.readAuthStatus());
+    const res = await codexLogout.POST(post("http://localhost/api/codex-auth/logout"));
+    const body = (await res.json()) as { auth?: { loggedIn: boolean } };
+    await poll.done;
+    assert.equal(res.status, 200);
+    assert.equal(body.auth?.loggedIn, false);
+  });
+
+  it("answers a Claude sign-out as signed out, and so does a read begun after it", async () => {
+    fs.writeFileSync(claudeCredential(), "creds");
+    const poll = await readInFlight(() => claudeAuth.readAuthStatus());
+    const res = await claudeLogout.POST(post("http://localhost/api/claude-auth/logout"));
+    const body = (await res.json()) as { auth?: { loggedIn: boolean } };
+    assert.equal(res.status, 200);
+    assert.equal(body.auth?.loggedIn, false);
+    // The page's next GET, arriving while the read from before the change is
+    // still running, must not be handed that read either.
+    const later = await claudeAuth.readAuthStatus();
+    assert.ok(later.ok && !later.value.loggedIn, JSON.stringify(later));
+    await poll.done;
+  });
+});
+
+/**
+ * The status child failing after the CLI already changed the credential — an
+ * OOM kill, a timeout, `EAGAIN`. The change happened, so the durable row is
+ * written; the read did not, so the answer says the change could not be
+ * confirmed rather than that it failed.
+ */
+describe("a credential that changed is recorded even when the read confirming it fails", () => {
+  it("records a Codex sign-out", async () => {
+    const credential = storedCodexCredential();
+    process.env.STUB_STATUS_FAIL = "1";
+    const res = await codexLogout.POST(post("http://localhost/api/codex-auth/logout"));
+    assert.ok(!fs.existsSync(credential));
+    assertUnconfirmed(res.status, await res.json());
+    assert.deepEqual(onlyOps(), {
+      level: "warn",
+      event: "auth.provider_signed_out",
+      detail: { provider: "codex", unconfirmed: true, actor: "session", address: "203.0.113.9" },
+    });
+  });
+
+  it("records a Claude sign-out", async () => {
+    fs.writeFileSync(claudeCredential(), "creds");
+    process.env.STUB_STATUS_FAIL = "1";
+    const res = await claudeLogout.POST(post("http://localhost/api/claude-auth/logout"));
+    assert.ok(!fs.existsSync(claudeCredential()));
+    assertUnconfirmed(res.status, await res.json());
+    assert.deepEqual(onlyOps(), {
+      level: "warn",
+      event: "auth.provider_signed_out",
+      detail: { provider: "claude", unconfirmed: true, actor: "session", address: "203.0.113.9" },
+    });
+  });
+
+  it("records a Claude sign-in", async () => {
+    const loginId = await startClaudeSignIn();
+    dbMod.db().prepare("DELETE FROM ops_events").run();
+    process.env.STUB_STATUS_FAIL = "1";
+    const res = await claudeCode.POST(
+      post("http://localhost/api/claude-auth/login/code", { code: CODE, loginId }),
+    );
+    assert.ok(fs.existsSync(claudeCredential()));
+    assertUnconfirmed(res.status, await res.json());
+    // `warn` where a confirmed sign-in is `info`: a credential was written and
+    // nothing has yet said what it is.
+    assert.deepEqual(onlyOps(), {
+      level: "warn",
+      event: "auth.provider_signed_in",
+      detail: {
+        provider: "claude",
+        method: null,
+        unconfirmed: true,
+        actor: "session",
+        address: "203.0.113.9",
+      },
+    });
+  });
+});
+
+/** "Changed, but could not confirm": a success, with no status and a reason. */
+function assertUnconfirmed(status: number, body: unknown): void {
+  assert.equal(status, 200, JSON.stringify(body));
+  const answer = body as { auth?: unknown; error?: unknown };
+  assert.equal(answer.auth, null);
+  assert.match(String(answer.error), /could not confirm/);
+}
+
 describe("what a credential route records when nothing changed", () => {
   it("writes the request line and no durable row when the CLI refuses", async () => {
     process.env.CLAUDE_STUB_FAIL = "1";
@@ -454,6 +669,23 @@ describe("what a credential route records when nothing changed", () => {
     } finally {
       fs.rmSync(home, { force: true });
     }
+  });
+
+  it("refuses a Claude sign-in whose fresh status still says signed out", async () => {
+    // Codex's key store already refused this; Claude's code exchange reported
+    // `ok` over whatever the read said, and audited a sign-in as `none`.
+    // Set before the start: the child that does the exchange is spawned there.
+    process.env.CLAUDE_STUB_EXCHANGE = "forget";
+    const loginId = await startClaudeSignIn();
+    dbMod.db().prepare("DELETE FROM ops_events").run();
+    const res = await claudeCode.POST(
+      post("http://localhost/api/claude-auth/login/code", { code: CODE, loginId }),
+    );
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as { error?: unknown; stillPending?: unknown };
+    assert.equal(body.stillPending, false);
+    assert.match(String(body.error), /signed out/);
+    assert.deepEqual(opsRows(), []);
   });
 
   it("writes no durable row for a rejected authorize code", async () => {
@@ -515,9 +747,9 @@ describe("every one of the six leaves a request line", () => {
     process.env.CLAUDE_STUB_LOGGED_IN = "1";
     process.env.CODEX_STUB_STATUS = "Logged in using an API key - sk-proj-***4321";
 
-    await claudeLogin.POST(post("http://localhost/api/claude-auth/login"));
+    const loginId = await startClaudeSignIn();
     await claudeCode.POST(
-      post("http://localhost/api/claude-auth/login/code", { code: CODE }),
+      post("http://localhost/api/claude-auth/login/code", { code: CODE, loginId }),
     );
     await claudeLogout.POST(post("http://localhost/api/claude-auth/logout"));
     await codexLogin.POST(post("http://localhost/api/codex-auth/login"));

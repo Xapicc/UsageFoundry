@@ -1121,10 +1121,21 @@ export interface ClaudeAuthStateDTO {
    * Reported so the flow survives a page reload: the child holding the PKCE
    * verifier outlives the tab that started it, and without this the operator
    * would be shown a fresh Sign in button while the code in their clipboard
-   * still belonged to the old one.
+   * still belonged to the old one. `loginId` is what `login/code` must be sent
+   * beside a code from this link.
    */
-  pending: { url: string; startedAt: number } | null;
+  pending: { url: string; startedAt: number; loginId: string } | null;
 }
+
+/**
+ * What a sign-in or sign-out answers once the CLI has changed the credential:
+ * the fresh status read after it, or, when that read failed, no status and why.
+ *
+ * `error` here is "changed, but could not confirm" and never "did not change",
+ * which is a non-2xx answer instead. The page shows it where it shows a status
+ * the CLI could not give, and offers no Sign in button over it.
+ */
+export type ClaudeAuthChangeDTO = Pick<ClaudeAuthStateDTO, "auth" | "error">;
 
 /**
  * Whether the container's Codex has a credential, and of which kind.
@@ -1175,6 +1186,9 @@ export interface CodexAuthStateDTO {
    */
   loginError: string | null;
 }
+
+/** `ClaudeAuthChangeDTO`'s twin, for the key store and the sign-out. */
+export type CodexAuthChangeDTO = Pick<CodexAuthStateDTO, "auth" | "error">;
 
 /** Names a plan. Carries no ceiling, no email, no account UUID. */
 export interface AccountProfileDTO {

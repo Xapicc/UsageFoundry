@@ -12,12 +12,18 @@ import { after, describe, it, mock } from "node:test";
  *
  * The stub records its pid, prints a link carrying that pid, and holds stdin
  * open the way the real CLI does while it waits for a code. `STUB_HOLD`, read
- * at spawn time, makes it wait for that file before printing.
+ * at spawn time, makes it wait for that file before printing;
+ * `STUB_EXIT_AFTER_LINK` makes it leave on its own once it has printed, the
+ * way a CLI that hit a network error or crashed does. Every line it reads goes
+ * into `received.log` against its pid; under `STUB_EXCHANGE` it redeems only
+ * `code-<its own pid>` and fails anything else the way a verifier mismatch
+ * does, with a 400 and an exit.
  */
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-claude-auth-")));
 const pidsDir = path.join(tmp, "pids");
 fs.mkdirSync(pidsDir);
 const stub = path.join(tmp, "claude");
+const receivedLog = path.join(tmp, "received.log");
 fs.writeFileSync(
   stub,
   [
@@ -25,7 +31,14 @@ fs.writeFileSync(
     `echo $$ > "${pidsDir}/$$"`,
     'if [ -n "$STUB_HOLD" ]; then while [ ! -e "$STUB_HOLD" ]; do sleep 0.02; done; fi',
     'echo "Open https://claude.ai/oauth/authorize?state=$$"',
-    "while read line; do :; done",
+    'if [ -n "$STUB_EXIT_AFTER_LINK" ]; then sleep 0.2; exit 0; fi',
+    "while read line; do",
+    `  echo "$$ got $line" >> "${receivedLog}"`,
+    '  if [ -n "$STUB_EXCHANGE" ]; then',
+    '    if [ "$line" = "code-$$" ]; then exit 0; fi',
+    '    echo "Login failed: Request failed with status code 400"; exit 1',
+    "  fi",
+    "done",
     "",
   ].join("\n"),
   { mode: 0o755 },
@@ -51,6 +64,7 @@ const {
   normalizeCode,
   parseAuthStatus,
   pendingLogin,
+  submitCode,
 } = require("./claudeAuth") as typeof import("./claudeAuth");
 
 /**
@@ -276,6 +290,18 @@ async function driveUntilSettled<T>(promise: Promise<T>): Promise<T> {
   return promise;
 }
 
+after(() => {
+  cancelLogin();
+  for (const pid of recordedPids()) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // Already gone, which is what the tests want.
+    }
+  }
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
 /** `PENDING_TIMEOUT_MS` in `claudeAuth.ts`. The last assertion below fails if it drifts. */
 const PENDING_TIMEOUT_MS = 10 * 60_000;
 
@@ -292,18 +318,6 @@ const PENDING_TIMEOUT_MS = 10 * 60_000;
  * is a process left running, and nothing short of one shows it.
  */
 describe("beginLogin, started twice at once", () => {
-  after(() => {
-    cancelLogin();
-    for (const pid of recordedPids()) {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {
-        // Already gone, which is what the tests want.
-      }
-    }
-    fs.rmSync(tmp, { recursive: true, force: true });
-  });
-
   it("leaves no child that cancelLogin cannot reach", async () => {
     const results = await Promise.all([beginLogin(), beginLogin()]);
     const pendingUrl = pendingLogin()?.url;
@@ -350,6 +364,112 @@ describe("beginLogin, started twice at once", () => {
     } finally {
       cancelLogin();
       mock.timers.reset();
+    }
+  });
+});
+
+function pidOf(url: string): number {
+  return Number(new URL(url).searchParams.get("state"));
+}
+
+/**
+ * Every timer `setInterval` hands out while `run` is running, less the ones
+ * cleared. Patched on `globalThis` because the leak is an interval nothing
+ * holds a handle to, and that is the only place left to see it from.
+ */
+async function intervalsLeftBy(run: () => Promise<void>): Promise<number> {
+  const realSetInterval = globalThis.setInterval;
+  const realClearInterval = globalThis.clearInterval;
+  const live = new Set<unknown>();
+  const timers = globalThis as unknown as Record<"setInterval" | "clearInterval", unknown>;
+  timers.setInterval = (...args: Parameters<typeof setInterval>) => {
+    const handle = realSetInterval(...args);
+    live.add(handle);
+    return handle;
+  };
+  timers.clearInterval = (handle: Parameters<typeof clearInterval>[0]) => {
+    live.delete(handle);
+    realClearInterval(handle);
+  };
+  try {
+    await run();
+  } finally {
+    timers.setInterval = realSetInterval;
+    timers.clearInterval = realClearInterval;
+    for (const handle of live) realClearInterval(handle as NodeJS.Timeout);
+  }
+  return live.size;
+}
+
+/**
+ * The sign-in child is the one thing that knows whether a sign-in is still
+ * alive, and this module used to act on its exit only inside a code submit: a
+ * child that left on its own stayed "pending" for ten minutes behind a link
+ * whose verifier was gone, and a submit ended by a kill left its rejection
+ * poll firing every 100 ms for as long as the server lived.
+ */
+describe("the sign-in child's exit", () => {
+  it("ends the pending login when the child leaves on its own", async () => {
+    process.env.STUB_EXIT_AFTER_LINK = "1";
+    const started = await beginLogin();
+    delete process.env.STUB_EXIT_AFTER_LINK;
+    try {
+      assert.ok(started.ok, JSON.stringify(started));
+      await realDelay(1000);
+      assert.equal(alive(pidOf(started.value.url)), false, "the stub never left");
+      assert.equal(pendingLogin(), null);
+    } finally {
+      cancelLogin();
+    }
+  });
+
+  it("stops polling for a rejection once a cancel has ended the submit", async () => {
+    const left = await intervalsLeftBy(async () => {
+      const started = await beginLogin();
+      assert.ok(started.ok, JSON.stringify(started));
+      // The stub reads the code and says nothing, so only the cancel ends it.
+      const submit = submitCode("code-whatever", started.value.loginId);
+      await realDelay(300);
+      cancelLogin();
+      const outcome = await submit;
+      assert.equal(outcome.ok, false);
+    });
+    assert.equal(left, 0, "an interval outlived the submit it was polling for");
+  });
+});
+
+/**
+ * A second start kills the first child and mints a new verifier, so a code
+ * from the first link can be redeemed by nothing. Written to whichever child
+ * was pending, it was spent on the newer sign-in's one exchange, which failed
+ * on the mismatch and ended that sign-in too — both dead, and the error about
+ * the one the operator was not using.
+ */
+describe("a code pasted from a superseded sign-in link", () => {
+  it("is refused before any child reads it, and the newer sign-in stays live", async () => {
+    process.env.STUB_EXCHANGE = "1";
+    try {
+      const first = await beginLogin();
+      const second = await beginLogin();
+      assert.ok(first.ok && second.ok, JSON.stringify([first, second]));
+      const firstPid = pidOf(first.value.url);
+      const secondPid = pidOf(second.value.url);
+
+      const outcome = await submitCode(`code-${firstPid}`, first.value.loginId);
+      const received = fs.existsSync(receivedLog) ? fs.readFileSync(receivedLog, "utf8") : "";
+      assert.ok(
+        !received.includes(`${secondPid} got`),
+        `the newer sign-in's child was handed the stale link's code: ${received}`,
+      );
+      assert.equal(!outcome.ok && outcome.stillPending, true, JSON.stringify(outcome));
+      assert.equal(pendingLogin()?.url, second.value.url);
+
+      // And its own code still redeems it.
+      const live = await submitCode(`code-${secondPid}`, second.value.loginId);
+      assert.ok(live.ok, JSON.stringify(live));
+    } finally {
+      delete process.env.STUB_EXCHANGE;
+      cancelLogin();
     }
   });
 });

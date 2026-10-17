@@ -503,16 +503,37 @@ function runCodex(
  * Callers arriving while a read is already running share it, exactly as
  * `readAuthStatus` does next door: this is a spawn on a route with no rate limit
  * in front of it, the page polls it while a device login is pending, and the
- * answer cannot differ between two reads a few milliseconds apart.
+ * answer cannot differ between two reads a few milliseconds apart — unless
+ * something changed the credential in between, which is why the key store and
+ * the sign-out below never join.
  */
 export function readAuthStatus(): Promise<CodexAuthResult<CodexAuthStatus>> {
-  if (store.__ufCodexAuthRead) return store.__ufCodexAuthRead;
-  const read = statusOnce().finally(() => {
-    store.__ufCodexAuthRead = null;
-  });
+  return store.__ufCodexAuthRead ?? readFreshAuthStatus();
+}
+
+/**
+ * A status read spawned now, for a caller that has just changed the credential,
+ * on `claudeAuth.ts`'s reasoning: a joined read answered for the credential as
+ * it was, so a stored key was refused as not stored and a sign-out answered
+ * "still signed in". Later readers join this one rather than the stale one.
+ */
+function readFreshAuthStatus(): Promise<CodexAuthResult<CodexAuthStatus>> {
+  const read: Promise<CodexAuthResult<CodexAuthStatus>> = statusOnce().finally(
+    () => {
+      if (store.__ufCodexAuthRead === read) store.__ufCodexAuthRead = null;
+    },
+  );
   store.__ufCodexAuthRead = read;
   return read;
 }
+
+/**
+ * A key store or sign-out that changed the credential, and the fresh read after
+ * it: `claudeAuth.ts`'s `ChangeOutcome`, for the same two readers.
+ */
+export type ChangeOutcome =
+  | { ok: true; status: CodexAuthResult<CodexAuthStatus> }
+  | { ok: false; error: string };
 
 async function statusOnce(): Promise<CodexAuthResult<CodexAuthStatus>> {
   const home = ensureCodexHome();
@@ -790,10 +811,12 @@ function waitForDeviceLogin(
  * an unchanged install. The status read is what decides, and it has to agree
  * about the *method* as well as the fact — an install that was already signed in
  * with ChatGPT would otherwise pass on the credential this call did not write.
+ *
+ * Decides only when it answers. A read that fails says nothing either way, and
+ * the CLI was handed a non-empty key and exited 0, so the store stands as a
+ * change it could not confirm rather than one that did not happen.
  */
-export async function submitApiKey(
-  input: unknown,
-): Promise<CodexAuthResult<CodexAuthStatus>> {
+export async function submitApiKey(input: unknown): Promise<ChangeOutcome> {
   const key = normalizeApiKey(input);
   if (!key.ok) return key;
 
@@ -820,12 +843,11 @@ export async function submitApiKey(
     return { ok: false, error: describeOutput(res.output) };
   }
 
-  const status = await readAuthStatus();
-  if (!status.ok) return status;
-  if (!status.value.loggedIn || status.value.method !== "apikey") {
+  const status = await readFreshAuthStatus();
+  if (status.ok && (!status.value.loggedIn || status.value.method !== "apikey")) {
     return { ok: false, error: describeOutput(res.output) };
   }
-  return status;
+  return { ok: true, status };
 }
 
 /**
@@ -836,7 +858,7 @@ export async function submitApiKey(
  * refused while any existed would be unreachable exactly when a leaked
  * credential most needs revoking. The page confirms instead.
  */
-export async function signOut(): Promise<CodexAuthResult<CodexAuthStatus>> {
+export async function signOut(): Promise<ChangeOutcome> {
   cancelLogin();
   store.__ufCodexLoginFailure = null;
 
@@ -853,5 +875,5 @@ export async function signOut(): Promise<CodexAuthResult<CodexAuthStatus>> {
   if (res.code !== 0) {
     return { ok: false, error: describeOutput(res.output) };
   }
-  return readAuthStatus();
+  return { ok: true, status: await readFreshAuthStatus() };
 }

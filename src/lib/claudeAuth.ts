@@ -3,6 +3,7 @@ import {
   type ChildProcess,
   type SpawnOptions,
 } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { CLAUDE_BIN, spawnCommand } from "./config";
 import { childCredentials } from "./privsep";
 import { agentEnvironment } from "./stacks";
@@ -86,6 +87,8 @@ const COMMAND_TIMEOUT_MS = 30_000;
 const CAPTURE_LIMIT = 16_384;
 
 interface PendingLogin {
+  /** What a code must name to be written to this child. See `submitCode`. */
+  id: string;
   child: ChildProcess;
   url: string;
   startedAt: number;
@@ -381,12 +384,29 @@ function runAuth(
  * no rate limit in front of it, and the answer cannot differ between two reads
  * a few milliseconds apart — without the share, a page opened in five tabs is
  * five processes for one fact.
+ *
+ * That premise holds only while nothing changes the credential, which is why
+ * the sign-in and sign-out below never join: see `readFreshAuthStatus`.
  */
 export function readAuthStatus(): Promise<ClaudeAuthResult<ClaudeAuthStatus>> {
-  if (store.__ufClaudeAuthRead) return store.__ufClaudeAuthRead;
-  const read = statusOnce().finally(() => {
-    store.__ufClaudeAuthRead = null;
-  });
+  return store.__ufClaudeAuthRead ?? readFreshAuthStatus();
+}
+
+/**
+ * A status read spawned now, for a caller that has just changed the credential.
+ *
+ * Joining instead answered for the credential as it was whenever a poll had
+ * started before the change — a second tab, a script, this page's own reload —
+ * so a sign-out was answered "still signed in" after the CLI had deleted the
+ * file. It takes the shared slot as well, so a reader arriving afterwards joins
+ * this read rather than the one from before the change.
+ */
+function readFreshAuthStatus(): Promise<ClaudeAuthResult<ClaudeAuthStatus>> {
+  const read: Promise<ClaudeAuthResult<ClaudeAuthStatus>> = statusOnce().finally(
+    () => {
+      if (store.__ufClaudeAuthRead === read) store.__ufClaudeAuthRead = null;
+    },
+  );
   store.__ufClaudeAuthRead = read;
   return read;
 }
@@ -403,9 +423,13 @@ async function statusOnce(): Promise<ClaudeAuthResult<ClaudeAuthStatus>> {
 }
 
 /** Is a login waiting for its code right now? */
-export function pendingLogin(): { url: string; startedAt: number } | null {
+export function pendingLogin(): {
+  url: string;
+  startedAt: number;
+  loginId: string;
+} | null {
   const p = store.__ufClaudeLogin;
-  return p ? { url: p.url, startedAt: p.startedAt } : null;
+  return p ? { url: p.url, startedAt: p.startedAt, loginId: p.id } : null;
 }
 
 /**
@@ -438,11 +462,12 @@ export function cancelLogin(): void {
  * docblock says why the two must not share a status.
  */
 export type StartOutcome =
-  | { ok: true; value: { url: string } }
+  | { ok: true; value: { url: string; loginId: string } }
   | { ok: false; error: string; superseded: boolean };
 
 /**
- * Start a login and return the URL to open.
+ * Start a login and return the URL to open, and the id a code from it must
+ * name.
  *
  * The child stays alive afterwards, holding the verifier, until `submitCode`
  * feeds it a line or something cancels it.
@@ -512,6 +537,7 @@ export async function beginLogin(): Promise<StartOutcome> {
   timer.unref?.();
 
   const pending: PendingLogin = {
+    id: randomUUID(),
     child,
     url: url.value,
     startedAt: Date.now(),
@@ -520,7 +546,18 @@ export async function beginLogin(): Promise<StartOutcome> {
     timer,
   };
   store.__ufClaudeLogin = pending;
-  return { ok: true, value: { url: url.value } };
+
+  // A child that leaves on its own — a network error, a crash, the CLI giving
+  // up — took the verifier with it, and its link must stop being offered. After
+  // the store is set and guarded on it, as `codexAuth.ts` does, so a cancelled
+  // child's exit cannot end the login that replaced it.
+  void exited.then(() => {
+    if (store.__ufClaudeLogin !== pending) return;
+    store.__ufClaudeLogin = null;
+    clearTimeout(timer);
+  });
+
+  return { ok: true, value: { url: url.value, loginId: pending.id } };
 }
 
 /** Poll the captured output until the URL appears, the child dies, or we give up. */
@@ -573,8 +610,23 @@ function waitForUrl(
 }
 
 /**
+ * A sign-in or sign-out that changed the credential, and the fresh read after it.
+ *
+ * Two facts, kept apart because they are owed to different readers. Whether
+ * the credential changed is the CLI's own exit, and it decides the durable
+ * audit row: deciding it from the read instead let a status child killed after
+ * `auth logout` had already deleted the file suppress the one row an operator
+ * needs after a fleet went quiet. What it changed *to* is `status`, which is
+ * what the page shows and which may itself have failed — "changed, but could
+ * not confirm" is a different answer from "did not change".
+ */
+export type ChangeOutcome =
+  | { ok: true; status: ClaudeAuthResult<ClaudeAuthStatus> }
+  | { ok: false; error: string };
+
+/**
  * A submitted code either finished the sign-in or did not, and the second case
- * splits in a way the page has to see.
+ * splits in a way the page has to see. A finished one is `ChangeOutcome`'s.
  *
  * `stillPending` is the difference between "paste it again" and "start again",
  * and it is not cosmetic: the CLI validates the code's shape locally *before*
@@ -584,7 +636,7 @@ function waitForUrl(
  * killing it over a typo would cost them the whole round trip.
  */
 export type SubmitOutcome =
-  | { ok: true; value: ClaudeAuthStatus }
+  | { ok: true; status: ClaudeAuthResult<ClaudeAuthStatus> }
   | { ok: false; error: string; stillPending: boolean };
 
 /** How long a locally-rejected code's message is given to arrive. */
@@ -595,8 +647,17 @@ const REJECTION_GRACE_MS = 1_500;
  *
  * The child owns the exchange — it holds the verifier, it writes the credential
  * — so success here is its exit code and nothing this module computes.
+ *
+ * `loginId` is the start's, and a code naming any other is refused before a
+ * child reads a byte. A newer start replaces the child and the verifier, so a
+ * code from the replaced link — another tab, a reload, a second client — was
+ * written to the newer child, which spent its one exchange failing on it: both
+ * sign-ins dead, and the error about the one the operator was not using.
  */
-export async function submitCode(input: unknown): Promise<SubmitOutcome> {
+export async function submitCode(
+  input: unknown,
+  loginId: unknown,
+): Promise<SubmitOutcome> {
   const code = normalizeCode(input);
   if (!code.ok) return { ok: false, error: code.error, stillPending: true };
 
@@ -606,6 +667,14 @@ export async function submitCode(input: unknown): Promise<SubmitOutcome> {
       ok: false,
       error: "That sign-in has expired or was cancelled. Start it again.",
       stillPending: false,
+    };
+  }
+
+  if (loginId !== pending.id) {
+    return {
+      ok: false,
+      error: "That code is from a sign-in link a newer one replaced. Open the link shown now and paste its code.",
+      stillPending: true,
     };
   }
 
@@ -621,13 +690,17 @@ export async function submitCode(input: unknown): Promise<SubmitOutcome> {
   const mark = pending.output().length;
   pending.child.stdin.write(`${code.value}\n`);
 
+  const raced = new AbortController();
   const outcome = await Promise.race([
     pending.exited.then((e) => ({ kind: "exit" as const, ...e })),
     // Only resolves while the child is still on the prompt, so an exit always
     // wins this race even when the CLI prints a parting line before it goes.
-    waitForRejection(pending, mark).then(() => ({ kind: "rejected" as const })),
+    waitForRejection(pending, mark, raced.signal).then(() => ({
+      kind: "rejected" as const,
+    })),
     after(EXCHANGE_TIMEOUT_MS).then(() => ({ kind: "timeout" as const })),
   ]);
+  raced.abort();
 
   if (outcome.kind === "rejected") {
     return {
@@ -664,11 +737,18 @@ export async function submitCode(input: unknown): Promise<SubmitOutcome> {
   }
 
   // The exit code says the exchange worked; the status read is what proves the
-  // credential landed somewhere the next child can read.
-  const status = await readAuthStatus();
-  return status.ok
-    ? { ok: true, value: status.value }
-    : { ok: false, error: status.error, stillPending: false };
+  // credential landed somewhere the next child can read. One that answers and
+  // still says signed out is refused, as Codex's key store refuses one; one
+  // that cannot answer leaves the change standing, unconfirmed.
+  const status = await readFreshAuthStatus();
+  if (status.ok && !status.value.loggedIn) {
+    return {
+      ok: false,
+      error: `\`${CLAUDE_BIN} auth login\` exited 0, but \`${CLAUDE_BIN} auth status\` still answers signed out.`,
+      stillPending: false,
+    };
+  }
+  return { ok: true, status };
 }
 
 /**
@@ -678,13 +758,23 @@ export async function submitCode(input: unknown): Promise<SubmitOutcome> {
  * The grace period is what keeps this from firing on a success that prints a
  * parting line: the child is re-checked after it, and a process that has left
  * is left to the `exited` branch of the race by never resolving here.
+ *
+ * Never resolving is also why it takes `raced`: the poll clears itself only on
+ * new output, so a child killed while quiet — a cancel, a newer start, a
+ * sign-out, the exchange timeout — left it firing every 100 ms for the life of
+ * the process, holding the dead login's child and output with it.
  */
-function waitForRejection(pending: PendingLogin, mark: number): Promise<void> {
+function waitForRejection(
+  pending: PendingLogin,
+  mark: number,
+  raced: AbortSignal,
+): Promise<void> {
   return new Promise((resolve) => {
+    let settle: NodeJS.Timeout | undefined;
     const poll = setInterval(() => {
       if (pending.output().length <= mark) return;
       clearInterval(poll);
-      const settle = setTimeout(() => {
+      settle = setTimeout(() => {
         const gone =
           pending.child.exitCode !== null || pending.child.signalCode !== null;
         if (!gone) resolve();
@@ -692,6 +782,14 @@ function waitForRejection(pending: PendingLogin, mark: number): Promise<void> {
       settle.unref?.();
     }, 100);
     poll.unref?.();
+    raced.addEventListener(
+      "abort",
+      () => {
+        clearInterval(poll);
+        clearTimeout(settle);
+      },
+      { once: true },
+    );
   });
 }
 
@@ -710,7 +808,7 @@ function after(ms: number): Promise<void> {
  * unreachable exactly when a leaked credential most needs revoking. The page
  * confirms instead.
  */
-export async function signOut(): Promise<ClaudeAuthResult<ClaudeAuthStatus>> {
+export async function signOut(): Promise<ChangeOutcome> {
   cancelLogin();
   const res = await runAuth(["auth", "logout"], COMMAND_TIMEOUT_MS);
   if (res.spawnError) {
@@ -722,5 +820,5 @@ export async function signOut(): Promise<ClaudeAuthResult<ClaudeAuthStatus>> {
   if (res.code !== 0) {
     return { ok: false, error: describeOutput(stripEscapes(res.output)) };
   }
-  return readAuthStatus();
+  return { ok: true, status: await readFreshAuthStatus() };
 }
