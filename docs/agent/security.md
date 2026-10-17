@@ -24,6 +24,7 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 ## [Process signals, the appended system prompt and commit identity](security/process-signals-and-appended-prompt.md)
 
 - An agent cannot select processes by name to signal them. (was line 21)
+- The Codex half of that denial is a file, and it holds only while root alone can change the directory Codex reads it from.
 - …and the notice must contain no literal an agent could match on, because the notice is itself on every sibling's command line. (was line 22)
 - An agent must not sign a commit with the address it was given to recognise the operator by. (was line 23)
 - Nothing on a run's appended system prompt may carry a literal an agent could `pgrep -f` (was line 34)

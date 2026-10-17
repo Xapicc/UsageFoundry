@@ -5,7 +5,7 @@ import {
 } from "node:child_process";
 import fs from "node:fs";
 import { CODEX_BIN, CODEX_HOME, spawnCommand } from "./config";
-import { childCredentials, chownForChild } from "./privsep";
+import { childCredentials } from "./privsep";
 import { agentEnvironment } from "./stacks";
 
 /**
@@ -381,29 +381,56 @@ function spawnOptions(): SpawnOptions {
 }
 
 /**
- * Make `CODEX_HOME` exist and belong to the uid that will write in it.
+ * Make `CODEX_HOME` exist and writable by the uid that will sign in to it,
+ * without handing that uid the directory.
  *
  * The directory `claudeAuth.ts` never has to think about, because `~/.claude` is
- * a bind mount that already carries the host uid. Codex's is not mounted on a
- * stock install, so it is created by whichever process gets there first — and
- * the first process is the server, which is root. Left root-owned it is a
- * directory the login child cannot write, and the failure surfaces as the CLI
- * refusing to save rather than as anything naming a permission.
+ * a bind mount that already carries the host uid. Codex's may not exist yet,
+ * so it is created by whichever process gets there first — and the first
+ * process is the server, which is root. Left root's 0700 it is a directory the
+ * login child cannot write, and the failure surfaces as the CLI refusing to
+ * save rather than as anything naming a permission.
  *
- * `chownForChild` throws on failure and is allowed to, one layer up: a
- * `CODEX_HOME` the child cannot write is a sign-in that cannot complete, and
- * saying so is better than a login that reports success over nothing on disk.
+ * **Root's, the agents' group, 1770 — never the agents'.** This used to
+ * `chownForChild` it, which gave the agents the directory holding `rules/`,
+ * the `pkill`/`killall` denial `codexRules.ts` writes as root: a rename there
+ * needs write on the parent only, so any work cycle could move `rules/` aside,
+ * and every sign-in undid the entrypoint's lock. The group bit is what the
+ * login needs and the sticky bit keeps it from reaching root's entries; the
+ * arrangement, and why `prepareCodexRules` refuses anything else, is in
+ * `docker-entrypoint.sh`'s `CODEX_HOME` block. Through a descriptor opened
+ * `O_NOFOLLOW`, `handDirectoryToChild`'s reason: root must not chown whatever
+ * a link at this name points to.
+ *
+ * Failures are allowed to throw, one layer up: a `CODEX_HOME` the child cannot
+ * write is a sign-in that cannot complete, and saying so is better than a
+ * login that reports success over nothing on disk.
  */
 function ensureCodexHome(): CodexAuthResult<null> {
   try {
     fs.mkdirSync(CODEX_HOME, { recursive: true, mode: 0o700 });
-    chownForChild(CODEX_HOME);
+    lockCodexHome();
     return { ok: true, value: null };
   } catch (err) {
     return {
       ok: false,
       error: `Could not prepare ${CODEX_HOME}: ${err instanceof Error ? err.message : String(err)}`,
     };
+  }
+}
+
+function lockCodexHome(): void {
+  const { gid } = childCredentials();
+  if (gid === undefined) return;
+  const fd = fs.openSync(
+    CODEX_HOME,
+    fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW,
+  );
+  try {
+    fs.fchownSync(fd, process.getuid?.() ?? 0, gid);
+    fs.fchmodSync(fd, 0o1770);
+  } finally {
+    fs.closeSync(fd);
   }
 }
 

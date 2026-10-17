@@ -154,3 +154,107 @@ describe("prepareCodexRules", () => {
     assert.equal(mod.prepareCodexRules().kind, "ready");
   });
 });
+
+/**
+ * The denial under a uid split, where the server writing it is root and the
+ * cycle it constrains is not.
+ *
+ * Root owning `rules/` was the whole of the protection, and it kept nothing:
+ * renaming a directory is a write to the one that holds it, and that one was
+ * the agents'. So a work cycle could move `rules/` aside and leave a file or a
+ * dangling link at the name, which refused every later Codex cycle for good, or
+ * a link into its own tree, which wrote the denial somewhere it can edit and
+ * answered `ready`. These pin that the delivery checks the directories rather
+ * than trusting a successful write, and that its refusal names the directory
+ * rather than a missing denial.
+ *
+ * The suite is not root, so the uid that owns the fixture stands in for the
+ * server's, passed explicitly; production passes what `rulesOwner()` answers.
+ */
+describe("prepareCodexRules when the cycle runs under another uid", () => {
+  const self = process.getuid!();
+  const home = () => process.env.CODEX_HOME!;
+  const rulesDir = () => path.dirname(CODEX_RULES_FILE);
+
+  function homeWithMode(mode: number): void {
+    fs.rmSync(home(), { recursive: true, force: true });
+    fs.mkdirSync(home());
+    fs.chmodSync(home(), mode);
+  }
+
+  /** The refusal's reason, after asserting there is one and that it named `named`. */
+  function refused(named: string, owner = self): string {
+    const delivery = mod.prepareCodexRules(owner);
+    assert.equal(delivery.kind, "unavailable", `answered ready with ${named} untrustworthy`);
+    const reason = delivery.kind === "unavailable" ? delivery.reason : "";
+    assert.equal(
+      reason.includes(named),
+      true,
+      `the reason must name ${named}, the directory an operator has to fix: ${reason}`,
+    );
+    return reason;
+  }
+
+  it("answers ready for the shape the entrypoint makes", () => {
+    // The control, and the one that matters most in the other direction: a
+    // check that refused 1770 would refuse every Codex cycle on every install.
+    // Group-writable is right for CODEX_HOME because the sticky bit is what
+    // stops a rename of root's `rules/`; `rules/` itself is made 0755.
+    homeWithMode(0o1770);
+    assert.deepEqual(mod.prepareCodexRules(self), { kind: "ready", file: CODEX_RULES_FILE });
+    assert.equal(fs.lstatSync(rulesDir()).mode & 0o777, 0o755);
+    assert.equal(mod.prepareCodexRules(self).kind, "ready");
+
+    homeWithMode(0o755);
+    assert.equal(mod.prepareCodexRules(self).kind, "ready");
+  });
+
+  it("refuses a CODEX_HOME the agents can write that is not sticky", () => {
+    for (const mode of [0o777, 0o775]) {
+      homeWithMode(mode);
+      const reason = refused(home());
+      assert.match(reason, /sticky/);
+      assert.equal(fs.existsSync(CODEX_RULES_FILE), false, "wrote the denial into it anyway");
+    }
+  });
+
+  it("refuses a CODEX_HOME that is not the server's", () => {
+    // What every stock container had: `/home/node/.codex` owned by the agent
+    // uid at 0755, which no mode check alone would have caught.
+    homeWithMode(0o755);
+    const reason = refused(home(), self + 1);
+    assert.match(reason, new RegExp(`uid ${self}\\b`));
+  });
+
+  it("refuses a rules/ that is a link to a directory an agent owns, and writes nothing through it", () => {
+    homeWithMode(0o1770);
+    const agentDir = path.join(path.dirname(home()), "agent-owned");
+    fs.rmSync(agentDir, { recursive: true, force: true });
+    fs.mkdirSync(agentDir);
+    fs.symlinkSync(agentDir, rulesDir());
+
+    assert.match(refused(rulesDir()), /symbolic link/);
+    assert.deepEqual(fs.readdirSync(agentDir), [], "the denial was written where the agent can edit it");
+  });
+
+  it("names a dangling link at rules/ rather than an errno", () => {
+    homeWithMode(0o1770);
+    fs.symlinkSync(path.join(path.dirname(home()), "no-such-directory"), rulesDir());
+    assert.match(refused(rulesDir()), /symbolic link/);
+  });
+
+  it("names a file at rules/ rather than an errno", () => {
+    homeWithMode(0o1770);
+    fs.writeFileSync(rulesDir(), "not a directory");
+    assert.match(refused(rulesDir()), /not a directory/);
+  });
+
+  it("refuses a rules/ the agents can write into", () => {
+    // Where they could delete the denial or add a file Codex also loads.
+    homeWithMode(0o1770);
+    fs.mkdirSync(rulesDir());
+    fs.chmodSync(rulesDir(), 0o777);
+    refused(rulesDir());
+    assert.equal(fs.existsSync(CODEX_RULES_FILE), false);
+  });
+});
