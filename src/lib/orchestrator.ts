@@ -10669,7 +10669,14 @@ function handleCodexStreamLine(
         // same string in a file, and `runIteration` prefers that file when the
         // CLI wrote one — see there for why a turn that fails does not.
         const text = item.text;
-        if (typeof text === "string" && text) acc.finalText = text;
+        if (typeof text === "string" && text) {
+          acc.finalText = text;
+          // The agent's words on the log and the Report tab, which read only
+          // `assistant` events. Every `agent_message` is the main thread's:
+          // Codex has no sub-agent voice here, so there is no
+          // `parentToolUseId` to route on and none is written.
+          emit({ runId, ts: Date.now(), kind: "assistant", payload: { text } });
+        }
       } else if (itemType === "error") {
         const message = item.message;
         if (typeof message === "string" && message) latchCodexNotice(acc, message);

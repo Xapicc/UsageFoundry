@@ -181,6 +181,7 @@ const { reviewEnv } = require("./review") as typeof import("./review");
 const { authEnv } = require("./claudeAuth") as typeof import("./claudeAuth");
 const { verifyEnv } = require("./landGate") as typeof import("./landGate");
 const { gitEnv } = require("./git") as typeof import("./git");
+const { cycleOutputs } = require("./cycles") as typeof import("./cycles");
 const { localCycleEnv } =
   require("./localProvider") as typeof import("./localProvider");
 
@@ -4237,10 +4238,12 @@ describe("handleCodexStreamLine", () => {
     for (const line of lines) {
       parseLine(runId, JSON.stringify(line), acc, (id) => sessions.push(id));
     }
+    const { events } = runEvents(runId);
     return {
       acc,
       sessions,
-      logs: runEvents(runId).events.flatMap((e) =>
+      events,
+      logs: events.flatMap((e) =>
         e.kind === "log" ? [String((e.payload as { message: string }).message)] : [],
       ),
     };
@@ -4372,6 +4375,35 @@ describe("handleCodexStreamLine", () => {
       { type: "error", message: flagged },
     ]);
     assert.equal(filtered.acc.apiError, flagged);
+  });
+
+  it("writes each agent message as an assistant event the Report tab reads", () => {
+    const { acc, events } = run([
+      { type: "thread.started", thread_id: "t" },
+      { type: "item.completed", item: { id: "i1", type: "agent_message", text: "Reading the parser first." } },
+      { type: "item.completed", item: { id: "i2", type: "reasoning", text: "not the agent's words" } },
+      { type: "item.completed", item: { id: "i3", type: "agent_message", text: "Fixed it; all tests pass.\n\nDONE" } },
+      { type: "item.completed", item: { id: "i4", type: "agent_message", text: "" } },
+      { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } },
+    ]);
+    const said = events.filter((e) => e.kind === "assistant");
+    // One per non-empty message, in the Claude parser's shape: the words in
+    // `payload.text` and no `parentToolUseId`, which is what `cycleOutputs`
+    // checks to tell the main thread from a delegated turn.
+    assert.deepEqual(
+      said.map((e) => e.payload),
+      [{ text: "Reading the parser first." }, { text: "Fixed it; all tests pass.\n\nDONE" }],
+    );
+    assert.equal(acc.finalText, "Fixed it; all tests pass.\n\nDONE");
+
+    const cycles = cycleOutputs([
+      { runId: "r", ts: 1, kind: "iteration", payload: { n: 1, prompt: "go", resuming: null } },
+      ...events,
+    ]);
+    assert.deepEqual(
+      cycles.map((c) => [c.n, c.text]),
+      [[1, "Fixed it; all tests pass.\n\nDONE"]],
+    );
   });
 
   it("takes the last agent message as the cycle's last word", () => {
