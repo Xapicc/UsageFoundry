@@ -1904,16 +1904,30 @@ export async function landRun(
       if (!verify.passed) return { ok: false, reason: verify.reason };
     }
 
+    // The commit every check below is asked of, and the one the merge takes.
     // Read before the merge: after a squash there is nothing in the target's
     // history that points back at these commits, and this is what makes them
     // identifiable afterwards.
-    const tip = (await git(folder, ["rev-parse", branch], NO_CLOCK)).stdout;
+    //
+    // The merge is handed this SHA and never the branch's name. Several git
+    // children are awaited between this read and the merge's spawn, and the
+    // card's Commit button, a second tab or a continuation can move the branch
+    // in that time: a merge by name then took a commit that no check had seen,
+    // a forced `.env` among them, while `landed_tip` recorded this one.
+    const tipRead = await git(folder, ["rev-parse", "--verify", `refs/heads/${branch}`], NO_CLOCK);
+    if (!tipRead.ok || !tipRead.stdout) {
+      return {
+        ok: false,
+        reason: `Could not read where ${branch} points, so nothing was merged: ${gitFailureLine(tipRead.stderr) || "unknown error"}`,
+      };
+    }
+    const tip = tipRead.stdout;
 
     // Asked again of the tip the merge takes, because `landState`'s answer was
     // read before the check, and the card's Commit button can put a seeded
     // file on the branch while it runs.
     const seeded = seededRefusal(
-      await seededOnBranch(folder, tip || `refs/heads/${branch}`, target, run.worktree_base, seedGlobsOf(run)),
+      await seededOnBranch(folder, tip, target, run.worktree_base, seedGlobsOf(run)),
       { branch, target, exit: "land" },
     );
     if (seeded) return { ok: false, reason: seeded };
@@ -1984,10 +1998,14 @@ export async function landRun(
     // checkout read clean and the operator's own file was gone, never having
     // been in git, under a card that said it landed.
     const merge = pastSquash
-      ? await applyMergedTree(folder, strategy, branch, pastSquash)
+      ? await applyMergedTree(folder, strategy, branch, target, pastSquash)
       : strategy === "squash"
-        ? await git(folder, ["merge", "--squash", "--no-overwrite-ignore", branch], NO_CLOCK)
-        : await git(folder, ["merge", "--no-edit", "--no-overwrite-ignore", branch], NO_CLOCK);
+        ? await git(folder, ["merge", "--squash", "--no-overwrite-ignore", tip], NO_CLOCK)
+        : await git(
+            folder,
+            ["merge", "--no-edit", "--no-overwrite-ignore", "-m", mergeSubject(branch, target), tip],
+            NO_CLOCK,
+          );
 
     if (!merge.ok) {
       const conflicts = await conflictedFiles(folder);
@@ -2053,7 +2071,7 @@ export async function landRun(
       .prepare(
         "UPDATE runs SET landed_at=?, landed_into=?, landed_strategy=?, landed_tip=?, landed_commit=? WHERE id=?",
       )
-      .run(now, target, strategy, tip || null, squashCommit, runId);
+      .run(now, target, strategy, tip, squashCommit, runId);
 
     emitRunEvent({
       runId,
@@ -2076,12 +2094,26 @@ export async function landRun(
 }
 
 /**
- * A merge `mergePastSquash` worked out: the target it read, the tree it came
- * to, and the paths that tree has which the target does not.
+ * The subject `git merge <branch>` writes, for a merge handed the branch's SHA:
+ * given a bare commit git says "Merge commit '<sha>'", and the target's history
+ * would stop naming the branch. Git leaves out "into <target>" for main and
+ * master alone.
+ */
+function mergeSubject(branch: string, target: string): string {
+  const into = target === "main" || target === "master" ? "" : ` into ${target}`;
+  return `Merge branch '${branch}'${into}`;
+}
+
+/**
+ * A merge `mergePastSquash` worked out: the target it read, the commit it
+ * measured the branch at, the tree it came to, and the paths that tree has
+ * which the target does not.
  */
 interface MergedTree {
   ok: true;
   ours: string;
+  /** What the tree was worked out from, and so what the merge must record. */
+  theirs: string;
   tree: string;
   added: string[];
 }
@@ -2145,6 +2177,7 @@ async function mergePastSquash(
   return {
     ok: true,
     ours: ours.stdout,
+    theirs: tip,
     tree: merged.tree,
     added: added.stdout.split("\0").filter((p) => p !== ""),
   };
@@ -2153,7 +2186,9 @@ async function mergePastSquash(
 /**
  * Put `merged`'s tree into the operator's checkout, staged and uncommitted,
  * the state `merge --squash` leaves — and for a merge, with `MERGE_HEAD` naming
- * the branch, so the commit that follows has it as its second parent.
+ * the commit the tree was worked out from (`merged.theirs`, never the branch's
+ * name, which can have moved since), so the commit that follows has it as its
+ * second parent and history says merged exactly what the tree holds.
  *
  * `-s ours` records the merge and takes nothing from it, so the content is the
  * tree worked out past the squash and nothing git's own merge-base would add.
@@ -2168,12 +2203,22 @@ async function applyMergedTree(
   folder: string,
   strategy: LandStrategy,
   branch: string,
+  target: string,
   merged: MergedTree,
 ) {
   if (strategy !== "squash") {
     const record = await git(
       folder,
-      ["merge", "-s", "ours", "--no-ff", "--no-commit", branch],
+      [
+        "merge",
+        "-s",
+        "ours",
+        "--no-ff",
+        "--no-commit",
+        "-m",
+        mergeSubject(branch, target),
+        merged.theirs,
+      ],
       NO_CLOCK,
     );
     if (!record.ok) return record;

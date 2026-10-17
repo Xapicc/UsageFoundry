@@ -263,6 +263,7 @@ Units that are about no test file in the tree:
 | `diffSlotReuse.test.ts` |  |
 | `landAfterSquash.test.ts` | [resolution] |
 | `landAfterVerify.test.ts` |  |
+| `landMovedBranch.test.ts` |  |
 | `landUnwind.test.ts` |  |
 | `landView.test.ts` | [cards] |
 | `repoLock.test.ts` |  |
