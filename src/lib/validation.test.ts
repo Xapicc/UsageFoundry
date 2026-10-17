@@ -259,14 +259,14 @@ describe("verdictsToActOn", () => {
     // newest row saw only B's and dropped A.
     const a = row("A", 110, 120, "not-finished");
     for (const b of [row("B", 130, 140, "finished"), row("B", 130, 140, null)]) {
-      assert.deepEqual(verdictsToActOn([b, a], since, new Set(["A"])), [a]);
+      assert.deepEqual(verdictsToActOn([b, a], since, new Set(["A"]), null), [a]);
     }
   });
 
   it("names every held task judged unfinished this cycle, oldest first", () => {
     const a = row("A", 110, 120, "not-finished");
     const b = row("B", 130, 140, "not-finished");
-    assert.deepEqual(verdictsToActOn([b, a], since, new Set(["A", "B"])), [a, b]);
+    assert.deepEqual(verdictsToActOn([b, a], since, new Set(["A", "B"]), null), [a, b]);
   });
 
   it("reads each task's newest check, not its newest unfinished one", () => {
@@ -275,7 +275,7 @@ describe("verdictsToActOn", () => {
     // first would be a pushback against a reading already superseded.
     const first = row("A", 110, 120, "not-finished");
     for (const second of [row("A", 130, null, null), row("A", 130, 140, null)]) {
-      assert.deepEqual(verdictsToActOn([second, first], since, new Set(["A"])), []);
+      assert.deepEqual(verdictsToActOn([second, first], since, new Set(["A"]), null), []);
     }
   });
 
@@ -283,15 +283,29 @@ describe("verdictsToActOn", () => {
     // A verdict buys a cycle once. The standing row from before `since` is the
     // one a granted cycle that never re-asked would otherwise buy another with.
     const stale = row("A", 80, 90, "not-finished");
-    assert.deepEqual(verdictsToActOn([stale], since, new Set(["A"])), []);
+    assert.deepEqual(verdictsToActOn([stale], since, new Set(["A"]), null), []);
+  });
+
+  it("leaves a check begun before the pick-up, however late its verdict lands", () => {
+    // Claimed in a cycle that ended `needs-review`, so the run ended without
+    // waiting for it, and picked up at 115. The verdict lands inside the
+    // pick-up's cycle, which `since` alone accepts.
+    const old = row("A", 105, 120, "not-finished");
+    assert.deepEqual(verdictsToActOn([old], since, new Set(["A"]), 115), []);
+    // A claim made in the picked-up segment is still acted on, and so is one
+    // carried across a park, which is not a pick-up and moves no floor.
+    const fresh = row("A", 118, 120, "not-finished");
+    assert.deepEqual(verdictsToActOn([fresh, old], since, new Set(["A"]), 115), [fresh]);
+    const carried = row("A", 80, 120, "not-finished");
+    assert.deepEqual(verdictsToActOn([carried], 70, new Set(["A"]), 60), [carried]);
   });
 
   it("leaves a task that is no longer this run's", () => {
     // The operator took it back, dropped it or closed it while it was read.
     // Their decision outranks the verdict.
     const a = row("A", 110, 120, "not-finished");
-    assert.deepEqual(verdictsToActOn([a], since, new Set()), []);
-    assert.deepEqual(verdictsToActOn([row(null, 110, 120, "not-finished")], since, new Set(["A"])), []);
+    assert.deepEqual(verdictsToActOn([a], since, new Set(), null), []);
+    assert.deepEqual(verdictsToActOn([row(null, 110, 120, "not-finished")], since, new Set(["A"]), null), []);
   });
 });
 

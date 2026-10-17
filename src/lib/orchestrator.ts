@@ -421,6 +421,11 @@ export interface RunRow {
    */
   early_ends: number;
   /**
+   * Work cycles the provider refused after they had spent, and the loop
+   * refunded on a park or a transient retry. Only ever increases.
+   */
+  worked_refunds: number;
+  /**
    * Parked milliseconds already closed off. Open parks are not in here — the
    * total at any instant is this plus `now - paused_at` while `paused_at` is
    * set. The duration guard subtracts it, because `maxDurationMinutes` caps
@@ -566,7 +571,11 @@ export interface RunRow {
   origin: RunOrigin | null;
   /** The record that authorised it: a proposal, an instance, a schedule. */
   origin_ref: string | null;
-  /** When an operator last put this terminal run back in the queue. */
+  /**
+   * When an operator last put this terminal run back in the queue, and so the
+   * floor below which a task check belongs to an earlier segment — see
+   * `verdictsToActOn`.
+   */
   reopened_at: number | null;
   /** `gitDirWatch.ts`'s `GitDirBaseline` as JSON, taken once before the first cycle. */
   git_dir_baseline: string | null;
@@ -5407,27 +5416,29 @@ export interface DependencyState {
 /**
  * The count `DependencyState.refundedCycles` carries, for a query to select.
  *
- * `guard_refunds`, `stack_waits` and `early_ends` each only ever increase and
- * each is written only when a cycle that *did work* was put back on the cycle
- * counter: a live-guard cut, a stack park and a context-ceiling end. The two
- * other refunds are left out on purpose, and that is the whole reason this is
- * not `pause_count`: a transient retry and a provider refusal both hand a cycle
- * back, and in both the provider turned the cycle away before any work
- * happened. A run refused at the wall and then stopped ended having done
- * nothing, which is what the dependents' "without running a work cycle" says.
+ * `guard_refunds`, `stack_waits`, `early_ends` and `worked_refunds` each only
+ * ever increase and each is written only when a cycle that *did work* was put
+ * back on the cycle counter: a live-guard cut, a stack park, a context-ceiling
+ * end, and a provider refusal — the wall or a transient error — met after the
+ * cycle had spent. That last condition is the whole reason this is not
+ * `pause_count`: a refusal on a cycle's first turn hands back a cycle in which
+ * nothing happened, and a run refused at the wall that way and then stopped
+ * ended having done nothing, which is what the dependents' "without running a
+ * work cycle" says. A wall is met by whichever turn crosses the allowance,
+ * though, so a refusal alone is no evidence either way; what the cycle spent is.
  *
  * `alias` is the `runs` table's alias in the caller's query, when it has one.
  */
 export function refundedCyclesSql(alias?: string): string {
   const col = (name: string) => (alias ? `${alias}.${name}` : name);
-  return `(${col("guard_refunds")} + ${col("stack_waits")} + ${col("early_ends")})`;
+  return `(${col("guard_refunds")} + ${col("stack_waits")} + ${col("early_ends")} + ${col("worked_refunds")})`;
 }
 
 /** `refundedCyclesSql` for a row already in hand. */
 export function refundedCyclesOf(
-  run: Pick<RunRow, "guard_refunds" | "stack_waits" | "early_ends">,
+  run: Pick<RunRow, "guard_refunds" | "stack_waits" | "early_ends" | "worked_refunds">,
 ): number {
-  return run.guard_refunds + run.stack_waits + run.early_ends;
+  return run.guard_refunds + run.stack_waits + run.early_ends + run.worked_refunds;
 }
 
 /**
@@ -5438,8 +5449,8 @@ export function refundedCyclesOf(
  * the cycle they ended back to the counter, so a run that paid for a whole cycle
  * and was then stopped reads `iterations === 0`. `ensureWorktree` already makes
  * this distinction for the same reason, with `pause_count`; this one asks the
- * three refund counters instead, because `pause_count` also counts a provider
- * refusal, which refunded a cycle that never started.
+ * refund counters instead, because `pause_count` also counts a provider refusal
+ * that refunded a cycle in which nothing was spent.
  */
 export function ranWorkCycle(
   dep: Pick<DependencyState, "iterations" | "refundedCycles">,
@@ -11091,6 +11102,8 @@ export async function startRun(id: string): Promise<void> {
   let guardRefunds = run.guard_refunds ?? 0;
   /** Parks for a stack over the run's whole life. See `MAX_STACK_WAITS_PER_RUN`. */
   let stackWaits = run.stack_waits ?? 0;
+  /** Refused cycles that had spent, refunded. See `refundedCyclesSql`. */
+  let workedRefunds = run.worked_refunds ?? 0;
   /** The operator's message for the first cycle of this segment, if any. */
   let followUp: string | null = run.follow_up ?? null;
   /**
@@ -12652,6 +12665,13 @@ export async function startRun(id: string): Promise<void> {
           transientRetries,
         });
         const retrying = plan.action === "retry";
+        // Both answers below that keep the run alive refund this cycle, and a
+        // refunded cycle has to be counted where `ranWorkCycle` reads if it did
+        // anything. Spend is the evidence, not the turn count: the pinned CLI
+        // reports `num_turns: 1` for an API error on a cycle's first turn
+        // (`docs/verification/run-lifecycle.md`, 2026-10-06). Tokens as well as
+        // dollars, because a provider that reports no money still counts them.
+        const spentBeforeRefusal = cycleSpend.costUSD > 0 || res.tokens > 0;
         // Jittered, so twenty-five runs meeting one failure at one instant do
         // not re-spawn as one wave — see `transientBackoffMs`.
         const backoff = plan.action === "retry" ? transientBackoffMs(plan) : 0;
@@ -12685,6 +12705,7 @@ export async function startRun(id: string): Promise<void> {
           // that never completed. Left charged, a run with `maxIterations: 1`
           // could only ever retry into its own cycle cap.
           iterations -= 1;
+          if (spentBeforeRefusal) workedRefunds += 1;
           // And this segment still has not completed a cycle, which is exactly
           // what `cyclesThisSegment` counts. Without the matching decrement a
           // retry that fails to resume the session is no longer the segment's
@@ -12729,9 +12750,10 @@ export async function startRun(id: string): Promise<void> {
                 "Waiting for it to refill.";
           finalStatus = "paused";
           refusalPark = true;
-          // Refunded for the same reason a guard-interrupted cycle is, and with
-          // more force: the provider refused before any work happened at all.
+          // Refunded for the same reason a guard-interrupted cycle is: the
+          // provider refused it, partway or before it began.
           iterations -= 1;
+          if (spentBeforeRefusal) workedRefunds += 1;
           break;
         }
 
@@ -13102,6 +13124,7 @@ export async function startRun(id: string): Promise<void> {
       // other.
       guard_refunds: guardRefunds,
       stack_waits: stackWaits,
+      worked_refunds: workedRefunds,
       verdicts_unread_since: verdictsUnreadSince,
       spent_usd: spentUSD,
       spent_tokens: spentTokens,
@@ -15176,7 +15199,8 @@ export function reopenRun(
       // set, `needs-review` included, and a run that said it could not finish
       // must never be sent back into a cycle by a verdict — least of all on the
       // pick-up of the operator who came to answer it. A pick-up stays the
-      // fresh segment it has always been.
+      // fresh segment it has always been, and `reopened_at` is what keeps it
+      // one: a check the ending did not wait for began before it.
       `UPDATE runs SET status=?, queued_at=?, budget=?, max_iterations=?, follow_up=?,
          follow_up_is_note=?, reopened_at=?,
          started_at=NULL, finished_at=NULL, exit_code=NULL, stop_reason=NULL,
