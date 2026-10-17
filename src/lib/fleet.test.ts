@@ -958,8 +958,9 @@ describe("what a fleet budget does to each run's own", () => {
       }),
     });
 
-    // Exactly what `FleetControls` puts on the wire: two fields, no more.
-    const report = fleet.reopenFleet([id], { maxIterations: 3, maxRunCostUSD: 5 });
+    // Exactly what `FleetControls` puts on the wire: two fields, no more. The
+    // run has used no cycles, so three more is a cap of three.
+    const report = fleet.reopenFleet([id], { moreIterations: 3, maxRunCostUSD: 5 });
     assert.deepEqual(report.reopened, [id]);
 
     const stored = budgetOf(id);
@@ -986,7 +987,7 @@ describe("what a fleet budget does to each run's own", () => {
     });
 
     const report = fleet.reopenFleet([bounded, unbounded], {
-      maxIterations: null,
+      moreIterations: null,
       maxRunCostUSD: null,
     });
 
@@ -1003,6 +1004,99 @@ describe("what a fleet budget does to each run's own", () => {
       "stopped",
       "refused by name and left exactly as it ended",
     );
+  });
+});
+
+/**
+ * What the pick-up sheet does when nobody touches its fields.
+ *
+ * Its cycle field opens at 1, and it used to be sent as `maxIterations`, which
+ * `reopenRun` reads as a total — so at its defaults the sheet refused every run
+ * that had finished a work cycle, which is nearly every run the button is for,
+ * and when it refused them all the card named one of them. Nothing threw and
+ * the existing cases all passed 3 or 5, never the sheet's own default. The field
+ * now asks for more work cycles, added to what each run has used, so one number
+ * means the same thing across runs at different points in their work.
+ */
+describe("the pick-up sheet at its defaults", () => {
+  before(() => settings.setNewWorkPaused(true));
+  after(() => settings.setNewWorkPaused(false));
+
+  /** Exactly what `FleetControls` puts on the wire with neither field touched. */
+  const SHEET_DEFAULT = { moreIterations: 1, maxRunCostUSD: null };
+  const capOf = (id: string) =>
+    (JSON.parse(orch.getRun(id)!.budget) as { maxIterations: number | null })
+      .maxIterations;
+
+  it("picks up runs that had worked, each for one more work cycle", () => {
+    const afterOne = run("default-stopped-after-one", "stopped", {
+      iterations: 1,
+      budget: ROOMY,
+    });
+    const inThird = run("default-failed-in-third", "failed", {
+      iterations: 2,
+      budget: ROOMY,
+    });
+    // Its own limit is used up, so only the sheet's answer can pick it up.
+    const atCap = run("default-at-own-cap", "stopped", { iterations: 1 });
+
+    const report = fleet.reopenFleet([afterOne, inThird, atCap], SHEET_DEFAULT);
+
+    assert.deepEqual(report.refused, []);
+    assert.deepEqual(
+      [...report.reopened].sort(),
+      [afterOne, inThird, atCap].sort(),
+    );
+    for (const id of [afterOne, inThird, atCap]) {
+      assert.equal(statusOf(id), "queued");
+      assert.equal(
+        capOf(id),
+        orch.getRun(id)!.iterations + 1,
+        `${id}: one more cycle on top of what it used, not a total of one`,
+      );
+    }
+  });
+
+  it("does not hand a run back the cycles its task check already granted", () => {
+    // The guard reads `maxIterations + validation_cycles` as the cap, so a
+    // limit of used + 1 here would buy the granted cycle over again: two more
+    // billed cycles on a press that asked for one.
+    const granted = run("default-granted", "stopped", { iterations: 3 });
+    dbMod
+      .db()
+      .prepare("UPDATE runs SET validation_cycles = 1 WHERE id = ?")
+      .run(granted);
+
+    assert.deepEqual(fleet.reopenFleet([granted], SHEET_DEFAULT).reopened, [
+      granted,
+    ]);
+    assert.equal(capOf(granted), 3, "3 used, 1 of them granted: cap 3 + 1 = 4");
+  });
+
+  it("names every run it refused when it refused them all", async () => {
+    const { POST } = await import("../app/api/fleet/route");
+    const aside = run("refusedA-set-aside", "stopped", { iterations: 1 });
+    dbMod
+      .db()
+      .prepare("UPDATE runs SET set_aside_at = ? WHERE id = ?")
+      .run(Date.now(), aside);
+
+    const res = await POST(
+      new Request("http://localhost/api/fleet", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "reopen",
+          runIds: [aside, "refusedB-no-such-run"],
+          budget: SHEET_DEFAULT,
+        }),
+      }),
+    );
+    const body = (await res.json()) as { error: string };
+
+    assert.equal(res.status, 400);
+    assert.match(body.error, /refusedA.*Set aside/);
+    assert.match(body.error, /refusedB.*No such run/);
   });
 });
 

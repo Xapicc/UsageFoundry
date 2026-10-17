@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 // Relative, not "@/…" — see the note in the login route.
 import {
+  allRefusedMessage,
   fleetState,
   reopenFleet,
   setFleetPaused,
@@ -86,16 +87,30 @@ async function postHandler(req: Request) {
         { status: 400 },
       );
     }
+    // Checked here because `reopenFleet` adds it to each run's own count, and
+    // a zero or a word there would come back as twenty-five refusals telling
+    // the operator to raise a limit they never typed.
+    const more = (body.budget as Record<string, unknown> | null | undefined)
+      ?.moreIterations;
+    if (
+      more !== undefined &&
+      more !== null &&
+      !(typeof more === "number" && Number.isInteger(more) && more >= 1)
+    ) {
+      return NextResponse.json(
+        {
+          error: `More work cycles must be a whole number of at least 1, or blank for no cycle limit; got ${JSON.stringify(more)}.`,
+        },
+        { status: 400 },
+      );
+    }
     const report = reopenFleet(ids, body.budget);
     // A batch where every id was refused is a 400 for the same reason an empty
     // list is: a 200 with nothing started is indistinguishable from a batch that
     // worked, and the page clears its selection on `res.ok`.
     if (report.reopened.length === 0) {
       return NextResponse.json(
-        {
-          error: report.refused[0]?.reason ?? "None of those runs could be picked up.",
-          report,
-        },
+        { error: allRefusedMessage(report.refused), report },
         { status: 400 },
       );
     }

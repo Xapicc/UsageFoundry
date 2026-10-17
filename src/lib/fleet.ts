@@ -306,6 +306,16 @@ export interface FleetReopenReport {
  * and `reopenRun` reads it back off the row — reopening is not a second route
  * to `--permission-mode` and merging must not make it one.
  *
+ * The sheet's cycle field is **more work cycles**, `moreIterations` on the wire,
+ * and it becomes a cap per run: what that run has used plus the answer. One
+ * total cannot mean the same thing for twenty-five runs at different points —
+ * the sheet opened at 1, sent as `maxIterations`, and refused every run that
+ * had finished a cycle, which is nearly every run this exists for. The cycles a
+ * task check granted are taken off what was used, because the guard reads the
+ * cap as `maxIterations + validation_cycles` and adding them again would buy
+ * each one a second time. A `maxIterations` on the wire is still a total, and
+ * `moreIterations` wins over it; `null` is "no cycle limit" either way.
+ *
  * Sequential and synchronous, `approveProposal`'s rule: `createRun`'s folder
  * claim and `reopenRun`'s checkout check are only atomic inside one event-loop
  * turn, and two runs reopened into one checkout is exactly what that check
@@ -317,7 +327,7 @@ export function reopenFleet(
   budget: unknown,
 ): FleetReopenReport {
   const report: FleetReopenReport = { reopened: [], refused: [] };
-  const wire = (budget ?? {}) as Record<string, unknown>;
+  const { moreIterations, ...wire } = (budget ?? {}) as Record<string, unknown>;
 
   for (const id of dependenciesFirst(ids)) {
     const run = getRun(id);
@@ -344,10 +354,33 @@ export function reopenFleet(
     // is JSON it wrote itself, and a row that is not is a corrupted database
     // rather than a refusal to word.
     const stored = JSON.parse(run.budget) as Record<string, unknown>;
-    const outcome = reopenRun(id, { ...stored, ...wire });
+    const cycles =
+      moreIterations === undefined
+        ? {}
+        : {
+            maxIterations:
+              moreIterations === null
+                ? null
+                : run.iterations - run.validation_cycles + Number(moreIterations),
+          };
+    const outcome = reopenRun(id, { ...stored, ...wire, ...cycles });
     if (outcome.ok) report.reopened.push(id);
     else report.refused.push({ id, reason: outcome.reason });
   }
 
   return report;
+}
+
+/**
+ * The answer to a pick-up that refused every run it was given: each one by its
+ * short id and its own sentence. The route used to send only the first
+ * refusal, which named no run, so twenty-five refused for twenty-five reasons
+ * read as one run refused for one.
+ */
+export function allRefusedMessage(refused: FleetReopenReport["refused"]): string {
+  const count = refused.length;
+  return (
+    `None of ${count === 1 ? "that run" : `those ${count} runs`} could be picked up. ` +
+    refused.map((r) => `${r.id.slice(0, 8)}: ${r.reason}`).join(" ")
+  );
 }

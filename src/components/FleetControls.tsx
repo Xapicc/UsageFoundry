@@ -52,7 +52,7 @@ export function FleetControls({
   const [error, setError] = useState<string | null>(null);
   const [confirmStop, setConfirmStop] = useState(false);
   const [confirmReopen, setConfirmReopen] = useState(false);
-  const [maxIterations, setMaxIterations] = useState("1");
+  const [moreIterations, setMoreIterations] = useState("1");
   const [maxRunCostUSD, setMaxRunCostUSD] = useState("");
 
   const load = useCallback(async () => {
@@ -187,7 +187,8 @@ export function FleetControls({
               action: "reopen",
               runIds: reopenable.map((r) => r.id),
               budget: {
-                maxIterations: maxIterations === "" ? null : Number(maxIterations),
+                moreIterations:
+                  moreIterations === "" ? null : Number(moreIterations),
                 maxRunCostUSD:
                   maxRunCostUSD === "" ? null : Number(maxRunCostUSD),
               },
@@ -201,17 +202,18 @@ export function FleetControls({
           {reopenable.length === 1 ? "" : "s"} listed on this page, each
           continuing its own session. The two limits below apply to all of them;
           every other limit each run started with is kept. A run already past
-          them is refused and left alone.
+          the spending limit is refused and left alone.
         </p>
         <Field
-          label="Work cycles"
-          hint="Blank means no cycle limit — a run with no time limit of its own is then refused"
+          label="More work cycles"
+          hint="For each run, on top of the cycles it has already used. Blank means no cycle limit — a run with no time limit of its own is then refused"
         >
           <Input
             type="number"
             min={1}
-            value={maxIterations}
-            onChange={(e) => setMaxIterations(e.target.value)}
+            step={1}
+            value={moreIterations}
+            onChange={(e) => setMoreIterations(e.target.value)}
           />
         </Field>
         <Field label="Spending limit (USD)" hint="Blank switches it off">
