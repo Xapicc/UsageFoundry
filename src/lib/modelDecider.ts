@@ -180,7 +180,10 @@ export async function decideRunModel(work: DeciderWork): Promise<ModelDecision |
     return { model: null, note: `The model decider ${why}.` };
   }
 
-  const decision = readDeciderReply(res.status, body, catalogue, work.provider);
+  // The request waited up to DECIDER_TIMEOUT_MS, long enough for the operator
+  // to switch a model off, so the answer meets the list as it is now and not
+  // the one the question was built from.
+  const decision = readDeciderReply(res.status, body, catalogueFor(work.provider), work.provider);
   if (res.status !== 200) console.warn(`[usagefoundry] ${decision.note}`);
   return decision;
 }
