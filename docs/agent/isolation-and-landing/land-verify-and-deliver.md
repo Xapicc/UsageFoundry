@@ -80,8 +80,13 @@ mid-check that has not committed, or a run reopened mid-check, leaves the tip
 where the check saw it and this run no longer the one that lands the branch,
 so `landRun` asks `unsettledBranchRefusal` again from a fresh `getRun` and
 `branchChain`, beside `landRecheck` with nothing awaited before the merge's
-spawn, as Deliver does. Still open: the milliseconds between the `HEAD`
-comparison and the merge's spawn.
+spawn, as Deliver does. **And the merge takes the SHA every later check was asked of, never the
+branch's name.** Git children are awaited between `landRun`'s read of the tip
+and the spawn, and the card's Commit holds a claim it never reads, so a merge by
+name took a commit no check saw, a forced `.env` included
+(`landMovedBranch.test.ts`, 2026-10-17; past a squash, `branch-inventory-and-deletion.md`).
+A late commit stays on the branch, unlanded, rather than failing an unattended
+queue row. Still open: the milliseconds between the `HEAD` comparison and that read.
 
 **A slot a later run took over is switched to the branch for the command, by Land and Deliver as by a review block.** All three call `verifyRunBranch`, which is `verifyTreeVerdict` then `verifyInSlot`, so what is checked is what this section describes. `allocateSlotPath` gives a finished run's clean slot to the next isolated run in the repository, so a branch Land was pressed on days later routinely finds another branch in its slot, and refusing it ("a later run has taken that checkout over") withheld Land for good with `landVerifyCommand` set. The slot is now `borrowSlot`'s, the branch is checked out in it when it is clean, the command runs there and the later run's branch is put back before `verifyRunBranch` returns, so the merge and its fresh reads (`landRecheck`, `unsettledBranchRefusal`) come after the undo. The refusals that remain, what the card says before the press, the merge queue's row and how the `landing` claim composes with the borrow are in [review-verify-command.md](review-verify-command.md); that is the switch's home and this section is only where it is called.
 
