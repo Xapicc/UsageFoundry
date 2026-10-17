@@ -53,6 +53,7 @@ import {
   currentKnowledge,
   emitBlockRuns,
   emittedModelWork,
+  foldWorkflowName,
   folderRefusal,
   getWorkflow,
   instanceOwnsRun,
@@ -3219,6 +3220,34 @@ function proposeWorkflow(args: Record<string, unknown>, chatId: string) {
   }
 
   const pending = pendingProposals(chatId).filter((p) => p.id !== superseded?.id);
+  // The click saves through `idx_workflows_name`, and a card refused there is
+  // failed for good, so a name it would refuse is asked here, where the model
+  // can still rename it — `proposeSchedule`'s second-card refusal, for its
+  // reason. The card being replaced is not a rival, so a correction keeps its
+  // name. The click keeps its own catch: a person can save the name by hand
+  // while the card waits.
+  const nameKey = foldWorkflowName(name);
+  const holder = listWorkflows().find((w) => foldWorkflowName(w.name) === nameKey);
+  if (holder) {
+    return text(
+      `A workflow called “${holder.name}” is already saved (id ${holder.id}), ` +
+        "and no two may share a name in any letter case. Propose this under " +
+        "another name, or tell the operator what to change in that one, which " +
+        "a chat cannot edit. Nothing was proposed.",
+      true,
+    );
+  }
+  const rival = pending.find(
+    (p) => p.kind === "workflow" && foldWorkflowName(p.title) === nameKey,
+  );
+  if (rival) {
+    return text(
+      `“${rival.title}” is already waiting (proposalId ${rival.id}), and only ` +
+        "one workflow can be saved under that name. Pass that as supersedes " +
+        "to correct it, or give this one another name. Nothing was proposed.",
+      true,
+    );
+  }
   if (pending.length >= MAX_PENDING_PROPOSALS) {
     return text(pendingLimitMessage(pending.length), true);
   }

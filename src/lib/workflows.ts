@@ -2496,19 +2496,25 @@ export function pickDuplicateName(
   sourceName: string,
   takenNames: readonly string[],
 ): string {
-  // The unique index on `workflows.name` is `COLLATE NOCASE`, which folds the
-  // 26 ASCII capitals and nothing else. A wider fold only skips names the
-  // index would accept; a locale-dependent one (Turkish "I") would pass a name
-  // it refuses.
-  const fold = (name: string) =>
-    name.replace(/[A-Z]/g, (c) => c.toLowerCase());
-  const taken = new Set(takenNames.map(fold));
+  const taken = new Set(takenNames.map(foldWorkflowName));
   for (let n = 1; ; n++) {
     const suffix = n === 1 ? " copy" : ` copy ${n}`;
     const candidate =
       trimForSuffix(sourceName, MAX_WORKFLOW_NAME - suffix.length) + suffix;
-    if (!taken.has(fold(candidate))) return candidate;
+    if (!taken.has(foldWorkflowName(candidate))) return candidate;
   }
+}
+
+/**
+ * A workflow name as `idx_workflows_name` compares it: two names with one key
+ * cannot both be saved.
+ *
+ * The index is `COLLATE NOCASE`, which folds the 26 ASCII capitals and nothing
+ * else. A wider fold refuses names the index would accept; a locale-dependent
+ * one (Turkish "I") would pass a name it refuses.
+ */
+export function foldWorkflowName(name: string): string {
+  return name.replace(/[A-Z]/g, (c) => c.toLowerCase());
 }
 
 function trimForSuffix(name: string, room: number): string {
