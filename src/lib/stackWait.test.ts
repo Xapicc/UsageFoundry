@@ -795,6 +795,111 @@ describe("a second run continuing a branch whose continuer was refunded", () => 
       assert.match(row.stop_reason ?? "", new RegExp(`Run ${success.slice(0, 8)} already carries on run ${predecessor.slice(0, 8)}'s branch`));
     });
   });
+
+  // The third door onto a branch. A continuer released and then stopped before
+  // its first cycle holds a workspace, so a pick-up queues it directly rather
+  // than through the release pass — and admission has meanwhile read it as
+  // holding nothing, which is what lets another continuer on.
+  describe("picked up again having run nothing", () => {
+    const RAISED = { maxIterations: 5, maxDurationMinutes: 60 };
+
+    function settle(id: string, status: "completed" | "failed"): void {
+      db()
+        .prepare("UPDATE runs SET status = ?, iterations = 1, finished_at = ? WHERE id = ?")
+        .run(status, Date.now(), id);
+    }
+
+    /** A release pass, which does nothing under the hold the case is built under. */
+    function releasePass(): void {
+      setNewWorkPaused(false);
+      releaseDependents();
+      setNewWorkPaused(true);
+    }
+
+    /** A completed predecessor, and an on-success continuer released onto its branch and stopped at zero cycles. */
+    function stoppedBeforeStart() {
+      seq += 1;
+      setNewWorkPaused(true);
+      const folder = `pick-up-${seq}`;
+      makeRepo(folder);
+      const predecessor = create(folder, []);
+      assert.equal(getRun(predecessor)!.isolation, "worktree", "the premise: the predecessor has a branch");
+      settle(predecessor, "completed");
+      const success = create(folder, [{ runId: predecessor, edge: "on-success", continueBranch: true }]);
+      assert.equal(getRun(success)!.status, "queued", "the premise: released at creation");
+      assert.notEqual(getRun(success)!.work_dir, null, "the premise: it holds a workspace, so it skips waiting");
+      assert.equal(stopRun(success), "cancelled");
+      assert.equal(getRun(success)!.iterations, 0);
+      return { folder, predecessor, success };
+    }
+
+    it("control: queues it on the branch when no other run has taken it", () => {
+      const { predecessor, success } = stoppedBeforeStart();
+      assert.deepEqual(reopenRun(success, RAISED), { ok: true });
+      assert.equal(getRun(success)!.status, "queued");
+      assert.equal(getRun(success)!.worktree_branch, getRun(predecessor)!.worktree_branch);
+    });
+
+    it("refuses it, naming the continuer admitted onto the branch and worked since", () => {
+      const { folder, predecessor, success } = stoppedBeforeStart();
+      const second = create(folder, [{ runId: predecessor, edge: "on-success", continueBranch: true }]);
+      assert.equal(
+        getRun(second)!.worktree_branch,
+        getRun(predecessor)!.worktree_branch,
+        "the premise: admission let a second continuer onto the branch",
+      );
+      settle(second, "completed");
+      const outcome = reopenRun(success, RAISED);
+      assert.equal(outcome.ok, false, "queued beside a run that already carries the branch on");
+      assert.match(
+        outcome.ok ? "" : outcome.reason,
+        new RegExp(`Run ${second.slice(0, 8)} carries on run ${predecessor.slice(0, 8)}'s branch now \\(it is completed\\)`),
+      );
+      assert.equal(getRun(success)!.status, "stopped");
+    });
+
+    it("refuses the success run behind a predecessor picked up and failed, whose fixer took the branch", () => {
+      seq += 1;
+      setNewWorkPaused(true);
+      const folder = `pick-up-pair-${seq}`;
+      makeRepo(folder);
+      const predecessor = create(folder, []);
+      const success = create(folder, [{ runId: predecessor, edge: "on-success", continueBranch: true }]);
+      const fixer = create(folder, [{ runId: predecessor, edge: "on-failure", continueBranch: true }]);
+      settle(predecessor, "completed");
+      releasePass();
+      assert.equal(getRun(success)!.status, "queued");
+      assert.equal(getRun(fixer)!.status, "not-needed");
+      assert.equal(stopRun(success), "cancelled");
+      // Picked up and failed this time, so the fixer is needed after all.
+      assert.deepEqual(reopenRun(predecessor, RAISED), { ok: true });
+      assert.equal(getRun(fixer)!.status, "waiting", "the premise: the fixer is revived");
+      settle(predecessor, "failed");
+      releasePass();
+      assert.equal(getRun(fixer)!.status, "queued", getRun(fixer)!.stop_reason ?? "");
+      settle(fixer, "completed");
+      const outcome = reopenRun(success, RAISED);
+      assert.equal(outcome.ok, false, "queued behind a failed predecessor onto the branch its fixer committed to");
+      assert.match(
+        outcome.ok ? "" : outcome.reason,
+        new RegExp(`Run ${fixer.slice(0, 8)} carries on run ${predecessor.slice(0, 8)}'s branch now`),
+      );
+      assert.equal(getRun(success)!.status, "stopped");
+    });
+
+    it("refuses it behind a predecessor picked up and failed, with no other run on the branch", () => {
+      const { predecessor, success } = stoppedBeforeStart();
+      assert.deepEqual(reopenRun(predecessor, RAISED), { ok: true });
+      settle(predecessor, "failed");
+      const outcome = reopenRun(success, RAISED);
+      assert.equal(outcome.ok, false, "queued as a success run behind a failure");
+      assert.match(
+        outcome.ok ? "" : outcome.reason,
+        new RegExp(`Set to start only after run ${predecessor.slice(0, 8)} succeeded \\(on-success\\); it ended failed`),
+      );
+      assert.equal(getRun(success)!.status, "stopped");
+    });
+  });
 });
 
 /**
