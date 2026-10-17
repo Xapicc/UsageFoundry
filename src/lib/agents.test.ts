@@ -135,6 +135,17 @@ describe("normalizeAgentInput", () => {
     }
   }
 
+  // And saved `{id: …}` as the model "[object Object]", which `--agents` hands
+  // the CLI to run the agent on, and read `["sonnet"]` as the id inside it.
+  for (const model of [{ id: "claude-sonnet-5" }, ["claude-sonnet-5"]]) {
+    it(`refuses a model of ${JSON.stringify(model)} by name instead of reading it as text`, () => {
+      const parsed = normalizeAgentInput({ ...valid, model });
+      assert(!parsed.ok);
+      assert.match(parsed.error, /"model" has to be a string when it is given/);
+      assert.doesNotMatch(parsed.error, /\[object Object\]/);
+    });
+  }
+
   it("reads a null or missing prompt as the empty one it always was", () => {
     for (const prompt of [null, undefined]) {
       const parsed = normalizeAgentInput({ ...valid, prompt });

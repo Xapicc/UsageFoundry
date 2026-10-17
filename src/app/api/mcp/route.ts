@@ -4890,7 +4890,8 @@ async function completeTaskForRun(args: Record<string, unknown>, runId: string) 
  * either. The move and the note are one transaction in `taskRelease.ts`.
  */
 function releaseTaskForRun(args: Record<string, unknown>, runId: string) {
-  const notString = nonStringArg(args, "taskId");
+  // `reason` too, or a wrapped one is read as none and told it needs one.
+  const notString = nonStringArg(args, "taskId", "reason");
   if (notString) return notString;
   const taskId = String(args.taskId ?? "").trim();
   if (!taskId) {
@@ -5321,7 +5322,7 @@ function pendingLimitMessage(count: number): string {
  * template weeks later and wondering when it changed.
  */
 function saveTemplate(args: Record<string, unknown>, chatId: string) {
-  const notString = nonStringArg(args, "prompt", "name", "templateId");
+  const notString = nonStringArg(args, "prompt", "name", "templateId", "model");
   if (notString) return notString;
   const prompt = String(args.prompt ?? "").trim();
   if (!prompt) return text("A template needs a prompt.", true);
@@ -5439,6 +5440,10 @@ function saveTemplate(args: Record<string, unknown>, chatId: string) {
  * checks.
  */
 async function proposalModelDecision(args: Record<string, unknown>): Promise<ModelDecision | null> {
+  // `proposeRun` refuses each of these by name before it reads the verdict, so
+  // asking the decider about one read through `String()` is a local call spent
+  // on a card that is never written.
+  if (nonStringArg(args, "model", "templateId", "agentId", "provider", "title", "task")) return null;
   const templateId = String(args.templateId ?? "").trim();
   const template = templateId ? getTemplate(templateId) : null;
   const agentId = String(args.agentId ?? "").trim();
@@ -5477,6 +5482,7 @@ function proposeRun(args: Record<string, unknown>, chatId: string, decision: Mod
     "folder",
     "supersedes",
     "id",
+    "model",
   );
   if (notString) return notString;
 

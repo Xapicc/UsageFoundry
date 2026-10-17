@@ -206,7 +206,7 @@ create that could set a terminal status would be a route around
 `taskTransitionRefusal` that no test of that function would ever see. All three
 are refused *by name* rather than dropped, on `normalizeAgentInput`'s grounds: a
 caller whose field was silently ignored believes it took effect. A create's
-title, brief or `parentTaskId` that is not a string is refused by name for the
+title, brief, `parentTaskId`, `mountId` or `folder` that is not a string is refused by name for the
 same reason (`notStringRefusal`, `http.ts`'s one sentence for a text field of the
 wrong type), and so is a note's body in `taskComments.ts` and a patch's `title`,
 `body`, `parentTaskId`, `mountId`, `folder` and `claimRunId` in

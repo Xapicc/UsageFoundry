@@ -109,6 +109,28 @@ describe("normalizeTemplateInput — name and prompt", () => {
     assert.match(error({ ...OK, name: { text: "Nightly" } }), /"name" has to be a string when it is given; got an object/);
     assert.match(error({ ...OK, name: ["Nightly"] }), /"name" has to be a string when it is given; got an array/);
   });
+
+  // The same `String()` saved `{path: "api"}` as the folder "[object Object]"
+  // and read `["api"]` as the folder inside it, and the same for the mount,
+  // agent and model a run from this template starts in, as and on.
+  it("refuses a mount, folder, agent or model that is not a string rather than saving its String()", () => {
+    for (const [field, text] of [
+      ["mountId", "main"],
+      ["folder", "api"],
+      ["agentId", "a1"],
+      ["model", "sonnet"],
+    ] as const) {
+      for (const [wrong, kind] of [
+        [{ id: text }, "an object"],
+        [[text], "an array"],
+      ] as const) {
+        assert.match(
+          error({ ...OK, mountId: "main", [field]: wrong }),
+          new RegExp(`"${field}" has to be a string when it is given; got ${kind}`),
+        );
+      }
+    }
+  });
 });
 
 /* ------------------------------------------------------------------ */

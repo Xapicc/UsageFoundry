@@ -1137,8 +1137,18 @@ export function resolveTaskFolder(
   rawMountId: unknown,
   rawFolder: unknown,
 ): { ok: true; mountId: string | null; folder: string | null } | { ok: false; error: string } {
-  const mountId = rawMountId === null || rawMountId === undefined ? "" : String(rawMountId).trim();
-  const folder = rawFolder === null || rawFolder === undefined ? "" : String(rawFolder).trim();
+  // Refused rather than read through `String()`, the rule `normalizeTaskPatch`
+  // keeps at an edit: at a create `["RepoOne"]` was filed against the folder
+  // inside it, and `{…}` was resolved as a folder named "[object Object]".
+  for (const [field, value] of [
+    ["mountId", rawMountId],
+    ["folder", rawFolder],
+  ] as const) {
+    const refusal = notStringRefusal(field, value);
+    if (refusal) return { ok: false, error: refusal };
+  }
+  const mountId = typeof rawMountId === "string" ? rawMountId.trim() : "";
+  const folder = typeof rawFolder === "string" ? rawFolder.trim() : "";
 
   if (!mountId && !folder) return { ok: true, mountId: null, folder: null };
 

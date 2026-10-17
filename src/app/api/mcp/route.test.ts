@@ -63,6 +63,7 @@ let comments: typeof import("../../../lib/taskComments");
 let taskDeps: typeof import("../../../lib/taskDeps");
 let db: typeof import("../../../lib/db").db;
 let saveSettings: typeof import("../../../lib/settings").saveSettings;
+let settings: typeof import("../../../lib/settings");
 
 before(async () => {
   const config = await import("../../../lib/config");
@@ -78,6 +79,7 @@ before(async () => {
   taskDeps = await import("../../../lib/taskDeps");
   db = (await import("../../../lib/db")).db;
   saveSettings = (await import("../../../lib/settings")).saveSettings;
+  settings = await import("../../../lib/settings");
   route = await import("./route");
 });
 
@@ -1367,6 +1369,72 @@ test("propose_run, save_template and propose_workflow refuse a text argument tha
     blocks: [block, { ...second, kind: "run", dependsOn: [{ id: "a", edge: "on-success" }] }],
   });
   assert.equal(graph.isError, false, graph.text);
+});
+
+// The doors the sweep above missed, one case each. `[<id>]` was read as the
+// model inside it and `{…}` as the model "[object Object]" — on a Codex card,
+// whose list is empty by default and so refuses nothing, a card that spawns
+// `codex exec -m "[object Object]"` — a chat's task was filed against the
+// folder inside a list, and a release's wrapped reason was told it gave none.
+test("a model, a task's mount or folder and a release's reason that are not strings are refused by name", async () => {
+  const { token, proposals } = proposingChat();
+  const enabled = settings.getSettings().modelCatalogue.find((e) => e.enabled)!.id;
+  const base = { mountId: MOUNT, folder: "RepoOne", title: "Typed", task: "Do a thing." };
+  for (const extra of [
+    { model: [enabled] },
+    { model: { id: enabled } },
+    { provider: "codex", model: { id: "gpt-5" } },
+  ]) {
+    const proposed = await callTool(token, "propose_run", { ...base, ...extra });
+    assert.equal(proposed.isError, true, `propose_run took ${JSON.stringify(extra)}: ${proposed.text}`);
+    assert.match(proposed.text, /"model" has to be a string/);
+  }
+  assert.equal(proposals(), 0, "no card was written");
+
+  const templates = () =>
+    (db().prepare("SELECT COUNT(*) AS n FROM run_templates").get() as { n: number }).n;
+  const savedBefore = templates();
+  for (const model of [[enabled], { id: enabled }]) {
+    const saved = await callTool(token, "save_template", { name: "Typed model", prompt: "Review it.", model });
+    assert.equal(saved.isError, true, `save_template took ${JSON.stringify(model)}: ${saved.text}`);
+    assert.match(saved.text, /"model" has to be a string/);
+  }
+  assert.equal(templates(), savedBefore, "no template was saved");
+
+  const boardSize = () =>
+    (db().prepare("SELECT COUNT(*) AS n FROM tasks").get() as { n: number }).n;
+  const filedBefore = boardSize();
+  for (const [field, wrong] of [
+    ["mountId", [MOUNT]],
+    ["mountId", { id: MOUNT }],
+    ["folder", ["RepoOne"]],
+    ["folder", { path: "RepoOne" }],
+  ] as const) {
+    const created = await callTool(token, "create_task", {
+      title: "Typed",
+      body: "the brief",
+      mountId: MOUNT,
+      folder: "RepoOne",
+      [field]: wrong,
+    });
+    assert.equal(created.isError, true, `create_task took ${field} ${JSON.stringify(wrong)}: ${created.text}`);
+    assert.match(created.text, new RegExp(`"${field}" has to be a string`), field);
+  }
+  assert.equal(boardSize(), filedBefore, "nothing was filed");
+
+  const run = seedRun(HERE);
+  const held = file(HERE);
+  move(held, "claimed", run.runId);
+  for (const reason of [["Could not build: cargo missing"], { why: "cargo missing" }]) {
+    const released = await callTool(run.token, "release_task", { taskId: held.id, reason });
+    assert.equal(released.isError, true, released.text);
+    assert.match(released.text, /"reason" has to be a string/);
+  }
+  assert.equal(tasks.getTask(held.id)?.status, "claimed", "the held task was not released");
+
+  // A string is still a model: the refusal is the type.
+  const named = await callTool(token, "propose_run", { ...base, model: enabled });
+  assert.equal(named.isError, false, named.text);
 });
 
 // `["daily"]` was read as `daily`, `["<id>"]` as the workflow inside it and a
