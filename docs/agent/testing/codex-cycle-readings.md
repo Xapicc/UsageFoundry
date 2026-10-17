@@ -1,0 +1,13 @@
+# What a Codex cycle's stream and exit are read as
+
+[← testing index](../testing.md)
+
+Read before adding or editing `orchestrator.test.ts` cases for `handleCodexStreamLine`'s notices and agent messages or for `exitStopReason`. The parser's argv and tool-item cases are in [stream-parsers-and-webhook.md](stream-parsers-and-webhook.md).
+
+The three decisions below are each a Codex cycle that did its work and was filed, or logged, as though it had not. Each is silent: nothing throws, the run page renders, and every case was written first and watched fail on the tree it was filed against (2026-10-17).
+
+`handleCodexStreamLine`'s reconnect case feeds the sequence a flaky connection produces — a "Reconnecting… 1/5" `error`, an `agent_message` ending in `DONE`, an error item, `turn.completed`, and a late notice — and asserts that `apiError` is null, `sawResult` is true and the notices are still on the log. It earns its place because the run loop reads `apiError` as the cycle's refusal before it reads `DONE`, and `recovered` matches only Claude's wordings, so the unfixed parser ended a finished run `failed` with "Codex refused the request: Reconnecting… 1/5". Its control is the case beside it: an allowance sentence or a content refusal stays latched even on a completed turn, because a wall that exits 0 must still stop the run, and a fix that cleared everything on `turn.completed` would pass the first case while letting that through. The existing `turn.failed` case still pins the other direction — the real reason overwrites the notices — and is not weakened.
+
+The agent-message case asserts one `assistant` event per non-empty `agent_message`, carrying `payload.text` with no `parentToolUseId`, none for `reasoning` or an empty message, and that `cycleOutputs` over the events returns the last message as the cycle's report. The failure was lost data, not a wrong ending: a Codex run's log showed no sentence its agent said and its Report tab was empty, and nothing but the rollout file in `$CODEX_HOME` kept the account of what it did. The `cycleOutputs` half is there because that function, not the emit, is what the Report tab reads.
+
+`exitStopReason` is pure, and its case asserts the whole sentence for each provider: a Codex run names Codex and `codex resume <thread id>` and never says `claude`, while Claude, local and unknown providers keep the exact sentences they had. The wrong sentence sent the operator to a command that cannot work with a Codex thread id. What the case cannot say is that the run loop passes `run.provider`; that is one argument at one call site, and no stub-`CODEX_BIN` harness for a Codex run loop exists to drive it.

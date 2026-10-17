@@ -131,6 +131,7 @@ const {
   hookInjection,
   refusalDisposition,
   refusalStopReason,
+  exitStopReason,
   refusalKind,
   refusalResumeAt,
   reopenPrompt,
@@ -181,6 +182,7 @@ const { reviewEnv } = require("./review") as typeof import("./review");
 const { authEnv } = require("./claudeAuth") as typeof import("./claudeAuth");
 const { verifyEnv } = require("./landGate") as typeof import("./landGate");
 const { gitEnv } = require("./git") as typeof import("./git");
+const { cycleOutputs } = require("./cycles") as typeof import("./cycles");
 const { localCycleEnv } =
   require("./localProvider") as typeof import("./localProvider");
 
@@ -2195,6 +2197,33 @@ describe("rate limits, apart from the rest", () => {
     assert.match(refusalStopReason("other", "boom", "codex"), /^Codex refused the request: boom$/);
     assert.match(refusalStopReason("other", "boom", null), /^Claude Code refused the request: boom$/);
     assert.match(refusalStopReason("pauses-spent", "boom", "codex"), /^Codex refused the work cycle/);
+  });
+
+  it("names the CLI that exited, and its own resume command, on a non-zero exit", () => {
+    const thread = "0199abcd-0000-7000-8000-000000000000";
+
+    const codexExit = exitStopReason("codex", 1, null);
+    assert.equal(codexExit, "Codex exited with code 1.");
+
+    // The resume failure used to say "Claude Code session" and send the
+    // operator to `claude --resume` with a Codex thread id, which `claude` has
+    // never heard of. `codex resume <id>` is the subcommand the pinned 0.153.4
+    // lists for picking a recorded session back up by hand.
+    const codexResume = exitStopReason("codex", 1, thread);
+    assert.match(codexResume, /^Could not resume this run's Codex session \(exit 1\)\./);
+    assert.ok(codexResume.endsWith(`codex resume ${thread}`), codexResume);
+    assert.doesNotMatch(codexResume, /claude/i);
+    assert.doesNotMatch(codexExit, /claude/i);
+
+    // The Claude sentences are unchanged, and a local run is still Claude Code
+    // — `refusalStopReason`'s rule — so neither is sent to the Codex CLI.
+    for (const provider of ["claude", "local", null] as const) {
+      assert.equal(exitStopReason(provider, 2, null), "Claude Code exited with code 2.");
+      assert.equal(
+        exitStopReason(provider, 2, "sess-1"),
+        "Could not resume this run's Claude Code session (exit 2). Its work is still on disk; pick it up by hand with: claude --resume sess-1",
+      );
+    }
   });
 
   it("gives each refusal cause its own instruction to the operator", () => {
@@ -4237,10 +4266,12 @@ describe("handleCodexStreamLine", () => {
     for (const line of lines) {
       parseLine(runId, JSON.stringify(line), acc, (id) => sessions.push(id));
     }
+    const { events } = runEvents(runId);
     return {
       acc,
       sessions,
-      logs: runEvents(runId).events.flatMap((e) =>
+      events,
+      logs: events.flatMap((e) =>
         e.kind === "log" ? [String((e.payload as { message: string }).message)] : [],
       ),
     };
@@ -4328,6 +4359,79 @@ describe("handleCodexStreamLine", () => {
     // `sawResult` stays false, which is what tells the run loop this cycle
     // never reported: it is the same meaning it has on the Claude path.
     assert.equal(acc.sawResult, false);
+  });
+
+  it("reads a reconnect notice on a turn that went on to complete as log-only", () => {
+    const { acc, logs } = run([
+      { type: "thread.started", thread_id: "t" },
+      { type: "turn.started" },
+      { type: "error", message: "Reconnecting… 1/5" },
+      { type: "item.completed", item: { type: "agent_message", text: "All four tests pass.\n\nDONE" } },
+      // An item-level notice on the same turn, which latched just the same
+      // before the CLI said the turn completed.
+      { type: "item.completed", item: { type: "error", message: "a tool failed" } },
+      { type: "turn.completed", usage: { input_tokens: 12_000, output_tokens: 900 } },
+      // And one after the verdict, which is no more a refusal than the ones before.
+      { type: "error", message: "Reconnecting… 2/5" },
+    ]);
+    // `apiError` is what the run loop reads as the cycle's refusal, and
+    // `recovered` only matches Claude's wordings — a latched notice here ended
+    // a run that had finished its work `failed`, "Codex refused the request:
+    // Reconnecting… 1/5", before the `DONE` test was reached.
+    assert.equal(acc.apiError, null);
+    assert.equal(acc.sawResult, true);
+    assert.equal(acc.isError, false);
+    assert.equal(acc.finalText, "All four tests pass.\n\nDONE");
+    // Still on the log: a run that spent its cycle reconnecting should say so.
+    assert.deepEqual(logs, ["Reconnecting… 1/5", "Reconnecting… 2/5"]);
+  });
+
+  it("keeps an allowance or policy refusal latched even when the turn completed", () => {
+    // The control for the case above, and the Claude `recovered` rule's own
+    // exclusion: a wall that somehow exits 0 must still stop the run rather
+    // than re-spawn into itself, and only the notices are read as log-only.
+    const wall = "You've hit your usage limit. Visit chatgpt.com/codex/settings/usage to purchase more credits.";
+    const walled = run([
+      { type: "error", message: wall },
+      { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } },
+    ]);
+    assert.equal(walled.acc.apiError, wall);
+
+    const flagged = "This content was flagged for possible cybersecurity risk.";
+    const filtered = run([
+      { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } },
+      { type: "error", message: flagged },
+    ]);
+    assert.equal(filtered.acc.apiError, flagged);
+  });
+
+  it("writes each agent message as an assistant event the Report tab reads", () => {
+    const { acc, events } = run([
+      { type: "thread.started", thread_id: "t" },
+      { type: "item.completed", item: { id: "i1", type: "agent_message", text: "Reading the parser first." } },
+      { type: "item.completed", item: { id: "i2", type: "reasoning", text: "not the agent's words" } },
+      { type: "item.completed", item: { id: "i3", type: "agent_message", text: "Fixed it; all tests pass.\n\nDONE" } },
+      { type: "item.completed", item: { id: "i4", type: "agent_message", text: "" } },
+      { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } },
+    ]);
+    const said = events.filter((e) => e.kind === "assistant");
+    // One per non-empty message, in the Claude parser's shape: the words in
+    // `payload.text` and no `parentToolUseId`, which is what `cycleOutputs`
+    // checks to tell the main thread from a delegated turn.
+    assert.deepEqual(
+      said.map((e) => e.payload),
+      [{ text: "Reading the parser first." }, { text: "Fixed it; all tests pass.\n\nDONE" }],
+    );
+    assert.equal(acc.finalText, "Fixed it; all tests pass.\n\nDONE");
+
+    const cycles = cycleOutputs([
+      { runId: "r", ts: 1, kind: "iteration", payload: { n: 1, prompt: "go", resuming: null } },
+      ...events,
+    ]);
+    assert.deepEqual(
+      cycles.map((c) => [c.n, c.text]),
+      [[1, "Fixed it; all tests pass.\n\nDONE"]],
+    );
   });
 
   it("takes the last agent message as the cycle's last word", () => {

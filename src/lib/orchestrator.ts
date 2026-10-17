@@ -2604,6 +2604,29 @@ export function refusalStopReason(
 }
 
 /**
+ * What a run's row says when its CLI exited non-zero with no refusal sentence,
+ * or could not resume the session it was handed (`resumeTarget` non-null).
+ *
+ * Named for the CLI that exited, `refusalStopReason`'s rule: a Codex run's
+ * `runs.session_id` is a Codex thread id, and "claude --resume <thread id>"
+ * sent the operator to a command that has never heard of it. `codex resume`
+ * is the subcommand the pinned 0.153.4 lists for picking a recorded session
+ * back up by hand (`codex exec resume` is the non-interactive one this app
+ * spawns). A local run is still Claude Code.
+ */
+export function exitStopReason(
+  provider: RunProviderDTO | null,
+  exitCode: number,
+  resumeTarget: string | null,
+): string {
+  const codex = provider === "codex";
+  const cli = RUN_PROVIDER_LABEL[codex ? "codex" : "claude"];
+  if (resumeTarget === null) return `${cli} exited with code ${exitCode}.`;
+  const command = codex ? `codex resume ${resumeTarget}` : `claude --resume ${resumeTarget}`;
+  return `Could not resume this run's ${cli} session (exit ${exitCode}). Its work is still on disk; pick it up by hand with: ${command}`;
+}
+
+/**
  * Sleep, unless the run is interrupted first.
  *
  * The loop's `cancelled` checkpoints only run between cycles, so sleeping
@@ -10491,6 +10514,39 @@ export function readCodexItem(
 }
 
 /**
+ * Latch an `error` event or error item as the cycle's refusal, the way the
+ * Claude parser latches `apiError` — and retire it when the turn completed.
+ */
+function latchCodexNotice(acc: IterationResult, message: string): void {
+  acc.apiError ??= message;
+  if (acc.sawResult) settleCodexNotice(acc);
+}
+
+/**
+ * Read a notice on a turn that `turn.completed` reported as finished as
+ * log-only, which is the Claude path's `recovered` rule for the wording that
+ * rule cannot match.
+ *
+ * Codex's `error` events include the transport retries ("Reconnecting… n/5")
+ * that precede a successful connection as well as a failure, and an error item
+ * is a notice about one tool. Left latched, either one was read by the run loop
+ * as the cycle's refusal and ended a run that had finished its work `failed`,
+ * "Codex refused the request: Reconnecting… 1/5", before the `DONE` test was
+ * reached. Success is read from the CLI's own verdict — `turn.completed`, and
+ * no `turn.failed` — and never from the notice's text; `turn.failed` is the
+ * verdict that files a real reason, so it is left alone.
+ *
+ * The allowance wall and the content refusal are kept by name, for the reason
+ * `recovered` excludes the wall: one that somehow came with a completed turn
+ * must still stop the run rather than re-spawn into itself.
+ */
+function settleCodexNotice(acc: IterationResult): void {
+  if (acc.isError || acc.apiError === null) return;
+  if (isCodexUsageLimit(acc.apiError) || isCodexPolicyRefusal(acc.apiError)) return;
+  acc.apiError = null;
+}
+
+/**
  * Interpret one line of `codex exec --json` output.
  *
  * A different vocabulary from `handleStreamLine`'s and not a translation of it.
@@ -10565,6 +10621,7 @@ function handleCodexStreamLine(
       // The cycle's terminal event, and the counterpart of Claude's `result`.
       acc.sawResult = true;
       acc.subtype = "success";
+      settleCodexNotice(acc);
 
       // **Assigned, never accumulated.** One `codex exec` invocation is one
       // turn, so at most one of these arrives per cycle and the two shapes agree
@@ -10620,10 +10677,11 @@ function handleCodexStreamLine(
       // the message of a failure that never reaches `turn.failed`. Latched only
       // when nothing better has been said, so `turn.failed` can still replace
       // it, and logged either way because a run that spent five minutes
-      // reconnecting should say so.
+      // reconnecting should say so. A turn that went on to complete retires it
+      // — see `settleCodexNotice`.
       const message = typeof ev.message === "string" ? ev.message : "";
       if (message) {
-        acc.apiError ??= message;
+        latchCodexNotice(acc, message);
         log(runId, message, { stream: "stdout" });
       }
       return;
@@ -10639,10 +10697,17 @@ function handleCodexStreamLine(
         // same string in a file, and `runIteration` prefers that file when the
         // CLI wrote one — see there for why a turn that fails does not.
         const text = item.text;
-        if (typeof text === "string" && text) acc.finalText = text;
+        if (typeof text === "string" && text) {
+          acc.finalText = text;
+          // The agent's words on the log and the Report tab, which read only
+          // `assistant` events. Every `agent_message` is the main thread's:
+          // Codex has no sub-agent voice here, so there is no
+          // `parentToolUseId` to route on and none is written.
+          emit({ runId, ts: Date.now(), kind: "assistant", payload: { text } });
+        }
       } else if (itemType === "error") {
         const message = item.message;
-        if (typeof message === "string" && message) acc.apiError ??= message;
+        if (typeof message === "string" && message) latchCodexNotice(acc, message);
       } else {
         noteCodexItem(runId, ev, true, acc);
       }
@@ -12976,9 +13041,11 @@ export async function startRun(id: string): Promise<void> {
           );
           continue;
         }
-        stopReason = looksLikeResumeFailure
-          ? `Could not resume this run's Claude Code session (exit ${res.exitCode}). Its work is still on disk; pick it up by hand with: claude --resume ${resumeTarget}`
-          : `Claude Code exited with code ${res.exitCode}.`;
+        stopReason = exitStopReason(
+          run.provider,
+          res.exitCode,
+          looksLikeResumeFailure ? resumeTarget : null,
+        );
         finalStatus = "failed";
         endingCode = looksLikeResumeFailure ? "resume_failed" : "exit_code";
         break;
