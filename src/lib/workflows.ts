@@ -6914,11 +6914,28 @@ function advanceLoop(
     }
 
     // Read before every decision, including the one in front of the first
-    // pass. A condition this app cannot count for ends the loop `failed` rather
-    // than being treated as a clear board: zero is the answer that stops it,
-    // and a mount that has gone is not a finished project.
+    // pass. A condition this app cannot count for is never a clear board: zero
+    // is the answer that stops the loop, and a mount that has gone is not a
+    // finished project.
     const board = loopBoardCount(node);
-    if (!board.ok) {
+    const decision = planLoopPass({
+      blockName: node.name,
+      passes,
+      maxPasses: node.maxPasses,
+      maxCostUSD: node.maxLoopCostUSD,
+      spentGuardUSD: loopSpend(instanceId, nodeId),
+      // Decided without the board when it cannot be read, and failed below only
+      // if that decision is another pass. A pass that reported DONE and a stop
+      // the operator asked for rank above the board, and a cap reached ends the
+      // loop whichever way the board reads, so failing any of them protects
+      // nothing — and writes off the `on-success` block behind the loop, in a
+      // pass with nothing blocked for `pickUpsOf` to offer.
+      stopWhenTasks: board.ok ? node.stopWhenTasks : null,
+      boardCounts: board.ok ? board.counts : null,
+      stopAfterPass: loopStopAfter(instanceId, nodeId),
+    });
+
+    if (!board.ok && decision.kind === "pass") {
       settleLoop(
         instanceId,
         nodeId,
@@ -6927,17 +6944,6 @@ function advanceLoop(
       );
       return;
     }
-
-    const decision = planLoopPass({
-      blockName: node.name,
-      passes,
-      maxPasses: node.maxPasses,
-      maxCostUSD: node.maxLoopCostUSD,
-      spentGuardUSD: loopSpend(instanceId, nodeId),
-      stopWhenTasks: node.stopWhenTasks,
-      boardCounts: board.counts,
-      stopAfterPass: loopStopAfter(instanceId, nodeId),
-    });
 
     if (decision.kind === "stop") {
       settleLoop(
