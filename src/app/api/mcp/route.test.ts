@@ -1784,6 +1784,46 @@ test("propose_run still refuses a replacement for a branch another pending card 
   );
 });
 
+// An untemplated card's guards are frozen when it is written and the click
+// reads that set, so whether its branch can be carried on is a fact about the
+// card rather than about Settings now. Read live, a default switched between
+// two proposals refused a chain the click would start, and let through one the
+// click fails for good.
+test("carrying an untemplated card's branch on reads the guards that card froze, not today's default", async () => {
+  const { token } = proposingChat();
+  const templateId = isolatingTemplate();
+  const isolateByDefault = (isolate: boolean) =>
+    saveSettings({ chatDefaultGuards: { ...settings.DEFAULT_CHAT_GUARDS, isolate } });
+  const propose = (id: string, carriesOn?: string) =>
+    callTool(token, "propose_run", {
+      mountId: MOUNT,
+      folder: "RepoOne",
+      id,
+      title: id,
+      task: `Do ${id}.`,
+      ...(carriesOn
+        ? { templateId, dependsOn: [{ id: carriesOn, edge: "on-success", continueBranch: true }] }
+        : {}),
+    });
+  try {
+    isolateByDefault(true);
+    const a = await propose("pa");
+    assert.equal(a.isError, false, a.text);
+    isolateByDefault(false);
+    const b = await propose("pb", "pa");
+    assert.equal(b.isError, false, `"pa" froze a set that isolates: ${b.text}`);
+
+    const c = await propose("pc");
+    assert.equal(c.isError, false, c.text);
+    isolateByDefault(true);
+    const d = await propose("pd", "pc");
+    assert.equal(d.isError, true, `"pc" froze a set that works in the folder: ${d.text}`);
+    assert.match(d.text, /^"pc" works directly in the folder/);
+  } finally {
+    saveSettings({ chatDefaultGuards: settings.DEFAULT_CHAT_GUARDS });
+  }
+});
+
 test("propose_workflow refuses a block whose folder is null, and takes \"\" as the mount root", async () => {
   const { token, proposals } = proposingChat();
   const propose = (folder: unknown) =>

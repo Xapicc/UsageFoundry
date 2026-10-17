@@ -22,6 +22,7 @@ import {
   PAST_PROPOSALS_MAX,
   proposalByReference,
   proposalDeps,
+  proposalGuards,
   subjectForCapability,
   type CapabilitySubject,
   type ChatProposalRow,
@@ -5778,9 +5779,12 @@ function proposeRun(args: Record<string, unknown>, chatId: string, decision: Mod
       { label: "This proposal", guards: template ?? chatGuards() },
       {
         label: `"${continuing[0].specId}"`,
+        // An untemplated predecessor by the set its card froze, the one
+        // `approveProposal` starts it under: today's default answers about a
+        // run that will not exist if the operator changed it since.
         guards: predecessor.template_id
           ? (getTemplate(predecessor.template_id) ?? chatGuards())
-          : chatGuards(),
+          : (proposalGuards(predecessor) ?? chatGuards()),
       },
     ].find((end) => !end.guards.isolate);
     if (flat) {
