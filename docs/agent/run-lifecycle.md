@@ -90,6 +90,16 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - Null means not recorded, and that is the load-bearing part.
 - It is the field a count of finished runs reads, and `reported_done` was deliberately not repaired.
 
+## [The prior-read pointer and its holdout](run-lifecycle/prior-read-pointer.md)
+
+- A run's first prompt names the files earlier runs on its repository opened most, on half of all runs, as a fact rather than an instruction.
+- Its slot is the last orientation before the task, on the session-less branch only.
+- It is resolved once per segment, synchronously, beside `githubTokenFor` and after `ensureWorktree`.
+- Who is never considered, so is in neither arm.
+- The arm is `inHoldout(runId)`, a function of the id and nothing else, and it must never change.
+- Every session-less cycle the pointer considered records `priorReads: { arm, paths }` on its `iteration` event, in both arms.
+- There is no setting.
+
 ## [A cycle's CLI, argv and appended notices](run-lifecycle/cycle-argv-and-notices.md)
 
 - Three flags ride *every* cycle's argv, not the opening one, and `--resume` restores none of them.

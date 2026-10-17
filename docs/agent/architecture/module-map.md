@@ -105,6 +105,10 @@ repoReading.ts  what runs on each repository keep reading, failing at and
                 run_reviews rows, the edited/not-edited split, Dreaming's
                 signatureOf, and the money per repository only. Reporting and
                 never a guard, and no cost source
+priorReads.ts   the prior-read pointer: the files earlier runs on a repository
+                opened most, ranked ×0.9 per run back, proved to exist in the
+                run's tree, and inHoldout — the arm, by run id alone. Read once
+                per segment; writes nothing
 fleet.ts        the three controls that act on the whole install — stop
                 everything, hold new work, pick several runs back up. It owns no
                 transition of its own: it composes stopInstance, stopRun,

@@ -42,6 +42,7 @@ Twenty-two are renderings rather than functions — every `*.test.tsx` in the tr
 |---|---|
 | `backgroundWork.test.ts` |  |
 | `cycleDeadline.test.ts` |  |
+| `priorReads.test.ts` |  |
 | `resumeControl.test.ts` |  |
 | `resumeMissingTranscript.test.ts` |  |
 

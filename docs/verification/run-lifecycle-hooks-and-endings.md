@@ -1,10 +1,11 @@
-# Verification: Run lifecycle — hooks, a cycle's prompt and how a run ended
+# Verification: Run lifecycle — hooks, a cycle's prompt, the prior-read pointer and how a run ended
 
 [← Verification index](../verification.md)
 
 What a cycle reports about the hooks that ran in it (`--include-hook-events`,
 `hookInjection` and the storage filter in `handleStreamLine`), the prompt fold
-on a work cycle's log row, and `runs.ending_code`. Opened on 2026-10-17 with
+on a work cycle's log row, the prior-read pointer and its holdout
+(`priorReads.ts`), and `runs.ending_code`. Opened on 2026-10-17 with
 Phase 0 and Phase 2 of `proposals/ContinuousImprovement/`, because
 [run-lifecycle.md](run-lifecycle.md) had no room.
 
@@ -59,6 +60,28 @@ Phase 0 and Phase 2 of `proposals/ContinuousImprovement/`, because
   `npm run smoke-pages` against that build: 100 of 100 page loads clean,
   serving `.next/standalone/server.js`.
 
+- **The prior-read pointer through the real run loop, 2026-10-17, branch
+  `uf/usagefoundry-721638d11c0b-22`, stub child, $0.00.** A scratch script
+  built a real git repository under a scratch `DATA_DIR`, seeded two earlier
+  runs' `tool` events, and drove `createRun` and `startRun` with
+  `child_process.spawn` stubbed for the work cycle only. The seeded reads were:
+  `src/a.ts` twice and `src/b.ts` once in the older run, and `src/b.ts` once in
+  the newer. The rest were each a case to drop: a read of a deleted file, a
+  symlink to `/etc/hostname`, a `../outside.txt`, a sub-agent's read and
+  `/tmp/scratch.txt`. Three runs went through isolated checkouts. Both
+  pointer-arm runs' first prompts carried the block directly after the
+  checkout notice and before the task, naming `src/b.ts (2 runs)` then
+  `src/a.ts (1 run)` and nothing else (1.9 against 1.8 at ×0.9). The holdout
+  run's prompt went straight from the checkout notice to the task. Each
+  `iteration` event recorded `priorReads: { arm, paths: 2 }`, and every arm
+  matched `inHoldout(id)`. Caveat: a stub reads only the argv, so this proves
+  what the CLI was handed and nothing about what an agent does with it.
+
+- **`priorReads.test.ts`, 14 cases, and the slot case in `orchestrator.test.ts`,
+  2026-10-17.** Mutations of the compiled module that reversed the decay,
+  dropped the experiment name from the hash's preimage and removed the base
+  check each failed (1, 2 and 1 cases).
+
 ## Not yet verified by hand
 
 - **No billed cycle has run with the flag.** The stub API proves the shapes
@@ -84,3 +107,18 @@ Phase 0 and Phase 2 of `proposals/ContinuousImprovement/`, because
   pinned by the loop tests with a stubbed spawn, and the twenty pre-column rows
   `proposals/ContinuousImprovement/` counted have not been seen to render
   "ending unknown" on the install that holds them.
+
+- **Whether naming the files changes what a run reads.** That is the
+  holdout's question, and it cannot be read before about two weeks of runs
+  have gone through both arms. `03-experiment-holdout.md` sizes it: 62.3%
+  to 77.3% compliance needs 372 named-path pairs, about 8 days, and a halving
+  of file-opens 115 runs a side, about 13 days. Its first reading is due
+  around 2026-10-31. To settle it, join each `iteration` event's
+  `$.priorReads.arm` with that run's later `tool` events, as
+  `03-experiment-holdout.md`'s compliance query does. Do it before
+  `eventRetentionDays` sweeps the first fortnight's logs.
+
+- **The pointer has not met a billed cycle or the real CLI.** It rides the
+  prompt after `--`, like every other notice, so nothing about the argv is
+  new. But no real run has yet opened with it, and nobody has read a real
+  run page showing one.
