@@ -10977,6 +10977,20 @@ function prepareRunTaskboard(
   }
 }
 
+/**
+ * Everything a cycle's prompt consumed at the spawn, beside the session and
+ * the run's settings: what `startRun`'s `handBack` gives the attempt that
+ * replaces a cycle which did no work.
+ */
+interface HandedMessage {
+  followUp: string | null;
+  /** `runs.follow_up_is_note` for it, written back with it. */
+  followUpIsNote: number;
+  pendingPushback: string | null;
+  justRetriggered: boolean;
+  backgroundNotice: string | null;
+}
+
 export async function startRun(id: string): Promise<void> {
   const run = getRun(id);
   if (!run) throw new Error(`No such run: ${id}`);
@@ -11170,6 +11184,12 @@ export async function startRun(id: string): Promise<void> {
   let lastContextTokens = 0;
   let cyclesThisSegment = 0;
   let resumeRetried = false;
+  /**
+   * What `handBack` gave the next attempt, read once by its prompt. Cast so the
+   * compiler does not narrow it to null for good: it is set inside `handBack`,
+   * an assignment TypeScript does not follow out of a closure.
+   */
+  let handedBack = null as HandedMessage | null;
   /** Transient API failures retried since the last cycle that got through. */
   let transientRetries = 0;
   /**
@@ -11213,6 +11233,32 @@ export async function startRun(id: string): Promise<void> {
     db()
       .prepare("UPDATE runs SET session_id = ?, session_cost_usd = ? WHERE id = ?")
       .run(sid, costUSD, id);
+  };
+
+  /**
+   * Give the attempt that replaces a cycle which did no work the message that
+   * cycle was handed, on the row as well.
+   *
+   * The clear at the spawn rests on the cycle having had its message delivered,
+   * and a `--resume` the CLI refuses with no turn has not: the measured refusal
+   * writes no transcript, so neither the operator's note, the DONE pushback nor
+   * the stopped-tasks note reached any model. The retry used to be sent the
+   * continuation instead — the note dropped in silence, and a run that had said
+   * DONE billed a cycle that said it again. On the row because a park before
+   * the retry's spawn starts a segment from it. The stopped-tasks note stays in
+   * this frame, `pendingPushback`'s way: read again, its boundary would be the
+   * refused attempt's own `iteration` event, which nothing follows.
+   */
+  const handBack = (m: HandedMessage) => {
+    followUp = m.followUp;
+    pendingPushback = m.pendingPushback;
+    justRetriggered = m.justRetriggered;
+    handedBack = m;
+    if (m.followUp !== null) {
+      db()
+        .prepare("UPDATE runs SET follow_up = ?, follow_up_is_note = ? WHERE id = ?")
+        .run(m.followUp, m.followUpIsNote, id);
+    }
   };
 
   /**
@@ -11781,6 +11827,21 @@ export async function startRun(id: string): Promise<void> {
         forgetComposition(id);
       }
 
+      // Read for a Claude Code cycle only: a Codex cycle's stream has no such
+      // events, so the answer would be null at the price of a query.
+      const backgroundNotice = handedBack
+        ? handedBack.backgroundNotice
+        : run.provider === "codex"
+          ? null
+          : previousCycleStoppedTasksNotice(id);
+      handedBack = null;
+      const handed: HandedMessage = {
+        followUp,
+        followUpIsNote: run.follow_up_is_note,
+        pendingPushback,
+        justRetriggered,
+        backgroundNotice,
+      };
       const prompt = nextPrompt({
         sessionId,
         followUp,
@@ -11810,10 +11871,7 @@ export async function startRun(id: string): Promise<void> {
         // buys one cycle and says its piece into that cycle, and a run that
         // parks or crashes after this point has already had it delivered.
         validation: pendingPushback,
-        // Read for a Claude Code cycle only: a Codex cycle's stream has no such
-        // events, so the answer would be null at the price of a query.
-        backgroundNotice:
-          run.provider === "codex" ? null : previousCycleStoppedTasksNotice(id),
+        backgroundNotice,
         // Read off the same policy the loop's own exits read, so the promise
         // the opening prompt makes and the rule that ends the run cannot drift:
         // `continueAfterDone` is the flag at 6862 that sends a DONE agent back
@@ -11827,7 +11885,8 @@ export async function startRun(id: string): Promise<void> {
       // point of no return for the message: a run that parks, crashes or is
       // killed from here on has already had it delivered, and replaying it on
       // the next pick-up would say the same thing twice into a conversation
-      // that has already acted on it.
+      // that has already acted on it. Except a cycle that did no work, which
+      // delivered nothing and gives `handed` back to its replacement.
       pendingPushback = null;
       if (followUp !== null) {
         followUp = null;
@@ -12820,6 +12879,9 @@ export async function startRun(id: string): Promise<void> {
           // cycle is still the one the fallback restores — whatever throwaway
           // session the failed resume named.
           returnToSession(fork.fallbackSessionId, sessionCostBeforeCycle);
+          // The fork was cut from that conversation, so what this cycle was
+          // asked to say is still what it is waiting to hear.
+          handBack(handed);
           log(
             id,
             `The forked conversation would not resume, so this run is back on the ` +
@@ -12839,6 +12901,7 @@ export async function startRun(id: string): Promise<void> {
           // the conversation the retry exists to get back into.
           // And the figure that session's ledger stood at, for the same reason.
           returnToSession(resumeTarget, sessionCostBeforeCycle);
+          handBack(handed);
           log(
             id,
             "Resuming the previous session failed before it did any work. Trying once more.",
