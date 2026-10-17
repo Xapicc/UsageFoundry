@@ -4,6 +4,7 @@ import type {
   UsageRemainingWindowDTO,
 } from "./apiTypes";
 import type { CodexPlanUsage } from "./codexAccount";
+import { currentCodexReading } from "./codexReading";
 import { REFRESH_MS } from "./planUsage";
 import {
   FIVE_HOURS_MS,
@@ -40,19 +41,6 @@ function windowOf(
   };
 }
 
-/**
- * A Codex window that has not yet closed, or null.
- *
- * `currentPlanReading` is not used for Codex, because its session test is a
- * five-hour window by construction and Codex names its own lengths: applied to
- * a day-long primary window it would drop a live reading whenever the reset is
- * more than five hours off.
- */
-function openCodexWindow(window: PlanWindow | null, now: number): PlanWindow | null {
-  if (!window) return null;
-  return window.resetsAt === null || window.resetsAt > now ? window : null;
-}
-
 function providerOf(
   provider: UsageRemainingProviderDTO["provider"],
   windows: UsageRemainingWindowDTO[],
@@ -87,8 +75,8 @@ function providerOf(
  * A window with no current reading is `used: null` and never a number. The
  * readers are themselves null-or-reading, so what this adds is the staleness
  * test every surface already applies — a window whose reset has passed is
- * described by `currentPlanReading` as closed, not as full — and the refusal
- * to turn an absent window into a 0% or a 100%.
+ * described by `currentPlanReading` or `currentCodexReading` as closed, not as
+ * full — and the refusal to turn an absent window into a 0% or a 100%.
  */
 export function usageRemaining(inputs: RemainingInputs, now: number): UsageRemainingDTO {
   const providers: UsageRemainingProviderDTO[] = [];
@@ -114,13 +102,13 @@ export function usageRemaining(inputs: RemainingInputs, now: number): UsageRemai
   }
 
   if (inputs.codex.signedIn) {
-    const plan = inputs.codex.plan;
+    const plan = inputs.codex.plan ? currentCodexReading(inputs.codex.plan, now) : null;
     providers.push(
       providerOf(
         "codex",
         [
-          windowOf("session", plan?.sessionMinutes ?? null, openCodexWindow(plan?.session ?? null, now)),
-          windowOf("weekly", plan?.weeklyMinutes ?? null, openCodexWindow(plan?.weekly ?? null, now)),
+          windowOf("session", plan?.sessionMinutes ?? null, plan?.session ?? null),
+          windowOf("weekly", plan?.weeklyMinutes ?? null, plan?.weekly ?? null),
         ],
         plan ? plan.fetchedAt : null,
         plan?.limitReached ?? null,
