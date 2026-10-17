@@ -163,7 +163,7 @@ const {
   SURVIVAL_TABLE_CLI_VERSION,
 } = require("./orchestrator") as typeof import("./orchestrator");
 
-const { CLAUDE_BIN, CLAUDE_CONFIG_DIR, CODEX_BIN } =
+const { CLAUDE_BIN, CLAUDE_CONFIG_DIR, CODEX_BIN, WORKSPACE_MOUNTS, selectGithubToken } =
   require("./config") as typeof import("./config");
 const { CODEX_FORBIDDEN_COMMANDS, codexRulesText } =
   require("./codexRules") as typeof import("./codexRules");
@@ -179,6 +179,8 @@ const { priceFiles, renderFileCostNotice } =
 const { chatEnv } = require("./chat") as typeof import("./chat");
 const { reviewEnv } = require("./review") as typeof import("./review");
 const { authEnv } = require("./claudeAuth") as typeof import("./claudeAuth");
+const { verifyEnv } = require("./landGate") as typeof import("./landGate");
+const { gitEnv } = require("./git") as typeof import("./git");
 const { localCycleEnv } =
   require("./localProvider") as typeof import("./localProvider");
 
@@ -5653,6 +5655,84 @@ describe("childEnv — a credential class the app has no use for", () => {
       if (before === undefined) delete process.env.ANTHROPIC_API_KEY;
       else process.env.ANTHROPIC_API_KEY = before;
     }
+  });
+});
+
+describe("every child env — a GitHub token only agentGitEnv hands out", () => {
+  // `gh` documents `GH_TOKEN`, so it is the name an operator reaches for first,
+  // and in the server's own environment it used to pass every strip: a
+  // repository configured to get none got one anyway, and the run log said it
+  // got none. Nothing in the app reads the ambient name, so nothing would report
+  // it coming back; the per-repository "none" and the blank `UF_GITHUB_TOKEN`
+  // are the levers that silently stop holding.
+  const planted = { GH_TOKEN: "ambient-gh", GITHUB_TOKEN: "ambient-github" };
+  const previous = Object.fromEntries(
+    Object.keys(planted).map((k) => [k, process.env[k]]),
+  );
+  before(() => {
+    // Set on this process rather than passed in, for the reason the siblings
+    // give: reading `process.env` is the whole of what these functions do.
+    for (const [k, v] of Object.entries(planted)) process.env[k] = v;
+  });
+  after(() => {
+    for (const [k, v] of Object.entries(previous)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  // Every key carrying a planted value, under its own name or another: a strip
+  // that deleted the variable and merged it back under a new name would pass a
+  // key check alone.
+  const ambientIn = (env: NodeJS.ProcessEnv): string[] =>
+    Object.entries(env)
+      .filter(([, value]) => Object.values(planted).some((v) => value?.includes(v)))
+      .map(([key]) => key);
+
+  it("withholds the ambient token from every builder", () => {
+    // `chatEnv` with an empty token is the blank-`UF_GITHUB_TOKEN` lever.
+    const builders: Record<string, () => NodeJS.ProcessEnv> = {
+      childEnv: () => childEnv(),
+      reviewEnv,
+      'chatEnv(null, "")': () => chatEnv(null, ""),
+      verifyEnv,
+      gitEnv,
+      authEnv,
+    };
+    const leaks = Object.entries(builders).flatMap(([name, build]) =>
+      ambientIn(build()).map((key) => `${name}: ${key}`),
+    );
+    assert.deepEqual(leaks, [], "the server's GitHub token reached these children");
+  });
+
+  it("gives a work cycle neither variable when its repository is configured to get none", () => {
+    const repo = path.join(WORKSPACE_MOUNTS[0].path, "configured-none");
+    const chosen = selectGithubToken(
+      repo,
+      new Map([[repo, ""]]),
+      "install-wide",
+      WORKSPACE_MOUNTS,
+    );
+    assert.equal(chosen.scope, "none");
+    // The cycle's own composition: `agentGitEnv` as an extra over the strip.
+    assert.deepEqual(ambientIn(childEnv({ ...agentGitEnv(chosen.token, null) })), []);
+  });
+
+  it("still hands a configured repository its own token, over the ambient one", () => {
+    // The control: the strip runs before the extras, so the deliberate hand-out
+    // is untouched — and it is the repository's token, not the server's.
+    const repo = path.join(WORKSPACE_MOUNTS[0].path, "configured-own");
+    const chosen = selectGithubToken(
+      repo,
+      new Map([[repo, "repo-token"]]),
+      "install-wide",
+      WORKSPACE_MOUNTS,
+    );
+    assert.equal(chosen.scope, "repository");
+    const cycle = childEnv({ ...agentGitEnv(chosen.token, null) });
+    assert.equal(cycle.GH_TOKEN, "repo-token");
+    assert.equal(cycle.GITHUB_TOKEN, "repo-token");
+    assert.equal(chatEnv(null, "chat-token").GH_TOKEN, "chat-token");
   });
 });
 

@@ -7451,6 +7451,18 @@ export function sandboxOverlayFor(scope: SandboxScope): SandboxOverlay | null {
  *   `ANTHROPIC_API_KEY` is deliberately **not** here — it is what a work cycle
  *   bills against, and `claudeAuth.ts`'s copy writes out why.
  *
+ *   `GH_TOKEN`, `GITHUB_TOKEN`: the names `agentGitEnv` hands a GitHub
+ *   credential out under, withheld here so that it is the only thing that
+ *   does. It runs after the strip, as an extra, so the token it chose survives
+ *   and one the server merely had does not. Inherited, the operator's two
+ *   levers stopped holding — a `UF_GITHUB_TOKENS` entry with an empty token,
+ *   and a blank `UF_GITHUB_TOKEN` for the chat — while the run log said
+ *   "configured to get none" over a cycle that had both, and the reviewer,
+ *   the verify command and this app's own git, which runs repository-controlled
+ *   filter drivers, had them too. `gh` documents `GH_TOKEN`, so it is the name
+ *   an operator reaches for first; `config.ts` reads `UF_GITHUB_TOKEN` instead
+ *   for exactly this reason, and this is what makes that choice hold.
+ *
  * One variable is set rather than withheld. `CLAUDE_CODE_HARBOR_KITE=0` turns
  * off the CLI's cross-session messaging, which is on by default and spans the
  * whole container. Without it every session gets `ListAgents` and an inbox at
@@ -7554,9 +7566,9 @@ export function contextShapingEnv(
  * The strip, applied. Every exclusion's reasoning is the block above
  * `CONTEXT_SHAPING_ENV`, which the three copies of this list cite in turn.
  *
- * Exported for the test that pins the three provider credentials' absence, on
- * `telemetryEnv`'s grounds: there is nothing else in this app that would notice
- * if any of them came back.
+ * Exported for the tests that pin the three provider credentials' absence and
+ * an inherited GitHub token's, on `telemetryEnv`'s grounds: there is nothing
+ * else in this app that would notice if any of them came back.
  */
 export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...agentEnvironment(), FORCE_COLOR: "0" };
@@ -7569,6 +7581,8 @@ export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv 
       key === "OPENAI_API_KEY" ||
       key === "CODEX_API_KEY" ||
       key === "CODEX_ACCESS_TOKEN" ||
+      key === "GH_TOKEN" ||
+      key === "GITHUB_TOKEN" ||
       key === "CLAUDE_CODE_ENABLE_TELEMETRY" ||
       key === "DATA_DIR" ||
       key === "NODE_OPTIONS"
@@ -7730,7 +7744,10 @@ const GITHUB_CREDENTIAL_HELPER =
  * call alone. That withholding
  * is by namespace rather than by remembering, so a *second* credential shape is
  * covered by it with no change: `UF_GITHUB_TOKENS` leaves those children the
- * same way `UF_GITHUB_TOKEN` does.
+ * same way `UF_GITHUB_TOKEN` does. The two names the token is handed out
+ * under, `GH_TOKEN` and `GITHUB_TOKEN`, are the exception and are stripped by
+ * name from every builder, so one the server inherited reaches nothing and a
+ * child holds a GitHub credential only when this block put it there.
  *
  * *Which* token is decided by `selectGithubToken` in `config.ts`, off the
  * folder the child is working in, and it is decided by the caller rather than
