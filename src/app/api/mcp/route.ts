@@ -3775,6 +3775,11 @@ function listTasksTool(args: Record<string, unknown>) {
             // and a block whose runs go to the local model would emit one that
             // `emit_runs` then refuses.
             needsFrontier: row.needsFrontier,
+            // On the row and not only in `get_task`, because age is a thing a
+            // block is told to rank by: without it, "prefer the tasks open
+            // longest" read one `get_task` per row, which on 2026-10-17 was 156
+            // calls and 22 minutes of a deciding turn over a 116-task board.
+            createdAt: new Date(t.createdAt).toISOString(),
             // Two numbers rather than the neighbours themselves, which is the
             // whole of what a *list* can afford: the ids are in `get_task`, and
             // a page carrying two ref lists per row is the payload the board's
