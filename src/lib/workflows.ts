@@ -9010,6 +9010,15 @@ async function driveReviewItem(
       await pause();
       continue;
     }
+    // The workflow's limit before every review, not only at the block's start:
+    // a branch that waited in the queue, or comes back from a fix round, starts
+    // after earlier reviews have put their cost on the block's row, and asked
+    // once a block of N branches overshot by every review still queued when the
+    // limit was crossed. Skipped with no limit, which needs no snapshot read.
+    if (!instanceBudgetIsOff(instance.instanceBudget)) {
+      const guard = enforceInstanceBudgetForBlock(instanceId, await currentSnapshot());
+      if (guard?.kind === "halted" || !open()) return;
+    }
     const started = await startReview(current.run_id, {
       requireVerdict: true,
       requireFrontier: true,

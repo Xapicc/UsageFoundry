@@ -633,6 +633,32 @@ describe("a review block and its workflow's limit", () => {
       .get() as { status: string; cause: string };
     assert.deepEqual(stored, { status: "stopping", cause: "guard" });
   });
+
+  it("starts no queued review once the reviews it already banked are past the limit", async () => {
+    // One slot, so branches two to four each wait in the queue, and each review
+    // reports $0.02: two reviews put $0.04 on the block against $0.03.
+    const settings = await import("./settings");
+    settings.saveSettings({ maxConcurrentAssists: 1 });
+    const ids = ["queued-a", "queued-b", "queued-c", "queued-d"];
+    try {
+      reviewScene("inst-queued", {
+        budget: { maxInstanceCostUSD: 0.03 },
+        runs: ids.map((id) => ({ id, prompt: "Do it. APPROVE-ME", branch: "uf/repo-good" })),
+      });
+      await settledWithin(workflows.startReviewBlock("inst-queued", "r", ids), 30_000, "startReviewBlock");
+    } finally {
+      settings.saveSettings({ maxConcurrentAssists: 2 });
+    }
+
+    const started = ids.filter((id) => reviewsOf(id).length > 0).length;
+    const total = workflows.instanceSpend("inst-queued").spentUSD;
+    assert.equal(started, 2, `${started} reviews started; $${total.toFixed(2)} against a $0.03 limit`);
+    const stored = dbMod
+      .db()
+      .prepare("SELECT status, stop_cause AS cause FROM workflow_instances WHERE id='inst-queued'")
+      .get() as { status: string; cause: string | null };
+    assert.equal(stored.cause, "guard");
+  });
 });
 
 /* ------------------------------------------------------------------ */
