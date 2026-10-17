@@ -84,7 +84,7 @@ describe("afterFixRun", () => {
   });
 
   it("does not blame the model for a fix a person stopped or that never started", () => {
-    for (const [status, iterations] of [["stopped", 1], ["blocked", 0], ["completed", 0]] as const) {
+    for (const [status, iterations] of [["stopped", 1], ["blocked", 0], ["completed", 0], ["failed", 0]] as const) {
       const step = afterFixRun(status, iterations);
       assert.equal(step.kind, "set-aside", status);
       assert.equal(step.kind === "set-aside" && step.needsFrontier, false, status);

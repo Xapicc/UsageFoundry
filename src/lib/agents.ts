@@ -342,7 +342,11 @@ export function normalizeAgentInput(raw: unknown): AgentNormalization {
   // Blank is null, the way every optional string here is: `null`, `""` and a
   // missing key all mean "inherit the session's model", and only a real value
   // reaches the flag. It is never sent as JSON `null` — see `agentsFlagValue`.
-  const rawModel = o.model === null || o.model === undefined ? "" : String(o.model).trim();
+  // Refused by name otherwise, the prompt's reason: `String()` saved `{…}` as
+  // the model "[object Object]" and `["sonnet"]` as the id inside it.
+  const notModel = notStringRefusal("model", o.model);
+  if (notModel) return { ok: false, error: notModel };
+  const rawModel = typeof o.model === "string" ? o.model.trim() : "";
   const model = rawModel === "" ? null : rawModel;
   if (model !== null && model.length > MAX_AGENT_NAME) {
     return { ok: false, error: `That does not look like a model id: ${model}` };

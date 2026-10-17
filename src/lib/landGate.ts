@@ -182,6 +182,8 @@ export function verifyEnv(): NodeJS.ProcessEnv {
       key === "OPENAI_API_KEY" ||
       key === "CODEX_API_KEY" ||
       key === "CODEX_ACCESS_TOKEN" ||
+      key === "GH_TOKEN" ||
+      key === "GITHUB_TOKEN" ||
       key === "CLAUDE_CODE_ENABLE_TELEMETRY" ||
       key === "DATA_DIR" ||
       key === "NODE_OPTIONS"

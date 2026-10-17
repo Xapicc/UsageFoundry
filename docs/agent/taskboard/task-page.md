@@ -49,6 +49,26 @@ that sends `{ operatorOnly }` alone, against the row as last read, and re-reads
 after; `TaskEditor` sends the flag only when filing, where there is no row for
 anything else to have marked.
 
+**On an existing task, the project is sent only when the form changed it.**
+`taskProjectPayload` in `format.ts` compares the two selects with what they held
+when the form was seeded or last saved, and leaves `mountId` and `folder` out of
+the body when they match. Re-sending the stored pair on every save lost a
+project two ways, both silently. A task on a mount root — a run's `create_task`
+files under exactly `run.folder`, and a run may work on the root — has `""` for
+its path within the mount, which is also the folder select's "pick a folder", so
+a retitle sent half a pair as none and the task left its project with a 200. And
+a task whose folder was deleted or renamed had its pair re-proved at the door,
+so every edit was refused until the operator gave the project up. The baseline
+is the form's own rather than the row the page last read, for the operator-only
+toggle's reason: the page re-reads after every press, and a project another door
+set meanwhile is not the operator's to revert by retitling. The door is
+unchanged, so a pair the operator *did* pick is still proved and refused if it
+does not resolve. The helper is in `src/lib` because nothing here can test a
+component; `tasks.test.ts` sends the editor's own body through `updateTask`. A
+mount-root task's folder select still draws "— pick a folder —", because the
+scan offers a mount's children and never the root; the save no longer acts on
+that drawing.
+
 **The thread is drawn on the task's own page, and it does not poll either.**
 `TaskThread` in `src/components/TaskThread.tsx` — lifted out of the page when the
 run page grew a second reader, and `TaskCommentRows` beside it is why a note looks

@@ -290,20 +290,24 @@ export function normalizeTemplateInput(
   // empty string is a real answer (the mount root), and collapsing the two
   // would silently turn "no folder recorded" into "the whole workspace", which
   // is the one selection that blocks every other run in the tree.
-  const mountId =
-    o.mountId === null || o.mountId === undefined || String(o.mountId) === ""
-      ? null
-      : String(o.mountId);
-  const folder = mountId === null ? null : String(o.folder ?? "");
+  //
+  // Refused rather than read through `String()`, which saved `{path: "api"}`
+  // as the folder "[object Object]" and `["api"]` as the folder inside it — and
+  // the same for the agent and the model below.
+  const mountField = optionalStringField(o, "mountId");
+  if (!mountField.ok) return { ok: false, error: mountField.error };
+  const folderField = optionalStringField(o, "folder");
+  if (!folderField.ok) return { ok: false, error: folderField.error };
+  const mountId = mountField.value || null;
+  const folder = mountId === null ? null : (folderField.value ?? "");
 
   // Blank is "no agent", the way every optional string here is. A named one is
   // checked against the registry rather than stored on trust: instantiation
   // refuses an agent that is not there, so saving a template that names one
   // would be saving something that can never be run.
-  const agentId =
-    o.agentId === null || o.agentId === undefined || String(o.agentId).trim() === ""
-      ? null
-      : String(o.agentId).trim();
+  const agentField = optionalStringField(o, "agentId");
+  if (!agentField.ok) return { ok: false, error: agentField.error };
+  const agentId = agentField.value?.trim() || null;
   if (agentId !== null) {
     const refusal = agentRefusal(agentId, known.agents);
     if (refusal) return { ok: false, error: refusal };
@@ -319,9 +323,9 @@ export function normalizeTemplateInput(
   // saved prompts to start refusing. The catalogue is read at the doors that
   // start work — `POST /api/runs` and the chat's two tools — in front of the
   // person who can act on the refusal.
-  const rawModel =
-    o.model === null || o.model === undefined ? "" : String(o.model).trim();
-  const model = rawModel === "" ? null : rawModel;
+  const modelField = optionalStringField(o, "model");
+  if (!modelField.ok) return { ok: false, error: modelField.error };
+  const model = modelField.value?.trim() || null;
 
   return {
     ok: true,

@@ -29,6 +29,7 @@ let orchestrator: typeof import("./orchestrator");
 let tasks: typeof import("./tasks");
 let settings: typeof import("./settings");
 let database: typeof import("./db");
+let diffModule: typeof import("./diff");
 let root: string;
 
 const MOUNT_DIR = "validation-queue-mount";
@@ -118,6 +119,7 @@ before(async () => {
   validation = await import("./validation");
   review = await import("./review");
   orchestrator = await import("./orchestrator");
+  diffModule = await import("./diff");
   settings.saveSettings({ validateTaskCompletion: true });
 });
 
@@ -168,11 +170,12 @@ function heldTask(runId: string, title: string): Task {
   return claimed.task;
 }
 
-async function until(what: string, ready: () => boolean): Promise<void> {
+/** `tick` 0 polls on `setImmediate`, for a state that lasts only a diff read. */
+async function until(what: string, ready: () => boolean, tick = 20): Promise<void> {
   const deadline = Date.now() + 10_000;
   while (!ready()) {
     assert.ok(Date.now() < deadline, `timed out waiting for ${what}`);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => (tick === 0 ? setImmediate(resolve) : setTimeout(resolve, tick)));
   }
 }
 
@@ -301,6 +304,88 @@ describe("a second complete_task while the first is being checked", () => {
     assert.equal(closed.status, "done", "a claim a restart left queued stayed claimed for good");
     assert.equal(closed.completedByRunId, runId);
     assert.equal(validation.validationInFlight(runId), false);
+    assert.ok(
+      logLines(runId).some((line) => /restarted before this task could be checked/.test(line)),
+      logLines(runId).join("\n"),
+    );
+  });
+});
+
+/** The old process's two checks, both written and neither reading, before a case asserts. */
+const settled = (runId: string) =>
+  until("both checks to settle", () =>
+    checksOf(runId).length === 2 && checksOf(runId).every((row) => row.status !== "running"));
+
+/** `instrumentation.ts`'s boot reconcile, in its order, for a process that died. */
+function bootAsInstrumentationDoes(): void {
+  validation.closeStrandedValidations(review.reconcileReviewsOnBoot());
+  validation.closeQueuedValidations();
+}
+
+/**
+ * The drain used to delete a claim's queue row and then await the diff read and
+ * the window scan before `startAssist` wrote its check row, so a process killed
+ * in between left neither row for the boot to find, and the task stayed claimed
+ * by a run that had been told its claim was queued. Each case runs the boot's
+ * closers inside that window, then lets the old process's check settle so it
+ * cannot start a child in the next case.
+ */
+describe("a queued claim the drain has taken, before its check row exists", () => {
+  it("is closed by the next boot if the process dies there", async () => {
+    const runId = worktreeRun("running");
+    const first = heldTask(runId, "First task, then a crash");
+    const second = heldTask(runId, "Second task, taken off the queue");
+    assert.equal((await validation.completeTaskWithValidation(first.id, runId)).kind, "checking");
+    await until("the first check to start", () => childrenStarted() === 1);
+    assert.equal((await validation.completeTaskWithValidation(second.id, runId)).kind, "queued");
+
+    fs.writeFileSync(control("answer"), "");
+    const starting = (globalThis as { __ufValidationStarting?: Map<string, string> })
+      .__ufValidationStarting!;
+    await until("the drain to take the second claim", () => starting.get(runId) === second.id, 0);
+    bootAsInstrumentationDoes();
+    const afterBoot = tasks.getTask(second.id)!;
+    await settled(runId);
+
+    assert.equal(afterBoot.status, "done", "a claim between its queue row and its check row stayed claimed");
+    assert.equal(afterBoot.completedByRunId, runId);
+  });
+
+  it("is closed by the next boot if the process dies while its diff is read", async () => {
+    const runId = worktreeRun("paused");
+    const first = heldTask(runId, "First task, parked");
+    const second = heldTask(runId, "Second task, read when the first settles");
+    assert.equal((await validation.completeTaskWithValidation(first.id, runId)).kind, "checking");
+    await until("the first check to start", () => childrenStarted() === 1);
+    assert.equal((await validation.completeTaskWithValidation(second.id, runId)).kind, "queued");
+
+    // Held rather than polled for, so the boot lands inside the read every time.
+    const realRunDiff = diffModule.runDiff;
+    let releaseDiff!: () => void;
+    const held = new Promise<void>((resolve) => (releaseDiff = resolve));
+    let reads = 0;
+    // A module's exports are writable under the CommonJS this suite compiles
+    // to, and `validation.ts` reads `runDiff` off them at each call.
+    const writable = diffModule as { runDiff: typeof realRunDiff };
+    writable.runDiff = async (id: string) => {
+      reads += 1;
+      await held;
+      return realRunDiff(id);
+    };
+    let afterBoot: Task;
+    try {
+      fs.writeFileSync(control("answer"), "");
+      await until("the second claim's diff read to begin", () => reads === 1);
+      bootAsInstrumentationDoes();
+      afterBoot = tasks.getTask(second.id)!;
+    } finally {
+      writable.runDiff = realRunDiff;
+      releaseDiff();
+    }
+    await settled(runId);
+
+    assert.equal(afterBoot.status, "done", "a claim whose diff was being read stayed claimed");
+    assert.equal(afterBoot.completedByRunId, runId);
     assert.ok(
       logLines(runId).some((line) => /restarted before this task could be checked/.test(line)),
       logLines(runId).join("\n"),

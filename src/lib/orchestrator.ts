@@ -7451,6 +7451,18 @@ export function sandboxOverlayFor(scope: SandboxScope): SandboxOverlay | null {
  *   `ANTHROPIC_API_KEY` is deliberately **not** here — it is what a work cycle
  *   bills against, and `claudeAuth.ts`'s copy writes out why.
  *
+ *   `GH_TOKEN`, `GITHUB_TOKEN`: the names `agentGitEnv` hands a GitHub
+ *   credential out under, withheld here so that it is the only thing that
+ *   does. It runs after the strip, as an extra, so the token it chose survives
+ *   and one the server merely had does not. Inherited, the operator's two
+ *   levers stopped holding — a `UF_GITHUB_TOKENS` entry with an empty token,
+ *   and a blank `UF_GITHUB_TOKEN` for the chat — while the run log said
+ *   "configured to get none" over a cycle that had both, and the reviewer,
+ *   the verify command and this app's own git, which runs repository-controlled
+ *   filter drivers, had them too. `gh` documents `GH_TOKEN`, so it is the name
+ *   an operator reaches for first; `config.ts` reads `UF_GITHUB_TOKEN` instead
+ *   for exactly this reason, and this is what makes that choice hold.
+ *
  * One variable is set rather than withheld. `CLAUDE_CODE_HARBOR_KITE=0` turns
  * off the CLI's cross-session messaging, which is on by default and spans the
  * whole container. Without it every session gets `ListAgents` and an inbox at
@@ -7554,9 +7566,9 @@ export function contextShapingEnv(
  * The strip, applied. Every exclusion's reasoning is the block above
  * `CONTEXT_SHAPING_ENV`, which the three copies of this list cite in turn.
  *
- * Exported for the test that pins the three provider credentials' absence, on
- * `telemetryEnv`'s grounds: there is nothing else in this app that would notice
- * if any of them came back.
+ * Exported for the tests that pin the three provider credentials' absence and
+ * an inherited GitHub token's, on `telemetryEnv`'s grounds: there is nothing
+ * else in this app that would notice if any of them came back.
  */
 export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...agentEnvironment(), FORCE_COLOR: "0" };
@@ -7569,6 +7581,8 @@ export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv 
       key === "OPENAI_API_KEY" ||
       key === "CODEX_API_KEY" ||
       key === "CODEX_ACCESS_TOKEN" ||
+      key === "GH_TOKEN" ||
+      key === "GITHUB_TOKEN" ||
       key === "CLAUDE_CODE_ENABLE_TELEMETRY" ||
       key === "DATA_DIR" ||
       key === "NODE_OPTIONS"
@@ -7730,7 +7744,10 @@ const GITHUB_CREDENTIAL_HELPER =
  * call alone. That withholding
  * is by namespace rather than by remembering, so a *second* credential shape is
  * covered by it with no change: `UF_GITHUB_TOKENS` leaves those children the
- * same way `UF_GITHUB_TOKEN` does.
+ * same way `UF_GITHUB_TOKEN` does. The two names the token is handed out
+ * under, `GH_TOKEN` and `GITHUB_TOKEN`, are the exception and are stripped by
+ * name from every builder, so one the server inherited reaches nothing and a
+ * child holds a GitHub credential only when this block put it there.
  *
  * *Which* token is decided by `selectGithubToken` in `config.ts`, off the
  * folder the child is working in, and it is decided by the caller rather than
@@ -10977,6 +10994,20 @@ function prepareRunTaskboard(
   }
 }
 
+/**
+ * Everything a cycle's prompt consumed at the spawn, beside the session and
+ * the run's settings: what `startRun`'s `handBack` gives the attempt that
+ * replaces a cycle which did no work.
+ */
+interface HandedMessage {
+  followUp: string | null;
+  /** `runs.follow_up_is_note` for it, written back with it. */
+  followUpIsNote: number;
+  pendingPushback: string | null;
+  justRetriggered: boolean;
+  backgroundNotice: string | null;
+}
+
 export async function startRun(id: string): Promise<void> {
   const run = getRun(id);
   if (!run) throw new Error(`No such run: ${id}`);
@@ -11170,6 +11201,12 @@ export async function startRun(id: string): Promise<void> {
   let lastContextTokens = 0;
   let cyclesThisSegment = 0;
   let resumeRetried = false;
+  /**
+   * What `handBack` gave the next attempt, read once by its prompt. Cast so the
+   * compiler does not narrow it to null for good: it is set inside `handBack`,
+   * an assignment TypeScript does not follow out of a closure.
+   */
+  let handedBack = null as HandedMessage | null;
   /** Transient API failures retried since the last cycle that got through. */
   let transientRetries = 0;
   /**
@@ -11213,6 +11250,32 @@ export async function startRun(id: string): Promise<void> {
     db()
       .prepare("UPDATE runs SET session_id = ?, session_cost_usd = ? WHERE id = ?")
       .run(sid, costUSD, id);
+  };
+
+  /**
+   * Give the attempt that replaces a cycle which did no work the message that
+   * cycle was handed, on the row as well.
+   *
+   * The clear at the spawn rests on the cycle having had its message delivered,
+   * and a `--resume` the CLI refuses with no turn has not: the measured refusal
+   * writes no transcript, so neither the operator's note, the DONE pushback nor
+   * the stopped-tasks note reached any model. The retry used to be sent the
+   * continuation instead — the note dropped in silence, and a run that had said
+   * DONE billed a cycle that said it again. On the row because a park before
+   * the retry's spawn starts a segment from it. The stopped-tasks note stays in
+   * this frame, `pendingPushback`'s way: read again, its boundary would be the
+   * refused attempt's own `iteration` event, which nothing follows.
+   */
+  const handBack = (m: HandedMessage) => {
+    followUp = m.followUp;
+    pendingPushback = m.pendingPushback;
+    justRetriggered = m.justRetriggered;
+    handedBack = m;
+    if (m.followUp !== null) {
+      db()
+        .prepare("UPDATE runs SET follow_up = ?, follow_up_is_note = ? WHERE id = ?")
+        .run(m.followUp, m.followUpIsNote, id);
+    }
   };
 
   /**
@@ -11781,6 +11844,21 @@ export async function startRun(id: string): Promise<void> {
         forgetComposition(id);
       }
 
+      // Read for a Claude Code cycle only: a Codex cycle's stream has no such
+      // events, so the answer would be null at the price of a query.
+      const backgroundNotice = handedBack
+        ? handedBack.backgroundNotice
+        : run.provider === "codex"
+          ? null
+          : previousCycleStoppedTasksNotice(id);
+      handedBack = null;
+      const handed: HandedMessage = {
+        followUp,
+        followUpIsNote: run.follow_up_is_note,
+        pendingPushback,
+        justRetriggered,
+        backgroundNotice,
+      };
       const prompt = nextPrompt({
         sessionId,
         followUp,
@@ -11810,10 +11888,7 @@ export async function startRun(id: string): Promise<void> {
         // buys one cycle and says its piece into that cycle, and a run that
         // parks or crashes after this point has already had it delivered.
         validation: pendingPushback,
-        // Read for a Claude Code cycle only: a Codex cycle's stream has no such
-        // events, so the answer would be null at the price of a query.
-        backgroundNotice:
-          run.provider === "codex" ? null : previousCycleStoppedTasksNotice(id),
+        backgroundNotice,
         // Read off the same policy the loop's own exits read, so the promise
         // the opening prompt makes and the rule that ends the run cannot drift:
         // `continueAfterDone` is the flag at 6862 that sends a DONE agent back
@@ -11827,7 +11902,8 @@ export async function startRun(id: string): Promise<void> {
       // point of no return for the message: a run that parks, crashes or is
       // killed from here on has already had it delivered, and replaying it on
       // the next pick-up would say the same thing twice into a conversation
-      // that has already acted on it.
+      // that has already acted on it. Except a cycle that did no work, which
+      // delivered nothing and gives `handed` back to its replacement.
       pendingPushback = null;
       if (followUp !== null) {
         followUp = null;
@@ -12820,6 +12896,9 @@ export async function startRun(id: string): Promise<void> {
           // cycle is still the one the fallback restores — whatever throwaway
           // session the failed resume named.
           returnToSession(fork.fallbackSessionId, sessionCostBeforeCycle);
+          // The fork was cut from that conversation, so what this cycle was
+          // asked to say is still what it is waiting to hear.
+          handBack(handed);
           log(
             id,
             `The forked conversation would not resume, so this run is back on the ` +
@@ -12839,6 +12918,7 @@ export async function startRun(id: string): Promise<void> {
           // the conversation the retry exists to get back into.
           // And the figure that session's ledger stood at, for the same reason.
           returnToSession(resumeTarget, sessionCostBeforeCycle);
+          handBack(handed);
           log(
             id,
             "Resuming the previous session failed before it did any work. Trying once more.",
@@ -14924,6 +15004,69 @@ function branchHolderRefusal(run: RunRow): string | null {
 }
 
 /**
+ * Why a branch continuer that never ran a work cycle may not rejoin the queue
+ * on that branch, or null.
+ *
+ * The two questions the release pass asks a `waiting` continuer — `admitWaiting`
+ * the one-continuer rule, `releasableRuns` its condition — asked again for the
+ * row `reopenRun` queues directly because it already holds a workspace. Both
+ * answers can have changed since its release, and because it ran nothing:
+ * `branchRivalOf` reads a terminal continuer with no work cycle as not holding
+ * the branch, which is what let another continuer onto it, and a predecessor
+ * picked up since may have ended in a way its condition does not accept. Queued
+ * anyway, it committed to one ref beside that other run, or carried an
+ * `on-success` prompt onto the branch of a run that failed.
+ *
+ * A continuer that ran a cycle is not asked: it holds the branch, so admission
+ * refused every rival, and the condition it started on was spent by starting.
+ */
+function unworkedContinuerRefusal(run: RunRow): string | null {
+  const predecessorId = run.continues_run;
+  if (!predecessorId) return null;
+  if (ranWorkCycle({ iterations: run.iterations, refundedCycles: refundedCyclesOf(run) })) {
+    return null;
+  }
+  const mine = db()
+    .prepare("SELECT edge FROM run_deps WHERE run_id = ? AND depends_on = ?")
+    .get(run.id, predecessorId) as { edge: DependencyEdge } | undefined;
+  const rival = branchRivalOf(run.id, predecessorId, mine?.edge ?? null);
+  if (rival) {
+    return (
+      `Run ${shortId(rival.id)} carries on run ${shortId(predecessorId)}'s branch now (it is ${rival.status}), ` +
+      "and two runs cannot extend the same branch. This run never ran a work cycle on it, so there is " +
+      `no work of its own to pick up; start a new run continuing run ${shortId(rival.id)}'s branch instead.`
+    );
+  }
+
+  // `run_deps` cascade-deletes with the predecessor, and with it the condition
+  // there would be to ask again.
+  const predecessor = getRun(predecessorId);
+  if (!mine || !predecessor) return null;
+  const { release, block, notNeeded } = releasableRuns(
+    [
+      { id: run.id, status: "waiting", iterations: 0, refundedCycles: 0, restartClosed: false },
+      {
+        id: predecessor.id,
+        status: predecessor.status,
+        iterations: predecessor.iterations,
+        refundedCycles: refundedCyclesOf(predecessor),
+        restartClosed: restartClosedOf(predecessor),
+      },
+    ],
+    [{ runId: run.id, dependsOn: predecessor.id, edge: mine.edge }],
+  );
+  if (release.includes(run.id)) return null;
+  const verdict = block[0]?.reason ?? notNeeded[0]?.reason;
+  if (verdict) {
+    return `It never ran a work cycle, and the run whose branch it continues no longer lets it start. ${verdict}`;
+  }
+  return (
+    `Run ${shortId(predecessor.id)} is ${predecessor.status} again, and this run carries on its branch ` +
+    "only once it has ended. Pick this one up again after that."
+  );
+}
+
+/**
  * Put a finished run back to work, continuing its Claude Code session, and
  * optionally say something to it.
  *
@@ -15023,6 +15166,14 @@ export function reopenRun(
   }
   const sharedFolder = memberSharedFolderRefusal(id);
   if (sharedFolder) return { ok: false, reason: sharedFolder };
+
+  // Only on the way to the queue: a row going back to `waiting` is asked both
+  // questions by the release pass. Ahead of the checkout below, whose "wait for
+  // that run to finish" is wrong advice when the holder is a rival continuer.
+  if (!waitingAgain) {
+    const branchTaken = unworkedContinuerRefusal(run);
+    if (branchTaken) return { ok: false, reason: branchTaken };
+  }
 
   // Its checkout may have been handed to a newer run while it was dead:
   // `allocateSlotPath` only avoids slots that an *active* run holds, and a

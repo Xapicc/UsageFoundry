@@ -194,7 +194,9 @@ with no mount is a path this app cannot say which root proved it, and a mount
 with no folder is a project claim with nothing under it. Both would store happily
 and neither would answer the query the pair exists for. A mount that is merely
 *absent right now* refuses with `resolveInMount`'s own sentence naming the mount
-and the path, which is the same refusal the new-run form shows.
+and the path, which is the same refusal the new-run form shows. A patch naming
+the pair has it re-proved even when it restates the stored one, which is why the
+task page sends the pair only when its form changed it (`task-page.md`).
 
 **Three fields are recorded rather than claimed, and are refused by name off the
 wire.** `origin` and `created_by_run_id` come from the caller supplying a
@@ -206,7 +208,7 @@ create that could set a terminal status would be a route around
 `taskTransitionRefusal` that no test of that function would ever see. All three
 are refused *by name* rather than dropped, on `normalizeAgentInput`'s grounds: a
 caller whose field was silently ignored believes it took effect. A create's
-title, brief or `parentTaskId` that is not a string is refused by name for the
+title, brief, `parentTaskId`, `mountId` or `folder` that is not a string is refused by name for the
 same reason (`notStringRefusal`, `http.ts`'s one sentence for a text field of the
 wrong type), and so is a note's body in `taskComments.ts` and a patch's `title`,
 `body`, `parentTaskId`, `mountId`, `folder` and `claimRunId` in

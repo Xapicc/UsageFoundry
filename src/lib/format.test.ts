@@ -24,6 +24,7 @@ import {
   resolveLiveModel,
   runPageNotes,
   storedFolderState,
+  taskProjectPayload,
 } from "./format";
 import type {
   TaskCommentDTO,
@@ -263,8 +264,8 @@ test("only a template that is genuinely absent is called deleted", () => {
  * started as an empty list, so every task with a project opened under a warning
  * that its folder was not in the workspace scan — until `/api/folders` answered,
  * and for good when it failed. `absent` is the only state that draws the
- * warning, and it must stay reachable, because a folder deleted under a task is
- * refused at the next save and this is where the operator sees that first.
+ * warning, and it must stay reachable, because a save keeps a folder deleted
+ * under a task as stored and this is the one place the form says it has gone.
  */
 
 const SCAN = [
@@ -292,6 +293,24 @@ test("a task with no project has nothing to keep, read or not", () => {
     // folder is cleared whenever the mount moves — and is nothing to warn of.
     assert.equal(storedFolderState("m1", "", scan), "none");
   }
+});
+
+// The edit's two cases go through `updateTask` in `tasks.test.ts`; these are the
+// halves no edit reaches. A creation that sent nothing would file every task on
+// no project with a 201, and half a pair the operator left is sent as neither.
+test("a creation always names its project, and a changed half pair is sent as none", () => {
+  assert.deepEqual(taskProjectPayload({ mountId: "m1", folder: "app" }, null), {
+    mountId: "m1",
+    folder: "app",
+  });
+  assert.deepEqual(taskProjectPayload({ mountId: "", folder: "" }, null), {
+    mountId: null,
+    folder: null,
+  });
+  assert.deepEqual(
+    taskProjectPayload({ mountId: "m2", folder: "" }, { mountId: "m1", folder: "app" }),
+    { mountId: null, folder: null },
+  );
 });
 
 /**

@@ -95,6 +95,7 @@ const { releaseTask, MAX_RELEASE_REASON } =
   require("./taskRelease") as typeof import("./taskRelease");
 const { listTaskComments } = require("./taskComments") as typeof import("./taskComments");
 const { claimTasksForRun } = require("./orchestrator") as typeof import("./orchestrator");
+const { taskProjectDraft, taskProjectPayload } = require("./format") as typeof import("./format");
 
 /**
  * A `runs` row with nothing on it but the columns the insert refuses to be
@@ -397,6 +398,27 @@ test("a title, body or parent that is not a string is refused by name, never coe
     ["parentTaskId", [randomUUID()]],
   ] as const) {
     const parsed = normalizeTaskInput({ title: "t", body: "b", [field]: value }, CREATION);
+    assert.equal(parsed.ok, false, `${field}: ${JSON.stringify(value)} was read as text`);
+    const error = !parsed.ok ? parsed.error : "";
+    assert.match(error, new RegExp(`"${field}" has to be a string when it is given`));
+    assert.doesNotMatch(error, /\[object Object\]/);
+  }
+});
+
+// The pair `normalizeTaskPatch` already refused at an edit, refused at a create
+// too: `String()` filed `["RepoOne"]` against the folder inside it, and `{…}`
+// was resolved as a folder named "[object Object]".
+test("a mount or folder that is not a string is refused by name at a create, never coerced", () => {
+  for (const [field, value] of [
+    ["mountId", [MOUNT]],
+    ["mountId", { id: MOUNT }],
+    ["folder", ["RepoOne"]],
+    ["folder", { path: "RepoOne" }],
+  ] as const) {
+    const parsed = normalizeTaskInput(
+      { title: "t", body: "b", mountId: MOUNT, folder: "RepoOne", [field]: value },
+      CREATION,
+    );
     assert.equal(parsed.ok, false, `${field}: ${JSON.stringify(value)} was read as text`);
     const error = !parsed.ok ? parsed.error : "";
     assert.match(error, new RegExp(`"${field}" has to be a string when it is given`));
@@ -717,6 +739,68 @@ test("a patch that changes nothing leaves updated_at where it was", () => {
 
   const renamed = updateTask(task.id, { title: "Renamed" }, { kind: "operator" });
   assert.ok(renamed.ok && renamed.task.updatedAt > LONG_AGO, "an edit that changes a field is");
+});
+
+/**
+ * The body the task page's editor sends for a save, through the same two
+ * helpers it builds that body with, so a retitle is the request the page makes
+ * rather than a patch shaped by hand to leave the project out.
+ */
+function editorSave(
+  task: Task,
+  draft: Partial<{ title: string; mountId: string; folder: string }>,
+) {
+  const dto = taskDTO(task);
+  const saved = taskProjectDraft(dto);
+  const parsed = normalizeTaskPatch({
+    title: draft.title ?? dto.title,
+    body: dto.body,
+    priority: dto.priority,
+    ...taskProjectPayload({ ...saved, ...draft }, saved),
+  });
+  if (!parsed.ok) throw new Error(`the editor's own body was refused: ${parsed.error}`);
+  return updateTask(task.id, parsed.value, { kind: "operator" });
+}
+
+test("a retitle keeps a task filed on the mount root on its project", () => {
+  // A run's `create_task` files under exactly `run.folder`, and a run may work
+  // on the mount root, whose path within the mount is "" — the spelling the
+  // editor's selects also use for "no folder", so the project read as half a
+  // pair and was sent as none, with a 200.
+  const task = file({ mountId: MOUNT, folder: ws });
+  assert.equal(taskDTO(task).relPath, "", "the fixture is the mount root");
+
+  const saved = editorSave(task, { title: "Retitled" });
+  assert.equal(saved.ok, true, !saved.ok ? saved.error : "");
+  assert.equal(getTask(task.id)?.mountId, MOUNT);
+  assert.equal(getTask(task.id)?.folder, ws);
+
+  // The control: a project the operator did take off still comes off.
+  const cleared = editorSave(task, { mountId: "", folder: "" });
+  assert.equal(cleared.ok, true);
+  assert.equal(getTask(task.id)?.mountId, null);
+  assert.equal(getTask(task.id)?.folder, null);
+});
+
+test("a retitle saves on a task whose folder has gone, and keeps the stored pair", () => {
+  const doomed = path.join(ws, "doomed-project");
+  fs.mkdirSync(doomed, { recursive: true });
+  const task = file({ mountId: MOUNT, folder: "doomed-project" });
+  fs.rmSync(doomed, { recursive: true });
+
+  // Re-sent, the pair was re-proved and the retitle refused with "No such
+  // folder", leaving another folder or no project as the only ways to save.
+  const saved = editorSave(task, { title: "Retitled" });
+  assert.equal(saved.ok, true, !saved.ok ? saved.error : "");
+  assert.equal(getTask(task.id)?.title, "Retitled");
+  assert.equal(getTask(task.id)?.mountId, MOUNT);
+  assert.equal(getTask(task.id)?.folder, doomed);
+
+  // The control: picking another folder is still proved at the door. Its own
+  // folder, because the listing cases count what is filed under `RepoOne`.
+  fs.mkdirSync(path.join(ws, "moved-to"));
+  const moved = editorSave(task, { folder: "moved-to" });
+  assert.equal(moved.ok && moved.task.folder, path.join(ws, "moved-to"));
 });
 
 test("a missing task is told apart from a refused one", () => {

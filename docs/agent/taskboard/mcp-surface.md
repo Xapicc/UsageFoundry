@@ -146,8 +146,10 @@ argument that is read as text and used as a filter, a prompt or a stored value:
 `list_tasks`' `mountId` and `folder` (an object `folder` read as `[object Object]`
 matched no row, which is an empty backlog, the one answer that stops a loop),
 `list_past_proposals`' `mountId`, `folder` and `query`,
-`list_recurring_failures`' `query`, `save_template`'s `prompt` and
-`propose_run`'s `promptOverride`. Absent and `null` keep their meaning. `taskIdShapeRefusal` in `tasks.ts` is asked first by
+`list_recurring_failures`' `query`, `save_template`'s `prompt` and `model`,
+`propose_run`'s `promptOverride` and `model`, `create_task`'s `mountId` and
+`folder` (asked by `resolveTaskFolder`, so `POST /api/tasks` too) and
+`release_task`'s `reason`, which a wrapped one was told it had not given. Absent and `null` keep their meaning. `taskIdShapeRefusal` in `tasks.ts` is asked first by
 `malformedTaskId` in the route: the run's `get_my_task`, `complete_task`,
 `release_task`, `comment_on_task` and `add_task_dependency`, and the chat's
 `get_task`, `comment_on_task` and `add_task_dependency` — and by both doors of

@@ -111,6 +111,7 @@ The paragraphs themselves live in `docs/agent/taskboard/`, one topic file per he
 - The editor is a route, not a card the board opens above itself.
 - The editor is never filled from a list row.
 - On an existing task, operator-only is its own press and never a field of the draft.
+- On an existing task, the project is sent only when the form changed it.
 - The thread is drawn on the task's own page, and it does not poll either.
 - The task's own page draws the neighbourhood, and the canvas draws while the form writes.
 - The assembly is in `src/lib` rather than beside the component because a graph assembled wrongly draws a plausible picture — an arrow the wrong way round is a readable drawing of the opposite…
