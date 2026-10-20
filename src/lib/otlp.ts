@@ -495,6 +495,34 @@ export function telemetrySpendSince(runId: string, since: number): TelemetrySpen
   return row ?? { requests: 0, costUSD: 0, tokens: 0 };
 }
 
+/**
+ * What one run's cycle in flight adds to a figure *other* runs are judged by —
+ * the install limit's and a workflow instance's — given the `--max-budget-usd`
+ * that cycle was spawned with.
+ *
+ * `telemetrySpendSince`, capped at that budget. The poster is not trusted to be
+ * the exporter (`parseLogsPayload`), and nothing bounds a positive figure it
+ * sends, so uncapped one `cost_usd: 1e9` ended every other run that reached
+ * its pre-cycle check on `install_cost` and halted its instance on
+ * `instance_cost`. The cap is the most the CLI lets the cycle spend, so it
+ * understates no real cycle — except by the one request that crosses it, which
+ * ends the cycle and reaches `spent_usd` as soon as it reports.
+ *
+ * Uncapped when the cycle was handed no budget: a run with no `maxRunCostUSD`
+ * has nothing bounding a cycle, so any ceiling here would be a guess, and one
+ * set too low blinds both limits to money really being spent. Explicitly so,
+ * because `Math.min(x, null)` is 0. The run's own live guard reads
+ * `telemetrySpendSince` in full, so a forger still stops itself.
+ */
+export function inFlightCostForOthers(
+  runId: string,
+  since: number,
+  cycleBudgetUSD: number | null,
+): number {
+  const reported = telemetrySpendSince(runId, since).costUSD;
+  return cycleBudgetUSD === null ? reported : Math.min(reported, cycleBudgetUSD);
+}
+
 /** One run's first-party total inside a window, with the run's current status. */
 export interface TelemetryRunTotal {
   runId: string;

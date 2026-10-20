@@ -8,7 +8,7 @@ import {
   type InstallBudgetPolicy,
   type InstallProgress,
 } from "./budget";
-import { telemetrySpendSince } from "./otlp";
+import { inFlightCostForOthers } from "./otlp";
 import { readCodexCycle } from "./codexRollout";
 import { getSettings } from "./settings";
 
@@ -31,7 +31,9 @@ import { getSettings } from "./settings";
  * dated per turn so a day's window can be taken out of it), and — for cycles in
  * flight — `telemetrySpendSince`,
  * through the same one door and with the same per-run, per-cycle bound the live
- * run guard and the instance guard already use. None of it reaches
+ * run guard and the instance guard already use, capped at what each cycle could
+ * have spent (`inFlightCostForOthers`) because every other run is judged by it.
+ * None of it reaches
  * `buildSnapshot()`, `runs.spent_usd` or any existing meter; this is its own
  * reading, with the same display-versus-guard split everything else here makes.
  */
@@ -109,9 +111,10 @@ export function installSpend(now = Date.now()): InstallProgress {
 
   const runs = db()
     .prepare(
-      `SELECT id, status, spent, est, cycleStartedAt
+      `SELECT id, status, spent, est, cycleStartedAt, cycleBudgetUSD
          FROM (SELECT id, status, spent_usd AS spent, spent_usd_est AS est,
                       active_started_at AS cycleStartedAt,
+                      active_budget_usd AS cycleBudgetUSD,
                       COALESCE(finished_at,
                                CASE WHEN status IN ('paused', 'waiting-for-stack')
                                     THEN paused_at END)
@@ -125,6 +128,7 @@ export function installSpend(now = Date.now()): InstallProgress {
     spent: number;
     est: number;
     cycleStartedAt: number | null;
+    cycleBudgetUSD: number | null;
   }>;
 
   let spentUSD = 0;
@@ -137,7 +141,7 @@ export function installSpend(now = Date.now()): InstallProgress {
     // `active_started_at` when the container dies mid-cycle, so a terminal row
     // can still name a cycle that ended hours ago.
     if (run.status === "running" && run.cycleStartedAt !== null) {
-      spentGuardUSD += telemetrySpendSince(run.id, run.cycleStartedAt).costUSD;
+      spentGuardUSD += inFlightCostForOthers(run.id, run.cycleStartedAt, run.cycleBudgetUSD);
     }
   }
 

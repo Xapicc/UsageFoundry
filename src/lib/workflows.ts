@@ -118,7 +118,7 @@ import {
   updateTask,
   type TaskLinkReading,
 } from "./tasks";
-import { telemetrySpendSince } from "./otlp";
+import { inFlightCostForOthers } from "./otlp";
 import type { UsageSnapshot } from "./windows";
 import {
   chatGuards,
@@ -2827,7 +2827,9 @@ interface InstanceRow {
  * run reading its own current cycle for its own live guard; it is now also an
  * instance reading each member's current cycle for the instance guard. Same
  * function, same per-run and per-cycle bound, same destination — a `*Guard*`
- * figure that no display and no meter ever sees. Nothing here reaches
+ * figure that no display and no meter ever sees — but capped at what the cycle
+ * could have spent (`inFlightCostForOthers`), because one member's figure halts
+ * every other. Nothing here reaches
  * `runs.spent_usd`, `buildSnapshot()` or the dashboard.
  *
  * Bounded to `running` members for the telemetry half, for the reason
@@ -2848,6 +2850,8 @@ export interface MemberSpendRow {
   spent: number;
   est: number;
   cycleStartedAt: number | null;
+  /** `active_budget_usd`: the cap on what that cycle's telemetry may add. */
+  cycleBudgetUSD: number | null;
 }
 
 /**
@@ -2969,7 +2973,7 @@ export function sumMemberSpend(rows: readonly MemberSpendRow[]): InstanceSpend {
     spentUSD += row.spent;
     spentGuardUSD += row.spent + row.est;
     if (row.status === "running" && row.cycleStartedAt !== null) {
-      spentGuardUSD += telemetrySpendSince(row.id, row.cycleStartedAt).costUSD;
+      spentGuardUSD += inFlightCostForOthers(row.id, row.cycleStartedAt, row.cycleBudgetUSD);
     }
   }
   // One count for both readers, because for a member they are one fact: a
@@ -2987,7 +2991,8 @@ export function sumMemberSpend(rows: readonly MemberSpendRow[]): InstanceSpend {
 const MEMBER_SPEND_COLUMNS =
   `SELECT r.id AS id, r.status AS status, r.provider AS provider,
           r.spent_usd AS spent,
-          r.spent_usd_est AS est, r.active_started_at AS cycleStartedAt
+          r.spent_usd_est AS est, r.active_started_at AS cycleStartedAt,
+          r.active_budget_usd AS cycleBudgetUSD
      FROM workflow_instance_runs w
      JOIN runs r ON r.id = w.run_id`;
 

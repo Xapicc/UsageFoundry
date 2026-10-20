@@ -55,6 +55,7 @@ assert.equal(
 const { createRun, getRun, reopenRun, runEvents } =
   require("./orchestrator") as typeof import("./orchestrator");
 const { saveSettings } = require("./settings") as typeof import("./settings");
+const { db } = require("./db") as typeof import("./db");
 
 interface Cycle {
   /** What this child spends of its own. */
@@ -74,8 +75,12 @@ interface FailedResume {
 
 /** What each child the loop spawns will do, in spawn order. */
 let script: Array<Cycle | FailedResume> = [];
-/** What each child was asked to `--resume`, and the limit it was handed. */
-let spawns: Array<{ resumed: string | null; ceiling: string | null }> = [];
+/**
+ * What each child was asked to `--resume`, the limit it was handed, and the
+ * limit its run's row says it was handed.
+ */
+let spawns: Array<{ resumed: string | null; ceiling: string | null; stamped: number | null }> =
+  [];
 /** Each session's saved ledger, as the transcript's `cost-state` would hold it. */
 const ledgers = new Map<string, number>();
 
@@ -96,7 +101,10 @@ childProcess.spawn = (bin: string, args: readonly string[], options: unknown) =>
   const cycle = script[n];
   assert.ok(cycle, `the loop spawned work cycle ${n + 1}, and the script has ${script.length}`);
   const resumed = flag(args, "--resume");
-  spawns.push({ resumed, ceiling: flag(args, "--max-budget-usd") });
+  const row = db()
+    .prepare("SELECT active_budget_usd AS stamped FROM runs WHERE active_started_at IS NOT NULL")
+    .get() as { stamped: number | null };
+  spawns.push({ resumed, ceiling: flag(args, "--max-budget-usd"), stamped: row.stamped });
 
   const stdout = new PassThrough();
   const child = Object.assign(new EventEmitter(), {
@@ -244,6 +252,12 @@ describe("a run whose work cycles resume one session", () => {
     assert.deepEqual(
       spawns.map((s) => s.ceiling),
       ["10", "6", "2"],
+    );
+    // And the row says the same, because the install and workflow limits cap
+    // what the cycle's own telemetry adds to their figures at it.
+    assert.deepEqual(
+      spawns.map((s) => s.stamped),
+      [10, 6, 2],
     );
   });
 

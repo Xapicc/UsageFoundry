@@ -5635,6 +5635,7 @@ describe("sumMemberSpend — a member whose provider reports no cost", () => {
     spent,
     est,
     cycleStartedAt: null,
+    cycleBudgetUSD: null,
   });
 
   it("counts a Codex member as unmeasured rather than adding its zero", () => {

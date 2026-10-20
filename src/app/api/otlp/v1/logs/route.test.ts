@@ -29,6 +29,12 @@ import { after, before, describe, it } from "node:test";
  * for every later cycle too — so the live guard never tripped and nothing was
  * logged. They drive the route and read the guard's own figure, because that
  * figure is what the forgery was aimed at.
+ *
+ * The last one is the other direction: a *positive* cost the poster made up,
+ * read by the install limit and a workflow instance's limit, which sum every
+ * running run's cycle in flight and so judge every other run by it. One
+ * `cost_usd: 1e9` ended each run that reached its pre-cycle check while the
+ * forging cycle ran, and halted its instance's members.
  */
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "uf-otlp-route-"));
@@ -226,5 +232,73 @@ describe("a record that would lower the live guard's figure", () => {
       0,
       "a cycle that has not started yet already has records",
     );
+  });
+});
+
+describe("a record that would raise another run's figure", () => {
+  it("adds no more to the install and workflow figures than the forging cycle could have spent", async () => {
+    const installBudget = await import("../../../../../lib/installBudget");
+    const settings = await import("../../../../../lib/settings");
+    const workflows = await import("../../../../../lib/workflows");
+    const db = dbMod.db();
+    const cycleStart = Date.now() - 1000;
+
+    // The forger is in a cycle spawned with `--max-budget-usd 3`: a $5 limit
+    // with $2 already spent. The bystander is between cycles, at the pre-cycle
+    // check the install limit refuses at.
+    const insertRun = db.prepare(
+      `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, created_at,
+                         spent_usd, active_started_at, active_budget_usd)
+       VALUES (?, '/workspace', 'work', 'running', '{"maxIterations":5,"maxRunCostUSD":5}', 5, ?, ?, ?, ?)`,
+    );
+    insertRun.run("run-forger", cycleStart, 2, cycleStart, 3);
+    insertRun.run("run-bystander", cycleStart, 1, null, null);
+    db.prepare(
+      "INSERT INTO workflows (id, name, graph, created_at, updated_at) VALUES ('wf-forged', 'w', '{}', ?, ?)",
+    ).run(cycleStart, cycleStart);
+    db.prepare(
+      `INSERT INTO workflow_instances
+         (id, workflow_id, workflow_name, graph, created_at, status, instance_budget)
+       VALUES ('inst-forged', 'wf-forged', 'w', '{"nodes":[],"edges":[]}', ?, 'started',
+               '{"maxInstanceCostUSD":20}')`,
+    ).run(cycleStart);
+    const insertMember = db.prepare(
+      "INSERT INTO workflow_instance_runs (instance_id, node_id, node_name, position, run_id)" +
+        " VALUES ('inst-forged', ?, ?, ?, ?)",
+    );
+    insertMember.run("n0", "Forger", 0, "run-forger");
+    insertMember.run("n1", "Bystander", 1, "run-bystander");
+
+    const bearer = otlp.ingestTokenFor("run-forger");
+    const guardFigures = () => ({
+      install: installBudget.installSpend().spentGuardUSD,
+      instance: workflows.instanceSpend("inst-forged").spentGuardUSD,
+    });
+
+    // Real spend under the cap counts in full: a cap that understated it would
+    // blind both limits to money actually being spent.
+    const real = await post(payload(record("req_real_cycle", { cost_usd: 1.25 }, Date.now())), bearer);
+    assert.equal(real.status, 200);
+    assert.deepEqual(guardFigures(), { install: 2 + 1 + 1.25, instance: 2 + 1 + 1.25 });
+
+    const forged = await post(payload(record("req_forged", { cost_usd: 1e9 }, Date.now())), bearer);
+    assert.equal(forged.status, 200);
+    assert.equal(
+      otlp.telemetrySpendSince("run-forger", cycleStart).costUSD,
+      1e9 + 1.25,
+      "the forger's own live guard still reads what it posted, and stops it",
+    );
+    assert.deepEqual(
+      guardFigures(),
+      { install: 2 + 1 + 3, instance: 2 + 1 + 3 },
+      "another run's figure moved past what the forging cycle could have spent",
+    );
+
+    settings.saveSettings({ installDailyCostLimitUSD: 50 });
+    try {
+      assert.equal(installBudget.installBudgetVerdict(), null, "the bystander is refused on install_cost");
+    } finally {
+      settings.saveSettings({ installDailyCostLimitUSD: null });
+    }
   });
 });

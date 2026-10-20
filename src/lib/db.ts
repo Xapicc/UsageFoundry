@@ -1645,6 +1645,15 @@ function migrate(db: Database.Database) {
   // clears either when the container dies mid-cycle.
   addColumn(db, "runs", "active_started_at", "INTEGER");
 
+  // The `--max-budget-usd` that cycle was spawned with, or null when it was
+  // handed none. Stamped and cleared with `active_started_at`, for the one
+  // reader that needs it: the install and instance limits sum every running
+  // run's cycle in flight from telemetry the cycle can post itself, and this is
+  // the most that cycle could really have spent — see `inFlightCostForOthers`.
+  // Stored rather than recomputed from the row, because the guard figure the
+  // remainder was taken from is a local in `startRun`'s frame.
+  addColumn(db, "runs", "active_budget_usd", "REAL");
+
   // The orchestrator block that started this run, or the loop block whose pass
   // it is — null for a block a person wrote into the graph. A plain column
   // rather than a foreign key, the shape the run_id beside it already has: this
