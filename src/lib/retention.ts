@@ -12,6 +12,7 @@ import {
   emitRunEvent,
   getRun,
   resolveWorkspaceFolder,
+  slotHolder,
   TERMINAL_STATUSES,
   worktreeStores,
 } from "./orchestrator";
@@ -523,9 +524,11 @@ export async function sweepCheckouts(now = Date.now()): Promise<{
     // checkout `allocateSlotPath` found clean, which is exactly the profile of
     // a candidate here. Removing one under a run that has just claimed it costs
     // that run its working tree.
-    const heldNow = activeRuns().some(
-      (r) => r.worktree_path === row.worktree_path,
-    );
+    //
+    // A verify command's hold counts as well as a run: a review block switches a
+    // finished run's slot to another branch for its check, and the newest run
+    // recorded in it is still a settled one past the horizon.
+    const heldNow = slotHolder(row.worktree_path) !== null;
 
     const verdict = planCheckoutReclaim(
       {

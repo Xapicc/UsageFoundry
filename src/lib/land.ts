@@ -2601,6 +2601,16 @@ export async function resolveCheckout(
       // — falling through on a dirty slot was a guaranteed failure wearing a
       // fallback's clothes, and it reported itself as `Preparing worktree`.
       // The choice here is reuse or refuse, never a second checkout.
+      //
+      // A verify command running in the slot is the same case: the merge would
+      // open in the tree it is checking, and the check would then pass on it.
+      const underCheck = checkHoldsSlot(
+        own,
+        branch,
+        "a resolution would open its merge in the tree the command is checking",
+        "Nothing was started.",
+      );
+      if (underCheck) throw new Error(underCheck);
       const [status, merging] = await Promise.all([
         git(own, ["status", "--porcelain"], NO_CLOCK),
         mergeHeadIn(own),
@@ -4062,7 +4072,61 @@ async function verifyHeldSlot(
         ),
     );
   }
-  return verdict;
+  const written = await writtenDuringCheck(slot, branch, asker);
+  return written ?? verdict;
+}
+
+/**
+ * The refusal for a check that exited 0 in a tree something else wrote to, or
+ * null when the slot is as the command found it.
+ *
+ * The tip comparison above cannot see a writer that has not committed: an open
+ * merge and an edited tracked file both leave the branch's ref where it was,
+ * while the command read a tree that was part one thing and part another. The
+ * slot was proved clean before the command, so either of these afterwards is a
+ * writer the hold did not keep out. Untracked and ignored files are not looked
+ * at — build output and caches are what a command writes — and a command that
+ * itself rewrites a tracked file is refused here too, because from the slot
+ * that is the same picture; its output belongs in an ignored path.
+ */
+async function writtenDuringCheck(
+  slot: string,
+  branch: string,
+  asker: VerifyAsker,
+): Promise<VerifyOutcome | null> {
+  const [status, merging] = await Promise.all([
+    git(slot, ["status", "--porcelain", "-z"], { ...NO_CLOCK, trim: false }),
+    mergeHeadIn(slot),
+  ]);
+  const end = verifyRefusalEnd(
+    asker,
+    (exit) => `Nothing was ${EXIT_WORDS[exit].done}. Try again once nothing else is writing to it.`,
+  );
+  if (!status.ok || merging === null) {
+    return notRun(
+      `The verify command passed, but git could not read what ${slot} holds afterwards ` +
+        `(${gitFailureLine(status.stderr) || "unknown error"}), so there is no telling whether ` +
+        `the check saw what ${branch} points at.${end}`,
+    );
+  }
+  if (merging) {
+    return notRun(
+      `A merge was opened in ${slot} while the verify command ran, so what it checked is not ` +
+        `what ${branch} points at.${end}`,
+    );
+  }
+  const dirt = parseStatusZ(status.stdout)
+    .filter((file) => file.code !== "??")
+    .map((file) => file.path);
+  if (dirt.length > 0) {
+    const rest = dirt.length - DIRT_NAMED;
+    return notRun(
+      `${slot} has uncommitted changes to ${dirt.slice(0, DIRT_NAMED).join(", ")}` +
+        `${rest > 0 ? ` and ${rest} more` : ""} after the verify command ran, so what it checked ` +
+        `is not what ${branch} points at.${end}`,
+    );
+  }
+  return null;
 }
 
 /**
@@ -4176,6 +4240,26 @@ const HELD_WHY = {
   check: "another verify command is running in it",
   run: "a run is working in it",
 } as const;
+
+/**
+ * Why a door that writes to or removes `slot` has to wait, or null when no
+ * verify command is running in it.
+ *
+ * `holdSlot` and `borrowSlot` keep other checks, runs and continuations out of
+ * the slot; this is the same exclusion asked from the doors that do not go
+ * through them. A command's tree is the branch's only while nothing else writes
+ * to it, and a slot switched for a check is a later run's checkout, which no
+ * press on this run's branch owns. `doing` says what the press would have done
+ * to it and `left` what that leaves undone.
+ */
+function checkHoldsSlot(slot: string, branch: string, doing: string, left: string): string | null {
+  if (slotHolder(slot) !== "check") return null;
+  const name = path.basename(slot);
+  const where = isSlotBorrowed(slot)
+    ? `A verify command has switched ${name}, a later run's checkout, to ${branch} for its check`
+    : `A verify command is running its check in ${name}, where ${branch} is checked out`;
+  return `${where}, so ${doing}. ${left} Try again once the check has finished.`;
+}
 
 /**
  * The refusal when the switch cannot be made: the original sentence, then why
@@ -4756,6 +4840,15 @@ export async function deleteBranch(runId: string): Promise<LandOutcome> {
             reason: `Its checkout at ${held} still holds uncommitted work. Clear it first.`,
           };
         }
+        // Asked in the turn that starts the removal, for `purgeClaimedBranch`'s
+        // reason: a plain `worktree remove` still takes the ignored files with it.
+        const underCheck = checkHoldsSlot(
+          held,
+          state.branch,
+          "deleting now would remove the checkout from under the command",
+          "Nothing was deleted.",
+        );
+        if (underCheck) return { ok: false, reason: underCheck };
         // Load-bearing, not tidiness: `update-ref` below deletes a ref a
         // checkout is standing on without a word, where `git branch` refused.
         // Removing the holder — and git refusing to remove the operator's own
@@ -5184,6 +5277,18 @@ async function purgeClaimedBranch(
 
         const status = await git(held, ["status", "--porcelain", "-z"], { trim: false });
         lost = status.ok ? parseStatusZ(status.stdout).length : null;
+
+        // Asked after the status read, in the turn that starts the removal: a
+        // check can take its hold during that await. While a verify command has
+        // the slot — or has switched a later run's checkout to this branch — this
+        // press owns neither the directory nor what is ignored in it.
+        const underCheck = checkHoldsSlot(
+          held,
+          branch,
+          "purging now would delete the checkout from under the command",
+          "Nothing was deleted.",
+        );
+        if (underCheck) return { ok: false, reason: underCheck };
 
         // `--force` is the whole difference from `deleteBranch`, which leaves a
         // checkout with work in it alone. Here that work is what is being purged.
