@@ -5995,7 +5995,8 @@ export async function branchInventory(
  * row, so asking the operator to find out by pressing would be asking them to
  * spend a round trip on an answer this route already has. The other is
  * `unsettledBranchRefusal`: a branch its run, a later link or a live loop pass
- * can still commit to, which lifts when that settles.
+ * can still commit to, which lifts when that settles — as does a conflict
+ * resolution's hold on it, `resolutionHolds`.
  *
  * `planDelivery` and `deliverHold` decide it, the same two the press asks, so
  * the button and the endpoint cannot disagree about whether delivery is
@@ -6019,10 +6020,17 @@ export async function deliveryState(
   base: string | null;
   /** The pull request a previous press opened, if there was one. */
   delivered: { url: string; number: number; at: number } | null;
+  /**
+   * The branch has commits the newest push to that pull request did not carry.
+   * Asked whether or not a press is possible, so a refused card still does not
+   * call a moved branch delivered.
+   */
+  movedSincePush: boolean;
 }> {
   const run = getRun(runId);
   const state = run ? (known !== undefined ? known : await landState(runId)) : null;
   const delivered = deliveredPullRequest(runId);
+  const movedSincePush = delivered ? await branchMovedSincePush(runId) : false;
   if (!run || !state) {
     return {
       possible: false,
@@ -6031,6 +6039,7 @@ export async function deliveryState(
       head: null,
       base: null,
       delivered,
+      movedSincePush,
     };
   }
 
@@ -6051,6 +6060,23 @@ export async function deliveryState(
       head: null,
       base: null,
       delivered,
+      movedSincePush,
+    };
+  }
+
+  // After the settled-run hold and before anything about the install: a branch
+  // with a resolution under way is one whose merge commit is about to land on
+  // it, so what a press would push is the pre-resolution tip. Lifts when the
+  // resolution finishes, like the hold above.
+  if (resolutionHolds(run)) {
+    return {
+      possible: false,
+      reason: deliverResolutionRefusal(state.branch),
+      remote: null,
+      head: null,
+      base: null,
+      delivered,
+      movedSincePush,
     };
   }
 
@@ -6067,6 +6093,7 @@ export async function deliveryState(
       head: null,
       base: null,
       delivered,
+      movedSincePush,
     };
   }
 
@@ -6081,6 +6108,7 @@ export async function deliveryState(
       head: null,
       base: null,
       delivered,
+      movedSincePush,
     };
   }
 
@@ -6099,6 +6127,7 @@ export async function deliveryState(
       head: null,
       base: null,
       delivered,
+      movedSincePush,
     };
   }
   return {
@@ -6108,6 +6137,7 @@ export async function deliveryState(
     head: plan.head,
     base: plan.base,
     delivered,
+    movedSincePush,
   };
 }
 
@@ -6131,21 +6161,73 @@ export async function deliveryState(
 export function deliveredPullRequest(
   runId: string,
 ): { url: string; number: number; at: number } | null {
-  const run = getRun(runId);
+  const row = newestDelivery(getRun(runId));
+  return row ? { url: row.url, number: row.number, at: row.at } : null;
+}
+
+/**
+ * `deliveredPullRequest`'s row, with the run that holds it and the tip its
+ * newest push carried. Kept off the public shape, which travels to the card.
+ */
+function newestDelivery(
+  run: RunRow | null,
+): { runId: string; url: string; number: number; at: number; tip: string | null } | null {
   // No branch, nothing delivered: `deliverRun` refuses a run without one.
   if (!run?.worktree_branch || !run.repo_root) return null;
   const row = db()
     .prepare(
-      `SELECT delivered_pr_url AS url, delivered_pr_number AS number, delivered_at AS at
+      `SELECT id AS runId, delivered_pr_url AS url, delivered_pr_number AS number,
+              delivered_at AS at, delivered_tip AS tip
          FROM runs
         WHERE repo_root = ? AND worktree_branch = ? AND delivered_pr_url IS NOT NULL
         ORDER BY delivered_at DESC
         LIMIT 1`,
     )
     .get(run.repo_root, run.worktree_branch) as
-    | { url: string; number: number; at: number }
+    | { runId: string; url: string; number: number; at: number; tip: string | null }
     | undefined;
   return row ?? null;
+}
+
+/**
+ * Whether the branch has moved since the push its pull request last carried.
+ *
+ * Against `runs.delivered_tip`, which Deliver writes with the pull request and
+ * again with each push-only update, and not against `refs/remotes/origin/<branch>`:
+ * that ref is maintained by any `git fetch` of the operator's checkout and goes
+ * when `fetch --prune` meets a branch GitHub deleted after the merge, and a
+ * pull request that was merged and cleaned up would then read as a branch with
+ * a push waiting, whose press would recreate the remote branch it was deleted
+ * from. False where the tip was never recorded (a row delivered before the
+ * column) or cannot be read, because a button offered on a guess is a push.
+ */
+export async function branchMovedSincePush(runId: string): Promise<boolean> {
+  const run = getRun(runId);
+  const delivery = newestDelivery(run);
+  const repoRoot = run?.repo_root ? repoPathFor(run.repo_root) : null;
+  if (!run?.worktree_branch || !delivery?.tip || !repoRoot) return false;
+  const tip = await git(
+    repoRoot,
+    ["rev-parse", "--verify", `refs/heads/${run.worktree_branch}`],
+    NO_CLOCK,
+  );
+  return tip.ok && tip.stdout !== delivery.tip;
+}
+
+/**
+ * Why Deliver will not push while a conflict resolution holds the branch, in
+ * `commitRefusal`'s words: its merge is half-done in the checkout, and the
+ * commit that finishes it is about to land on the branch, so what a press
+ * pushed now would be the tip before it. The pull request would then be left
+ * without the resolution the operator paid for, and nothing a person can press
+ * afterwards would put it there.
+ */
+function deliverResolutionRefusal(branch: string): string {
+  return (
+    `Claude is resolving a conflict on ${branch}, and its merge is half-done in ` +
+    "that checkout. Delivering now would publish the branch without the resolution. " +
+    "Wait for the resolution to finish."
+  );
 }
 
 /**
@@ -6194,6 +6276,9 @@ export async function deliverRun(
   // of the run's status decides nothing here.
   const unsettled = deliverHoldNow(run);
   if (unsettled) return { ok: false, reason: unsettled };
+  if (resolutionHolds(run)) {
+    return { ok: false, reason: deliverResolutionRefusal(run.worktree_branch ?? "its branch") };
+  }
 
   const state = await landState(runId);
   if (!state) return { ok: false, reason: "This run has no branch to deliver." };
@@ -6339,6 +6424,13 @@ async function pushAndOpen(a: {
   });
   if (!destination.ok) return { ok: false, reason: destination.reason };
 
+  // Read with the seeded files below and before them, so the last await is the
+  // one before the push and what is recorded as pushed is no newer than what
+  // was checked. A commit that lands between this read and the spawn is pushed
+  // with the rest and recorded behind it, which only over-offers one push.
+  const tipRead = await git(folder, ["rev-parse", "--verify", `refs/heads/${plan.head}`], NO_CLOCK);
+  const pushedTip = tipRead.ok ? tipRead.stdout : null;
+
   // Of the branch as it is pushed rather than as `landState` read it before the
   // check: a commit made during the check — the card's Commit button runs
   // `add -A` — is pushed with the rest. Nothing after it awaits before the
@@ -6357,6 +6449,19 @@ async function pushAndOpen(a: {
   if (!current) return { ok: false, reason: "No such run." };
   const unsettled = deliverHoldNow(current);
   if (unsettled) return { ok: false, reason: unsettled };
+  // A resolution can start during the check too: nothing but this read stands
+  // between its merge and a push of the tip before it.
+  if (resolutionHolds(current)) {
+    return { ok: false, reason: deliverResolutionRefusal(plan.head) };
+  }
+  // A branch with an open pull request whose tip has moved is pushed and not
+  // opened again: GitHub refuses a second open as already existing, and the
+  // push is what the pull request was missing.
+  const existing = newestDelivery(current);
+  const updating =
+    existing !== null && existing.tip !== null && pushedTip !== null && existing.tip !== pushedTip
+      ? existing
+      : null;
 
   // Again where nothing awaits before the push's spawn, `landRun`'s second
   // read: a push begun during the grace is one the exit can cut off before the
@@ -6389,6 +6494,24 @@ async function pushAndOpen(a: {
     };
   }
 
+  if (updating) {
+    db().prepare("UPDATE runs SET delivered_tip = ? WHERE id = ?").run(pushedTip, updating.runId);
+    emitRunEvent({
+      runId,
+      ts: Date.now(),
+      kind: "deliver",
+      payload: {
+        branch: plan.head,
+        base: plan.base,
+        remote: `${plan.remote.owner}/${plan.remote.repo}`,
+        url: updating.url,
+        number: updating.number,
+        updated: true,
+      },
+    });
+    return { ok: true, url: updating.url, number: updating.number };
+  }
+
   const opened = await openPullRequest({
     // The same token the push used, not `openPullRequest`'s install-wide
     // default: a repository scoped to its own credential must not open its
@@ -6411,9 +6534,9 @@ async function pushAndOpen(a: {
   const deliveredAt = Date.now();
   db()
     .prepare(
-      "UPDATE runs SET delivered_pr_url = ?, delivered_pr_number = ?, delivered_at = ? WHERE id = ?",
+      "UPDATE runs SET delivered_pr_url = ?, delivered_pr_number = ?, delivered_at = ?, delivered_tip = ? WHERE id = ?",
     )
-    .run(opened.pr.url, opened.pr.number, deliveredAt, runId);
+    .run(opened.pr.url, opened.pr.number, deliveredAt, pushedTip, runId);
 
   // On the run's own timeline, the way a land is: this is the other exit, and
   // the question "where did this work go" is asked on the run's page.

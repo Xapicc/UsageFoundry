@@ -55,7 +55,25 @@ not, and `land.test.ts` pins that Land's answer is still exactly it.
 `deliverRun` asks it before any git runs, from a fresh read of the run and its
 chain, and asks again after the verify gate with nothing awaited before the
 push, because a check can run for `VERIFY_TIMEOUT_MS`. Deliver asks as a
-person, `null` for the asker, since nothing in the run loop reaches it. **And
+person, `null` for the asker, since nothing in the run loop reaches it. **A
+branch with a conflict resolution under way is one that can still move**: its
+merge commit is about to land on it, so a press pushed the tip before the
+resolution and left the pull request without what the operator had just paid a
+model for. Measured on 2026-10-16 in `deliverRun.test.ts`' harness, the card
+answered `branchResolving: true` and `delivery.possible: true` in one response,
+the press pushed and opened the pull request, and when the merge then committed
+the remote stayed behind it while the card read Delivered. `resolutionHolds`
+(the checkout claim a resolution holds, then its `running` row) is asked in
+`commitRefusal`'s words from `deliveryState`, ahead of `landState` in
+`deliverRun`, and beside the second `deliverHoldNow` with nothing awaited before
+the push, and the card's `canDeliver` requires `!resolving`. The first read
+is the one that spares the verify gate, which runs the branch's own code for up
+to `VERIFY_TIMEOUT_MS`: the second would refuse in the same words after it, so
+a verify command that leaves a mark is what pins the first. **Deliver reads the
+claim and does not hold it**, unlike Commit and Purge
+([conflicts-and-resolution.md](conflicts-and-resolution.md)): it writes nothing in the run's
+checkout, and a resolution that starts after the last read finds the tip already
+pushed and commits on top of it, which is the moved branch below. **And
 the body is checked before anything runs**: the route cast it, so `null` or
 `{"title": 5}` threw at `.trim()` after `git push` had published the branch,
 answered 500 and wrote no record. It now goes through `readJsonObject` and
@@ -70,10 +88,34 @@ reasons are standing conditions of the install (no credential for this
 repository, a remote that is not GitHub, a branch that is already the target)
 or a branch something can still commit to, never something only a press would
 find out. What it does *not* pre-empt is the verify gate and the push, which are
-about the branch now. Offered once per pull request, and replaced afterwards by
-a link to it: a second press would push again, updating the pull request, and
-then be refused by GitHub's "already exists", so what it reported and what it
-did would disagree. **The link is read off the run's row, per branch, and never
+about the branch now. Opened once per pull request, and replaced afterwards by
+a link to it: a second open would be refused by GitHub's "already exists", so
+what it reported and what it did would disagree. **A branch that has moved since
+its last push is offered the push alone.** That reasoning is about the report of
+a second *open* and says nothing of a tip that moved after the push, which is
+the follow-up an operator starts to answer review comments: it commits on the
+same ref. Measured on 2026-10-16 in the same harness, the follow-up's card read
+`delivered: {#41}` with the remote still at the first run's tip and nothing to
+press, and a deliver block skipped the branch on the same read and passed with
+the new work unpublished. `runs.delivered_tip` records the tip each push to the
+pull request carried, written with the link and again by a push-only update, and
+`branchMovedSincePush` compares it with `refs/heads/<branch>`.
+`deliveryState` carries the answer as `movedSincePush`, asked whether or not a
+press is possible, so a refused card does not say Delivered of a moved branch
+either. When it is true the card reads "Opened … — pull request #N, behind this
+branch" and offers **Push to pull request #N**; `pushAndOpen` pushes, opens
+nothing, returns the existing address, writes the new tip on the row that holds
+the link, and puts a `deliver` event with `updated: true` on the run that
+pressed. A branch at the pushed tip is unchanged: the link only, and a route
+press still meets GitHub's refusal. **The record, and not
+`refs/remotes/origin/<branch>`**, which needs no column and was the other
+candidate: that ref moves with any `git fetch` of the operator's checkout and is
+deleted by `fetch --prune` once GitHub removes a merged pull request's branch,
+so a merged and cleaned-up pull request would read as a branch with a push
+waiting, whose press recreates the remote branch it was deleted from. **A row
+delivered before the column holds null and reads as not moved**: the `deliver`
+event carries the address and not the commit, so nothing says what such a press
+pushed, and a button offered on a guess is a push. **The link is read off the run's row, per branch, and never
 off the `deliver` event.** The event was the only record, and it failed both
 ways: `sweepRunEvents` deletes a settled run's events after
 `eventRetentionDays`, after which the card offered the press again, and it was

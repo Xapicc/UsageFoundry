@@ -1138,6 +1138,13 @@ function migrate(db: Database.Database) {
     `);
   })();
 
+  // The branch tip the newest push to that pull request carried, so the card
+  // can tell a branch that has moved since from one the remote has. Null on a
+  // row delivered before this column existed, and read as "not known to have
+  // moved": nothing records what such a press pushed, and no backfill is
+  // possible, because the `deliver` event carries the address and not the commit.
+  addColumn(db, "runs", "delivered_tip", "TEXT");
+
   // The agent this run was started **as**, frozen as the whole definition
   // rather than as a reference to an `agents` row.
   //

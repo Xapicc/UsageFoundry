@@ -406,6 +406,24 @@ describe("a deliver block against a real repository", () => {
     assert.equal(opened.length, 1, "GitHub would have refused the second as already existing");
   });
 
+  it("pushes the new commits of a delivered branch that moved since, and opens no second pull request", async () => {
+    const s = scene("moved");
+    const first = await land.deliverRun(s.runId);
+    assert.equal(first.ok, true, first.ok ? "" : first.reason);
+    fs.writeFileSync(path.join(s.slot, "followup.txt"), "addressing review\n");
+    git(s.slot, "add", "followup.txt");
+    git(s.slot, "commit", "-qm", "follow-up the PR asked for");
+    const tip = git(s.slot, "rev-parse", "HEAD").trim();
+    assert.notEqual(remoteTip(s), tip, "the scene starts with the remote behind the branch");
+
+    const block = await settleBlock(s);
+
+    assert.equal(block.status, "emitted", block.error ?? "");
+    assert.match(block.error ?? "", /Delivered 1 branch\(es\): uf\/moved — https:\/\/github\.com\/acme\/moved\/pull\/71/);
+    assert.equal(remoteTip(s), tip, "the block passed having published nothing of the new work");
+    assert.equal(opened.length, 1, "GitHub would have refused the second as already existing");
+  });
+
   it("fails the block, and pushes nothing, when the verify command refuses the branch", async () => {
     const s = scene("verify");
     const refuse = path.join(root, "refuse.js");

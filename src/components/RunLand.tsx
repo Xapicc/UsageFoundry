@@ -365,7 +365,9 @@ export function RunLand({ run }: { run: RunDTO }) {
       if (res.ok) {
         setNote(
           res.data.number
-            ? `Pull request #${res.data.number} is open.`
+            ? updatesPullRequest
+              ? `Pushed to pull request #${res.data.number}.`
+              : `Pull request #${res.data.number} is open.`
             : "The branch was pushed.",
         );
       } else {
@@ -432,14 +434,18 @@ export function RunLand({ run }: { run: RunDTO }) {
   // Delete withheld for a stopped rebase is not replaced by the destructive door.
   const canPurge = state.branchExists && settled && !deletable && !resolving;
   // The other exit, and the only one here that leaves the machine. Offered once
-  // per pull request: a second press would push again — updating the pull
-  // request — and then be refused by GitHub's "already exists", so what it
-  // reports and what it did would disagree. Delivered, this becomes the link.
+  // per pull request: a second open would be refused by GitHub's "already
+  // exists", so what it reports and what it did would disagree. Delivered, this
+  // becomes the link, until the branch moves: then the press is a push to that
+  // pull request and opens nothing. Not while Claude resolves a conflict, whose
+  // merge commit is about to land on the branch being pushed.
+  const updatesPullRequest = delivery?.delivered != null && delivery.movedSincePush;
   const canDeliver =
     state.branchExists &&
     settled &&
+    !resolving &&
     (delivery?.possible ?? false) &&
-    delivery?.delivered == null;
+    (delivery?.delivered == null || updatesPullRequest);
 
   return (
     // Raised only while there is a decision to take. A branch that is already
@@ -705,10 +711,21 @@ export function RunLand({ run }: { run: RunDTO }) {
           {canDeliver && (
             <p className="mb-2.5 max-w-[70ch] text-xs leading-snug text-ink-muted">
               Pushes <span className="mono">{delivery?.head}</span> to{" "}
-              <span className="mono">{delivery?.remote}</span> and opens a pull
-              request against <span className="mono">{delivery?.base}</span>. Never
-              forced; nothing is merged and your checkout&rsquo;s files are left
-              alone. Land&rsquo;s check applies too.
+              <span className="mono">{delivery?.remote}</span>
+              {updatesPullRequest ? (
+                <>
+                  , which updates pull request #{delivery?.delivered?.number}. No
+                  second one is opened.
+                </>
+              ) : (
+                <>
+                  {" "}
+                  and opens a pull request against{" "}
+                  <span className="mono">{delivery?.base}</span>.
+                </>
+              )}{" "}
+              Never forced; nothing is merged and your checkout&rsquo;s files are
+              left alone. Land&rsquo;s check applies too.
             </p>
           )}
 
@@ -774,7 +791,13 @@ export function RunLand({ run }: { run: RunDTO }) {
                 onClick={() => void deliver()}
                 disabled={busy}
               >
-                {busy ? "Delivering…" : "Open pull request"}
+                {updatesPullRequest
+                  ? busy
+                    ? "Pushing…"
+                    : `Push to pull request #${delivery?.delivered?.number}`
+                  : busy
+                    ? "Delivering…"
+                    : "Open pull request"}
               </Button>
             )}
             {/* The safe door: git can see this work is in the target, so it is
@@ -805,7 +828,8 @@ export function RunLand({ run }: { run: RunDTO }) {
               than a second press, for `canDeliver`'s reason. */}
           {delivery?.delivered && (
             <p className="mt-2.5 text-xs text-ink-muted">
-              Delivered {fmtDateTime(delivery.delivered.at)} —{" "}
+              {delivery.movedSincePush ? "Opened" : "Delivered"}{" "}
+              {fmtDateTime(delivery.delivered.at)} —{" "}
               <a
                 className="text-accent underline"
                 href={delivery.delivered.url}
@@ -814,6 +838,7 @@ export function RunLand({ run }: { run: RunDTO }) {
               >
                 pull request #{delivery.delivered.number}
               </a>
+              {delivery.movedSincePush && ", behind this branch"}
             </p>
           )}
 
@@ -826,7 +851,7 @@ export function RunLand({ run }: { run: RunDTO }) {
             settled &&
             delivery &&
             !delivery.possible &&
-            delivery.delivered === null && (
+            (delivery.delivered === null || delivery.movedSincePush) && (
               <Hint>{delivery.reason}</Hint>
             )}
         </div>

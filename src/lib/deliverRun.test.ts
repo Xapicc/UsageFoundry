@@ -48,6 +48,7 @@ let settings: typeof import("./settings");
 let orchestrator: typeof import("./orchestrator");
 let retention: typeof import("./retention");
 let route: typeof import("../app/api/runs/[id]/deliver/route");
+let landRoute: typeof import("../app/api/runs/[id]/land/route");
 let root: string;
 let remotes: string;
 
@@ -150,6 +151,7 @@ before(async () => {
   orchestrator = await import("./orchestrator");
   retention = await import("./retention");
   route = await import("../app/api/runs/[id]/deliver/route");
+  landRoute = await import("../app/api/runs/[id]/land/route");
 
   realFetch = globalThis.fetch;
   globalThis.fetch = stubFetch;
@@ -777,6 +779,228 @@ describe("the delivered pull request outlives the event sweep and belongs to the
 
     assert.equal(state.delivered?.url, delivered.ok ? delivered.url : "");
     assert.equal(state.delivered?.number, delivered.ok ? delivered.number : -1);
+  });
+});
+
+/**
+ * Deliver beside a conflict resolution, which `commitPending` and `purgeBranch`
+ * already refuse for: a Resolve in flight has the target merged into the branch
+ * in the run's own checkout, conflicted, with a billed agent editing the files,
+ * and its merge commit is about to land on the branch. Measured on 02f3b764 in
+ * this harness before the fix: the card answered `branchResolving: true` and
+ * `delivery.possible: true` in one response, the press pushed the pre-resolution
+ * tip and opened the pull request, and when the resolution then committed, the
+ * remote stayed behind it while the card read Delivered and offered nothing.
+ */
+describe("Deliver while a conflict resolution holds the branch", () => {
+  /** What `resolveConflicts` leaves while its agent works, built on `scene()`. */
+  function resolving(name: string): { s: Scene; preResolutionTip: string } {
+    const s = scene(name);
+    fs.writeFileSync(path.join(s.repo, "shared.txt"), "main\n");
+    git(s.repo, "commit", "-qam", "main moves under the branch");
+    const preResolutionTip = git(s.repo, "rev-parse", s.branch).trim();
+    assert.throws(() => git(s.slot, "merge", "--no-edit", "main"));
+    git(s.slot, "rev-parse", "-q", "--verify", "MERGE_HEAD");
+    startResolveRow(s);
+    return { s, preResolutionTip };
+  }
+
+  function startResolveRow(s: Scene): void {
+    dbMod
+      .db()
+      .prepare(
+        "INSERT INTO run_reviews (id, run_id, kind, created_at, status) VALUES (?, ?, 'resolve', ?, 'running')",
+      )
+      .run(`rv-${s.runId}`, s.runId, Date.now());
+  }
+
+  /** The way a resolution's `after` finishes: the merge committed, the row done. */
+  function finishResolution(s: Scene): void {
+    fs.writeFileSync(path.join(s.slot, "shared.txt"), "resolved\n");
+    git(s.slot, "add", "shared.txt");
+    git(s.slot, "commit", "-q", "--no-edit");
+    dbMod
+      .db()
+      .prepare("UPDATE run_reviews SET status = 'done', finished_at = ? WHERE run_id = ?")
+      .run(Date.now(), s.runId);
+  }
+
+  it("refuses on the card and at the press, as Commit does, and pushes nothing", async () => {
+    const { s } = resolving("resolving");
+    const run = orchestrator.getRun(s.runId)!;
+    assert.equal(land.resolutionHolds(run), true);
+    // The control: the door that already asks, in the sentence this one echoes.
+    const commit = await land.commitPending(s.runId);
+    assert.equal(commit.ok, false);
+    assert.match(commit.ok ? "" : commit.reason, /^Claude is resolving a conflict on uf\/resolving/);
+
+    const get = await landRoute.GET(new Request(`http://localhost/api/runs/${s.runId}/land`), {
+      params: Promise.resolve({ id: s.runId }),
+    });
+    const card = (await get.json()) as {
+      branchResolving: boolean;
+      delivery: { possible: boolean; reason: string | null };
+    };
+    const pressed = await land.deliverRun(s.runId);
+
+    assert.equal(card.branchResolving, true);
+    assert.equal(card.delivery.possible, false, "the card offers Open pull request while Claude is resolving");
+    assert.match(card.delivery.reason ?? "", /^Claude is resolving a conflict on uf\/resolving/);
+    assert.equal(pressed.ok, false, "Deliver pushed while a resolution held the branch");
+    assert.equal(pressed.ok ? "" : pressed.reason, card.delivery.reason, "the button and the press disagree");
+    assert.equal(remoteTip(s), null, "the pre-resolution tip was published");
+    assert.deepEqual(opened, []);
+  });
+
+  it("refuses when the resolution starts after the press's first read, and pushes nothing", async () => {
+    // A merge-block caller's `stillWanted` is the one hook that runs between the
+    // press's first read and the push; here it starts the resolution, which is
+    // what a verify command running for VERIFY_TIMEOUT_MS leaves room for.
+    const s = scene("resolving-late");
+    fs.writeFileSync(path.join(s.repo, "shared.txt"), "main\n");
+    git(s.repo, "commit", "-qam", "main moves under the branch");
+    assert.throws(() => git(s.slot, "merge", "--no-edit", "main"));
+    assert.equal(land.resolutionHolds(orchestrator.getRun(s.runId)!), false);
+
+    let started = false;
+    const pressed = await land.deliverRun(s.runId, {}, () => {
+      if (!started) startResolveRow(s);
+      started = true;
+      return true;
+    });
+
+    assert.equal(pressed.ok, false);
+    assert.match(pressed.ok ? "" : pressed.reason, /^Claude is resolving a conflict on uf\/resolving-late/);
+    assert.equal(remoteTip(s), null);
+    assert.deepEqual(opened, []);
+  });
+
+  it("delivers the resolved tip once the resolution has finished", async () => {
+    const { s } = resolving("resolved");
+    finishResolution(s);
+
+    const state = await land.deliveryState(s.runId);
+    const pressed = await land.deliverRun(s.runId);
+
+    assert.equal(state.possible, true, state.reason ?? "");
+    assert.equal(pressed.ok, true, pressed.ok ? "" : pressed.reason);
+    assert.equal(remoteTip(s), git(s.repo, "rev-parse", s.branch).trim());
+  });
+});
+
+/**
+ * A pull request is opened once and then follows its branch: the follow-up an
+ * operator starts to answer review comments commits on the same ref. Measured
+ * on 02f3b764 in this harness before the fix: the link's card read
+ * `delivered: {#41}`, the button was withdrawn, and the remote stayed at the
+ * first run's tip while the branch moved on. A deliver block skipped the same
+ * branch on the same read, so it passed having published nothing of the new work.
+ */
+describe("a branch that moved after its pull request was opened", () => {
+  /** The follow-up commit a review asks for, in the slot the branch is out in. */
+  function followUp(s: Scene): string {
+    fs.writeFileSync(path.join(s.slot, "followup.txt"), "addressing review\n");
+    git(s.slot, "add", "followup.txt");
+    git(s.slot, "commit", "-qm", "follow-up the PR asked for");
+    return git(s.repo, "rev-parse", s.branch).trim();
+  }
+
+  /** The card's `canDeliver`, minus the settled-status and `resolving` terms these cases hold fixed. */
+  const offersAPress = (d: Awaited<ReturnType<typeof land.deliveryState>>) =>
+    d.possible && (d.delivered == null || d.movedSincePush);
+
+  it("does not call a link's branch delivered while the remote lacks its commits", async () => {
+    const s = scene("moved-link");
+    const first = await land.deliverRun(s.runId);
+    assert.equal(first.ok, true, first.ok ? "" : first.reason);
+    const next = continuation(s, "completed", 1);
+    followUp(s);
+
+    const state = await land.deliveryState(next);
+
+    assert.equal(state.possible, true, state.reason ?? "");
+    assert.equal(state.delivered?.number, 41, "the link to the pull request stays");
+    assert.equal(state.movedSincePush, true);
+    assert.equal(offersAPress(state), true, "the card says Delivered and offers nothing");
+  });
+
+  it("pushes the new tip to the open pull request and opens no second one", async () => {
+    const s = scene("moved-push");
+    const first = await land.deliverRun(s.runId);
+    assert.equal(first.ok, true, first.ok ? "" : first.reason);
+    const next = continuation(s, "completed", 1);
+    const tip = followUp(s);
+    assert.notEqual(remoteTip(s), tip);
+
+    const pressed = await land.deliverRun(next);
+
+    assert.equal(pressed.ok, true, pressed.ok ? "" : pressed.reason);
+    assert.equal(pressed.ok ? pressed.number : -1, 41, "the pull request it updated");
+    assert.equal(remoteTip(s), tip);
+    assert.equal(opened.length, 1, "a second open would be refused by GitHub as already existing");
+    const after = await land.deliveryState(next);
+    assert.equal(after.movedSincePush, false);
+    assert.equal(offersAPress(after), false, "pressed, the card goes back to the link");
+    assert.equal(after.delivered?.number, 41);
+    assert.equal(deliverEvents(next), 1, "the update is on the timeline of the run that pushed it");
+  });
+
+  it("says the same of the run that opened it once a reopen adds commits", async () => {
+    const s = scene("moved-same");
+    const first = await land.deliverRun(s.runId);
+    assert.equal(first.ok, true, first.ok ? "" : first.reason);
+    const unmoved = await land.deliveryState(s.runId);
+    assert.equal(unmoved.movedSincePush, false);
+    assert.equal(offersAPress(unmoved), false);
+
+    followUp(s);
+
+    assert.equal((await land.deliveryState(s.runId)).movedSincePush, true);
+  });
+
+  it("does not read a row delivered before the tip was recorded as moved", async () => {
+    // The one case the record cannot answer: nothing says what such a press
+    // pushed, and a button offered on a guess would push a branch the operator
+    // may have deliberately left behind. The card reads as it did.
+    const s = scene("moved-legacy");
+    const first = await land.deliverRun(s.runId);
+    assert.equal(first.ok, true, first.ok ? "" : first.reason);
+    dbMod.db().prepare("UPDATE runs SET delivered_tip = NULL WHERE id = ?").run(s.runId);
+    followUp(s);
+
+    const state = await land.deliveryState(s.runId);
+
+    assert.equal(state.movedSincePush, false);
+    assert.equal(state.delivered?.number, 41);
+  });
+
+  it("refuses a moved branch's push while a resolution holds it", async () => {
+    const s = scene("moved-resolving");
+    const first = await land.deliverRun(s.runId);
+    assert.equal(first.ok, true, first.ok ? "" : first.reason);
+    const before = remoteTip(s);
+    followUp(s);
+    dbMod
+      .db()
+      .prepare("INSERT INTO run_reviews (id, run_id, kind, created_at, status) VALUES (?, ?, 'resolve', ?, 'running')")
+      .run(`rv-${s.runId}`, s.runId, Date.now());
+
+    // A verify command that leaves a mark when it runs: the press that is
+    // refused ahead of `landState` has run no check, whatever the later read
+    // would have said, and the check is the branch's own code for up to
+    // `VERIFY_TIMEOUT_MS`.
+    const mark = path.join(root, "moved-resolving-ran");
+    const marker = path.join(root, "moved-resolving-mark.js");
+    fs.writeFileSync(marker, 'require("node:fs").writeFileSync(process.argv[2], "ran");\n');
+    settings.saveSettings({ landVerifyCommand: `${process.execPath} ${marker} ${mark}` });
+
+    const state = await land.deliveryState(s.runId);
+    const pressed = await land.deliverRun(s.runId);
+
+    assert.equal(offersAPress(state), false);
+    assert.equal(pressed.ok, false);
+    assert.equal(fs.existsSync(mark), false, "the verify command ran for a press that was going to be refused");
+    assert.equal(remoteTip(s), before);
   });
 });
 

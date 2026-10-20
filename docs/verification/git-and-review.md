@@ -28,6 +28,19 @@
   `UF_GITHUB_TOKEN`. The app pushed and opened #1 `uf/deliver-smoke` → `main`;
   it refused a non-GitHub remote with no credential, and a second request, 400.
 
+- **The Land card over a branch that moved after its pull request, and over one
+  under a resolution, 2026-10-20 (git 2.39.5, the standalone build).** Five runs
+  seeded into a scratch `DATA_DIR` from the compiled test build. Behind its
+  pull request the card read "Opened … — pull request #41, behind this branch"
+  and offered "Push to pull request #41", its sentence naming #41 and "No second
+  one is opened"; at the pushed tip, "Delivered …" and no button; undelivered
+  under a `running` resolve row, no "Open pull request" and the refusal under
+  the buttons (`GET /api/runs/<id>/land`: `branchResolving` true,
+  `delivery.possible` false); delivered, behind and resolving, the link and the
+  refusal and no push. Caveat: nothing was pressed (the press is
+  `deliverRun.test.ts`', on a local bare repository), and boot reconciliation
+  fails a seeded `running` row, so it was set after the server was up.
+
 - **Review and conflict-resolution spawn, flags, JSON shape and accounting**,
   with a stub `result`; a bad conflict resolution cannot be committed.
 
@@ -216,6 +229,15 @@
   surviving a real sweep. Settles on the smoke repository above: press on a
   paused run (400, `git ls-remote` empty), then deliver, set
   `eventRetentionDays` to 1 and wait a day past the sweep.
+
+- **A push-only update of an open pull request has not reached GitHub,
+  2026-10-20.** `deliverRun.test.ts` pushes the moved tip to a local bare
+  repository and stubs `fetch`; unseen are GitHub taking the second push and the
+  pull request listing the new commit, and what a branch pushed again after its
+  pull request was *closed* now gets (an update, not the new pull request the
+  press used to open). Settles on the smoke repository above: deliver, commit on
+  the branch, press "Push to pull request #N", then `git ls-remote` and the
+  pull request's commit list.
 
 - **A review or conflict resolution against the real CLI.** Review quality,
   `plan` mode in print mode and `acceptEdits` resolutions are unconfirmed.

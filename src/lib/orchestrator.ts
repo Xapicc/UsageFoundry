@@ -395,6 +395,8 @@ export interface RunRow {
   delivered_pr_url: string | null;
   delivered_pr_number: number | null;
   delivered_at: number | null;
+  /** The branch tip the newest push to that pull request carried. See `deliveredPullRequest`. */
+  delivered_tip: string | null;
   /** Paused runs: when to look again. A hint, not a promise — see sweepPaused. */
   resume_at: number | null;
   paused_at: number | null;

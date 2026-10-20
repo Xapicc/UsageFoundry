@@ -3687,6 +3687,11 @@ export interface DeliveryStateDTO {
   base: string | null;
   /** What a previous press on this branch opened. See `deliveredPullRequest`. */
   delivered: { url: string; number: number; at: number } | null;
+  /**
+   * The branch has commits that pull request's last push did not carry, so
+   * `delivered` is not where the branch stands. See `branchMovedSincePush`.
+   */
+  movedSincePush: boolean;
 }
 
 /** One branch waiting to be landed, or already dealt with. */

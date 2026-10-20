@@ -72,6 +72,7 @@ import {
   type QueueRow,
 } from "./mergeQueue";
 import {
+  branchMovedSincePush,
   deliveredPullRequest,
   deliverRun,
   landState,
@@ -6148,9 +6149,9 @@ export function retryMergeBlock(instanceId: string, nodeId: string): PickUpOutco
  *
  * Safe to repeat for a reason of delivery's own: `deliverBranch` asks
  * `deliveredPullRequest` before anything else, so a branch the first try opened
- * a pull request for is skipped — not pushed again, which GitHub would refuse as
- * "already exists" after updating the branch — and the second try pushes only
- * what the first missed. The way through a failure that was not about the
+ * a pull request for is skipped while that pull request carries its tip — not
+ * pushed again, which GitHub would refuse as "already exists" after updating
+ * the branch — and the second try pushes only what the first missed. The way through a failure that was not about the
  * branch (a run working in the folder, a held `landing` claim, a token set since,
  * a verify gate the operator has fixed) is then one press.
  *
@@ -8832,11 +8833,13 @@ async function deliverBranch(
   const branch = branchLabel(runId);
 
   // Ahead of the git reads: the card's own rule, one pull request per branch.
-  // A second push would update that pull request and then be refused by
-  // GitHub's "already exists", so what it reported and what it did would
-  // disagree.
+  // A second open would be refused by GitHub's "already exists", so a branch
+  // whose pull request already carries its tip is skipped. One that has moved
+  // since goes on to `deliverRun`, which pushes it to that pull request and
+  // opens nothing: skipping it passed the block with the new work unpublished.
   const already = deliveredPullRequest(runId);
-  if (already) {
+  const moved = already ? await branchMovedSincePush(runId) : false;
+  if (already && !moved) {
     return {
       branch,
       result: "skipped",
@@ -8859,7 +8862,11 @@ async function deliverBranch(
   try {
     const delivery = await deliverRun(runId, {}, stillDelivering);
     return delivery.ok
-      ? { branch, result: "delivered", reason: delivery.url }
+      ? {
+          branch,
+          result: "delivered",
+          reason: moved ? `${delivery.url} (pushed its new commits)` : delivery.url,
+        }
       : { branch, result: "failed", reason: delivery.reason };
   } catch (err) {
     return {
