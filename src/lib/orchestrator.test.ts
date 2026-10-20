@@ -130,6 +130,7 @@ const {
   priorReadsNotice,
   permissionDenials,
   hookInjection,
+  hookRefusal,
   refusalDisposition,
   refusalStopReason,
   exitStopReason,
@@ -6500,6 +6501,181 @@ describe("hookInjection", () => {
       injected("SessionStart", "{draft} is stale"),
       "{draft} is stale",
     );
+  });
+
+  // A refusal reached the model, but as a refusal, and `hookRefusal` words it.
+  // Logging it here too would tell an operator the hook "added this to the
+  // agent's context" about the very line that said it had been blocked.
+  it("does not read a refusal as context", () => {
+    const deny = `${JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: "Read that file already.",
+      },
+    })}\n`;
+    assert.equal(injected("PreToolUse", deny), null);
+    assert.equal(
+      injected("PostToolUse", '{"decision":"block","reason":"Run the tests."}\n'),
+      null,
+    );
+    assert.equal(
+      hookInjection({
+        hook_event: "PreToolUse",
+        output: "Read that file already.\n",
+        stdout: "",
+        outcome: "error",
+      }),
+      null,
+    );
+  });
+});
+
+/**
+ * Covers what a hook that refused something is logged as having told the agent.
+ *
+ * The fixtures are the `hook_response` shapes CLI 2.1.280 wrote against a stub
+ * API, with a `stderr` line beside every one because `output` carries it, and
+ * the expectations are what the stub saw in the next request: a `PreToolUse`
+ * deny and a `PostToolUse` or `Stop` block through stdout, an exit 2 through
+ * stderr, and not an exit 1, a `SessionStart` exit 2 or a blocked prompt.
+ */
+describe("hookRefusal", () => {
+  const response = (
+    event: string,
+    over: {
+      stdout?: string;
+      stderr?: string;
+      outcome?: string;
+      exit_code?: number;
+    },
+  ) => ({
+    hook_event: event,
+    hook_name: event === "Stop" ? "Stop" : `${event}:Read`,
+    outcome: "success",
+    exit_code: 0,
+    stdout: "",
+    stderr: "",
+    ...over,
+    output: `${over.stderr ?? ""}${over.stdout ?? ""}`,
+  });
+  const deny = (reason?: string) =>
+    `${JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        ...(reason === undefined ? {} : { permissionDecisionReason: reason }),
+      },
+    })}\n`;
+  const block = (reason?: string) =>
+    `${JSON.stringify({ decision: "block", ...(reason === undefined ? {} : { reason }) })}\n`;
+
+  it("words a PreToolUse deny with its reason, which is how readGuard refuses", () => {
+    assert.equal(
+      hookRefusal(
+        response("PreToolUse", {
+          stdout: deny("Already read this turn."),
+          stderr: "guard: matched\n",
+        }),
+      ),
+      "PreToolUse:Read hook refused the tool call. The agent was told:\nAlready read this turn.",
+    );
+  });
+
+  it("says when a deny gave no reason, which the CLI covers with its own words", () => {
+    assert.equal(
+      hookRefusal(response("PreToolUse", { stdout: deny() })),
+      "PreToolUse:Read hook refused the tool call, giving no reason.",
+    );
+    assert.equal(
+      hookRefusal(response("PreToolUse", { stdout: deny("  ") })),
+      "PreToolUse:Read hook refused the tool call, giving no reason.",
+    );
+  });
+
+  it("reads the older top-level block on a PreToolUse as a refusal too", () => {
+    assert.equal(
+      hookRefusal(response("PreToolUse", { stdout: block("Not on this branch.") })),
+      "PreToolUse:Read hook refused the tool call. The agent was told:\nNot on this branch.",
+    );
+  });
+
+  it("words a PostToolUse and a Stop block by what they did", () => {
+    assert.equal(
+      hookRefusal(response("PostToolUse", { stdout: block("Run the tests.") })),
+      "PostToolUse:Read hook objected to the tool call after it ran. The agent was told:\nRun the tests.",
+    );
+    assert.equal(
+      hookRefusal(response("Stop", { stdout: block("Commit first.") })),
+      "Stop hook refused to let the agent stop. The agent was told:\nCommit first.",
+    );
+  });
+
+  // The whole of stderr reached the model, the hook's own chatter included.
+  it("reads an exit 2 from stderr, whole", () => {
+    assert.equal(
+      hookRefusal(
+        response("PreToolUse", {
+          outcome: "error",
+          exit_code: 2,
+          stderr: "guard: matched\nNo secrets.\n",
+        }),
+      ),
+      "PreToolUse:Read hook exited 2 and refused the tool call. The agent was told:\nguard: matched\nNo secrets.",
+    );
+    assert.equal(
+      hookRefusal(response("Stop", { outcome: "error", exit_code: 2, stderr: "Commit first.\n" })),
+      "Stop hook exited 2 and refused to let the agent stop. The agent was told:\nCommit first.",
+    );
+    assert.equal(
+      hookRefusal(response("PostToolUse", { outcome: "error", exit_code: 2 })),
+      "PostToolUse:Read hook exited 2 and objected to the tool call after it ran, printing nothing.",
+    );
+  });
+
+  it("finds nothing in a hook the model was not told anything by", () => {
+    // Measured: an exit 1's stderr never reached the model.
+    assert.equal(
+      hookRefusal(response("PostToolUse", { outcome: "error", exit_code: 1, stderr: "oops\n" })),
+      null,
+    );
+    // A crash or a timeout has no exit code to speak of.
+    assert.equal(
+      hookRefusal(response("PreToolUse", { outcome: "error", stderr: "oops\n" })),
+      null,
+    );
+    // Events whose refusal did not reach the model.
+    assert.equal(
+      hookRefusal(response("SessionStart", { outcome: "error", exit_code: 2, stderr: "no\n" })),
+      null,
+    );
+    assert.equal(
+      hookRefusal(response("UserPromptSubmit", { stdout: block("no") })),
+      null,
+    );
+    // Replies that say nothing against anything.
+    assert.equal(hookRefusal(response("PreToolUse", {})), null);
+    assert.equal(
+      hookRefusal(
+        response("PostToolUse", {
+          stdout: '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"x"}}',
+        }),
+      ),
+      null,
+    );
+    assert.equal(
+      hookRefusal(response("PreToolUse", { stdout: '{"decision":"approve","reason":"fine"}' })),
+      null,
+    );
+    // `deny` is a PreToolUse word.
+    assert.equal(hookRefusal(response("PostToolUse", { stdout: deny("x") })), null);
+  });
+
+  it("cuts a long reason at the line's cap and marks it", () => {
+    const line = hookRefusal(
+      response("PreToolUse", { stdout: deny("x".repeat(5_000)) }),
+    );
+    assert.ok(line?.endsWith(`${"x".repeat(2_000)}…`));
   });
 });
 

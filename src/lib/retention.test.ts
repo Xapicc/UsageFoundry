@@ -5,8 +5,10 @@ import path from "node:path";
 import { describe, it } from "node:test";
 
 import {
+  clipHookEvent,
   clipToolInput,
   describeEvent,
+  MAX_HOOK_FIELD_CHARS,
   MAX_TOOL_FIELD_CHARS,
   MAX_TOOL_INPUT_CHARS,
 } from "./logLine";
@@ -115,6 +117,51 @@ describe("clipToolInput", () => {
     cyclic.self = cyclic;
 
     assert.deepEqual(clipToolInput(cyclic), { input: null });
+  });
+});
+
+describe("clipHookEvent", () => {
+  // The shape CLI 2.1.280 wrote: `output` is stderr then stdout, so a hook that
+  // printed N characters stored about 2N of them.
+  const chatty = (stdout: string, stderr: string) => ({
+    type: "system",
+    subtype: "hook_response",
+    hook_event: "PostToolUse",
+    outcome: "success",
+    exit_code: 0,
+    stdout,
+    stderr,
+    output: `${stderr}${stdout}`,
+  });
+
+  it("stores a hook row inside the cap as it arrived", () => {
+    const ev = chatty("ok\n", "warn\n");
+    assert.equal(clipHookEvent(ev), ev, "a row inside the cap is not copied");
+  });
+
+  it("cuts each printed field at the cap, marks the cut, and leaves the rest", () => {
+    const ev = chatty("o".repeat(30_000), "e".repeat(5_000));
+    const clipped = clipHookEvent(ev);
+
+    assert.equal(clipped.stdout, `${"o".repeat(MAX_HOOK_FIELD_CHARS)}…`);
+    assert.equal(clipped.stderr, `${"e".repeat(MAX_HOOK_FIELD_CHARS)}…`);
+    assert.equal(clipped.output, `${"e".repeat(MAX_HOOK_FIELD_CHARS)}…`);
+    assert.equal(clipped.hook_event, "PostToolUse");
+    assert.equal(clipped.exit_code, 0);
+    assert.equal(ev.stdout.length, 30_000, "the event the caller reads is untouched");
+    assert.ok(
+      JSON.stringify(clipped).length < 3 * (MAX_HOOK_FIELD_CHARS + 1) + 500,
+      "three printed fields bound the whole row",
+    );
+  });
+
+  it("clips only the field that is over, and ignores one that is not text", () => {
+    const clipped = clipHookEvent({
+      ...chatty("short", "w".repeat(3_000)),
+      stdout: 7,
+    });
+    assert.equal(clipped.stdout, 7);
+    assert.equal(clipped.stderr, `${"w".repeat(MAX_HOOK_FIELD_CHARS)}…`);
   });
 });
 
