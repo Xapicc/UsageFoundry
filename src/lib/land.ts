@@ -994,11 +994,17 @@ export async function isLandedTip(
   clock: GitClock = NO_CLOCK,
 ): Promise<boolean> {
   if (!target || !tip) return false;
-  for (const run of squashesOnChain(chain)) {
-    if (run.landed_tip !== tip) continue;
-    if (await isAncestor(repoRoot, run.landed_commit, `refs/heads/${target}`, clock)) return true;
+  for (const squash of squashesOnChain(chain)) {
+    if (squash.tip !== tip) continue;
+    if (await isAncestor(repoRoot, squash.commit, `refs/heads/${target}`, clock)) return true;
   }
   return false;
+}
+
+interface Squash {
+  tip: string;
+  commit: string;
+  landedAt: number;
 }
 
 /**
@@ -1006,16 +1012,30 @@ export async function isLandedTip(
  * first. A squash landed before `landed_commit` was recorded is left out, and
  * so reads as not landed: nothing can prove the target still has it, and the
  * cost of that reading is a branch kept rather than one deleted.
+ *
+ * Every squash, not each run's newest. A reopened run can squash-land again,
+ * and its row then names only the second: once that one was reset away,
+ * `squashBase` found nothing the target still had and measured from the
+ * chain's base, putting back a change the operator had reverted after the
+ * first. The rows are read as well as `run_squashes` because a squash landed
+ * before that table existed is on the row alone.
  */
-function squashesOnChain(
-  chain: readonly RunRow[],
-): (RunRow & { landed_tip: string; landed_commit: string })[] {
-  return chain
-    .filter(
-      (r): r is RunRow & { landed_tip: string; landed_commit: string } =>
-        r.landed_strategy === "squash" && !!r.landed_tip && !!r.landed_commit,
+function squashesOnChain(chain: readonly RunRow[]): Squash[] {
+  if (chain.length === 0) return [];
+  const recorded = db()
+    .prepare(
+      `SELECT landed_tip AS tip, landed_commit AS "commit", landed_at AS landedAt
+         FROM run_squashes WHERE run_id IN (${chain.map(() => "?").join(",")})
+        ORDER BY landed_at DESC, rowid DESC`,
     )
-    .sort((a, b) => (b.landed_at ?? 0) - (a.landed_at ?? 0));
+    .all(...chain.map((r) => r.id)) as Squash[];
+  const seen = new Set(recorded.map((s) => s.commit));
+  const onRows = chain.flatMap((r) =>
+    r.landed_strategy === "squash" && r.landed_tip && r.landed_commit && !seen.has(r.landed_commit)
+      ? [{ tip: r.landed_tip, commit: r.landed_commit, landedAt: r.landed_at ?? 0 }]
+      : [],
+  );
+  return [...recorded, ...onRows].sort((a, b) => b.landedAt - a.landedAt);
 }
 
 /** A `git()` timeout: `NO_CLOCK` on the landing path, the default on a page read. */
@@ -1037,8 +1057,9 @@ async function isAncestor(
 }
 
 /**
- * The tip the newest squash on this chain landed, when that is where the next
- * land of `tip` has to be measured from; null when git's own merge-base is.
+ * The tip the newest squash on this chain that the target still has landed,
+ * when that is where the next land of `tip` has to be measured from; null when
+ * git's own merge-base is.
  *
  * A squash leaves no ancestry, so git's merge-base between the target and a
  * squash-landed branch stays where the chain started, and everything measured
@@ -1052,7 +1073,8 @@ async function isAncestor(
  *
  * Three conditions, each a reason the recorded tip stops being the right base.
  * The squash's commit must still be in the target, for `isLandedTip`'s reason —
- * an undone squash is work that has to land again whole. The tip must still be
+ * an undone squash is work that has to land again, so the walk goes on to the
+ * squash before it, which is why every squash is kept. The tip must still be
  * in the branch, which a rewritten branch need not be. And the tip must not be
  * in the target, because then a later merge carried it there and git's own
  * merge-base is already past it.
@@ -1067,10 +1089,10 @@ async function squashBase(
 ): Promise<string | null> {
   if (!target || !tip) return null;
   const ref = `refs/heads/${target}`;
-  for (const run of squashesOnChain(chain)) {
-    if (!(await isAncestor(repoRoot, run.landed_commit, ref, clock))) continue;
-    if (!(await isAncestor(repoRoot, run.landed_tip, tip, clock))) continue;
-    return (await isAncestor(repoRoot, run.landed_tip, ref, clock)) ? null : run.landed_tip;
+  for (const squash of squashesOnChain(chain)) {
+    if (!(await isAncestor(repoRoot, squash.commit, ref, clock))) continue;
+    if (!(await isAncestor(repoRoot, squash.tip, tip, clock))) continue;
+    return (await isAncestor(repoRoot, squash.tip, ref, clock)) ? null : squash.tip;
   }
   return null;
 }
@@ -2080,11 +2102,22 @@ export async function landRun(
     }
 
     const now = Date.now();
-    db()
-      .prepare(
-        "UPDATE runs SET landed_at=?, landed_into=?, landed_strategy=?, landed_tip=?, landed_commit=? WHERE id=?",
-      )
-      .run(now, target, strategy, tip, squashCommit, runId);
+    db().transaction(() => {
+      db()
+        .prepare(
+          "UPDATE runs SET landed_at=?, landed_into=?, landed_strategy=?, landed_tip=?, landed_commit=? WHERE id=?",
+        )
+        .run(now, target, strategy, tip, squashCommit, runId);
+      // The row keeps only this land, and a reopened run lands again: see
+      // `squashesOnChain` for what forgetting an earlier squash put back.
+      if (squashCommit) {
+        db()
+          .prepare(
+            "INSERT OR IGNORE INTO run_squashes (run_id, landed_tip, landed_commit, landed_at) VALUES (?, ?, ?, ?)",
+          )
+          .run(runId, tip, squashCommit, now);
+      }
+    })();
 
     emitRunEvent({
       runId,
@@ -2240,6 +2273,12 @@ async function mergePastSquash(
  * written, as `git checkout` refuses to overwrite a change. The refresh first
  * because `read-tree -u` trusts the index's stat data, and a stale entry is a
  * refusal of a clean checkout.
+ *
+ * `ORIG_HEAD` is written by hand, first, because `read-tree` and `commit` never
+ * write it and `git merge` does: a squash past a squash left it naming the
+ * target before some earlier land, so `reset --hard ORIG_HEAD` — git's own
+ * undo, and the only one there is — rewound that land, every commit since and
+ * this one. `--no-deref` as `git merge` writes it, so no ref it names moves.
  */
 async function applyMergedTree(
   folder: string,
@@ -2248,6 +2287,8 @@ async function applyMergedTree(
   target: string,
   merged: MergedTree,
 ) {
+  const origHead = await git(folder, ["update-ref", "--no-deref", "ORIG_HEAD", "HEAD"], NO_CLOCK);
+  if (!origHead.ok) return origHead;
   if (strategy !== "squash") {
     const record = await git(
       folder,
