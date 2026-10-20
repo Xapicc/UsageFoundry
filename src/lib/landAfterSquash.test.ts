@@ -281,6 +281,73 @@ describe("a squash-landed branch with nothing new on it", () => {
   });
 });
 
+describe("a run squash-landed twice, the second squash undone", () => {
+  // A reopened run keeps its `landed_*` and can land again, and each squash
+  // used to overwrite the one before it on the row. Once the second was reset
+  // away nothing recorded the first, so the next land was measured from the
+  // chain's base and took the first squash a second time.
+
+  /** Run A squashed twice, `main` changed by `between` after the first, and the second reset away. */
+  async function squashedTwiceThenUndone(name: string, between: (repo: string) => void) {
+    const c = await squashedLinkA(name);
+    between(c.repo);
+    fs.writeFileSync(path.join(c.slot, "f2.txt"), "A's second f2\n");
+    git(c.slot, "commit", "-qam", "A again edits f2");
+    const second = await land.landRun(`${name}-A`, "squash");
+    assert.equal(second.ok, true, second.ok ? "" : second.reason);
+    git(c.repo, "reset", "-q", "--hard", "HEAD~1");
+    assert.equal(read(path.join(c.repo, "f2.txt")), "original f2\n");
+    return c;
+  }
+
+  it("lands again from the first squash, leaving the operator's revert of it reverted", async () => {
+    const c = await squashedTwiceThenUndone("twice", (repo) => {
+      git(repo, "revert", "--no-edit", "HEAD");
+    });
+
+    const state = await land.landState("twice-A");
+    assert.equal(state?.blocked, null, `refused: ${state?.blocked}`);
+    assert.equal(state?.ahead, 1, "the first squash's commit is counted as unlanded");
+    assert.equal(state?.preview.outcome, "clean");
+
+    const third = await land.landRun("twice-A", "squash");
+    assert.equal(third.ok, true, third.ok ? "" : third.reason);
+    // Before the fix: "link A's f1", under "Squashed uf/twice into main as one commit."
+    assert.equal(read(path.join(c.repo, "f1.txt")), "original f1\n", "the operator's revert was undone");
+    assert.equal(read(path.join(c.repo, "f2.txt")), "A's second f2\n");
+    assert.deepEqual(touched(c.repo, "HEAD"), ["f2.txt"]);
+  });
+
+  it("previews over the first squash when the target has since edited its lines", async () => {
+    await squashedTwiceThenUndone("twice-edited", (repo) => {
+      fs.writeFileSync(path.join(repo, "f1.txt"), "main's later f1\n");
+      git(repo, "commit", "-qam", "main edits f1");
+    });
+
+    const state = await land.landState("twice-edited-A");
+    // Before the fix: a conflict in f1.txt, a file only the first squash touched.
+    assert.equal(state?.preview.outcome, "clean");
+    assert.equal(state?.ahead, 1);
+  });
+});
+
+describe("undoing a land past a squash", () => {
+  it("takes back that land alone, because ORIG_HEAD names the target just before it", async () => {
+    const c = await squashedLinkA("orig-head");
+    git(c.repo, "revert", "--no-edit", "HEAD");
+    const reverted = git(c.repo, "rev-parse", "main").trim();
+    const b = linkB("orig-head", c);
+
+    const landed = await land.landRun(b, "squash");
+    assert.equal(landed.ok, true, landed.ok ? "" : landed.reason);
+    assert.equal(git(c.repo, "rev-parse", "HEAD~1").trim(), reverted);
+    // Before the fix ORIG_HEAD still named `main` before link A's squash, so
+    // this rewound the squash, the revert and the land together.
+    git(c.repo, "reset", "-q", "--hard", "ORIG_HEAD");
+    assert.equal(git(c.repo, "rev-parse", "main").trim(), reverted, "the undo took back more than the land");
+  });
+});
+
 describe("resolving a conflict past a squash", () => {
   // The resolution merges the target into the branch, the other direction from
   // a land, and a plain `git merge` there took git's merge-base — the chain's

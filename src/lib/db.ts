@@ -1106,6 +1106,23 @@ function migrate(db: Database.Database) {
   // a merge, whose own ancestry answers the question, and on a squash landed
   // before it was recorded, which is therefore read as not landed — the keep.
   addColumn(db, "runs", "landed_commit", "TEXT");
+  // Every squash a run made, where the two columns above hold only its newest.
+  // A reopened run can squash-land again, and once that second squash was
+  // reset away nothing recorded the first: `squashBase` measured the next land
+  // from the chain's base and put back a change the operator had reverted
+  // after the first. No backfill, because all a run landed before this table
+  // recorded is the one squash those columns still name, and `squashesOnChain`
+  // reads both.
+  // Additive, so no `SCHEMA_VERSION` bump.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS run_squashes (
+      run_id        TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+      landed_tip    TEXT NOT NULL,
+      landed_commit TEXT NOT NULL,
+      landed_at     INTEGER NOT NULL,
+      PRIMARY KEY (run_id, landed_commit)
+    );
+  `);
 
   // The pull request Deliver opened, on the row for the reason `landed_*` is:
   // the card withdraws its button on it, and the `deliver` event it used to be
