@@ -279,9 +279,10 @@ export interface LandState {
   certification: CertificationState;
   /**
    * Files seeding copied in from the operator's checkout that the branch's
-   * history carries (`seededOnBranch`). Null where no target was found to
-   * measure from, which both exits refuse for that already. Read by Deliver as
-   * well as Land, like `certification`.
+   * history carries (`seededOnBranch`), measured for the Land exit. Null where
+   * no target was found to measure from, which both exits refuse for that
+   * already. Deliver measures from elsewhere and asks its own
+   * (`seededForDeliver`).
    */
   seeded: SeededRead | null;
   /**
@@ -681,6 +682,7 @@ export async function landState(
     target.branch,
     run.worktree_base,
     seedGlobsOf(run),
+    "land",
   );
 
   const counts = await git(
@@ -831,6 +833,16 @@ export function seedGlobsOf(run: RunRow): string[] {
  * after moving the operator's copy aside put it into the target's history,
  * because neither exit looked at what the branch carried. Both ask this.
  *
+ * **What counts as already out depends on the exit.** Land measures from the
+ * local target, because that is where the merge puts the branch's commits. Deliver
+ * measures from the remote's copy of it (`refs/remotes/origin/<target>`, as last
+ * fetched) and never from the local one: a push publishes the branch's commits
+ * that the remote lacks, and a local target that merged the branch by hand and
+ * then untracked the file holds the commit that adds it without having published
+ * anything, so measured from there a branch that adds the key read as carrying
+ * nothing. A remote-tracking ref that was never fetched is skipped like a base
+ * that no longer exists, which excludes less and so refuses more.
+ *
  * Every commit rather than the tip's tree, because what leaves is history: a
  * later commit that deletes the file still pushes the one that added it. A
  * merge is read against its first parent, which lists anything it brought in
@@ -860,9 +872,13 @@ export async function seededOnBranch(
   target: string,
   base: string | null,
   globs: string[],
+  exit: "land" | "deliver",
 ): Promise<SeededRead> {
   if (globs.length === 0) return { ok: true, paths: [] };
-  const known = [`refs/heads/${target}`, ...(base ? [base] : [])];
+  const known = [
+    exit === "deliver" ? `refs/remotes/${DELIVER_REMOTE}/${target}` : `refs/heads/${target}`,
+    ...(base ? [base] : []),
+  ];
   const log = await git(
     repo,
     [
@@ -1899,9 +1915,11 @@ export async function landRun(
     // never sees the switch: it reads the operator's checkout, not the slot,
     // and everything that decides it is asked again from a fresh read.
     const verifyCommand = getSettings().landVerifyCommand;
+    let verified: string | undefined;
     if (verifyCommand.trim()) {
       const verify = await verifyRunBranch(run, verifyCommand, "land");
       if (!verify.passed) return { ok: false, reason: verify.reason };
+      verified = verify.commit;
     }
 
     // The commit every check below is asked of, and the one the merge takes.
@@ -1914,20 +1932,15 @@ export async function landRun(
     // card's Commit button, a second tab or a continuation can move the branch
     // in that time: a merge by name then took a commit that no check had seen,
     // a forced `.env` among them, while `landed_tip` recorded this one.
-    const tipRead = await git(folder, ["rev-parse", "--verify", `refs/heads/${branch}`], NO_CLOCK);
-    if (!tipRead.ok || !tipRead.stdout) {
-      return {
-        ok: false,
-        reason: `Could not read where ${branch} points, so nothing was merged: ${gitFailureLine(tipRead.stderr) || "unknown error"}`,
-      };
-    }
-    const tip = tipRead.stdout;
+    const leaving = await commitToLeave(folder, branch, verified, "merged");
+    if (!leaving.ok) return { ok: false, reason: leaving.reason };
+    const tip = leaving.sha;
 
     // Asked again of the tip the merge takes, because `landState`'s answer was
     // read before the check, and the card's Commit button can put a seeded
     // file on the branch while it runs.
     const seeded = seededRefusal(
-      await seededOnBranch(folder, tip, target, run.worktree_base, seedGlobsOf(run)),
+      await seededOnBranch(folder, tip, target, run.worktree_base, seedGlobsOf(run), "land"),
       { branch, target, exit: "land" },
     );
     if (seeded) return { ok: false, reason: seeded };
@@ -2091,6 +2104,35 @@ export async function landRun(
     landing.delete(folder);
     untrack();
   }
+}
+
+/**
+ * The commit an exit acts on: the one the verify command ran against when there
+ * was a command, since `verifyHeldSlot` proved the branch still named it, and
+ * the branch as it stands now when there was none.
+ *
+ * A read made after the command is a second look at a ref that can move, and
+ * the proof is from the instant before it: the milliseconds between them, and
+ * the switch back `verifyOnSwitchedSlot` makes in between, are a window in which
+ * a commit the command never ran on becomes the one that leaves. Taking the
+ * proof's own SHA closes it, and a commit that arrives later stays on the branch
+ * for the next press. Both exits ask it; `then` words the refusal for each.
+ */
+async function commitToLeave(
+  folder: string,
+  branch: string,
+  verified: string | undefined,
+  then: "merged" | "pushed",
+): Promise<{ ok: true; sha: string } | { ok: false; reason: string }> {
+  if (verified) return { ok: true, sha: verified };
+  const read = await git(folder, ["rev-parse", "--verify", `refs/heads/${branch}`], NO_CLOCK);
+  if (!read.ok || !read.stdout) {
+    return {
+      ok: false,
+      reason: `Could not read where ${branch} points, so nothing was ${then}: ${gitFailureLine(read.stderr) || "unknown error"}`,
+    };
+  }
+  return { ok: true, sha: read.stdout };
 }
 
 /**
@@ -2601,6 +2643,16 @@ export async function resolveCheckout(
       // — falling through on a dirty slot was a guaranteed failure wearing a
       // fallback's clothes, and it reported itself as `Preparing worktree`.
       // The choice here is reuse or refuse, never a second checkout.
+      //
+      // A verify command running in the slot is the same case: the merge would
+      // open in the tree it is checking, and the check would then pass on it.
+      const underCheck = checkHoldsSlot(
+        own,
+        branch,
+        "a resolution would open its merge in the tree the command is checking",
+        "Nothing was started.",
+      );
+      if (underCheck) throw new Error(underCheck);
       const [status, merging] = await Promise.all([
         git(own, ["status", "--porcelain"], NO_CLOCK),
         mergeHeadIn(own),
@@ -3579,9 +3631,17 @@ interface SlotState {
   operation: BranchInOperation["operation"] | null;
   /**
    * There, with HEAD readable and on no branch: such an operation, or a plain
-   * `git checkout <commit>`. Not a checkout that is gone or a later run's.
+   * `git checkout <commit>`, and still this run's. Not a checkout that is gone
+   * or a later run's.
    */
   detached: boolean;
+  /**
+   * There, with HEAD readable and on no branch, in a slot a later run was given
+   * — which is where that run's own rebase, bisect or `git checkout <commit>`
+   * leaves it. The run's branch is not in it, so it reads as taken over, and
+   * not as `detached`, which would tell the operator to switch it back.
+   */
+  detachedByLaterRun: boolean;
 }
 
 /**
@@ -3608,6 +3668,28 @@ async function mergeHeadIn(dir: string): Promise<boolean | null> {
   return head.code === 1 && head.stderr === "" ? false : null;
 }
 
+/**
+ * Whether a run outside this run's branch chain was recorded at `slot` after
+ * this one: `allocateSlotPath` gives a finished run's slot to the next isolated
+ * run in the repository, which cuts its own branch there.
+ *
+ * A continuation is in the chain and is this run's own, so it does not count.
+ * Recorded rather than active, because a finished later run's rebase is no
+ * more this run's than a running one's.
+ */
+function laterRunHolds(run: RunRow, slot: string): boolean {
+  const own = new Set([run.id, ...chainRuns(run).map((member) => member.id)]);
+  const row = db()
+    .prepare(
+      `SELECT 1 FROM runs
+        WHERE worktree_path = ? AND created_at > ?
+          AND id NOT IN (${[...own].map(() => "?").join(",")})
+        LIMIT 1`,
+    )
+    .get(slot, run.created_at, ...own);
+  return row !== undefined;
+}
+
 async function slotState(run: RunRow): Promise<SlotState> {
   const slot = run.worktree_path;
   if (!slot || !fs.existsSync(slot)) {
@@ -3619,6 +3701,7 @@ async function slotState(run: RunRow): Promise<SlotState> {
       mergeInProgress: false,
       operation: null,
       detached: false,
+      detachedByLaterRun: false,
     };
   }
 
@@ -3628,6 +3711,22 @@ async function slotState(run: RunRow): Promise<SlotState> {
   // call it gone and the verify gate call it taken over.
   if (headReadable && !checkedOutBranch && run.worktree_branch) {
     const mid = await slotMidOperation(slot, run.worktree_branch);
+    // Only while something ties it to this run: an operation on its branch, or
+    // no later run recorded at the path. Otherwise the detached HEAD is that
+    // run's own rebase, bisect or `git checkout <commit>`, and "switch it back"
+    // would have the operator move a live run's checkout onto this branch.
+    if (!(mid.ok && mid.operation) && laterRunHolds(run, slot)) {
+      return {
+        path: slot,
+        checkedOutBranch: null,
+        readable: headReadable,
+        files: [],
+        mergeInProgress: false,
+        operation: null,
+        detached: false,
+        detachedByLaterRun: true,
+      };
+    }
     // What is uncommitted there is read only once the slot is known to be
     // mid-operation: it is what Purge would remove with the checkout, and the
     // card says so. A plain detached HEAD still reports nothing, as before.
@@ -3643,6 +3742,7 @@ async function slotState(run: RunRow): Promise<SlotState> {
       mergeInProgress: false,
       operation: mid.ok ? mid.operation : null,
       detached: true,
+      detachedByLaterRun: false,
     };
   }
   // Status is read only once the slot is proved to still hold this run's
@@ -3657,6 +3757,7 @@ async function slotState(run: RunRow): Promise<SlotState> {
       mergeInProgress: false,
       operation: null,
       detached: false,
+      detachedByLaterRun: false,
     };
   }
 
@@ -3673,6 +3774,7 @@ async function slotState(run: RunRow): Promise<SlotState> {
     mergeInProgress: readable && merging === true,
     operation: null,
     detached: false,
+    detachedByLaterRun: false,
   };
 }
 
@@ -3922,13 +4024,14 @@ async function verifyGateOf(run: RunRow, slot: SlotState): Promise<VerifyGate> {
  * `checkout -b`, and the check would then run in a tree about to change hands.
  *
  * A pass also proves the branch still points at the commit the command ran
- * against. Both exits act on the branch by **name** afterwards, and the hold
- * does not keep commits off it: a continuation of this run adopts the slot in
+ * against, and hands that SHA on as `commit`. The hold does not keep commits
+ * off the branch: a continuation of this run adopts the slot in
  * `planWorkspace` without going through `allocateSlotPath`, and the card's
  * Commit button writes into it, either of which can move the branch while the
- * command runs — and the land then merged, or the delivery pushed, commits the
- * check never saw. Comparing the ref rather than refusing continuations
- * covers every writer, including one this file does not know about.
+ * command runs — and a land that merged, or a delivery that pushed, the branch
+ * by name then took commits the check never saw. Comparing the ref rather than
+ * refusing continuations covers every writer, including one this file does not
+ * know about; the exits act on `commit` and never on a later read of the ref.
  */
 async function verifyInSlot(
   slot: string,
@@ -4012,7 +4115,61 @@ async function verifyHeldSlot(
         ),
     );
   }
-  return verdict;
+  const written = await writtenDuringCheck(slot, branch, asker);
+  return written ?? { ...verdict, commit: checked.stdout };
+}
+
+/**
+ * The refusal for a check that exited 0 in a tree something else wrote to, or
+ * null when the slot is as the command found it.
+ *
+ * The tip comparison above cannot see a writer that has not committed: an open
+ * merge and an edited tracked file both leave the branch's ref where it was,
+ * while the command read a tree that was part one thing and part another. The
+ * slot was proved clean before the command, so either of these afterwards is a
+ * writer the hold did not keep out. Untracked and ignored files are not looked
+ * at — build output and caches are what a command writes — and a command that
+ * itself rewrites a tracked file is refused here too, because from the slot
+ * that is the same picture; its output belongs in an ignored path.
+ */
+async function writtenDuringCheck(
+  slot: string,
+  branch: string,
+  asker: VerifyAsker,
+): Promise<VerifyOutcome | null> {
+  const [status, merging] = await Promise.all([
+    git(slot, ["status", "--porcelain", "-z"], { ...NO_CLOCK, trim: false }),
+    mergeHeadIn(slot),
+  ]);
+  const end = verifyRefusalEnd(
+    asker,
+    (exit) => `Nothing was ${EXIT_WORDS[exit].done}. Try again once nothing else is writing to it.`,
+  );
+  if (!status.ok || merging === null) {
+    return notRun(
+      `The verify command passed, but git could not read what ${slot} holds afterwards ` +
+        `(${gitFailureLine(status.stderr) || "unknown error"}), so there is no telling whether ` +
+        `the check saw what ${branch} points at.${end}`,
+    );
+  }
+  if (merging) {
+    return notRun(
+      `A merge was opened in ${slot} while the verify command ran, so what it checked is not ` +
+        `what ${branch} points at.${end}`,
+    );
+  }
+  const dirt = parseStatusZ(status.stdout)
+    .filter((file) => file.code !== "??")
+    .map((file) => file.path);
+  if (dirt.length > 0) {
+    const rest = dirt.length - DIRT_NAMED;
+    return notRun(
+      `${slot} has uncommitted changes to ${dirt.slice(0, DIRT_NAMED).join(", ")}` +
+        `${rest > 0 ? ` and ${rest} more` : ""} after the verify command ran, so what it checked ` +
+        `is not what ${branch} points at.${end}`,
+    );
+  }
+  return null;
 }
 
 /**
@@ -4093,7 +4250,8 @@ interface TakenOverSlot {
  * The slot, when it is there and standing on a branch that is not this run's —
  * the case `verifyTreeVerdict` words as "a later run has taken that checkout
  * over" — or null for every other reason it is no use: gone, unreadable, mid
- * rebase, detached, or holding the run's own branch.
+ * rebase, detached (a later run's included, which has no branch to put back),
+ * or holding the run's own branch.
  *
  * Whether it is clean is not known from here: `slotState` reads the status of a
  * slot only once it holds the run's own branch.
@@ -4125,6 +4283,26 @@ const HELD_WHY = {
   check: "another verify command is running in it",
   run: "a run is working in it",
 } as const;
+
+/**
+ * Why a door that writes to or removes `slot` has to wait, or null when no
+ * verify command is running in it.
+ *
+ * `holdSlot` and `borrowSlot` keep other checks, runs and continuations out of
+ * the slot; this is the same exclusion asked from the doors that do not go
+ * through them. A command's tree is the branch's only while nothing else writes
+ * to it, and a slot switched for a check is a later run's checkout, which no
+ * press on this run's branch owns. `doing` says what the press would have done
+ * to it and `left` what that leaves undone.
+ */
+function checkHoldsSlot(slot: string, branch: string, doing: string, left: string): string | null {
+  if (slotHolder(slot) !== "check") return null;
+  const name = path.basename(slot);
+  const where = isSlotBorrowed(slot)
+    ? `A verify command has switched ${name}, a later run's checkout, to ${branch} for its check`
+    : `A verify command is running its check in ${name}, where ${branch} is checked out`;
+  return `${where}, so ${doing}. ${left} Try again once the check has finished.`;
+}
 
 /**
  * The refusal when the switch cannot be made: the original sentence, then why
@@ -4231,6 +4409,23 @@ async function switchBlocker(taken: TakenOverSlot): Promise<string | null> {
   return null;
 }
 
+/**
+ * git's reason for a refused `checkout` in one line. Under `--no-overwrite-ignore`
+ * the first line of that refusal names no path, so the ones it lists beneath
+ * are added: status read the slot as clean, so they can only be files git
+ * ignores there.
+ */
+function checkoutRefusalLine(stderr: string): string {
+  const first = stderr.split("\n")[0] || "unknown error";
+  const inTheWay = untrackedInTheWay(stderr);
+  if (inTheWay.length === 0) return first;
+  const rest = inTheWay.length - DIRT_NAMED;
+  return (
+    `${first.replace(/:$/, "")}: ${inTheWay.slice(0, DIRT_NAMED).join(", ")}` +
+    `${rest > 0 ? ` and ${rest} more` : ""} — ignored, most likely`
+  );
+}
+
 /** The switch, the command and the switch back, in a slot already borrowed. */
 async function runOnSwitchedBranch(
   taken: TakenOverSlot,
@@ -4241,9 +4436,13 @@ async function runOnSwitchedBranch(
   const blocker = await switchBlocker(taken);
   if (blocker) return notRun(unswitchedReason(taken, blocker, asker));
 
-  const switched = await git(slot, ["checkout", "-q", branch, "--"], NO_CLOCK);
+  // `--no-overwrite-ignore` because the blocker above reads `git status`, which
+  // never lists an ignored file, and git's default replaces one: a seeded `.env`
+  // or `local.settings.json` the later run holds at a path this branch tracks
+  // would be overwritten here and deleted by the switch back. Refused instead.
+  const switched = await git(slot, ["checkout", "-q", "--no-overwrite-ignore", branch, "--"], NO_CLOCK);
   if (!switched.ok) {
-    const why = `git would not switch it: ${switched.stderr.split("\n")[0] || "unknown error"}`;
+    const why = `git would not switch it: ${checkoutRefusalLine(switched.stderr)}`;
     return notRun(unswitchedReason(taken, why, asker));
   }
   try {
@@ -4273,8 +4472,8 @@ async function switchBack(slot: string, branch: string, holds: string): Promise<
   if (!status.ok || status.stdout !== "") {
     return left("the command left uncommitted paths in it, or git could not read them");
   }
-  const back = await git(slot, ["checkout", "-q", holds, "--"], NO_CLOCK);
-  if (!back.ok) left(`git would not switch it back: ${back.stderr.split("\n")[0] || "unknown error"}`);
+  const back = await git(slot, ["checkout", "-q", "--no-overwrite-ignore", holds, "--"], NO_CLOCK);
+  if (!back.ok) left(`git would not switch it back: ${checkoutRefusalLine(back.stderr)}`);
 }
 
 /**
@@ -4296,6 +4495,8 @@ export function commitRefusal(s: {
   operation: BranchInOperation["operation"] | null;
   /** That checkout is there and on no branch. See `SlotState`. */
   detached: boolean;
+  /** That checkout is on no branch because a later run was given it. See `SlotState`. */
+  detachedByLaterRun: boolean;
   readable: boolean;
   /** Every uncommitted path in that checkout, with git's status letters. */
   pending: readonly Pick<PendingChange, "path" | "code">[];
@@ -4352,6 +4553,14 @@ export function commitRefusal(s: {
     return (
       `That checkout is on a detached HEAD rather than on ${s.branch}, so a commit there would ` +
       `be on no branch. Switch it back to ${s.branch} there and commit again.`
+    );
+  }
+  // Not the run's to switch: the HEAD in it is another run's, and whatever is
+  // uncommitted there is that run's too.
+  if (s.detachedByLaterRun) {
+    return (
+      `That checkout slot now belongs to a later run, which has it on a detached HEAD, not ` +
+      `${s.branch} — whatever is uncommitted in it belongs to that run.`
     );
   }
   if (!s.checkedOutBranch) {
@@ -4429,6 +4638,7 @@ export async function commitPending(
     checkedOutBranch: slot.checkedOutBranch,
     operation: slot.operation,
     detached: slot.detached,
+    detachedByLaterRun: slot.detachedByLaterRun,
     readable: slot.readable,
     pending: slot.files,
     mergeInProgress: slot.mergeInProgress,
@@ -4673,6 +4883,15 @@ export async function deleteBranch(runId: string): Promise<LandOutcome> {
             reason: `Its checkout at ${held} still holds uncommitted work. Clear it first.`,
           };
         }
+        // Asked in the turn that starts the removal, for `purgeClaimedBranch`'s
+        // reason: a plain `worktree remove` still takes the ignored files with it.
+        const underCheck = checkHoldsSlot(
+          held,
+          state.branch,
+          "deleting now would remove the checkout from under the command",
+          "Nothing was deleted.",
+        );
+        if (underCheck) return { ok: false, reason: underCheck };
         // Load-bearing, not tidiness: `update-ref` below deletes a ref a
         // checkout is standing on without a word, where `git branch` refused.
         // Removing the holder — and git refusing to remove the operator's own
@@ -5101,6 +5320,18 @@ async function purgeClaimedBranch(
 
         const status = await git(held, ["status", "--porcelain", "-z"], { trim: false });
         lost = status.ok ? parseStatusZ(status.stdout).length : null;
+
+        // Asked after the status read, in the turn that starts the removal: a
+        // check can take its hold during that await. While a verify command has
+        // the slot — or has switched a later run's checkout to this branch — this
+        // press owns neither the directory nor what is ignored in it.
+        const underCheck = checkHoldsSlot(
+          held,
+          branch,
+          "purging now would delete the checkout from under the command",
+          "Nothing was deleted.",
+        );
+        if (underCheck) return { ok: false, reason: underCheck };
 
         // `--force` is the whole difference from `deleteBranch`, which leaves a
         // checkout with work in it alone. Here that work is what is being purged.
@@ -6080,7 +6311,7 @@ export async function deliveryState(
     };
   }
 
-  const seeded = seededRefusal(state.seeded, {
+  const seeded = seededRefusal(await seededForDeliver(run, state), {
     branch: state.branch,
     target: state.target ?? "",
     exit: "deliver",
@@ -6231,6 +6462,31 @@ function deliverResolutionRefusal(branch: string): string {
 }
 
 /**
+ * `landState`'s seeded-file read, redone for the Deliver exit.
+ *
+ * `state.seeded` measures from the local target, which is right for a merge into
+ * it and wrong for a push: see `seededOnBranch` for what Deliver measures from.
+ * Asked here rather than carried on `landState`, which every poll of the Land
+ * card reads and which has no use for it. Null where there is no checkout or no
+ * target to read from, both of which Deliver refuses in their own sentences.
+ */
+async function seededForDeliver(
+  run: RunRow,
+  state: NonNullable<Awaited<ReturnType<typeof landState>>>,
+): Promise<SeededRead | null> {
+  const folder = state.checkout?.path;
+  if (!folder || !state.target) return null;
+  return seededOnBranch(
+    folder,
+    `refs/heads/${state.branch}`,
+    state.target,
+    run.worktree_base,
+    seedGlobsOf(run),
+    "deliver",
+  );
+}
+
+/**
  * `unsettledBranchRefusal` for the Deliver exit, asked as a person.
  *
  * `null` for the asker in as many words, `LandAsker`'s rule: nothing in the run
@@ -6282,9 +6538,9 @@ export async function deliverRun(
 
   const state = await landState(runId);
   if (!state) return { ok: false, reason: "This run has no branch to deliver." };
-  // From `landState`'s read, so a press the card would not have offered runs no
-  // check; `pushAndOpen` asks again of the branch as it is pushed.
-  const seeded = seededRefusal(state.seeded, {
+  // The card's own read, so a press the card would not have offered runs no
+  // check; `pushAndOpen` asks again of the commit it pushes.
+  const seeded = seededRefusal(await seededForDeliver(run, state), {
     branch: state.branch,
     target: state.target ?? "",
     exit: "deliver",
@@ -6352,6 +6608,9 @@ const DELIVER_WITHDRAWN_REFUSAL =
   "The delivery was called off before its push began, so nothing was pushed and no " +
   "pull request was opened.";
 
+/** The remote Deliver pushes to, and so the one whose tracking refs it measures from. */
+const DELIVER_REMOTE = "origin";
+
 /**
  * Every URL Deliver's push to `origin` goes to, as that push's own git will
  * use them, or none when git cannot name one.
@@ -6366,7 +6625,7 @@ const DELIVER_WITHDRAWN_REFUSAL =
 async function originPushUrls(folder: string): Promise<string[]> {
   const read = await git(
     folder,
-    ["remote", "get-url", "--push", "--all", "--end-of-options", "origin"],
+    ["remote", "get-url", "--push", "--all", "--end-of-options", DELIVER_REMOTE],
     { ...NO_CLOCK, env: githubEnv("placeholder-not-a-credential") },
   );
   return read.ok ? read.stdout.split("\n").filter(Boolean) : [];
@@ -6406,15 +6665,17 @@ async function pushAndOpen(a: {
   // pushes from is the operator's, standing on the target, and a check run
   // there would not see this branch's work at all.
   const verifyCommand = getSettings().landVerifyCommand;
+  let verified: string | undefined;
   if (verifyCommand.trim()) {
     const verify = await verifyRunBranch(run, verifyCommand, "deliver");
     if (!verify.passed) return { ok: false, reason: verify.reason };
+    verified = verify.commit;
   }
 
   // Read again after the check, because the check is the branch's own code run
   // in a worktree that shares this checkout's `.git/config`: a `pushInsteadOf`
   // it wrote there would send the push, and the token, where the read above
-  // never looked. Only the seeded read below awaits between this and the
+  // never looked. Only the reads of the commit below await between this and the
   // push's spawn; a write inside that window is one no read can see.
   const destination = planDelivery({
     token: github.token,
@@ -6424,19 +6685,22 @@ async function pushAndOpen(a: {
   });
   if (!destination.ok) return { ok: false, reason: destination.reason };
 
-  // Read with the seeded files below and before them, so the last await is the
-  // one before the push and what is recorded as pushed is no newer than what
-  // was checked. A commit that lands between this read and the spawn is pushed
-  // with the rest and recorded behind it, which only over-offers one push.
-  const tipRead = await git(folder, ["rev-parse", "--verify", `refs/heads/${plan.head}`], NO_CLOCK);
-  const pushedTip = tipRead.ok ? tipRead.stdout : null;
+  // The commit the check ran on, or the branch as it stands when there was no
+  // check, read once. Every question below is asked of this SHA and the push is
+  // handed it, never the branch's name: git resolves a name when the child
+  // starts, after the second `originPushUrls` and all of `seededOnBranch`'s
+  // children, and a commit the card's Commit button (`add -A`, under a claim
+  // this never reads) or a second tab put on the branch in that time was pushed
+  // without the command having run on it, a forced `.env` included. One that
+  // arrives later stays on the local branch.
+  const leaving = await commitToLeave(folder, plan.head, verified, "pushed");
+  if (!leaving.ok) return { ok: false, reason: leaving.reason };
+  // Also what `delivered_tip` records: the push is handed this SHA, so what is
+  // recorded as pushed is exactly what left.
+  const sha = leaving.sha;
 
-  // Of the branch as it is pushed rather than as `landState` read it before the
-  // check: a commit made during the check — the card's Commit button runs
-  // `add -A` — is pushed with the rest. Nothing after it awaits before the
-  // push's spawn.
   const seeded = seededRefusal(
-    await seededOnBranch(folder, `refs/heads/${plan.head}`, plan.base, run.worktree_base, seedGlobsOf(run)),
+    await seededOnBranch(folder, sha, plan.base, run.worktree_base, seedGlobsOf(run), "deliver"),
     { branch: plan.head, target: plan.base, exit: "deliver" },
   );
   if (seeded) return { ok: false, reason: seeded };
@@ -6459,9 +6723,7 @@ async function pushAndOpen(a: {
   // push is what the pull request was missing.
   const existing = newestDelivery(current);
   const updating =
-    existing !== null && existing.tip !== null && pushedTip !== null && existing.tip !== pushedTip
-      ? existing
-      : null;
+    existing !== null && existing.tip !== null && existing.tip !== sha ? existing : null;
 
   // Again where nothing awaits before the push's spawn, `landRun`'s second
   // read: a push begun during the grace is one the exit can cut off before the
@@ -6472,8 +6734,8 @@ async function pushAndOpen(a: {
   // refusing loses nothing and leaves nothing half-published.
   if (!stillWanted()) return { ok: false, reason: DELIVER_WITHDRAWN_REFUSAL };
 
-  // Never `--force`, and the upstream is set so a second press is an ordinary
-  // fast-forward rather than a new branch.
+  // Never `--force`. The upstream is set below rather than by `--set-upstream`,
+  // which given a SHA for a source sets none and says nothing.
   //
   // `githubEnv()` explicitly, because `gitEnv()` strips the whole `UF_`
   // namespace and `git()` therefore carries no credential by default — that
@@ -6484,7 +6746,7 @@ async function pushAndOpen(a: {
   // message about authentication that names nothing an operator could fix.
   const push = await git(
     folder,
-    ["push", "--set-upstream", "origin", `${plan.head}:${plan.head}`],
+    ["push", DELIVER_REMOTE, `${sha}:refs/heads/${plan.head}`],
     { ...NO_CLOCK, env: githubEnv(github.token) },
   );
   if (!push.ok) {
@@ -6494,8 +6756,26 @@ async function pushAndOpen(a: {
     };
   }
 
+  // What `push --set-upstream <head>:<head>` used to leave in `.git/config`,
+  // which `dropBranchConfig` removes again and Push's refusal of a run's branch
+  // is written around. After the push, because the tracking ref it names is the
+  // push's own. Best effort and never a verdict: the branch is published, and a
+  // refusal here would report a delivery as failed that a second press could
+  // not repeat.
+  const tracking = await git(
+    folder,
+    ["branch", `--set-upstream-to=${DELIVER_REMOTE}/${plan.head}`, "--end-of-options", plan.head],
+    NO_CLOCK,
+  );
+  if (!tracking.ok) {
+    console.warn(
+      `${plan.head} was pushed but not given ${DELIVER_REMOTE}/${plan.head} as its upstream: ` +
+        `${gitFailureLine(tracking.stderr) || "unknown error"}.`,
+    );
+  }
+
   if (updating) {
-    db().prepare("UPDATE runs SET delivered_tip = ? WHERE id = ?").run(pushedTip, updating.runId);
+    db().prepare("UPDATE runs SET delivered_tip = ? WHERE id = ?").run(sha, updating.runId);
     emitRunEvent({
       runId,
       ts: Date.now(),
@@ -6536,7 +6816,7 @@ async function pushAndOpen(a: {
     .prepare(
       "UPDATE runs SET delivered_pr_url = ?, delivered_pr_number = ?, delivered_at = ?, delivered_tip = ? WHERE id = ?",
     )
-    .run(opened.pr.url, opened.pr.number, deliveredAt, pushedTip, runId);
+    .run(opened.pr.url, opened.pr.number, deliveredAt, sha, runId);
 
   // On the run's own timeline, the way a land is: this is the other exit, and
   // the question "where did this work go" is asked on the run's page.

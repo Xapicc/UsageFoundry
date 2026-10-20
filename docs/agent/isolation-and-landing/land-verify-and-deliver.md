@@ -44,7 +44,7 @@ identically whatever the agent wrote, with nothing on either side visible. When
 the slot no longer holds the run's branch because a later run took it over,
 this switches it back for the command when it is safe to (below) and
 **refuses** when it is not, rather than falling back — and a slot stopped mid-rebase or
-mid-bisect of the branch, which reads as holding none, is refused naming that, as is one on a plain detached HEAD. It does not cut a fresh worktree,
+mid-bisect of the branch, which reads as holding none, is refused naming that, as is one on a plain detached HEAD that no later run was given (a later run's is taken over). It does not cut a fresh worktree,
 for the reason `resolveConflicts` records when it hands a temporary checkout
 `resolveAllowedTools: []`: a slot cut from bare git has no `node_modules` and no
 build output, so `npm test` there fails for a reason that is not the work, and
@@ -86,7 +86,8 @@ and the spawn, and the card's Commit holds a claim it never reads, so a merge by
 name took a commit no check saw, a forced `.env` included
 (`landMovedBranch.test.ts`, 2026-10-17; past a squash, `branch-inventory-and-deletion.md`).
 A late commit stays on the branch, unlanded, rather than failing an unattended
-queue row. Still open: the milliseconds between the `HEAD` comparison and that read.
+queue row. The tip is `VerifyOutcome.commit`, the SHA that proof was of, and the
+ref is read only when no command ran (`landMovedBranch.test.ts`, 2026-10-20).
 
 **A slot a later run took over is switched to the branch for the command, by Land and Deliver as by a review block.** All three call `verifyRunBranch`, which is `verifyTreeVerdict` then `verifyInSlot`, so what is checked is what this section describes. `allocateSlotPath` gives a finished run's clean slot to the next isolated run in the repository, so a branch Land was pressed on days later routinely finds another branch in its slot, and refusing it ("a later run has taken that checkout over") withheld Land for good with `landVerifyCommand` set. The slot is now `borrowSlot`'s, the branch is checked out in it when it is clean, the command runs there and the later run's branch is put back before `verifyRunBranch` returns, so the merge and its fresh reads (`landRecheck`, `unsettledBranchRefusal`) come after the undo. The refusals that remain, what the card says before the press, the merge queue's row and how the `landing` claim composes with the borrow are in [review-verify-command.md](review-verify-command.md); that is the switch's home and this section is only where it is called.
 

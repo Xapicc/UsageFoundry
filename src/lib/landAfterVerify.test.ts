@@ -68,12 +68,25 @@ if (mode === "edit") {
   fs.writeFileSync(path.join(dir, "other.txt"), "operator unrelated\\n");
 } else if (mode === "switch") {
   execFileSync("git", ["switch", "-q", "other"], { cwd: dir });
-} else if (mode === "wait") {
+} else if (mode === "wait" || mode === "inspect") {
   fs.writeFileSync(path.join(dir, "started"), "");
   const deadline = Date.now() + 20000;
   while (!fs.existsSync(path.join(dir, "go"))) {
     if (Date.now() > deadline) process.exit(3);
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+  }
+  if (mode === "inspect") {
+    // The tree the command was left looking at once the test said go: whether a
+    // merge is open in it, and what the run's file holds.
+    let merging = "no";
+    try {
+      execFileSync("git", ["rev-parse", "-q", "--verify", "MERGE_HEAD"], { stdio: "ignore" });
+      merging = "yes";
+    } catch {}
+    fs.writeFileSync(
+      path.join(dir, "seen"),
+      JSON.stringify({ shared: fs.readFileSync("shared.txt", "utf8"), merging }),
+    );
   }
 } else if (mode === "mark") {
   fs.writeFileSync(path.join(dir, "ran"), "");
@@ -425,7 +438,12 @@ interface ReusedScene extends Scene {
  * in the slot, a commit on it, and a row recording the same slot.
  */
 function reusedScene(name: string): ReusedScene {
-  const s = scene(name);
+  return takeOverSlot(scene(name));
+}
+
+/** `reusedScene` over a scene already built, for one that needs more in the run's branch first. */
+function takeOverSlot(s: Scene): ReusedScene {
+  const name = path.basename(s.repo);
   const laterBranch = `${s.branch}-later`;
   git(s.slot, "checkout", "-q", "-b", laterBranch, s.base);
   fs.writeFileSync(path.join(s.slot, "other.txt"), "later\n");
@@ -541,6 +559,73 @@ describe("a checkout a later run reused, with a verify command set", () => {
     assert.equal(git(s.repo, "rev-parse", "main").trim(), s.base);
   });
 
+  describe("whose own ignored file the run's branch tracks", () => {
+    /**
+     * `git status` never lists an ignored file, so the slot reads clean and the
+     * switch is offered; and `git checkout` replaces an ignored file by default,
+     * the way `git merge` did before `--no-overwrite-ignore`. The switch to the
+     * run's branch overwrote the later run's file with the run's tracked one,
+     * and the switch back, to a branch that does not track the path, deleted
+     * it: a seeded `.env` is the file this is for, and nothing said so.
+     */
+    const LATERS_OWN = "the later run's own, never in git\n";
+
+    function ignoredScene(name: string): ReusedScene {
+      const s = takeOverSlot(trackedIgnoredScene(name, { operatorFile: false }));
+      fs.writeFileSync(path.join(s.slot, "local.settings.json"), LATERS_OWN);
+      assert.equal(git(s.slot, "status", "--porcelain").trim(), "", "precondition: the slot reads clean");
+      return s;
+    }
+
+    const keptFile = (s: ReusedScene) => path.join(s.slot, "local.settings.json");
+
+    it("refuses Land's switch, runs nothing, and keeps the file", async () => {
+      const s = ignoredScene("switch-ignored");
+      verifyWith("mark", s.signals);
+
+      const landed = await land.landRun(s.runId, "merge");
+
+      assert.equal(landed.ok, false, "landed after switching over the later run's ignored file");
+      assert.match(
+        landed.ok ? "" : landed.reason,
+        /git would not switch it: .*overwritten by checkout: local\.settings\.json — ignored/,
+      );
+      assert.equal(fs.existsSync(path.join(s.signals, "ran")), false, "the command ran anyway");
+      assert.equal(headOf(s.slot), s.laterBranch);
+      assert.equal(fs.readFileSync(keptFile(s), "utf8"), LATERS_OWN);
+      assert.equal(git(s.repo, "rev-parse", "main").trim(), s.base);
+      assert.equal(landedAt(s.runId), null);
+    });
+
+    it("refuses a review block's switch the same way", async () => {
+      const s = ignoredScene("switch-ignored-review");
+
+      const outcome = await land.verifyBranchForReview(
+        orchestrator.getRun(s.runId)!,
+        `${process.execPath} ${probePath()} mark ${s.signals}`,
+      );
+
+      assert.equal(outcome.ran, false, "the block's command ran after the switch");
+      assert.match(outcome.reason, /git would not switch it: .*overwritten by checkout: local\.settings\.json — ignored/);
+      assert.equal(fs.existsSync(path.join(s.signals, "ran")), false, "the command ran anyway");
+      assert.equal(headOf(s.slot), s.laterBranch);
+      assert.equal(fs.readFileSync(keptFile(s), "utf8"), LATERS_OWN);
+    });
+
+    it("still switches and lands when the later run holds no file at that path", async () => {
+      // The control: what is refused is the later run's file, not a branch that
+      // tracks a path `.gitignore` names.
+      const s = takeOverSlot(trackedIgnoredScene("switch-ignored-absent", { operatorFile: false }));
+      verifyWith("mark", s.signals);
+
+      const landed = await land.landRun(s.runId, "merge");
+
+      assert.equal(landed.ok, true, landed.ok ? "" : landed.reason);
+      assert.ok(fs.existsSync(path.join(s.signals, "ran")), "the command did not run");
+      assert.equal(headOf(s.slot), s.laterBranch, "the slot was not put back");
+    });
+  });
+
   it("refuses two runs whose checkouts hold each other's branch, which git cannot switch", async () => {
     const a = scene("swapped");
     const bBranch = `${a.branch}-b`;
@@ -614,6 +699,204 @@ describe("a checkout a later run reused, with a verify command set", () => {
     assert.equal(headOf(s.slot), s.laterBranch);
     assert.equal(git(s.repo, "rev-parse", "main").trim(), s.base);
     assert.equal(landedAt(s.runId), null);
+  });
+});
+
+/**
+ * The writers a verify command's hold is there to keep out.
+ *
+ * `holdSlot` and `borrowSlot` refused a second *check*, a run and a continuation,
+ * and said nothing to the three doors that write to or remove a checkout:
+ * Purge's `worktree remove --force` took a later run's switched checkout out
+ * from under the command, Resolve opened its merge in the tree the command was
+ * checking and the review block then passed it, and nothing looked at the slot
+ * once the command had exited 0. None of it throws, so the only place the
+ * exclusion is checked in both directions is a command held open on a real slot
+ * while the other door is pressed.
+ */
+describe("a checkout a verify command is running in is kept from Purge, Delete and Resolve", () => {
+  const claudeBin = () => process.env.CLAUDE_BIN!;
+  const command = (mode: string, dir: string) => `${process.execPath} ${probePath()} ${mode} ${dir}`;
+  const review = (runId: string, mode: string, dir: string) =>
+    land.verifyBranchForReview(orchestrator.getRun(runId)!, command(mode, dir));
+
+  before(() => {
+    // A resolution wrongly let in has to keep its merge open long enough to be
+    // seen; the guard under test means this is never run.
+    fs.writeFileSync(claudeBin(), "#!/bin/sh\nsleep 3\n", { mode: 0o755 });
+  });
+  after(() => fs.rmSync(claudeBin(), { force: true }));
+
+  /** Main moves the file the run changed, so the run's branch conflicts with it. */
+  function mainConflicts(s: Scene): void {
+    fs.writeFileSync(path.join(s.repo, "shared.txt"), "main moved\n");
+    git(s.repo, "commit", "-qam", "main moved");
+  }
+
+  it("refuses Purge while a check has switched a later run's checkout to the branch", async () => {
+    const s = reusedScene("purge-mid");
+    const checking = review(s.runId, "wait", s.signals);
+    await until(path.join(s.signals, "started"));
+    assert.equal(orchestrator.isSlotBorrowed(s.slot), true);
+    assert.equal(headOf(s.slot), s.branch, "switched for the check");
+
+    const purged = await land.purgeBranch(s.runId, s.branch);
+    fs.writeFileSync(path.join(s.signals, "go"), "");
+    const verdict = await checking;
+
+    assert.equal(purged.ok, false, "Purge went ahead under the check");
+    assert.match(
+      purged.ok ? "" : purged.reason,
+      /^A verify command has switched .+, a later run's checkout, to uf\/purge-mid for its check, so purging now would delete the checkout from under the command\. Nothing was deleted\./,
+    );
+    assert.ok(fs.existsSync(s.slot), "Purge of this run removed the later run's checkout");
+    assert.equal(verdict.passed, true, verdict.reason);
+    assert.equal(headOf(s.slot), s.laterBranch);
+    git(s.repo, "rev-parse", "--verify", `refs/heads/${s.branch}`);
+
+    // The control: with no check running the same press goes through, and still
+    // leaves the later run's checkout alone, because the branch is not in it.
+    const again = await land.purgeBranch(s.runId, s.branch);
+    assert.equal(again.ok, true, again.ok ? "" : again.reason);
+    assert.ok(fs.existsSync(s.slot));
+    assert.equal(headOf(s.slot), s.laterBranch);
+  });
+
+  it("refuses Purge while a check is running in the run's own checkout", async () => {
+    const s = scene("purge-own");
+    const checking = review(s.runId, "wait", s.signals);
+    await until(path.join(s.signals, "started"));
+
+    const purged = await land.purgeBranch(s.runId, s.branch);
+    fs.writeFileSync(path.join(s.signals, "go"), "");
+    const verdict = await checking;
+
+    assert.equal(purged.ok, false, "Purge removed the checkout the command was running in");
+    assert.match(
+      purged.ok ? "" : purged.reason,
+      /^A verify command is running its check in .+, where uf\/purge-own is checked out, so purging now would delete the checkout from under the command\. Nothing was deleted\./,
+    );
+    assert.ok(fs.existsSync(s.slot));
+    assert.equal(verdict.passed, true, verdict.reason);
+
+    const again = await land.purgeBranch(s.runId, s.branch);
+    assert.equal(again.ok, true, again.ok ? "" : again.reason);
+    assert.equal(fs.existsSync(s.slot), false, "the control press no longer removes the checkout");
+  });
+
+  it("refuses Delete while a check has switched a later run's checkout to a landed branch", async () => {
+    const s = reusedScene("delete-mid");
+    const landed = await land.landRun(s.runId, "merge");
+    assert.equal(landed.ok, true, landed.ok ? "" : landed.reason);
+    const checking = review(s.runId, "wait", s.signals);
+    await until(path.join(s.signals, "started"));
+    assert.equal(headOf(s.slot), s.branch, "switched for the check");
+
+    const deleted = await land.deleteBranch(s.runId);
+    fs.writeFileSync(path.join(s.signals, "go"), "");
+    await checking;
+
+    assert.equal(deleted.ok, false, "Delete went ahead under the check");
+    assert.match(
+      deleted.ok ? "" : deleted.reason,
+      /^A verify command has switched .+, a later run's checkout, to uf\/delete-mid for its check, so deleting now would remove the checkout from under the command\. Nothing was deleted\./,
+    );
+    assert.ok(fs.existsSync(s.slot), "Delete of this run removed the later run's checkout");
+    assert.equal(headOf(s.slot), s.laterBranch);
+  });
+
+  it("refuses Resolve while a check is running in the run's own checkout", async () => {
+    const s = scene("resolve-own");
+    mainConflicts(s);
+    const checking = review(s.runId, "inspect", s.signals);
+    await until(path.join(s.signals, "started"));
+    assert.equal((await land.landState(s.runId))?.preview.outcome, "conflict");
+
+    const resolved = await land.resolveConflicts(s.runId);
+    fs.writeFileSync(path.join(s.signals, "go"), "");
+    const verdict = await checking;
+
+    assert.equal(resolved.ok, false, "a resolution was opened in the checkout under the check");
+    assert.match(
+      resolved.ok ? "" : resolved.reason,
+      /^A verify command is running its check in .+, where uf\/resolve-own is checked out, so a resolution would open its merge in the tree the command is checking\. Nothing was started\./,
+    );
+    const seen = JSON.parse(fs.readFileSync(path.join(s.signals, "seen"), "utf8"));
+    assert.deepEqual(seen, { shared: "branch\n", merging: "no" });
+    assert.equal(verdict.passed, true, verdict.reason);
+    assert.equal(git(s.slot, "status", "--porcelain"), "");
+  });
+
+  it("refuses Resolve while a check has switched a later run's checkout to the branch", async () => {
+    const s = reusedScene("resolve-mid");
+    mainConflicts(s);
+    const checking = review(s.runId, "inspect", s.signals);
+    await until(path.join(s.signals, "started"));
+    assert.equal(orchestrator.isSlotBorrowed(s.slot), true);
+    assert.equal(headOf(s.slot), s.branch, "switched for the check");
+
+    const resolved = await land.resolveConflicts(s.runId);
+    fs.writeFileSync(path.join(s.signals, "go"), "");
+    const verdict = await checking;
+
+    assert.equal(resolved.ok, false, "a resolution was opened in the checkout under the check");
+    assert.match(
+      resolved.ok ? "" : resolved.reason,
+      /^A verify command has switched .+, a later run's checkout, to uf\/resolve-mid for its check, so a resolution would open its merge in the tree the command is checking\. Nothing was started\./,
+    );
+    const seen = JSON.parse(fs.readFileSync(path.join(s.signals, "seen"), "utf8"));
+    assert.deepEqual(seen, { shared: "branch\n", merging: "no" });
+    assert.equal(verdict.passed, true, verdict.reason);
+    assert.equal(headOf(s.slot), s.laterBranch);
+    assert.equal(git(s.slot, "status", "--porcelain"), "");
+  });
+
+  it("does not pass a check whose checkout has a merge open in it afterwards", async () => {
+    // Whoever opened it, and whichever door let them in: the tip is where it was,
+    // because a merge has not committed, so the tip comparison cannot see it.
+    const s = scene("guard-merge");
+    mainConflicts(s);
+    const checking = review(s.runId, "wait", s.signals);
+    await until(path.join(s.signals, "started"));
+    try {
+      git(s.slot, "merge", "--no-edit", "main");
+    } catch {
+      // The conflict is the point.
+    }
+    assert.ok(fs.existsSync(path.join(s.slot, ".git")), "the slot is a checkout");
+    fs.writeFileSync(path.join(s.signals, "go"), "");
+    const verdict = await checking;
+
+    assert.equal(verdict.passed, false, "the check passed on a tree with a merge open in it");
+    assert.equal(verdict.ran, false);
+    assert.match(verdict.reason, /^A merge was opened in .+ while the verify command ran/);
+    git(s.slot, "merge", "--abort");
+  });
+
+  it("does not pass a check whose checkout has an uncommitted change to a tracked file afterwards", async () => {
+    const s = scene("guard-dirt");
+    const checking = review(s.runId, "wait", s.signals);
+    await until(path.join(s.signals, "started"));
+    fs.writeFileSync(path.join(s.slot, "shared.txt"), "written during the check\n");
+    fs.writeFileSync(path.join(s.signals, "go"), "");
+    const verdict = await checking;
+
+    assert.equal(verdict.passed, false, "the check passed on a tree edited while it ran");
+    assert.equal(verdict.ran, false);
+    assert.match(verdict.reason, /has uncommitted changes to shared\.txt after the verify command ran/);
+  });
+
+  it("still passes a check that left an untracked file behind", async () => {
+    // The control for the two above: build output and caches are untracked, and
+    // a check that wrote some is not a check on another tree.
+    const s = scene("guard-untracked");
+    const checking = review(s.runId, "wait", s.signals);
+    await until(path.join(s.signals, "started"));
+    fs.writeFileSync(path.join(s.slot, "build-output.txt"), "left by the command\n");
+    fs.writeFileSync(path.join(s.signals, "go"), "");
+    const verdict = await checking;
+
+    assert.equal(verdict.passed, true, verdict.reason);
   });
 });
 

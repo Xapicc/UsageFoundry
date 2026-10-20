@@ -693,6 +693,65 @@ describe("neither exit nor the handoff lets a file seeding copied in leave on th
   });
 });
 
+/**
+ * Which commits Deliver may leave out of the seeded-file read: what the remote
+ * already has, and never what the operator's local target has.
+ *
+ * Measured before the fix, 2026-10-20 (board task 9d68f433, found 2026-10-16):
+ * the range excluded `refs/heads/<target>`, so a branch whose `.env` commit the
+ * operator had merged by hand into an unpushed local `main`, and then untracked
+ * there, read as carrying nothing. The card offered Deliver and the press
+ * pushed the branch, history and key included, and opened the pull request.
+ */
+describe("Deliver measures the seeded-file read from the remote, not from the local target", () => {
+  it("refuses a branch whose .env commit an unpushed local main merged and then untracked", async () => {
+    const s = forcedEnvScene("handmerged");
+    // The operator merges the branch by hand, moving their ignored `.env` aside
+    // as git asks, then untracks it on `main` and puts their copy back. Nothing
+    // is pushed: the remote has the base commit and no branch.
+    fs.renameSync(path.join(s.repo, ".env"), path.join(root, "handmerged-aside.env"));
+    git(s.repo, "merge", "-q", "--no-edit", s.branch);
+    git(s.repo, "rm", "-q", "--cached", ".env");
+    git(s.repo, "commit", "-qm", "untrack .env");
+    fs.renameSync(path.join(root, "handmerged-aside.env"), path.join(s.repo, ".env"));
+    assert.equal(git(s.repo, "status", "--porcelain").trim(), "");
+    assert.equal(git(s.repo, "ls-tree", "--name-only", "main", ".env").trim(), "");
+    assert.equal(remoteTip(s), null);
+
+    const state = await land.deliveryState(s.runId);
+    const pressed = await land.deliverRun(s.runId);
+
+    assert.equal(state.possible, false, "the card offered Deliver");
+    assert.match(state.reason ?? "", /^uf\/handmerged carries \.env, which this app copies into every checkout from yours/);
+    assert.match(state.reason ?? "", /a push cannot be taken back/);
+    assert.equal(pressed.ok, false, "the press pushed the operator's .env");
+    assert.equal(pressed.ok ? "" : pressed.reason, state.reason);
+    assert.equal(remoteTip(s), null);
+    assert.deepEqual(opened, []);
+  });
+
+  it("delivers a branch that merged in a .env.development the remote's main tracks and the local main has not pulled", async () => {
+    // The control for the direction of the measurement: what the remote tracks
+    // is the repository's own file, so it is subtracted whether or not the
+    // operator's local `main` has caught up. Local `main` is rewound to the base
+    // here, with the remote-tracking ref left where the push put it.
+    const s = scene("remote-ahead");
+    fs.writeFileSync(path.join(s.repo, ".env.development"), "API_URL=dev\n");
+    git(s.repo, "add", ".env.development");
+    git(s.repo, "commit", "-qm", "track .env.development");
+    git(s.repo, "push", "-q", "origin", "main:refs/heads/main");
+    git(s.repo, "reset", "-q", "--hard", "HEAD~1");
+    git(s.slot, "merge", "-q", "--no-edit", "refs/remotes/origin/main");
+    assert.equal(git(s.slot, "ls-tree", "--name-only", "HEAD", ".env.development").trim(), ".env.development");
+    assert.equal(git(s.repo, "ls-tree", "--name-only", "main", ".env.development").trim(), "");
+
+    const delivered = await land.deliverRun(s.runId);
+
+    assert.equal(delivered.ok, true, delivered.ok ? "" : delivered.reason);
+    assert.equal(remoteTip(s), git(s.slot, "rev-parse", "HEAD").trim());
+  });
+});
+
 /** One press of the card's button, through the route and its body check. */
 function press(runId: string, body: string): Promise<Response> {
   return route.POST(

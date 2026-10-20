@@ -432,3 +432,152 @@ describe("a run's checkout on a plain detached HEAD", () => {
     }
   });
 });
+
+describe("a detached checkout once a later run was handed the slot", () => {
+  /**
+   * `allocateSlotPath` gives a finished run's slot to the next isolated run in
+   * the repository, which cuts its own branch there. If that run then stops
+   * detached — a rebase of its own branch, a bisect, `git checkout <sha>` — the
+   * earlier run's reads found a detached HEAD at its recorded path and took the
+   * slot for its own, so its card and its Commit told the operator to switch a
+   * live run's checkout onto the earlier run's branch. It is the earlier run's
+   * only while an operation names its branch, or while nothing has been
+   * recorded at that path since.
+   */
+  const VERIFY = `${process.execPath} -e 0`;
+
+  interface Later {
+    id: string;
+    branch: string;
+  }
+
+  /** A run recorded at `s.slot` after `s.runId`, with its own branch cut there from `main`. */
+  function laterRunTakes(s: Scene, status: "running" | "completed"): Later {
+    const branch = `${s.branch}-later`;
+    fixtureGit(s.slot, ["checkout", "-q", "-b", branch, "main"]);
+    fs.writeFileSync(path.join(s.slot, "later.txt"), "the later run's line\n");
+    fixtureGit(s.slot, ["add", "-A"]);
+    fixtureGit(s.slot, ["commit", "-qm", "the later run's work"]);
+    const id = `${s.runId}-later`;
+    const at = Date.now() + 1;
+    db()
+      .prepare(
+        `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
+                           created_at, finished_at, isolation, repo_root, worktree_path,
+                           worktree_branch, worktree_base, worktree_base_branch)
+         VALUES (?, ?, 'a later task', ?, '{}', 1, 1, ?, ?, 'worktree', ?, ?, ?, ?, 'main')`,
+      )
+      .run(id, s.repo, status, at, status === "running" ? null : at, s.repo, s.slot, branch, getRun(s.runId)!.worktree_base);
+    return { id, branch };
+  }
+
+  /** Back to the run's base, so its land is a fast-forward and nothing but the gate refuses. */
+  const landIsFastForward = (s: Scene) =>
+    fixtureGit(s.repo, ["reset", "-q", "--hard", getRun(s.runId)!.worktree_base!]);
+
+  async function cardAndPress(s: Scene) {
+    saveSettings({ landVerifyCommand: VERIFY });
+    try {
+      const blocked = (await land.landState(s.runId))?.blocked ?? null;
+      const landed = await land.landRun(s.runId, "merge");
+      return { blocked, pressed: landed.ok ? null : landed.reason };
+    } finally {
+      saveSettings({ landVerifyCommand: "" });
+    }
+  }
+
+  function assertTakenOver(said: string | null, s: Scene) {
+    assert.match(said ?? "", /a later run has taken that checkout over/, `not given the taken-over answer: ${said}`);
+    assert.doesNotMatch(said ?? "", /detached HEAD rather than/, `a later run's HEAD was called this run's: ${said}`);
+    assert.doesNotMatch(said ?? "", new RegExp(`Switch it back to ${s.branch}`), `told to switch a later run's checkout: ${said}`);
+  }
+
+  it("control: a later run on its own branch is taken over, and the slot is left alone", async () => {
+    const s = scene("later-control");
+    const later = laterRunTakes(s, "running");
+    landIsFastForward(s);
+
+    const { blocked, pressed } = await cardAndPress(s);
+
+    assertTakenOver(blocked, s);
+    assert.equal(pressed, blocked, "the card and the press disagree");
+    assert.equal(headOf(s.slot), later.branch);
+  });
+
+  it("says a plain detached HEAD of a later run is taken over, on the card and at the press", async () => {
+    const s = scene("later-detached");
+    laterRunTakes(s, "running");
+    fixtureGit(s.slot, ["checkout", "-q", "--detach"]);
+    landIsFastForward(s);
+
+    const { blocked, pressed } = await cardAndPress(s);
+
+    assertTakenOver(blocked, s);
+    assert.equal(pressed, blocked, "the card and the press disagree");
+    assert.equal(headOf(s.slot), "HEAD", "the later run's checkout was switched");
+  });
+
+  it("says a later run stopped mid-rebase of its own branch is taken over", async () => {
+    const s = scene("later-rebase");
+    laterRunTakes(s, "running");
+    // Both sides add `later.txt`, so rebasing the later run's branch onto the
+    // target stops on the conflict, detached.
+    fs.writeFileSync(path.join(s.repo, "later.txt"), "the target's line\n");
+    fixtureGit(s.repo, ["add", "-A"]);
+    fixtureGit(s.repo, ["commit", "-qm", "the target adds later.txt"]);
+    rebaseStops(s.slot);
+    landIsFastForward(s);
+
+    const { blocked, pressed } = await cardAndPress(s);
+
+    assertTakenOver(blocked, s);
+    assert.equal(pressed, blocked, "the card and the press disagree");
+    assert.equal(headOf(s.slot), "HEAD", "the later run's rebase was disturbed");
+  });
+
+  it("says a finished later run's detached HEAD is taken over as well", async () => {
+    const s = scene("later-finished");
+    laterRunTakes(s, "completed");
+    fixtureGit(s.slot, ["checkout", "-q", "--detach"]);
+    landIsFastForward(s);
+
+    assertTakenOver((await cardAndPress(s)).blocked, s);
+  });
+
+  it("does not tell Commit to switch it, nor call it gone", async () => {
+    const s = scene("later-commit");
+    laterRunTakes(s, "running");
+    fixtureGit(s.slot, ["checkout", "-q", "--detach"]);
+
+    const outcome = await land.commitPending(s.runId);
+
+    assert.equal(outcome.ok, false, "a commit was made in a later run's checkout");
+    const reason = outcome.ok ? "" : outcome.reason;
+    assert.doesNotMatch(reason, /Switch it back/, `told to switch a later run's checkout: ${reason}`);
+    assert.doesNotMatch(reason, /gone/, `a checkout standing there was called gone: ${reason}`);
+    assert.match(reason, /later run/, reason);
+  });
+
+  it("keeps the slot the run's own when only its own continuation is recorded there", async () => {
+    // A continuation adopts the slot and carries the run's branch on; it is not
+    // a later run, so a plain detached HEAD there is still the run's to name.
+    const s = scene("later-continuation");
+    const at = Date.now() + 1;
+    db()
+      .prepare(
+        `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
+                           created_at, finished_at, isolation, repo_root, worktree_path,
+                           worktree_branch, worktree_base, worktree_base_branch, continues_run)
+         VALUES (?, ?, 'carry on', 'completed', '{}', 1, 1, ?, ?, 'worktree', ?, ?, ?, ?, 'main', ?)`,
+      )
+      .run(`${s.runId}-next`, s.repo, at, at, s.repo, s.slot, s.branch, getRun(s.runId)!.worktree_base, s.runId);
+    fixtureGit(s.slot, ["checkout", "-q", "--detach"]);
+
+    // Commit rather than Land: the continuation owns the branch, and the owner
+    // refusal comes ahead of the gate.
+    const outcome = await land.commitPending(s.runId);
+
+    assert.equal(outcome.ok, false);
+    assert.match(outcome.ok ? "" : outcome.reason, /detached HEAD rather than on uf\/later-continuation/);
+  });
+});

@@ -63,6 +63,13 @@ export type VerifyOutcome = {
   ending: string;
   /** The last of its output, trimmed, and `""` when there was none. */
   tail: string;
+  /**
+   * The commit the command ran against, set only on a pass that
+   * `verifyHeldSlot` proved the branch still named afterwards. The exit that
+   * asked acts on this SHA rather than reading the branch again: the read is a
+   * new one, and a commit that reached the branch in between is one no check saw.
+   */
+  commit?: string;
 };
 
 /**
