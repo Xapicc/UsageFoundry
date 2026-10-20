@@ -304,10 +304,10 @@ test("an end_time with no status word still ends the task", () => {
 });
 
 test("task_progress opens no row", () => {
-  // Its payload is a sub-agent delegation's — `subagent_type`, `usage`,
-  // `last_tool_name`, no `task_type` and no `status`. Those have their own
-  // event kind and their own label in the log, and one word for both is the
-  // confusion this panel is scoped away from.
+  // Its payload is a sub-agent's progress — `subagent_type`, `usage`,
+  // `last_tool_name`, no `task_type`, no `status` and no `is_backgrounded` — so
+  // a row opened from one could not say whether the task is a foreground
+  // delegation, which this panel leaves out, or a backgrounded one.
   const rows = runTasks([
     systemEvent(1000, "task_progress", {
       task_id: "a23f9f64a2fc15bb0",
@@ -320,6 +320,87 @@ test("task_progress opens no row", () => {
   ]);
 
   assert.deepEqual(rows, []);
+});
+
+/**
+ * 2.1.280 files every `Agent` call as a `local_agent` task, so the panel's scope
+ * is drawn by `is_backgrounded` on `task_started`. These lines are that pin's own,
+ * captured 2026-10-20 against a loopback stub (`docs/verification/run-lifecycle-background-work.md`).
+ */
+function agentStarted(ts: number, taskId: string, isBackgrounded: boolean): RunEventDTO {
+  return systemEvent(ts, "task_started", {
+    task_id: taskId,
+    tool_use_id: `toolu_${taskId}`,
+    description: "slow sub",
+    subagent_type: "general-purpose",
+    is_backgrounded: isBackgrounded,
+    spawn_depth: 1,
+    task_type: "local_agent",
+  });
+}
+
+test("a foreground delegation is not a background task, however it ends", () => {
+  // The panel is "what the run backgrounded", and `stoppedTasksNotice` reads
+  // these rows: a Stop inside a foreground `Agent` call measured
+  // `task_updated killed` then `task_notification stopped` for it, which would
+  // otherwise reach the next cycle as a stopped *background* task.
+  const rows = runTasks([
+    agentStarted(1000, "fg", false),
+    systemEvent(1500, "task_progress", {
+      task_id: "fg",
+      tool_use_id: "toolu_fg",
+      last_tool_name: "Read",
+    }),
+    updated(2000, "fg", { status: "killed", end_time: 2000 }),
+    notified(2000, "fg", "stopped", { output_file: "/tmp/tasks/fg.output" }),
+  ]);
+
+  assert.deepEqual(rows, []);
+});
+
+test("a backgrounded delegation is a row, and says it is backgrounded", () => {
+  const rows = runTasks([agentStarted(1000, "bg", true)]);
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].taskType, "local_agent");
+  assert.equal(rows[0].backgrounded, true);
+  assert.equal(rows[0].state, "running");
+});
+
+test("a task started in the foreground and backgrounded later is a row, in any order", () => {
+  // Dropping it would hide a task that outlives its turn, the one the panel
+  // exists for. The word can come as a patch or as a listing in the snapshot
+  // of live background tasks, and must not depend on which event lands first.
+  const patched = [
+    agentStarted(1000, "moved", false),
+    updated(2000, "moved", { is_backgrounded: true }),
+  ];
+  const listed = [
+    agentStarted(1000, "moved", false),
+    snapshot(2000, [{ task_id: "moved", task_type: "local_agent" }]),
+  ];
+
+  for (const events of [patched, listed, [...patched].reverse(), [...listed].reverse()]) {
+    const rows = runTasks(events);
+    assert.deepEqual(
+      rows.map((t) => [t.id, t.state]),
+      [["moved", "running"]],
+    );
+  }
+});
+
+test("a task that never stated its kind is kept", () => {
+  // A pin older than `is_backgrounded`, or a task the page only met through its
+  // ending. Hiding a live shell is the worse error, so silence keeps the row.
+  const rows = runTasks([
+    started(1000, "old"),
+    notified(2000, "unseen", "completed"),
+  ]);
+
+  assert.deepEqual(
+    rows.map((t) => t.id).sort(),
+    ["old", "unseen"],
+  );
 });
 
 test("a malformed event is skipped rather than filed as a task", () => {

@@ -219,6 +219,7 @@ import {
 import { TASK_LIFECYCLE_MESSAGES } from "./runTasks";
 import {
   NO_SUBAGENTS,
+  backgroundSubagents,
   foldSubagentEvent,
   subagentSummary,
   type SubagentFold,
@@ -1016,6 +1017,37 @@ export function cycleSilenceMs(minutes: number): number {
   const wanted =
     Number.isFinite(asked) && asked > 0 ? asked : FALLBACK_CYCLE_SILENCE_MINUTES;
   return Math.max(MIN_CYCLE_SILENCE_MS, Math.floor(wanted * 60_000));
+}
+
+/**
+ * How long a cycle may be silent right now, given how many sub-agents the CLI is
+ * running for it in the background.
+ *
+ * **A background sub-agent's tool call prints nothing.** The CLI heartbeats a
+ * tool call on the main thread every 30 seconds and skips the timer for a tool
+ * running inside an agent, and a background `Agent` call has no heartbeat of its
+ * own, so a sub-agent in one 15-minute build is 15 minutes of silence from a
+ * healthy cycle. Measured end to end (`docs/verification/run-lifecycle-background-work.md`):
+ * a deadline of 20 seconds killed a cycle whose sub-agent was blocked in a
+ * `Read`, and the same cycle finished normally given a longer one. Taken at
+ * face value, a deadline an operator set to ten minutes for a main thread that
+ * heartbeats files every such build as a hang.
+ *
+ * So while one is running the deadline is raised to the default, 120 minutes,
+ * and never lowered: an operator who asked for longer keeps it. It is raised
+ * rather than switched off because a sub-agent can be hung too — blocked on a
+ * read with no timeout is what this deadline exists for — and a sub-agent that
+ * is working still resets the clock itself, with a `task_progress` for each tool
+ * call and a line for each message it forwards. Foreground delegations do not
+ * count: the main thread's heartbeat covers them.
+ */
+export function quietDeadlineMs(
+  silenceMs: number,
+  backgroundAgents: number,
+): number {
+  return backgroundAgents > 0
+    ? Math.max(silenceMs, FALLBACK_CYCLE_SILENCE_MINUTES * 60_000)
+    : silenceMs;
 }
 
 /* ------------------------------------------------------------------ */
@@ -8508,18 +8540,29 @@ export function runIteration(
       // Re-armed rather than trusted, because output resets `lastOutputAt`
       // without touching the timer — cheap on the hot path, one extra wakeup
       // per busy cycle here.
+      const agents = backgroundSubagentCount(runId);
+      const allowedMs = quietDeadlineMs(silenceMs, agents);
       const quietFor = Date.now() - lastOutputAt;
-      if (quietFor < silenceMs) {
-        armSilence(silenceMs - quietFor);
+      if (quietFor < allowedMs) {
+        // Never past `silenceMs`, because the allowance is read now and a
+        // sub-agent can end before it is up: the next look is at most one
+        // configured deadline away rather than at the end of the longer one.
+        armSilence(Math.min(allowedMs - quietFor, silenceMs));
         return;
       }
+      const subagentNote =
+        allowedMs > silenceMs
+          ? ` with ${agents} background sub-agent${agents === 1 ? "" : "s"} running ` +
+            `(which print nothing inside one tool call, so this deadline is the ` +
+            `default rather than the ${fmtDuration(silenceMs)} configured)`
+          : "";
       interruptRun(runId, {
         kind: "deadline",
         reason:
-          `No output from Claude Code for ${fmtDuration(silenceMs)}, so this work ` +
-          `cycle was ended. A cycle that has stopped reporting is not going to ` +
-          `finish on its own, and one left running holds this run's folder and its ` +
-          `place in the queue until the server restarts.`,
+          `No output from Claude Code for ${fmtDuration(allowedMs)}${subagentNote}, ` +
+          `so this work cycle was ended. A cycle that has stopped reporting is not ` +
+          `going to finish on its own, and one left running holds this run's folder ` +
+          `and its place in the queue until the server restarts.`,
         pause: false,
         at: Date.now(),
       });
@@ -9883,6 +9926,11 @@ function noteSubagentEvent(runId: string, ev: Record<string, unknown>): void {
 function clearSubagents(runId: string): void {
   if (!liveSubagents.delete(runId)) return;
   publishSubagentActivity(runId);
+}
+
+/** Background sub-agents the CLI has running for this run's cycle, for the silence deadline. */
+function backgroundSubagentCount(runId: string): number {
+  return backgroundSubagents(liveSubagents.get(runId) ?? NO_SUBAGENTS);
 }
 
 /** What `/runs/live` draws for this run's sub-agents right now. */

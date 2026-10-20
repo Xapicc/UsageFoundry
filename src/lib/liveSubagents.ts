@@ -318,6 +318,20 @@ export function foldSubagentEvent(
 }
 
 /**
+ * How many sub-agents the CLI is running in the background, which is the count
+ * the cycle's silence deadline reads. Only a backgrounded one counts: a
+ * foreground delegation is a call the main thread has open, and the CLI
+ * restates that call every 30 seconds itself, so its cycle is never quiet.
+ */
+export function backgroundSubagents(state: SubagentFold): number {
+  let count = 0;
+  for (const entry of state.running.values()) {
+    if (entry.background) count += 1;
+  }
+  return count;
+}
+
+/**
  * What a tile draws: the running ones longest-running first, an undated one
  * after every dated one, and how many have finished.
  */

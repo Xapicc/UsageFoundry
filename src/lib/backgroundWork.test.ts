@@ -117,6 +117,29 @@ describe("the note a cycle opens with after its background tasks were stopped", 
     );
   });
 
+  it("says nothing for a foreground sub-agent a Stop interrupted", () => {
+    // 2.1.280 files a foreground `Agent` call as a task too, and a Stop inside
+    // one measured `task_updated killed` then `task_notification stopped`. The
+    // agent's own conversation records the call as interrupted, so telling it a
+    // "background task" was stopped is a note about work that was never in the
+    // background.
+    assert.equal(
+      stoppedTasksNotice([
+        systemEvent(1, "task_started", {
+          task_id: "f1",
+          tool_use_id: "toolu_f1",
+          description: "slow sub",
+          subagent_type: "general-purpose",
+          is_backgrounded: false,
+          task_type: "local_agent",
+        }),
+        killed(9, "f1"),
+        notified(9, "f1", "stopped", "slow sub", "/tmp/tasks/f1.output"),
+      ]),
+      null,
+    );
+  });
+
   it("says nothing for a cycle that started no background task", () => {
     assert.equal(stoppedTasksNotice([]), null);
     assert.equal(

@@ -18,9 +18,20 @@
  * `apiTypes.ts` — because it runs in the browser over the replayed event stream
  * and because `src/lib` is what `tsconfig.test.json` compiles.
  *
- * Sub-agent delegations are deliberately not here. A `Task` tool call has its own
- * `subagent` event kind and its own label in the log; folding it in would put a
- * delegated turn and a backgrounded shell under one word.
+ * **Only backgrounded work is a row.** Claude Code 2.1.280 files every `Agent`
+ * call as a task (`task_type: "local_agent"`), foreground ones too, and says in
+ * `task_started` which kind it is through `is_backgrounded`. A task that says
+ * `false` and is never later said to be in the background is left out of the
+ * result: a foreground delegation is a turn of the run's own, already in the log
+ * as `subagent` events and on `/runs/live`'s roster, and the panel above the log
+ * is "what the run backgrounded". It is also what the next cycle is told about —
+ * `stoppedTasksNotice` reduces with this function, and a cycle stopped inside a
+ * foreground delegation measured `task_updated` `killed` and `task_notification`
+ * `stopped` for it, which would have reached the agent as a stopped *background*
+ * task when its own conversation records the call as interrupted. A task whose
+ * kind was never stated — a pin older than `is_backgrounded`, or one the page
+ * only met through a snapshot or an ending — stays, because dropping a live
+ * backgrounded shell is the worse error.
  */
 
 import type { RunEventDTO } from "./apiTypes";
@@ -80,7 +91,10 @@ export interface RunTask {
    * empty path rendered as a path is a file that does not exist.
    */
   outputFile: string | null;
-  /** The CLI moved the task to the background, per `patch.is_backgrounded`. */
+  /**
+   * The CLI said so through `is_backgrounded`, on `task_started` or in a patch.
+   * False also for a task whose kind nothing stated.
+   */
   backgrounded: boolean;
 }
 
@@ -120,6 +134,12 @@ interface Draft extends RunTask {
   statusSeenAt: number;
   /** Event ts behind `backgrounded`, for the same reason. */
   backgroundedSeenAt: number;
+  /**
+   * A live-tasks snapshot named it. The CLI sends that snapshot for background
+   * tasks only, so a listing is the word that a task started in the foreground
+   * has since been backgrounded, whatever order the events land in.
+   */
+  listed: boolean;
   /**
    * A `task_notification` arrived. Terminal on its own, whatever word it
    * carried and whether or not anything stated an instant.
@@ -169,10 +189,27 @@ function draftFor(
     firstSeenAt: ts,
     statusSeenAt: Number.NEGATIVE_INFINITY,
     backgroundedSeenAt: Number.NEGATIVE_INFINITY,
+    listed: false,
     notified: false,
   };
   drafts.set(id, draft);
   return draft;
+}
+
+/** The latest statement wins, by arrival, so a replay in any order lands alike. */
+function noteBackgrounded(draft: Draft, stated: unknown, ts: number): void {
+  if (typeof stated !== "boolean" || ts < draft.backgroundedSeenAt) return;
+  draft.backgrounded = stated;
+  draft.backgroundedSeenAt = ts;
+}
+
+/** Stated foreground and never said otherwise; see the module header. */
+function isForeground(draft: Draft): boolean {
+  return (
+    draft.backgroundedSeenAt !== Number.NEGATIVE_INFINITY &&
+    !draft.backgrounded &&
+    !draft.listed
+  );
 }
 
 /** The word wins if it is terminal; otherwise an ending must come from elsewhere. */
@@ -188,6 +225,7 @@ function toRow(draft: Draft): RunTask {
     firstSeenAt: _firstSeenAt,
     statusSeenAt: _statusSeenAt,
     backgroundedSeenAt: _backgroundedSeenAt,
+    listed: _listed,
     notified: _notified,
     ...row
   } = draft;
@@ -196,8 +234,9 @@ function toRow(draft: Draft): RunTask {
 
 /**
  * Every background task this run's events mention, in the order they were first
- * seen. Nothing is dropped once it has been seen, and no row is ever ended by
- * this app's own reasoning — only by something the CLI said.
+ * seen. Nothing is dropped once it has been seen but a task the CLI stated was
+ * in the foreground, and no row is ever ended by this app's own reasoning — only
+ * by something the CLI said.
  */
 export function runTasks(events: readonly RunEventDTO[]): RunTask[] {
   const drafts = new Map<string, Draft>();
@@ -219,6 +258,7 @@ export function runTasks(events: readonly RunEventDTO[]): RunTask[] {
         draft.description ??= str(raw.description);
         draft.taskType ??= str(raw.task_type);
         draft.toolUseId ??= str(raw.tool_use_id);
+        noteBackgrounded(draft, raw.is_backgrounded, event.ts);
         // The event's arrival, because the CLI states no start instant here —
         // and the earliest of them, so a duplicate cannot shorten the run.
         draft.startedAt =
@@ -243,6 +283,7 @@ export function runTasks(events: readonly RunEventDTO[]): RunTask[] {
           const draft = draftFor(drafts, id, event.ts);
           draft.description ??= str(task.description);
           draft.taskType ??= str(task.task_type);
+          draft.listed = true;
         }
         break;
       }
@@ -260,14 +301,7 @@ export function runTasks(events: readonly RunEventDTO[]): RunTask[] {
         const patch = rec(raw.patch);
         if (!patch) break;
 
-        const backgrounded = patch.is_backgrounded;
-        if (
-          typeof backgrounded === "boolean" &&
-          event.ts >= draft.backgroundedSeenAt
-        ) {
-          draft.backgrounded = backgrounded;
-          draft.backgroundedSeenAt = event.ts;
-        }
+        noteBackgrounded(draft, patch.is_backgrounded, event.ts);
 
         const word = str(patch.status);
         if (word && event.ts >= draft.statusSeenAt) {
@@ -308,21 +342,21 @@ export function runTasks(events: readonly RunEventDTO[]): RunTask[] {
 
       // Every other `system:` subtype, and `task_progress` deliberately.
       //
-      // Its payload is not the same family as the four above. Every instance
-      // found in this machine's transcripts carries `subagent_type`, `usage`
-      // and `last_tool_name` and carries **no** `task_type` and no `status` —
-      // it is a sub-agent delegation reporting how far it has got, which has
-      // its own `subagent` event kind and its own label in the log. Opening a
-      // row from one would put delegated turns and backgrounded shells under
-      // one word, which is the thing this panel is scoped away from. Nothing
-      // is lost by ignoring it: a task that was backgrounded still arrives as
-      // `task_started`, and progress is not state.
+      // It is progress and not state: 2.1.280 sends one for each tool call a
+      // sub-agent makes, carrying the `task_id` and `tool_use_id` of a task
+      // `task_started` has already opened and no `task_type`, no `status` and no
+      // `is_backgrounded`. A row opened from one would admit a task whose kind
+      // this reducer cannot tell — a foreground delegation as readily as a
+      // backgrounded one, which is the scope the header draws — and nothing is
+      // lost by ignoring it, because a task that was backgrounded still arrives
+      // as `task_started` and progress is not state.
       default:
         break;
     }
   }
 
   return [...drafts.values()]
+    .filter((draft) => !isForeground(draft))
     .sort((a, b) => a.firstSeenAt - b.firstSeenAt)
     .map(toRow);
 }

@@ -116,7 +116,9 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 
 - In `-p` mode the CLI keeps its process alive after the agent ends its turn for as long as a background sub-agent is running, and kills the lot when its own ceiling passes — so the ceiling is set per cycle, and it is a guard rather than a tuning knob.
 - Which guards bind while the CLI sits idle waiting, under `between-cycles`, and which do not — measured where the table says so, otherwise read from code.
+- While a background sub-agent is running, the silence deadline is the larger of the configured one and the default 120 minutes, because a sub-agent inside one tool call prints nothing and a deadline set for the main thread cannot tell that from a hang.
 - When a cycle ends with background tasks the CLI stopped, the next cycle's prompt says so, names them, and gives their output files.
+- A foreground delegation is not a background task and is not named.
 - What this does not do.
 
 ## [Outbound notifications](run-lifecycle/notifications.md)
