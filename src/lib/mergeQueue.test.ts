@@ -54,6 +54,7 @@ const base: LandState = {
   certification: { required: false },
   seeded: { ok: true, paths: [] },
   resolveBlocked: null,
+  resolveGateRefusal: null,
   landedAt: null,
   landedInto: null,
   landedStrategy: null,
@@ -156,6 +157,17 @@ describe("planItem", () => {
     const reason = plan.action === "fail" ? plan.reason : "";
     assert.match(reason, /conflicts in 1 file/);
     assert.match(reason, /uf\/repo-1234abcd carries \.env, which this app copies into every checkout/);
+  });
+
+  it("fails a conflicting branch the verify gate refuses rather than paying to resolve it", () => {
+    // A resolution touches neither the slot's uncommitted paths nor a detached
+    // HEAD, so `landRun` stops at the gate after the resolution was paid for.
+    const gate = "A verify command is configured, but 1 path(s) in /slot are not committed: notes.txt.";
+    const plan = planItem({ ...conflict, resolveGateRefusal: gate }, open);
+    assert.equal(plan.action, "fail");
+    const reason = plan.action === "fail" ? plan.reason : "";
+    assert.match(reason, /conflicts in 1 file/);
+    assert.ok(reason.endsWith(gate), reason);
   });
 
   it("stops trying to resolve once one refusal applies to all of them", () => {

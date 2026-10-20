@@ -625,6 +625,128 @@ describe("the merge worker", () => {
 });
 
 /**
+ * A completed run in its own repository, on a branch that conflicts with `main`,
+ * and standing in the checkout the allocator would have given it — the slot the
+ * verify gate reads. The shared `makeRun` records no slot at all, which the gate
+ * refuses for a different reason than the ones below.
+ */
+function conflictingRunInSlot(name: string) {
+  const dir = path.join(root, "ws", name);
+  fs.mkdirSync(dir);
+  git(dir, "init", "-q", "-b", "main");
+  fs.writeFileSync(path.join(dir, "a.txt"), "base\n");
+  git(dir, "add", "-A");
+  git(dir, "commit", "-q", "-m", "base");
+  const base = git(dir, "rev-parse", "main").trim();
+  const slot = path.join(orchestrator.worktreeStore(dir)!, `${orchestrator.repoSlug(dir)}-1`);
+  const branch = `uf/${name}`;
+  git(dir, "worktree", "add", "-q", "-b", branch, slot);
+  fs.writeFileSync(path.join(slot, "a.txt"), "branch side\n");
+  git(slot, "commit", "-qam", "branch side");
+  fs.writeFileSync(path.join(dir, "a.txt"), "main side\n");
+  git(dir, "commit", "-qam", "main side");
+  const id = `run-${name}`;
+  dbMod
+    .db()
+    .prepare(
+      `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
+                         created_at, finished_at, isolation, repo_root, worktree_path,
+                         worktree_branch, worktree_base, worktree_base_branch)
+       VALUES (?, ?, 'task', 'completed', '{}', 1, 1, ?, ?, 'worktree', ?, ?, ?, ?, 'main')`,
+    )
+    .run(id, dir, Date.now(), Date.now(), dir, slot, branch, base);
+  return { id, name, dir, slot, branch };
+}
+
+/** The spawns of a `claude` in a checkout of the repository `name`, one line each. */
+function spawnsIn(name: string): string[] {
+  if (!fs.existsSync(spawned)) return [];
+  return fs
+    .readFileSync(spawned, "utf8")
+    .split("\n")
+    .filter((line) => line.includes(name));
+}
+
+/**
+ * `landVerifyCommand` is set, and the verify gate refuses a land without running
+ * anything in several ordinary slot states. `landRun` asks the gate only after a
+ * resolution has been paid for and committed onto the branch, so an auto-resolve
+ * batch bought one for a land the gate then refused — the sibling of the owner,
+ * seeded and certification refusals above, and the queue's rule is the same: it
+ * resolves only when the conflict is why the land is refused.
+ */
+describe("auto-resolve with a verify command set", () => {
+  const command = () => `${process.execPath} -e 0`;
+
+  it("pays for no resolution of a branch the verify gate refuses whatever a resolution does", async () => {
+    const settings = await import("./settings");
+    const s = conflictingRunInSlot("gate-untracked");
+    // The gate counts every uncommitted path; `resolveCheckout` lets untracked
+    // files through, so a resolution would open its merge in this slot.
+    fs.writeFileSync(path.join(s.slot, "notes.txt"), "agent scratch\n");
+    const tip = git(s.dir, "rev-parse", s.branch).trim();
+    settings.saveSettings({ landVerifyCommand: command() });
+    try {
+      const state = await land.landState(s.id);
+      assert.equal(state?.preview.outcome, "conflict", "the fixture branch does not conflict");
+
+      const queued = mergeQueue.enqueue([s.id], { strategy: "merge", autoResolve: true });
+      assert.ok(queued.ok, JSON.stringify(queued));
+      const [row] = await settle(queued.batchId);
+
+      assert.equal(row.status, "failed", row.message ?? "");
+      assert.match(row.message ?? "", /conflicts in 1 file/);
+      assert.match(row.message ?? "", /notes\.txt/);
+      assert.equal(row.resolve_cost, 0, "the row was charged for a resolution");
+      assert.deepEqual(spawnsIn(s.name), [], "a billed resolution was spawned");
+      assert.equal(git(s.dir, "rev-parse", s.branch).trim(), tip, "the branch gained a commit");
+    } finally {
+      settings.saveSettings({ landVerifyCommand: "" });
+    }
+  });
+
+  // The other half of the rule: a slot the gate accepts is not refused, or an
+  // install with a command set would never auto-resolve anything.
+  it("still buys the resolution when the gate would let the land through", async () => {
+    const settings = await import("./settings");
+    const s = conflictingRunInSlot("gate-clean");
+    settings.saveSettings({ landVerifyCommand: command() });
+    try {
+      const queued = mergeQueue.enqueue([s.id], { strategy: "merge", autoResolve: true });
+      assert.ok(queued.ok, JSON.stringify(queued));
+      await settle(queued.batchId);
+
+      assert.equal(spawnsIn(s.name).length, 1, "no resolution was bought for a branch the gate accepts");
+    } finally {
+      settings.saveSettings({ landVerifyCommand: "" });
+    }
+  });
+
+  // `planItem` refuses first on the queue's path, so this is the only thing that
+  // reaches the door itself: the state it reads may be a poll newer than the
+  // plan's. A person pressing Resolve is not asked, so the refusal is the
+  // batch's alone: they can commit the file afterwards.
+  it("refuses the same at the resolution door for a batch", async () => {
+    const settings = await import("./settings");
+    const s = conflictingRunInSlot("gate-door");
+    fs.writeFileSync(path.join(s.slot, "notes.txt"), "agent scratch\n");
+    settings.saveSettings({ landVerifyCommand: command() });
+    try {
+      const refused = await land.resolveConflicts(s.id, { batchId: "no-such-batch" });
+      assert.equal(refused.ok, false);
+      assert.match(refused.ok ? "" : refused.reason, /notes\.txt/);
+      assert.deepEqual(spawnsIn(s.name), [], "a billed resolution was spawned");
+
+      const state = await land.landState(s.id, { batchId: "no-such-batch" });
+      assert.match(state?.blocked ?? "", /conflicts in 1 file/, "the card's sentence is the conflict");
+      assert.match(state?.resolveGateRefusal ?? "", /notes\.txt/);
+    } finally {
+      settings.saveSettings({ landVerifyCommand: "" });
+    }
+  });
+});
+
+/**
  * A restart that cut off a conflict resolution in the run's own checkout.
  *
  * `after` is the only thing that closes a resolution's merge, and it died with

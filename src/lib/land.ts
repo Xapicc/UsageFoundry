@@ -293,6 +293,17 @@ export interface LandState {
    * card withholds Resolve on it, so the two give one sentence.
    */
   resolveBlocked: string | null;
+  /**
+   * The verify gate's refusal that needs no command run, beside a conflict —
+   * `blocked` is the conflict and cannot also carry it — or null. Apart from
+   * `resolveBlocked` because a person may still resolve such a branch and then
+   * commit what the gate names, while a merge-queue batch's authorisation to
+   * spend does not cover buying a resolution of a land that is refused whatever
+   * it does. `planItem` and `startResolution` (for a batch) refuse on it; the
+   * card does not, so it is not on `LandStateDTO` — and it is read only for an
+   * asker that is a batch, so the card's poll never pays for it.
+   */
+  resolveGateRefusal: string | null;
   landedAt: number | null;
   landedInto: string | null;
   landedStrategy: string | null;
@@ -600,6 +611,7 @@ export async function landState(
     certification: NOT_REQUIRED,
     seeded: null,
     resolveBlocked: null,
+    resolveGateRefusal: null,
     landedAt: run.landed_at,
     landedInto: run.landed_into,
     landedStrategy: run.landed_strategy,
@@ -766,13 +778,25 @@ export async function landState(
     });
   // The gate's refusals that need no command run, which a press met only
   // after the card had drawn Land. Ahead of the review, because finishing a
-  // rebase or committing what is there moves the tip. Asked only once nothing
-  // above refuses, so a branch that is merged or conflicted costs the poll no
-  // read of a slot a later run holds.
-  const gate = earlier === null ? await verifyGateOf(run, slot) : NO_GATE_REFUSAL;
+  // rebase or committing what is there moves the tip. Asked once nothing above
+  // refuses, and beside a conflict for a batch, whose resolution the merge
+  // queue buys only for a land the gate would not refuse anyway
+  // (`resolveGateRefusal`). A branch that is merged, or refused for any other
+  // reason, costs the poll no read of a slot a later run holds, and neither
+  // does a conflicting one for a person, whose card never reads that field. For
+  // a batch it is one read per row's turn, and only with a verify command set:
+  // `verifyGateOf` answers from the slot read above unless that slot stands on
+  // another branch, where it adds `switchRefusal`'s git reads (measured
+  // 2026-10-20: 13 git children for a conflicting branch in such a slot
+  // without a command, 19 with, and 16 either way in a slot holding its own).
+  const conflicts = preview.outcome === "conflict" && asker !== null;
+  const gate =
+    earlier === null || conflicts ? await verifyGateOf(run, slot) : NO_GATE_REFUSAL;
   return {
     ...state,
-    verifySwitch: gate.switches,
+    // Advice for a land that nothing else refuses, so a conflict's read is not it.
+    verifySwitch: earlier === null ? gate.switches : null,
+    resolveGateRefusal: conflicts ? gate.refusal : null,
     blocked: earlier ?? gate.refusal ?? certificationRefusal(state.certification, "land"),
   };
 }
@@ -3010,6 +3034,13 @@ async function startResolution(
   // Before the spawn, because a resolution is billed and `landRun` refuses the
   // branch it leaves on the file it still carries.
   if (state.resolveBlocked) return { ok: false, reason: state.resolveBlocked };
+  // And the verify gate, for a batch only: its authorisation is to resolve a
+  // conflict that is why the land is refused, while a person pressing Resolve
+  // can commit what the gate names afterwards. `planItem` refuses the same for
+  // a queued row before it gets here; this is for a state a poll newer than its.
+  if (asker && state.resolveGateRefusal) {
+    return { ok: false, reason: state.resolveGateRefusal };
+  }
 
   const refusal = await assistRefusal();
   if (refusal) return { ok: false, reason: refusal };
