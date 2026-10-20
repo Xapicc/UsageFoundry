@@ -4068,7 +4068,7 @@ async function handoffSeededRefusal(run: RunRow, branch: string): Promise<string
     );
   }
   return seededRefusal(
-    await seededOnBranch(run.folder, `refs/heads/${branch}`, target, run.worktree_base, globs),
+    await seededOnBranch(run.folder, `refs/heads/${branch}`, target, run.worktree_base, globs, "land"),
     { branch, target, exit: "land" },
   );
 }

@@ -23,11 +23,13 @@ import type Database from "better-sqlite3";
  * was lost under a success message.
  *
  * Driven for real, a database and repositories, behind a `GIT_BIN` stub that
- * does one of two things a real race would: holds the checkout's `git status`
- * until the case has pressed Commit, or commits into the run's slot at the
- * instant the first `git merge` is spawned, strictly after every check. The
- * stub changes when things happen and nothing about what git does. Its own
- * file because `GIT_BIN` is read when `config.ts` loads.
+ * does one of three things a real race would: holds the checkout's `git status`
+ * until the case has pressed Commit, commits into the run's slot at the
+ * instant of the first git step `landRun` takes in the operator's checkout after
+ * the verify command has passed, or commits at the instant the first
+ * `git merge` is spawned, strictly after every check. The stub changes when
+ * things happen and nothing about what git does. Its own file because `GIT_BIN`
+ * is read when `config.ts` loads.
  */
 
 let land: typeof import("./land");
@@ -77,6 +79,15 @@ before(async () => {
       "      break",
       "    fi",
       "  done",
+      "fi",
+      // Run `on-after-proof` once, in the instant of the first git step in the
+      // operator's checkout after `armed-tip`, which the verify command writes:
+      // `verifyHeldSlot`'s proof runs in the slot, so this is `landRun`'s next
+      // step on the branch, whichever it is. Keyed on the position and not on
+      // what the step reads, because which step comes first is what is being
+      // changed.
+      `if [ -e '${holds}/on-after-proof' ] && [ -e '${holds}/armed-tip' ] && [ "$(pwd -P)" = "$(cat '${holds}/dir' 2>/dev/null)" ]; then`,
+      `  mv '${holds}/on-after-proof' '${holds}/on-after-proof.ran' 2>/dev/null && sh '${holds}/on-after-proof.ran'`,
       "fi",
       // Run `on-merge` once, in the instant the first merge that is not an
       // abort is spawned. `mv` claims it, so a second merge does not run it.
@@ -330,5 +341,61 @@ describe("a commit that reaches the branch as a merge past a squash is spawned",
     // Not reading merged: the late commit is still owed, so Delete must be refused.
     assert.equal((await land.landState(`${name}-B`))?.merged, false);
     assert.equal(git(repo, "status", "--porcelain").trim(), "", "the checkout was left dirty");
+  });
+});
+
+describe("a commit that reaches the branch just after the verify proof, before landRun's next step", () => {
+  it("is not merged: the land takes the commit the command ran against", async () => {
+    // `verifyHeldSlot` proves the branch still names the commit the command ran
+    // against, and `landRun` then read the ref again. The commit lands in that
+    // gap, past the proof; the SHA the proof was made of has to be the one
+    // merged, or a plain unchecked file reaches main.
+    const name = "after-proof";
+    const repo = newRepo(name);
+    const c = cutSlot(repo, name);
+    fs.writeFileSync(path.join(c.slot, "verified.txt"), "checked by the verify command\n");
+    git(c.slot, "add", "-A");
+    git(c.slot, "commit", "-qm", "verified work");
+    const verifiedTip = git(repo, "rev-parse", c.branch).trim();
+    insertRun(`run-${name}`, c);
+
+    fs.writeFileSync(path.join(holds, "dir"), repo);
+    const verifyScript = path.join(root, "verify-tip.js");
+    fs.writeFileSync(
+      verifyScript,
+      `require("fs").writeFileSync(${JSON.stringify(path.join(holds, "armed-tip"))}, "");\n`,
+    );
+    const identity = Object.entries(IDENTITY)
+      .map(([k, v]) => `${k}=${v}`)
+      .join(" ");
+    fs.writeFileSync(
+      path.join(holds, "on-after-proof"),
+      [
+        `cd '${c.slot}' || exit 1`,
+        "unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE",
+        "printf 'never checked\\n' > unchecked.txt",
+        "git add unchecked.txt",
+        `env ${identity} git commit -qm 'committed after the proof'`,
+        "",
+      ].join("\n"),
+    );
+    settings.saveSettings({ landVerifyCommand: `${process.execPath} ${verifyScript}` });
+    try {
+      const landed = await land.landRun(`run-${name}`, "merge");
+
+      assert.equal(landed.ok, true, landed.ok ? "" : landed.reason);
+      assert.ok(fs.existsSync(path.join(holds, "on-after-proof.ran")), "the late commit was never made");
+      fs.rmSync(path.join(holds, "on-after-proof.ran"));
+      const lateTip = git(repo, "rev-parse", c.branch).trim();
+      assert.notEqual(lateTip, verifiedTip, "the commit did not move the branch");
+
+      assert.deepEqual(tracked(repo), ["f1.txt", "f2.txt", "verified.txt"]);
+      assert.equal(git(repo, "rev-parse", "main").trim(), verifiedTip, "main took more than the command ran on");
+      assert.equal(landedTipOf(`run-${name}`), verifiedTip);
+      assert.equal(inMainHistory(repo, lateTip), false);
+      assert.equal((await land.landState(`run-${name}`))?.merged, false);
+    } finally {
+      settings.saveSettings({ landVerifyCommand: "" });
+    }
   });
 });
