@@ -227,6 +227,13 @@ export function planItem(
     // on a branch whose tip was approved before it.
     const uncertified = resolutionCertificationRefusal(state.certification);
     if (uncertified) return { action: "fail", reason: `${state.blocked} ${uncertified}` };
+    // Nor on a branch the verify gate refuses without running anything: an
+    // uncommitted path in its slot, a slot detached or taken by a later run. A
+    // resolution does not touch those, so `landRun` would stop at the gate
+    // after the resolution was paid for and committed onto the branch.
+    if (state.resolveGateRefusal) {
+      return { action: "fail", reason: `${state.blocked} ${state.resolveGateRefusal}` };
+    }
     if (opts.resolutionsRefused) {
       return {
         action: "fail",
