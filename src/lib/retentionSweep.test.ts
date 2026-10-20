@@ -511,6 +511,26 @@ describe("checkout reclaim across a continueBranch chain", () => {
     assert.equal(swept.removed, 0);
     assert.equal(fs.existsSync(c.slot), true, "a checkout with unlanded commits went");
   });
+
+  it("keeps a slot a verify command is running in, however old its newest run is", async () => {
+    // A review block switches a finished run's slot to another branch for its
+    // check, and the newest run recorded there is a settled one past the horizon:
+    // the profile of a candidate, in a directory that is not idle.
+    const c = chain("under-check");
+    dbMod.db().prepare("DELETE FROM runs WHERE id = 'under-check-link'").run();
+    const borrow = orchestrator.borrowSlot(c.slot);
+    assert.equal(borrow.ok, true);
+
+    const during = await retention.sweepCheckouts(NOW);
+    assert.equal(during.removed, 0);
+    assert.equal(fs.existsSync(c.slot), true, "the sweep removed a checkout a check was running in");
+
+    // The control: the same slot is reclaimed the moment the check lets go.
+    if (borrow.ok) borrow.release();
+    const after = await retention.sweepCheckouts(NOW);
+    assert.equal(after.removed, 1, "the slot was never a candidate, so the keep above proves nothing");
+    assert.equal(fs.existsSync(c.slot), false);
+  });
 });
 
 /**

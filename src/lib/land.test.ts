@@ -737,6 +737,7 @@ describe("commitRefusal", () => {
     checkedOutBranch: "uf/repo-1234abcd",
     operation: null,
     detached: false,
+    detachedByLaterRun: false,
     readable: true,
     pending: [
       { path: "src/parser.ts", code: " M" },
