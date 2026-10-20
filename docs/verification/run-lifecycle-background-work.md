@@ -61,6 +61,58 @@
   stub CLI, so this measures this app's wiring and not a real model's reading of
   the note.
 
+- **A background sub-agent inside one long tool call is silence to the work-cycle
+  watchdog, 2026-10-20.** `runIteration` driven directly (its `silenceMs` is
+  taken raw; the 5-minute floor is `cycleSilenceMs`'s, applied by the run loop)
+  from the compiled test build over a scratch `DATA_DIR`, `CLAUDE_BIN` a sh
+  wrapper around the real `claude` 2.1.280 with `ANTHROPIC_BASE_URL` on a
+  loopback stub of `/v1/messages`, a scratch `CLAUDE_CONFIG_DIR`, nothing billed.
+  The stub answered the main thread with an `Agent` call (no
+  `run_in_background`, so backgrounded by default), then the main thread's
+  acknowledgement with `end_turn`; the sub-agent's first request got a `Read` of
+  a FIFO in the workspace that a writer opened after a set delay. With
+  `silenceMs` 20000 and the FIFO released at 70 s, the CLI printed its last line
+  (`task_progress`, `last_tool_name: "Read"`) at 0.3 s and **nothing after it**;
+  the watchdog ended the cycle at 20.3 s (`exitCode` 0,
+  `sawResult` false, recorded interrupt `deadline`, "No output from Claude Code
+  for 20s"), with the sub-agent healthy and blocked, not hung. The control, same
+  run with `silenceMs` 200000 and the FIFO released at 45 s: the sub-agent
+  finished at 45.1 s, the main thread was woken and answered `DONE`, two
+  `result` events, no interrupt, so the 44.8 s of silence was a healthy cycle.
+  Caveat: the sub-agent's blocking call was a `Read` of a FIFO because the CLI's
+  Bash tool cannot start in this sandbox; a real build is the same shape (a tool
+  running inside an agent gets no `tool_progress` heartbeat) but was not run.
+
+- **While a background sub-agent runs the deadline is the default, and a hung one
+  still ends, 2026-10-20.** The same driver after `quietDeadlineMs` was wired
+  into `onSilence` (`orchestrator.ts`). At `silenceMs` 20000 and the FIFO
+  released at 70 s the cycle was **not** ended: the sub-agent finished at 70.1 s,
+  the main thread answered `DONE` at 70.2 s, `exitCode` 0, `sawResult` true, no
+  interrupt, 69.8 s of silence against a 20 s deadline. For the bound, the
+  FIFO was never released and a scratch copy of the compiled `orchestrator.js`
+  had `FALLBACK_CYCLE_SILENCE_MINUTES` edited from 120 to 0.5, so the allowance
+  was 30 s against a 10 s configured deadline: the cycle was ended at 30.4 s
+  with "No output from Claude Code for 30s with 1 background sub-agent running
+  (which print nothing inside one tool call, …)". Not measured: the real
+  120-minute allowance waited out.
+
+- **A foreground `Agent` call is a task too, and a Stop inside it files the same
+  endings as a stopped background one, 2026-10-20.** The same driver with the
+  `Agent` call carrying `run_in_background: false`, the FIFO never released, and
+  `stopRun` after 8 s. `task_started` read `task_type: "local_agent"`,
+  `is_backgrounded: false`, `spawn_depth: 1`; `task_progress` carried `task_id`,
+  `tool_use_id`, `description`, `subagent_type`, `usage` and `last_tool_name` and
+  no `task_type`, no `status`, no `is_backgrounded`; the Stop then produced
+  `task_updated {patch:{status:"killed", end_time}}` and
+  `task_notification {status:"stopped", output_file, summary}` — the pair
+  `stoppedTasksNotice` names a task from. That is why `runTasks` leaves out a
+  task stated foreground: the next cycle would otherwise have been told a
+  foreground delegation was a stopped background task. Not measured: whether the
+  CLI ever sends `is_backgrounded: false` on `task_started` for a shell the agent
+  started with `run_in_background: true` (the Bash tool cannot start here);
+  `runTasks` keeps such a task anyway when a `background_tasks_changed` snapshot
+  lists it or a patch says `is_backgrounded: true`.
+
 ## Not yet verified by hand
 
 - **A real, billed cycle with a background sub-agent has not met the ceiling.**

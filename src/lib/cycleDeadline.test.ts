@@ -269,6 +269,30 @@ describe("a work cycle's wait for its background tasks", () => {
 });
 
 /**
+ * A child that has launched one sub-agent through the CLI's own two lines — the
+ * `Agent` call and the `task_started` 2.1.280 answers it with — and then prints
+ * nothing, which is what a sub-agent sitting inside one tool call looks like from
+ * outside. It exits on its own after `exitAfterMs` with `exitCode`.
+ */
+function opensASubagent(opts: {
+  backgrounded: boolean;
+  exitCode: number;
+  exitAfterMs: number;
+}): string[] {
+  return [
+    "-e",
+    "const line = (o) => process.stdout.write(JSON.stringify(o) + '\\n');" +
+      "line({ type: 'assistant', parent_tool_use_id: null, session_id: 's', message: { content: [" +
+      "{ type: 'tool_use', id: 'toolu_bg', name: 'Agent', input: { description: 'Look around'," +
+      " prompt: 'p', subagent_type: 'general-purpose' } }] } });" +
+      "line({ type: 'system', subtype: 'task_started', task_id: 't1', tool_use_id: 'toolu_bg'," +
+      ` description: 'Look around', subagent_type: 'general-purpose', is_backgrounded: ${opts.backgrounded},` +
+      " task_type: 'local_agent', session_id: 's' });" +
+      `setTimeout(() => process.exit(${opts.exitCode}), ${opts.exitAfterMs});`,
+  ];
+}
+
+/**
  * That a cycle killed with a sub-agent running takes the sub-agent off
  * `/runs/live` with it.
  *
@@ -277,23 +301,11 @@ describe("a work cycle's wait for its background tasks", () => {
  * one line in `runIteration`'s `finish` that sweeps it. A killed cycle never
  * sends the `task_notification` that would otherwise end the row, so without
  * that line the tile counts a background agent up against a process that is
- * gone, for as long as the server lives. The child is the silent stub above
- * with two of the CLI's own lines in front of it — the `Agent` call and the
- * `task_started` 2.1.280 answers it with — and the deadline is what kills it.
+ * gone, for as long as the server lives. The child is silent with two of the
+ * CLI's own lines in front of it, and a Stop is what kills it: the deadline no
+ * longer will, for a background sub-agent, which is the next case's subject.
  */
 describe("a work cycle killed with a sub-agent running", () => {
-  const OPENS_A_SUBAGENT = [
-    "-e",
-    "const line = (o) => process.stdout.write(JSON.stringify(o) + '\\n');" +
-      "line({ type: 'assistant', parent_tool_use_id: null, session_id: 's', message: { content: [" +
-      "{ type: 'tool_use', id: 'toolu_bg', name: 'Agent', input: { description: 'Look around'," +
-      " prompt: 'p', subagent_type: 'general-purpose' } }] } });" +
-      "line({ type: 'system', subtype: 'task_started', task_id: 't1', tool_use_id: 'toolu_bg'," +
-      " description: 'Look around', subagent_type: 'general-purpose', is_backgrounded: true," +
-      " task_type: 'local_agent', session_id: 's' });" +
-      "setTimeout(() => process.exit(9), 30000);",
-  ];
-
   it("clears the roster when the cycle ends", { timeout: 20_000 }, async () => {
     const id = insertRun();
     const published: number[] = [];
@@ -301,27 +313,89 @@ describe("a work cycle killed with a sub-agent running", () => {
       published.push(s.running.length),
     );
     try {
-      const res = await orchestrator.runIteration(
+      const cycle = orchestrator.runIteration(
         id,
         workspace,
-        OPENS_A_SUBAGENT,
+        opensASubagent({ backgrounded: true, exitCode: 9, exitAfterMs: 30_000 }),
         orchestrator.selectCycleAdapter(null),
         launcher(),
         false,
-        SILENCE_MS,
+        60_000,
         () => {},
       );
-      assert.equal(res.exitCode, -1, "the deadline, not the stub, ended the cycle");
+      for (let waited = 0; published[0] !== 1 && waited < 5_000; waited += 20) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      assert.equal(published[0], 1, "the sub-agent never reached the roster");
+      orchestrator.stopRun(id);
+      const res = await cycle;
+      assert.equal(res.exitCode, -1, "the Stop, not the stub, ended the cycle");
     } finally {
       off();
     }
 
-    assert.equal(published[0], 1, "the sub-agent was never on the roster to clear");
     assert.equal(
       published.at(-1),
       0,
       "the cycle ended and the roster still said a sub-agent was running",
     );
     assert.deepEqual(orchestrator.subagentActivity(id), { running: [], finished: 0 });
+  });
+});
+
+/**
+ * That a cycle with a sub-agent running in the background is held to a longer
+ * deadline than the operator set, and a foreground one is not.
+ *
+ * The fault is a healthy cycle ended as hung. The CLI heartbeats a tool call on
+ * the main thread and skips the heartbeat for a tool running inside an agent, so
+ * a background sub-agent in one long call prints nothing; with the deadline taken
+ * at face value `runIteration` killed it (measured end to end against the real
+ * CLI, `docs/verification/run-lifecycle-background-work.md`). The pure rule is
+ * pinned in `orchestrator.test.ts`; what only a real child shows is that the
+ * watchdog *reads* it — `onSilence` asking the roster, and not an argument
+ * dropped between the two. The child is a stub printing the CLI's two lines and
+ * then nothing, so it stands in for the sub-agent's tool call, and the control is
+ * the same child with the task foreground, which must still be killed at the
+ * deadline or the allowance has extended every cycle that delegates.
+ */
+describe("a work cycle with a background sub-agent in a long tool call", () => {
+  it("outlives a deadline shorter than the call", { timeout: 20_000 }, async () => {
+    const id = insertRun();
+    const res = await orchestrator.runIteration(
+      id,
+      workspace,
+      opensASubagent({ backgrounded: true, exitCode: 0, exitAfterMs: 3_500 }),
+      orchestrator.selectCycleAdapter(null),
+      launcher(),
+      false,
+      SILENCE_MS,
+      () => {},
+    );
+
+    assert.equal(
+      res.exitCode,
+      0,
+      "a cycle whose background sub-agent was mid-call was ended at the " +
+        "configured deadline, 3 deadlines before the call returned",
+    );
+    assert.equal(recordedInterrupt(id), undefined, "no deadline should have been recorded");
+  });
+
+  it("does not extend the deadline for a foreground delegation", { timeout: 20_000 }, async () => {
+    const id = insertRun();
+    const res = await orchestrator.runIteration(
+      id,
+      workspace,
+      opensASubagent({ backgrounded: false, exitCode: 9, exitAfterMs: 30_000 }),
+      orchestrator.selectCycleAdapter(null),
+      launcher(),
+      false,
+      SILENCE_MS,
+      () => {},
+    );
+
+    assert.equal(res.exitCode, -1, "the deadline, not the stub, ended the cycle");
+    assert.equal(recordedInterrupt(id)?.kind, "deadline");
   });
 });

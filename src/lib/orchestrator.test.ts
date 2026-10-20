@@ -90,6 +90,7 @@ const {
   cycleCutByRestart,
   cycleEnding,
   cycleSilenceMs,
+  quietDeadlineMs,
   declaresSubmodule,
   dependencyCycle,
   isRunStatus,
@@ -6302,6 +6303,35 @@ describe("how long a work cycle may be silent", () => {
   it("floors a request that is too short, and honours one that is not", () => {
     assert.equal(cycleSilenceMs(1), 5 * 60_000);
     assert.equal(cycleSilenceMs(45), 45 * 60_000);
+  });
+});
+
+/**
+ * What the deadline is while the CLI has background sub-agents running.
+ *
+ * A sub-agent's tool call prints nothing, so the configured deadline taken at
+ * face value files a healthy 15-minute build as a hang (measured in
+ * `docs/verification/run-lifecycle-background-work.md`); and raised without
+ * limit it would never end a sub-agent that is itself hung. Both are silent
+ * until a run is lost, so the number each case lands on is the claim.
+ */
+describe("how long a work cycle may be silent while sub-agents run in the background", () => {
+  it("leaves the configured deadline alone when none is running", () => {
+    assert.equal(quietDeadlineMs(cycleSilenceMs(5), 0), 5 * 60_000);
+  });
+
+  it("raises a short deadline to the default while one is running", () => {
+    assert.equal(quietDeadlineMs(cycleSilenceMs(5), 1), 120 * 60_000);
+    assert.equal(quietDeadlineMs(cycleSilenceMs(5), 4), 120 * 60_000);
+  });
+
+  it("never lowers a deadline the operator set longer than the default", () => {
+    assert.equal(quietDeadlineMs(cycleSilenceMs(300), 1), 300 * 60_000);
+  });
+
+  it("is still a deadline: a hung sub-agent ends the cycle at the default", () => {
+    assert.ok(Number.isFinite(quietDeadlineMs(cycleSilenceMs(5), 1)));
+    assert.equal(quietDeadlineMs(cycleSilenceMs(5), 1), cycleSilenceMs(0));
   });
 });
 

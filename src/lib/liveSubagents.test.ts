@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   NO_SUBAGENTS,
+  backgroundSubagents,
   foldSubagentEvent,
   subagentSummary,
   type SubagentFold,
@@ -367,5 +368,71 @@ describe("the summary", () => {
       ],
     ]);
     assert.equal(shell, NO_SUBAGENTS);
+  });
+});
+
+/**
+ * The count the cycle's silence deadline reads (`quietDeadlineMs`). A background
+ * sub-agent is silent inside one tool call, so counting one that is not running
+ * keeps a hung cycle alive for two hours and missing one that is kills a healthy
+ * cycle at the operator's deadline; counting a foreground delegation too would
+ * extend every cycle that merely delegates, which the main thread's own heartbeat
+ * already covers.
+ */
+describe("the sub-agents the CLI is running in the background", () => {
+  const count = (lines: readonly Line[]) => backgroundSubagents(fold(lines));
+
+  it("never counts a foreground delegation, at any point in its life", () => {
+    for (const [at] of FOREGROUND) {
+      assert.equal(count(FOREGROUND.filter(([ms]) => ms <= at)), 0, `at ${at} ms`);
+    }
+  });
+
+  it("counts a background one from its launch until its notification", () => {
+    assert.equal(count(until(BACKGROUND, 35_000)), 1, "after the launch acknowledgement");
+    assert.equal(count(BACKGROUND), 0, "after task_notification");
+  });
+
+  it("counts a call that left the flag out once task_started says it is backgrounded", () => {
+    // 2.1.280 backgrounds such a call; the input alone would say it is not.
+    const lines: Line[] = [
+      [0, agentCall("toolu_x", { description: "d", prompt: "p", subagent_type: "general-purpose" })],
+    ];
+    assert.equal(count(lines), 0, "nothing has said so yet");
+    assert.equal(
+      count([
+        ...lines,
+        [
+          4,
+          {
+            type: "system",
+            subtype: "task_started",
+            task_id: "t1",
+            tool_use_id: "toolu_x",
+            is_backgrounded: true,
+            task_type: "local_agent",
+          },
+        ],
+      ]),
+      1,
+    );
+  });
+
+  it("counts a foreground call the CLI moves to the background", () => {
+    assert.equal(
+      count([
+        ...until(FOREGROUND, 30_000),
+        [
+          5_000,
+          {
+            type: "system",
+            subtype: "task_updated",
+            task_id: "a93351b95e0f73c99",
+            patch: { is_backgrounded: true },
+          },
+        ],
+      ]),
+      1,
+    );
   });
 });
