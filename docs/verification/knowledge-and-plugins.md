@@ -148,6 +148,8 @@
 
 - **`readGuard`'s `PreToolUse` hook has never been seen to fire.** Since
   2026-10-17 a firing one leaves a `system:hook_response` row, since a deny is
-  output the store keeps; none has been looked for. One billed run settles it:
-  switch `readGuard` on, have a cycle read one file twice, and confirm the
-  second read is refused and its row is there.
+  output the store keeps, and since 2026-10-20 a log line reading `PreToolUse:Read
+  hook refused the tool call. The agent was told:` and the reason, which a stub
+  child produced and a real firing has not; none has been looked for. One billed
+  run settles it: switch `readGuard` on, have a cycle read one file twice, and
+  confirm the second read is refused and its row and line are there.

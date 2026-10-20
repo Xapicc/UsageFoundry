@@ -226,8 +226,41 @@ export function clipToolInput(input: unknown): {
   return { input: kept, truncatedFrom: raw.length };
 }
 
+/** Longest `output`, `stdout` or `stderr` kept on a stored hook row, before it is cut. */
+export const MAX_HOOK_FIELD_CHARS = 2_000;
+
+const HOOK_PRINTED_FIELDS = ["output", "stdout", "stderr"] as const;
+
+/**
+ * A `hook_*` stream event, bounded, for storage rather than for reading.
+ *
+ * On the pinned CLI a `hook_response` carries what the hook printed three
+ * times: `stdout`, `stderr`, and `output`, which is the two together. So a
+ * hook that prints on every tool call — the catch-all `PostToolUse` this
+ * install runs — wrote about twice what it printed into `run_events` per call,
+ * and those rows spend the replay's 4 MB / 2,000-row budget and the live tile's
+ * fifty-event tail on text nothing draws. `hookInjection` and `hookRefusal`
+ * read the event as the CLI sent it, so the readable line is not the thing
+ * this cuts; the cap equals the line's own so the row never holds less than the
+ * line shows.
+ *
+ * Returns `ev` itself when nothing is over the cap, and a copy otherwise: the
+ * caller still reads the original after storing this one.
+ */
+export function clipHookEvent<T extends object>(ev: T): T {
+  const fields = ev as Record<string, unknown>;
+  let clipped: Record<string, unknown> | null = null;
+  for (const key of HOOK_PRINTED_FIELDS) {
+    const value = fields[key];
+    if (typeof value !== "string" || value.length <= MAX_HOOK_FIELD_CHARS) continue;
+    clipped ??= { ...fields };
+    clipped[key] = cutTo(value, MAX_HOOK_FIELD_CHARS);
+  }
+  return (clipped ?? ev) as T;
+}
+
 /** Cut a string to `max` characters, marking that something followed. */
-function cutTo(s: string, max: number): string {
+export function cutTo(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max)}…`;
 }
 

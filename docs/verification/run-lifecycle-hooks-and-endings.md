@@ -100,6 +100,47 @@ Phase 0 and Phase 2 of `proposals/ContinuousImprovement/`, because
   dropped the experiment name from the hash's preimage and removed the base
   check each failed (1, 2 and 1 cases).
 
+- **Which of a hook's refusals reach the model, CLI 2.1.280 against a stub
+  API, 2026-10-20, $0.00.** The recipe above (loopback `/v1/messages`,
+  `env -i`, scratch `HOME` and `CLAUDE_CONFIG_DIR`, `--include-hook-events`),
+  the stub answering one `Read` per request, hooks keyed to the file being
+  read that each wrote a stderr line beside a marker, and every later request
+  body searched for the markers. **Reached the model:** a `PreToolUse` deny's
+  `permissionDecisionReason` (exit 0, `outcome: "success"`) as the
+  `tool_result`'s content with `is_error: true`, and with no reason the CLI's
+  own `Hook PreToolUse:Read denied this tool`; the older top-level
+  `{"decision":"block","reason":…}` on `PreToolUse` the same way; a
+  `PostToolUse` `{"decision":"block","reason":…}` as a system message,
+  `PostToolUse:Read hook blocking error from command: "<command>": <reason>`,
+  with the tool's own result still delivered; an exit 2 (`outcome: "error"`,
+  `exit_code: 2`) from `PreToolUse` as an `is_error` `tool_result`, `PreToolUse:Read
+  hook error: [<command>]: <stderr>`, and from `PostToolUse` as that system
+  message, in both with the **whole** stderr, the hook's chatter included; and
+  a `Stop` hook's exit 2 or block as a user message, `Stop hook feedback:\n<reason>`,
+  after which the cycle took another turn. **Did not reach it:** a
+  `PostToolUse` exit 1's stderr (`outcome: "error"`, `exit_code: 1`, the same
+  outcome as exit 2) and a `SessionStart` exit 2. A `UserPromptSubmit` exit 2
+  or block makes no request at all: the cycle ends with `num_turns: 0` and a
+  `result` of `UserPromptSubmit operation blocked by hook:\n<reason>`. Caveat:
+  `Read` only, because the CLI's `Bash` cannot start in this container's
+  sandbox; one hook of each kind; nothing from a sub-agent's tool call.
+
+- **`hookRefusal` and the stored-row clip through the real run loop,
+  2026-10-20, stub child, $0.00.** The capture above replayed through
+  `createRun` and `startRun` from the compiled test build over a scratch
+  `DATA_DIR`, `CLAUDE_BIN` a script that prints the capture when argv has
+  `-p`, with one synthetic `PostToolUse` row added that printed 30,000
+  characters on stdout and 5,000 on stderr. The run completed with 29 rows.
+  The four refusals each got a log line (`PreToolUse:Read hook refused the tool
+  call. The agent was told:` and the reason, the `PostToolUse` one
+  `objected to the tool call after it ran`, and the two exit 2 lines opened
+  `exited 2 and`), the exit 1 row got none, and the 35,000-character row was
+  stored as 6,321 bytes with `stdout` 2,001 characters, the last of them `…`.
+  Mutations of the compiled modules that ignored `exit_code`, dropped
+  `PostToolUse` from the events, made the clip a no-op, and ignored the
+  top-level block each failed (1, 2, 2 and 2 cases). Caveat: a replay, so
+  nothing about a real hook's volume.
+
 ## Not yet verified by hand
 
 - **No billed cycle has run with the flag.** The stub API proves the shapes
@@ -109,17 +150,19 @@ Phase 0 and Phase 2 of `proposals/ContinuousImprovement/`, because
   run_id = ? group by 1` on one ordinary run after this lands, against one
   before it.
 
-- **A hook's deny, block and exit-2 reasons are kept but not read.** A
-  `PreToolUse` deny's `permissionDecisionReason`, a `PostToolUse` block's
-  `reason` and an exit-2 hook's stderr reach the agent by the CLI's docs, and
-  their raw rows are stored, but `hookInjection` reads only `additionalContext`
-  and plain text, so none of them gets a readable line, and none was driven.
-  Settle with the stub-API recipe and one hook of each kind, logging which
-  marker reaches `/v1/messages`.
+- **A refusal's edges are unmeasured.** Measured above for a non-empty
+  reason on `PreToolUse`, `PostToolUse` and `Stop`. Not driven: a
+  `decision: "block"` with no `reason` on `PostToolUse` or `Stop` (`hookRefusal`
+  says "giving no reason" and claims nothing about what the model was told), a
+  JSON reply beside an exit 2, `permissionDecision: "ask"` or `"defer"`, a
+  `continue: false` stop, and any of it from a sub-agent's tool call. Settle
+  with the same recipe, one hook per shape.
 
-- **A hook's stored row holds what it printed twice.** `output` repeats
-  `stdout` and `stderr`, and `raw` is stored whole, so a chatty hook firing on
-  every tool call costs that much per call. Unmeasured on any real hook.
+- **A chatty real hook's stored row is unmeasured.** Rows are clipped to 2,000
+  characters a field, which a stub proved; how large a catch-all `PostToolUse`
+  hook's rows are on a real install is not known. Settle on a logged-in host:
+  `select count(*), max(length(payload)) from run_events where
+  json_extract(payload,'$.message') = 'system:hook_response'`.
 
 - **`ending_code` has met the real CLI on one ending, `done`.** The others are
   pinned by the loop tests with a stubbed spawn, and the twenty pre-column rows

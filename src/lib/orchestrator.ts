@@ -191,7 +191,14 @@ import { notifyLifecycle } from "./notify";
 // The log's own extraction of what a tool call is about, so the parser retains
 // the same line for a call whose result comes back an error. Client-safe and
 // pure; the dependency runs the permitted way round.
-import { clipToolInput, MAX_LOG_CHARS, toolArgs } from "./logLine";
+import {
+  clipHookEvent,
+  clipToolInput,
+  cutTo,
+  MAX_HOOK_FIELD_CHARS,
+  MAX_LOG_CHARS,
+  toolArgs,
+} from "./logLine";
 // Same direction, same reason: the cycle deadline says how long it waited in
 // the words the run page already uses for every other span.
 import { fmtDuration, fmtTokens, shortId } from "./format";
@@ -9242,14 +9249,40 @@ export function contextAfterPrune(
 }
 
 /**
+ * What a hook printed on stdout, trimmed, and that parsed when it is a JSON
+ * object — the part of a `hook_response` the CLI itself reads.
+ *
+ * `output` only where a reply carries no `stdout` at all, which the pinned
+ * CLI's schema never sends; it is what this read before `stdout` was found to
+ * be the part the CLI parses.
+ */
+function hookStdout(ev: { stdout?: unknown; output?: unknown }): {
+  output: string;
+  reply: unknown;
+} {
+  const printed = typeof ev.stdout === "string" ? ev.stdout : ev.output;
+  const output = typeof printed === "string" ? printed.trim() : "";
+  let reply: unknown = null;
+  if (output.startsWith("{")) {
+    try {
+      reply = JSON.parse(output);
+    } catch {
+      // Not JSON after all, so it is plain text and the event decides.
+    }
+  }
+  return { output, reply };
+}
+
+/**
  * What a hook put into the agent's context, off the `hook_response` the CLI
  * reports it with — or null when it put nothing there.
  *
  * Measured against the pinned CLI rather than read off its docs
  * (`docs/verification/run-lifecycle-hooks-and-endings.md`). Only `stdout`, and
  * only from a hook whose `outcome` is `success`: `output` is stderr and stdout
- * together, in arrival order, and neither a hook's stderr nor what a failing
- * hook printed reached the model. Which part of that stdout reaches it depends
+ * together, in arrival order, and a hook's stderr reached the model only
+ * through a refusal (`hookRefusal` reads that), never as context. Which part of
+ * that stdout reaches it depends
  * on the event: a JSON object's `hookSpecificOutput.additionalContext` reached
  * it from `PreToolUse` and `PostToolUse` alike, and plain text reached it from
  * `SessionStart` and `UserPromptSubmit` and did **not** from `PostToolUse`. So a
@@ -9268,20 +9301,8 @@ export function hookInjection(ev: {
   outcome?: unknown;
 }): string | null {
   if (ev.outcome !== undefined && ev.outcome !== "success") return null;
-  // `output` only where a reply carries no `stdout` at all, which the pinned
-  // CLI's schema never sends; it is what this read before `stdout` was found
-  // to be the part the CLI parses.
-  const printed = typeof ev.stdout === "string" ? ev.stdout : ev.output;
-  const output = typeof printed === "string" ? printed.trim() : "";
+  const { output, reply } = hookStdout(ev);
   if (!output) return null;
-  let reply: unknown = null;
-  if (output.startsWith("{")) {
-    try {
-      reply = JSON.parse(output);
-    } catch {
-      // Not JSON after all, so it is plain text and the event decides below.
-    }
-  }
   if (isJsonObject(reply)) {
     const specific = reply.hookSpecificOutput;
     const context =
@@ -9293,6 +9314,88 @@ export function hookInjection(ev: {
   return ev.hook_event === "SessionStart" || ev.hook_event === "UserPromptSubmit"
     ? output
     : null;
+}
+
+/** How each event that feeds a refusal back to the model is told in the log. */
+const HOOK_REFUSALS = {
+  PreToolUse: "refused the tool call",
+  PostToolUse: "objected to the tool call after it ran",
+  Stop: "refused to let the agent stop",
+} as const;
+
+/**
+ * A hook that refused something, said in words — or null when it did not, or
+ * when the refusal did not reach the model.
+ *
+ * `hookInjection` reads what a hook added; this reads what it took away, and
+ * the two never overlap: a deny is a JSON reply with no `additionalContext`,
+ * and an exit-2 hook has `outcome: "error"`. It exists for `readGuard`, whose
+ * `PreToolUse` deny was otherwise on the run only as a `system:` row that
+ * `describeEvent` drops, so the guard firing was invisible.
+ *
+ * Measured against the pinned CLI, not read off its docs
+ * (`docs/verification/run-lifecycle-hooks-and-endings.md`). Three events carry
+ * a refusal to the model, each in two spellings: `PreToolUse`, `PostToolUse`
+ * and `Stop`, by `{"decision":"block","reason":…}` on stdout with exit 0 — and
+ * on `PreToolUse` by `hookSpecificOutput.permissionDecision: "deny"` with its
+ * `permissionDecisionReason` — or by exiting 2, whose whole stderr is the
+ * reason. Exit 2 is `outcome: "error"` and exit 1 is too, but an exit 1 never
+ * reached the model, so `exit_code` is read rather than the outcome alone.
+ * `UserPromptSubmit` and `SessionStart` are left out on purpose: a blocked
+ * prompt makes no request at all and ends the cycle with the reason as its
+ * `result`, and a `SessionStart` exit 2 never reached the model.
+ *
+ * Stdout is read only from a hook that succeeded, as `hookInjection` does.
+ *
+ * Pure and tested because every wrong answer is silent: a reader of `outcome`
+ * logs an exit 1 as the agent having been told something, and a reader of
+ * `permissionDecisionReason` alone misses the `PostToolUse` and `Stop` block.
+ */
+export function hookRefusal(ev: {
+  hook_event?: unknown;
+  hook_name?: unknown;
+  stdout?: unknown;
+  stderr?: unknown;
+  output?: unknown;
+  outcome?: unknown;
+  exit_code?: unknown;
+}): string | null {
+  const event = ev.hook_event;
+  if (event !== "PreToolUse" && event !== "PostToolUse" && event !== "Stop") {
+    return null;
+  }
+  const refused = HOOK_REFUSALS[event];
+  const name = String(ev.hook_name ?? event);
+
+  if (ev.outcome === "error") {
+    if (ev.exit_code !== 2) return null;
+    const printed = typeof ev.stderr === "string" ? ev.stderr : ev.output;
+    const reason = typeof printed === "string" ? printed.trim() : "";
+    return reason
+      ? `${name} hook exited 2 and ${refused}. The agent was told:\n${cutTo(reason, MAX_HOOK_FIELD_CHARS)}`
+      : `${name} hook exited 2 and ${refused}, printing nothing.`;
+  }
+  if (ev.outcome !== undefined && ev.outcome !== "success") return null;
+
+  const { reply } = hookStdout(ev);
+  if (!isJsonObject(reply)) return null;
+  const specific = reply.hookSpecificOutput;
+  let reason: unknown;
+  if (
+    event === "PreToolUse" &&
+    isJsonObject(specific) &&
+    specific.permissionDecision === "deny"
+  ) {
+    reason = specific.permissionDecisionReason;
+  } else if (reply.decision === "block") {
+    reason = reply.reason;
+  } else {
+    return null;
+  }
+  const said = typeof reason === "string" ? reason.trim() : "";
+  return said
+    ? `${name} hook ${refused}. The agent was told:\n${cutTo(said, MAX_HOOK_FIELD_CHARS)}`
+    : `${name} hook ${refused}, giving no reason.`;
 }
 
 /** How much of a refused command is kept. Long enough to name it, not to log it. */
@@ -10289,6 +10392,8 @@ function handleStreamLine(
     // not only what `hookInjection` reads as context: a `PreToolUse` deny or a
     // `PostToolUse` block is a JSON reply with no `additionalContext` in it,
     // and it is the one record of a guard hook such as `readGuard` firing.
+    // Kept clipped (`clipHookEvent`), because `output` repeats `stdout` and
+    // `stderr` and a hook that prints on every call stored all of it twice.
     const hookNoise =
       ev.subtype === "hook_started" ||
       ev.subtype === "hook_progress" ||
@@ -10300,7 +10405,10 @@ function handleStreamLine(
         runId,
         ts: Date.now(),
         kind: "log",
-        payload: { message: `system:${ev.subtype ?? ""}`, raw: ev },
+        payload: {
+          message: `system:${ev.subtype ?? ""}`,
+          raw: String(ev.subtype ?? "").startsWith("hook_") ? clipHookEvent(ev) : ev,
+        },
       });
     }
 
@@ -10325,13 +10433,15 @@ function handleStreamLine(
       if (injected) {
         // Under `MAX_LOG_CHARS`, so this is the only cut and the line does not
         // arrive already shortened for storage and then shortened again.
-        const shown =
-          injected.length > 2000 ? `${injected.slice(0, 2000)}…` : injected;
         log(
           runId,
-          `${String(ev.hook_name ?? ev.hook_event)} hook added this to the agent's context:\n${shown}`,
+          `${String(ev.hook_name ?? ev.hook_event)} hook added this to the agent's context:\n${cutTo(injected, MAX_HOOK_FIELD_CHARS)}`,
         );
       }
+      // The other half of what a hook can say to the agent: a refusal. Separate
+      // from the injection above because the two never come from one reply.
+      const refusal = hookRefusal(ev);
+      if (refusal) log(runId, refusal);
     }
     return;
   }
