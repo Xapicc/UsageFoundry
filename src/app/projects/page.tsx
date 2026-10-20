@@ -251,22 +251,30 @@ export default function Projects() {
 
   return (
     <>
-      <div className="mb-6">
-        <h1 className="mb-1 text-xl font-semibold tracking-tight">Project manager</h1>
-      </div>
-
-      <p className="sr-only" role="status" aria-live="polite">
-        {announcement}
-      </p>
-      <div role="alert">{readError && <Notice tone="danger">{readError}</Notice>}</div>
-
       {/* The orchestrator beside the list from `xl` and under it below, where
           beside it would leave the list too narrow for a path. `min-w-0` is
           what lets the list's column narrow for the panel rather than push it
           off the pane; the panel's column is about `/chat`'s own 360px proposal
-          column plus the room its thread needs to be read in. */}
+          column plus the room its thread needs to be read in.
+
+          The heading and the two announcement regions are in the list's column
+          and not above the grid, because the panel is pinned from `xl` at the
+          top of the pane: anything standing above the grid would start it that
+          much lower, and the panel — sized to the pane — would start its
+          composer that much under the fold until the pane had scrolled far
+          enough to stick it. Below `xl` there is one column and the order on
+          the page is the one it always had. */}
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_26rem] xl:items-start">
         <div className="min-w-0">
+          <div className="mb-6">
+            <h1 className="mb-1 text-xl font-semibold tracking-tight">Project manager</h1>
+          </div>
+
+          <p className="sr-only" role="status" aria-live="polite">
+            {announcement}
+          </p>
+          <div role="alert">{readError && <Notice tone="danger">{readError}</Notice>}</div>
+
           {missingMounts.length > 0 && (
             <Notice tone="warn" quiet>
               {missingMounts.map((m) => (
