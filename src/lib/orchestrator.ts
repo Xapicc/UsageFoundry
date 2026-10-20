@@ -229,6 +229,7 @@ import {
   clipReason,
   buildArgs,
   buildCodexArgs,
+  cycleBudgetUSD,
   cycleDidNoWork,
   cycleEnding,
   nextPrompt,
@@ -512,6 +513,13 @@ export interface RunRow {
    * same caveat `active_iteration` carries.
    */
   active_started_at: number | null;
+  /**
+   * The `--max-budget-usd` that cycle was spawned with, or null when it was
+   * handed none. Written and cleared with `active_started_at`. The cap on what
+   * that cycle's telemetry may add to a figure another run is judged by — see
+   * `inFlightCostForOthers`.
+   */
+  active_budget_usd: number | null;
   /**
    * Spend recovered from transcripts for cycles killed before Claude Code
    * reported theirs. Never added into `spent_usd`; the two are shown side by
@@ -12128,12 +12136,24 @@ export async function startRun(id: string): Promise<void> {
       //
       // `active_started_at` travels with it because a workflow instance's guard
       // reads this run's in-flight spend and has nowhere else to learn where the
-      // cycle began — see the column's note on `RunRow`.
+      // cycle began — see the column's note on `RunRow`. `active_budget_usd`
+      // with it, off the same two inputs `buildArgs` is handed below, so the
+      // cap on that reading is the argv's own figure. Null on the cycles whose
+      // argv carries none: a local one (see `maxRunCostUSD` below) and a Codex
+      // one, whose CLI takes no such flag.
       db()
         .prepare(
-          "UPDATE runs SET active_iteration = ?, active_started_at = ? WHERE id = ?",
+          "UPDATE runs SET active_iteration = ?, active_started_at = ?," +
+            " active_budget_usd = ? WHERE id = ?",
         )
-        .run(iterations, cycleStartedAt, id);
+        .run(
+          iterations,
+          cycleStartedAt,
+          local || run.provider === "codex"
+            ? null
+            : cycleBudgetUSD(policy.maxRunCostUSD, spentGuardBeforeCycle),
+          id,
+        );
 
       // Resolved per cycle, for the reason the sandbox policy below is: a run
       // outlives the plugin list it started under, and each stored path is
@@ -12636,7 +12656,7 @@ export async function startRun(id: string): Promise<void> {
           "UPDATE runs SET iterations = ?, spent_usd = ?, spent_tokens = ?," +
             " spent_usd_est = ?, spent_tokens_est = ?, session_id = ?," +
             " session_cost_usd = ?, done_retriggers = ?, active_iteration = NULL," +
-            " active_started_at = NULL WHERE id = ?",
+            " active_started_at = NULL, active_budget_usd = NULL WHERE id = ?",
         )
         .run(
           iterations,
@@ -13422,6 +13442,7 @@ export async function startRun(id: string): Promise<void> {
       // working run reading zero, in the other direction.
       active_iteration: null,
       active_started_at: null,
+      active_budget_usd: null,
     };
 
     try {
@@ -15874,7 +15895,7 @@ export async function reconcileInterruptedCycles(
         "UPDATE runs SET spent_usd_est = spent_usd_est + ?," +
           " spent_tokens_est = spent_tokens_est + ?," +
           " iterations = MAX(iterations, COALESCE(active_iteration, iterations))," +
-          " active_iteration = NULL, active_started_at = NULL" +
+          " active_iteration = NULL, active_started_at = NULL, active_budget_usd = NULL" +
           " WHERE id = ? AND active_started_at IS NOT NULL",
       )
       .run(est?.costUSD ?? 0, est?.tokens ?? 0, run.id);
@@ -16397,7 +16418,8 @@ export async function reconcileOnBoot(): Promise<void> {
   // an open cycle without being one this pass would otherwise touch.
   db()
     .prepare(
-      "UPDATE runs SET active_iteration = NULL, active_started_at = NULL" +
+      "UPDATE runs SET active_iteration = NULL, active_started_at = NULL," +
+        " active_budget_usd = NULL" +
         " WHERE active_iteration IS NOT NULL OR active_started_at IS NOT NULL",
     )
     .run();

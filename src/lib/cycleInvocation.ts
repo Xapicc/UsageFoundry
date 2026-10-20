@@ -1141,6 +1141,22 @@ export function promptArgs(prompt: string): string[] {
   return ["--", prompt];
 }
 
+/**
+ * The `--max-budget-usd` a cycle is spawned with: what is left of the run's own
+ * limit after the guard figure, or null when the run has none. `buildArgs`'s
+ * `maxRunCostUSD` says why each half is what it is.
+ *
+ * Its own function because two readers must agree on it to the cent: the argv,
+ * and the row `startRun` stamps it on as `active_budget_usd`, which is what
+ * bounds the cycle's own telemetry in the figures other runs are judged by.
+ */
+export function cycleBudgetUSD(
+  maxRunCostUSD: number | null,
+  spentGuardUSD: number,
+): number | null {
+  return maxRunCostUSD === null ? null : Math.max(0, maxRunCostUSD - spentGuardUSD);
+}
+
 export function buildArgs(opts: {
   prompt: string;
   model: string | null;
@@ -1540,9 +1556,9 @@ export function buildArgs(opts: {
   // cycle that crosses the threshold rather than the one after it. Per
   // invocation, so a resumed session is bounded by what is left *now* rather
   // than by what the conversation has cost since it opened.
-  if (opts.maxRunCostUSD !== null) {
-    const remaining = Math.max(0, opts.maxRunCostUSD - opts.spentGuardUSD);
-    args.push("--max-budget-usd", String(remaining));
+  const cycleBudget = cycleBudgetUSD(opts.maxRunCostUSD, opts.spentGuardUSD);
+  if (cycleBudget !== null) {
+    args.push("--max-budget-usd", String(cycleBudget));
   }
   // The last flag, and that position is asserted rather than incidental: this
   // used to be appended by the run loop after `buildArgs` returned, so an
