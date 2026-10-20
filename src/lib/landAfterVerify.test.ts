@@ -425,7 +425,12 @@ interface ReusedScene extends Scene {
  * in the slot, a commit on it, and a row recording the same slot.
  */
 function reusedScene(name: string): ReusedScene {
-  const s = scene(name);
+  return takeOverSlot(scene(name));
+}
+
+/** `reusedScene` over a scene already built, for one that needs more in the run's branch first. */
+function takeOverSlot(s: Scene): ReusedScene {
+  const name = path.basename(s.repo);
   const laterBranch = `${s.branch}-later`;
   git(s.slot, "checkout", "-q", "-b", laterBranch, s.base);
   fs.writeFileSync(path.join(s.slot, "other.txt"), "later\n");
@@ -539,6 +544,73 @@ describe("a checkout a later run reused, with a verify command set", () => {
     assert.equal(fs.existsSync(path.join(s.signals, "ran")), false, "the command ran anyway");
     assert.equal(headOf(s.slot), s.laterBranch);
     assert.equal(git(s.repo, "rev-parse", "main").trim(), s.base);
+  });
+
+  describe("whose own ignored file the run's branch tracks", () => {
+    /**
+     * `git status` never lists an ignored file, so the slot reads clean and the
+     * switch is offered; and `git checkout` replaces an ignored file by default,
+     * the way `git merge` did before `--no-overwrite-ignore`. The switch to the
+     * run's branch overwrote the later run's file with the run's tracked one,
+     * and the switch back, to a branch that does not track the path, deleted
+     * it: a seeded `.env` is the file this is for, and nothing said so.
+     */
+    const LATERS_OWN = "the later run's own, never in git\n";
+
+    function ignoredScene(name: string): ReusedScene {
+      const s = takeOverSlot(trackedIgnoredScene(name, { operatorFile: false }));
+      fs.writeFileSync(path.join(s.slot, "local.settings.json"), LATERS_OWN);
+      assert.equal(git(s.slot, "status", "--porcelain").trim(), "", "precondition: the slot reads clean");
+      return s;
+    }
+
+    const keptFile = (s: ReusedScene) => path.join(s.slot, "local.settings.json");
+
+    it("refuses Land's switch, runs nothing, and keeps the file", async () => {
+      const s = ignoredScene("switch-ignored");
+      verifyWith("mark", s.signals);
+
+      const landed = await land.landRun(s.runId, "merge");
+
+      assert.equal(landed.ok, false, "landed after switching over the later run's ignored file");
+      assert.match(
+        landed.ok ? "" : landed.reason,
+        /git would not switch it: .*overwritten by checkout: local\.settings\.json — ignored/,
+      );
+      assert.equal(fs.existsSync(path.join(s.signals, "ran")), false, "the command ran anyway");
+      assert.equal(headOf(s.slot), s.laterBranch);
+      assert.equal(fs.readFileSync(keptFile(s), "utf8"), LATERS_OWN);
+      assert.equal(git(s.repo, "rev-parse", "main").trim(), s.base);
+      assert.equal(landedAt(s.runId), null);
+    });
+
+    it("refuses a review block's switch the same way", async () => {
+      const s = ignoredScene("switch-ignored-review");
+
+      const outcome = await land.verifyBranchForReview(
+        orchestrator.getRun(s.runId)!,
+        `${process.execPath} ${probePath()} mark ${s.signals}`,
+      );
+
+      assert.equal(outcome.ran, false, "the block's command ran after the switch");
+      assert.match(outcome.reason, /git would not switch it: .*overwritten by checkout: local\.settings\.json — ignored/);
+      assert.equal(fs.existsSync(path.join(s.signals, "ran")), false, "the command ran anyway");
+      assert.equal(headOf(s.slot), s.laterBranch);
+      assert.equal(fs.readFileSync(keptFile(s), "utf8"), LATERS_OWN);
+    });
+
+    it("still switches and lands when the later run holds no file at that path", async () => {
+      // The control: what is refused is the later run's file, not a branch that
+      // tracks a path `.gitignore` names.
+      const s = takeOverSlot(trackedIgnoredScene("switch-ignored-absent", { operatorFile: false }));
+      verifyWith("mark", s.signals);
+
+      const landed = await land.landRun(s.runId, "merge");
+
+      assert.equal(landed.ok, true, landed.ok ? "" : landed.reason);
+      assert.ok(fs.existsSync(path.join(s.signals, "ran")), "the command did not run");
+      assert.equal(headOf(s.slot), s.laterBranch, "the slot was not put back");
+    });
   });
 
   it("refuses two runs whose checkouts hold each other's branch, which git cannot switch", async () => {

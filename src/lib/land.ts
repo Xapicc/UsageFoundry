@@ -3579,9 +3579,17 @@ interface SlotState {
   operation: BranchInOperation["operation"] | null;
   /**
    * There, with HEAD readable and on no branch: such an operation, or a plain
-   * `git checkout <commit>`. Not a checkout that is gone or a later run's.
+   * `git checkout <commit>`, and still this run's. Not a checkout that is gone
+   * or a later run's.
    */
   detached: boolean;
+  /**
+   * There, with HEAD readable and on no branch, in a slot a later run was given
+   * — which is where that run's own rebase, bisect or `git checkout <commit>`
+   * leaves it. The run's branch is not in it, so it reads as taken over, and
+   * not as `detached`, which would tell the operator to switch it back.
+   */
+  detachedByLaterRun: boolean;
 }
 
 /**
@@ -3608,6 +3616,28 @@ async function mergeHeadIn(dir: string): Promise<boolean | null> {
   return head.code === 1 && head.stderr === "" ? false : null;
 }
 
+/**
+ * Whether a run outside this run's branch chain was recorded at `slot` after
+ * this one: `allocateSlotPath` gives a finished run's slot to the next isolated
+ * run in the repository, which cuts its own branch there.
+ *
+ * A continuation is in the chain and is this run's own, so it does not count.
+ * Recorded rather than active, because a finished later run's rebase is no
+ * more this run's than a running one's.
+ */
+function laterRunHolds(run: RunRow, slot: string): boolean {
+  const own = new Set([run.id, ...chainRuns(run).map((member) => member.id)]);
+  const row = db()
+    .prepare(
+      `SELECT 1 FROM runs
+        WHERE worktree_path = ? AND created_at > ?
+          AND id NOT IN (${[...own].map(() => "?").join(",")})
+        LIMIT 1`,
+    )
+    .get(slot, run.created_at, ...own);
+  return row !== undefined;
+}
+
 async function slotState(run: RunRow): Promise<SlotState> {
   const slot = run.worktree_path;
   if (!slot || !fs.existsSync(slot)) {
@@ -3619,6 +3649,7 @@ async function slotState(run: RunRow): Promise<SlotState> {
       mergeInProgress: false,
       operation: null,
       detached: false,
+      detachedByLaterRun: false,
     };
   }
 
@@ -3628,6 +3659,22 @@ async function slotState(run: RunRow): Promise<SlotState> {
   // call it gone and the verify gate call it taken over.
   if (headReadable && !checkedOutBranch && run.worktree_branch) {
     const mid = await slotMidOperation(slot, run.worktree_branch);
+    // Only while something ties it to this run: an operation on its branch, or
+    // no later run recorded at the path. Otherwise the detached HEAD is that
+    // run's own rebase, bisect or `git checkout <commit>`, and "switch it back"
+    // would have the operator move a live run's checkout onto this branch.
+    if (!(mid.ok && mid.operation) && laterRunHolds(run, slot)) {
+      return {
+        path: slot,
+        checkedOutBranch: null,
+        readable: headReadable,
+        files: [],
+        mergeInProgress: false,
+        operation: null,
+        detached: false,
+        detachedByLaterRun: true,
+      };
+    }
     // What is uncommitted there is read only once the slot is known to be
     // mid-operation: it is what Purge would remove with the checkout, and the
     // card says so. A plain detached HEAD still reports nothing, as before.
@@ -3643,6 +3690,7 @@ async function slotState(run: RunRow): Promise<SlotState> {
       mergeInProgress: false,
       operation: mid.ok ? mid.operation : null,
       detached: true,
+      detachedByLaterRun: false,
     };
   }
   // Status is read only once the slot is proved to still hold this run's
@@ -3657,6 +3705,7 @@ async function slotState(run: RunRow): Promise<SlotState> {
       mergeInProgress: false,
       operation: null,
       detached: false,
+      detachedByLaterRun: false,
     };
   }
 
@@ -3673,6 +3722,7 @@ async function slotState(run: RunRow): Promise<SlotState> {
     mergeInProgress: readable && merging === true,
     operation: null,
     detached: false,
+    detachedByLaterRun: false,
   };
 }
 
@@ -4093,7 +4143,8 @@ interface TakenOverSlot {
  * The slot, when it is there and standing on a branch that is not this run's —
  * the case `verifyTreeVerdict` words as "a later run has taken that checkout
  * over" — or null for every other reason it is no use: gone, unreadable, mid
- * rebase, detached, or holding the run's own branch.
+ * rebase, detached (a later run's included, which has no branch to put back),
+ * or holding the run's own branch.
  *
  * Whether it is clean is not known from here: `slotState` reads the status of a
  * slot only once it holds the run's own branch.
@@ -4231,6 +4282,23 @@ async function switchBlocker(taken: TakenOverSlot): Promise<string | null> {
   return null;
 }
 
+/**
+ * git's reason for a refused `checkout` in one line. Under `--no-overwrite-ignore`
+ * the first line of that refusal names no path, so the ones it lists beneath
+ * are added: status read the slot as clean, so they can only be files git
+ * ignores there.
+ */
+function checkoutRefusalLine(stderr: string): string {
+  const first = stderr.split("\n")[0] || "unknown error";
+  const inTheWay = untrackedInTheWay(stderr);
+  if (inTheWay.length === 0) return first;
+  const rest = inTheWay.length - DIRT_NAMED;
+  return (
+    `${first.replace(/:$/, "")}: ${inTheWay.slice(0, DIRT_NAMED).join(", ")}` +
+    `${rest > 0 ? ` and ${rest} more` : ""} — ignored, most likely`
+  );
+}
+
 /** The switch, the command and the switch back, in a slot already borrowed. */
 async function runOnSwitchedBranch(
   taken: TakenOverSlot,
@@ -4241,9 +4309,13 @@ async function runOnSwitchedBranch(
   const blocker = await switchBlocker(taken);
   if (blocker) return notRun(unswitchedReason(taken, blocker, asker));
 
-  const switched = await git(slot, ["checkout", "-q", branch, "--"], NO_CLOCK);
+  // `--no-overwrite-ignore` because the blocker above reads `git status`, which
+  // never lists an ignored file, and git's default replaces one: a seeded `.env`
+  // or `local.settings.json` the later run holds at a path this branch tracks
+  // would be overwritten here and deleted by the switch back. Refused instead.
+  const switched = await git(slot, ["checkout", "-q", "--no-overwrite-ignore", branch, "--"], NO_CLOCK);
   if (!switched.ok) {
-    const why = `git would not switch it: ${switched.stderr.split("\n")[0] || "unknown error"}`;
+    const why = `git would not switch it: ${checkoutRefusalLine(switched.stderr)}`;
     return notRun(unswitchedReason(taken, why, asker));
   }
   try {
@@ -4273,8 +4345,8 @@ async function switchBack(slot: string, branch: string, holds: string): Promise<
   if (!status.ok || status.stdout !== "") {
     return left("the command left uncommitted paths in it, or git could not read them");
   }
-  const back = await git(slot, ["checkout", "-q", holds, "--"], NO_CLOCK);
-  if (!back.ok) left(`git would not switch it back: ${back.stderr.split("\n")[0] || "unknown error"}`);
+  const back = await git(slot, ["checkout", "-q", "--no-overwrite-ignore", holds, "--"], NO_CLOCK);
+  if (!back.ok) left(`git would not switch it back: ${checkoutRefusalLine(back.stderr)}`);
 }
 
 /**
@@ -4296,6 +4368,8 @@ export function commitRefusal(s: {
   operation: BranchInOperation["operation"] | null;
   /** That checkout is there and on no branch. See `SlotState`. */
   detached: boolean;
+  /** That checkout is on no branch because a later run was given it. See `SlotState`. */
+  detachedByLaterRun: boolean;
   readable: boolean;
   /** Every uncommitted path in that checkout, with git's status letters. */
   pending: readonly Pick<PendingChange, "path" | "code">[];
@@ -4352,6 +4426,14 @@ export function commitRefusal(s: {
     return (
       `That checkout is on a detached HEAD rather than on ${s.branch}, so a commit there would ` +
       `be on no branch. Switch it back to ${s.branch} there and commit again.`
+    );
+  }
+  // Not the run's to switch: the HEAD in it is another run's, and whatever is
+  // uncommitted there is that run's too.
+  if (s.detachedByLaterRun) {
+    return (
+      `That checkout slot now belongs to a later run, which has it on a detached HEAD, not ` +
+      `${s.branch} — whatever is uncommitted in it belongs to that run.`
     );
   }
   if (!s.checkedOutBranch) {
@@ -4429,6 +4511,7 @@ export async function commitPending(
     checkedOutBranch: slot.checkedOutBranch,
     operation: slot.operation,
     detached: slot.detached,
+    detachedByLaterRun: slot.detachedByLaterRun,
     readable: slot.readable,
     pending: slot.files,
     mergeInProgress: slot.mergeInProgress,
