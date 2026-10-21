@@ -388,6 +388,17 @@ type SideTab = "proposals" | "decided" | "chats";
  * use of it below. The one departure is the header: a column is too narrow for
  * the costs and New chat to share a line with the heading, so the action group
  * wraps on its own right edge rather than taking the row's width.
+ *
+ * From `xl`, where the host page puts the column beside a list that scrolls the
+ * pane, `column` is also pinned: `outer` is `sticky` with a definite height
+ * (the pane less its own padding, top and bottom), which is what lets every box
+ * inside it be bounded the way `page`'s are, without `page`'s out-of-flow trick
+ * — that trick exists to bound a box whose height is *not* given, and this one's
+ * is. The thread takes what the header leaves and the proposals card at most
+ * half of the same box, so the composer and the approve row are both on screen
+ * whatever either list holds. Half and not less because the card's own title and
+ * approve row are fixed cost: at 40% a 1280x800 window left the list between
+ * them about 8px tall, an Approve button with nothing visible to approve.
  */
 const LAYOUT: Record<
   ChatPanelLayout,
@@ -411,16 +422,18 @@ const LAYOUT: Record<
     side: "flex max-h-[34rem] flex-col lg:max-h-none lg:min-h-0",
   },
   column: {
-    outer: "flex min-w-0 flex-col",
-    inner: "flex flex-col",
+    outer:
+      "flex min-w-0 flex-col xl:sticky xl:top-5 xl:h-[calc(var(--pane-h)-4.25rem)]",
+    inner: "flex flex-col xl:min-h-0 xl:flex-1",
     standing: "order-last basis-full text-xs leading-normal text-ink-muted",
     actions: "ml-auto flex min-w-0 flex-wrap items-center justify-end gap-x-3 gap-y-2",
     cost: "text-xs tabular-nums text-ink-muted",
     costEst: "text-xs tabular-nums text-ink-faint",
     newChat: "",
-    grid: "grid grid-cols-[minmax(0,1fr)] gap-4",
-    thread: "flex max-h-[34rem] min-h-[22rem] flex-col max-md:max-h-none max-md:min-h-0",
-    side: "flex max-h-[34rem] flex-col",
+    grid: "grid grid-cols-[minmax(0,1fr)] gap-4 xl:flex xl:min-h-0 xl:flex-1 xl:flex-col",
+    thread:
+      "flex max-h-[34rem] min-h-[22rem] flex-col max-md:max-h-none max-md:min-h-0 xl:max-h-none xl:min-h-0 xl:flex-1",
+    side: "flex max-h-[34rem] flex-col xl:max-h-[50%]",
   },
 };
 

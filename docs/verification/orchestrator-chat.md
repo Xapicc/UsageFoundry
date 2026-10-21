@@ -109,7 +109,31 @@
   from `4b379136`'s tree less two comments. Caveat: no turn was sent from
   either page, so nothing about `/chat` mid-turn was exercised after the move.
 
+- **The `/projects` orchestrator column pinned to the pane, in Chromium on the
+  standalone build, 2026-10-20.** Scratch `DATA_DIR` and auth token, thirty git
+  checkouts in one mount, a 15-message thread and three pending proposals. At
+  1280×800 and 1440×900 the panel measured 680 and 780px high at top 72px with
+  the pane at scroll 0, 600px and the end of the list, and the composer and the
+  Approve row did not move by more than 1px in any of them (1280: composer
+  325–404, Approve 695–731). A wheel over the list moved the pane 0→500px with
+  the panel still; a wheel over the thread moved the thread (2201→1901) and the
+  pane stayed at 0. The thread box was 55px and the proposals list 62px at
+  1280×800, 105 and 112 at 1440×900; with no proposals the thread took 196 and
+  296px. With two checkouts the pane's `scrollHeight` equalled its
+  `clientHeight`, so a short list gets no scrollbar. No console error.
+  Built from `08a2ab8f`'s tree plus this change. Caveat: default skin only
+  measured (smoke-pages loads the page in both), and a window shorter than
+  800px, or the notice's disclosure open, was not tried.
+
 ## Not yet verified by hand
+
+- **The pinned `/projects` column on a window shorter than 800px, or with the
+  notice's disclosure open.** Both take height from the thread and the list and
+  neither has a floor, so on a short enough window the grid between them
+  reaches 0 and the composer goes with it, as `/chat`'s `page` layout's comment
+  records for itself. Seed as the 2026-10-20 entry above, open `/projects` at
+  1280×600 with "The chat's own permissions and cost" open, and read whether the
+  composer's bottom is above the pane's.
 
 - **Whether the shipped chat leaves files alone when a fix is one edit away
   has not been measured.**
