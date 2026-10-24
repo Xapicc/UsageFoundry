@@ -5,7 +5,7 @@
 ## Verified
 
 - **A Dreaming night in a vault that can be isolated puts its notes in the vault
-  before its signatures are claimed, 2026-10-24**, at `8d39cff1`, by
+  before its signatures are claimed, 2026-10-24**, at `5c4b5570`, by
   `dreamingLanding.test.ts` against a real repository at a mount root that
   ignores `.uf-worktrees/` and the real merge worker. After the run's branch
   (a note committed by hand on it, or left uncommitted in its checkout for the fallback commit) lands through the merge queue the note is in
