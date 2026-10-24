@@ -128,16 +128,19 @@ async function attempt(p: PendingLanding, run: RunRow, now: number): Promise<Set
     dropPendingLanding(p.runId);
     return { kind: "dropped", why: "its branch no longer exists" };
   }
-  if (read.merged || read.landedUnchanged) return claim(p, now);
 
+  // Asked before `merged`, which is true of a branch with no commits of its own
+  // (its tip is an ancestor of the target) and so says nothing about work the
+  // agent left uncommitted in its checkout.
   const leftover = read.pending !== null && read.pending.count > 0;
+  const onTarget = read.merged || read.landedUnchanged;
 
   // An operator who stopped the night decided it should not write, and an
   // isolated run is the first kind of Dreaming run that can honour that: before,
   // whatever it had written was already in the vault. So a stopped night's
   // branch is left for the operator (landed by hand, which claims it, or
   // purged, which lets it go) and is not landed on their behalf.
-  if (run.status === "stopped" && (leftover || read.ahead !== 0)) {
+  if (run.status === "stopped" && (leftover || (!onTarget && read.ahead !== 0))) {
     return { kind: "waiting", why: "the night was stopped, so its branch is left for you to land or purge" };
   }
 
@@ -158,6 +161,8 @@ async function attempt(p: PendingLanding, run: RunRow, now: number): Promise<Set
     const reread = await landState(run.id);
     if (!reread) return { kind: "waiting", why: "its branch could not be read after committing" };
     read = reread;
+  } else if (onTarget) {
+    return claim(p, now);
   }
 
   if (read.ahead === null) {

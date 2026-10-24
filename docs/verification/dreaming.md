@@ -8,7 +8,7 @@
   before its signatures are claimed, 2026-10-24**, at `8d39cff1`, by
   `dreamingLanding.test.ts` against a real repository at a mount root that
   ignores `.uf-worktrees/` and the real merge worker. After the run's branch
-  (a note committed by hand on it) lands through the merge queue the note is in
+  (a note committed by hand on it, or left uncommitted in its checkout for the fallback commit) lands through the merge queue the note is in
   the vault, `git status --porcelain` there is empty, and the two signatures are
   in `dreaming_notes` with `prompt_item` 1 and 2; with an uncommitted note of the
   operator's in the checkout the land is refused, nothing is claimed and

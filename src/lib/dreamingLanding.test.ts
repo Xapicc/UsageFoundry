@@ -83,6 +83,7 @@ function makeRepo(dir: string, gitignore: string | null): void {
 
 makeRepo(vault, `${WORKTREE_STORE_DIR}/\n`);
 makeRepo(unignored, null);
+const store = path.join(vault, WORKTREE_STORE_DIR);
 
 saveSettings({ maxConcurrentRuns: 0, dreamingEnabled: true, dreamingMaxCostUSD: 2 });
 
@@ -174,6 +175,11 @@ afterEach(async () => {
   }
   git(vault, ["checkout", "-q", "-f", "main"]);
   git(vault, ["clean", "-fdq"]);
+  // The store is ignored, so `clean` leaves any slot a case registered.
+  for (const slot of fs.existsSync(store) ? fs.readdirSync(store) : []) {
+    git(vault, ["worktree", "remove", "--force", path.join(store, slot)]);
+  }
+  git(vault, ["worktree", "prune"]);
 });
 
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -260,6 +266,27 @@ describe("a night in a vault that can be isolated", () => {
     assert.equal((await queueSettles(runId))?.status, "landed");
     assert.equal((await settleDreamingLandings({ revisit: false }))[0].result.kind, "claimed");
     assert.deepEqual(claimed(runId).map((c) => c.signature), ["a"]);
+  });
+
+  it("commits what the agent left uncommitted in its checkout before queueing the branch", async () => {
+    const result = startNight("vault", vault, ["a"]);
+    const runId = result.runId!;
+    const run = db()
+      .prepare("SELECT worktree_path AS slot, worktree_branch AS branch, worktree_base AS base FROM runs WHERE id = ?")
+      .get(runId) as { slot: string; branch: string; base: string };
+
+    // The run's own checkout, with the note written and never committed: the
+    // state `landRefusal` reads as "no commits of its own", which would lose the night.
+    git(vault, ["worktree", "add", "-q", "-b", run.branch, run.slot, run.base]);
+    fs.mkdirSync(path.join(run.slot, "Notes"), { recursive: true });
+    fs.writeFileSync(path.join(run.slot, "Notes", "Uncommitted.md"), "# left on disk\n");
+    db().prepare("UPDATE runs SET status = 'completed', finished_at = ? WHERE id = ?").run(Date.now(), runId);
+
+    assert.equal((await settleDreamingLandings({ revisit: false }))[0].result.kind, "queued");
+    assert.equal((await queueSettles(runId))?.status, "landed");
+    assert.equal((await settleDreamingLandings({ revisit: false }))[0].result.kind, "claimed");
+    assert.ok(fs.existsSync(path.join(vault, "Notes", "Uncommitted.md")));
+    assert.equal(git(vault, ["status", "--porcelain"]), "");
   });
 
   it("is queued by the nightly timer's tick, not only by the start of a night", async () => {
