@@ -4,6 +4,7 @@ import { getRun, TERMINAL_STATUSES } from "./orchestrator";
 import { retentionCutoff } from "./retention";
 import { getSettings } from "./settings";
 import type { RunTouchDTO, RunTouchStepDTO, RunTouchedDTO } from "./apiTypes";
+import { WORKTREE_STORE_DIR } from "./worktreeStoreDir";
 
 /**
  * What a run's tool events say it touched, read from the database.
@@ -31,6 +32,19 @@ import type { RunTouchDTO, RunTouchStepDTO, RunTouchedDTO } from "./apiTypes";
 const PATH_EXPR = `COALESCE(${TOOL_FILE_FIELDS.map(
   (field) => `json_extract(e.payload, '$.input.${field}')`,
 ).join(", ")})`;
+
+/**
+ * `raw` is below `base` and not in a checkout store directly under it.
+ *
+ * For a repository at the mount root the store is inside the run's folder, so a
+ * file in another run's slot would otherwise be "inside" as
+ * `.uf-worktrees/<repo>-2/…`, a path in a tree this run never worked in. The
+ * one place this parts from `readCountsFor`'s `CASE`: that figure is only ever
+ * looked up for files its own walk found, and the walk skips the store.
+ */
+function under(base: "work" | "folder"): string {
+  return `(instr(raw, ${base} || '/') = 1 AND instr(raw, ${base} || '/${WORKTREE_STORE_DIR}/') <> 1)`;
+}
 
 /**
  * One row per file-naming tool call, relativised and ordered, as a subquery.
@@ -61,12 +75,12 @@ const PATH_EXPR = `COALESCE(${TOOL_FILE_FIELDS.map(
 const TOUCH_ROWS = `
   SELECT
     CASE
-      WHEN instr(raw, work || '/') = 1 THEN substr(raw, length(work) + 2)
-      WHEN instr(raw, folder || '/') = 1 THEN substr(raw, length(folder) + 2)
+      WHEN ${under("work")} THEN substr(raw, length(work) + 2)
+      WHEN ${under("folder")} THEN substr(raw, length(folder) + 2)
       ELSE raw
     END AS path,
     CASE
-      WHEN instr(raw, work || '/') = 1 OR instr(raw, folder || '/') = 1
+      WHEN ${under("work")} OR ${under("folder")}
         THEN 0
       ELSE 1
     END AS outside,

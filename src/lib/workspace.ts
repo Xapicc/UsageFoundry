@@ -141,6 +141,16 @@ export async function scanWorkspace(): Promise<WorkspaceScan> {
       error,
       folderCount: count.n,
       truncated: count.n >= MAX_FOLDERS_PER_MOUNT,
+      // The same test the walk puts to a folder. `probeIsolation` still decides,
+      // and refuses a mount-root repository that does not ignore the store.
+      ...(available
+        ? {
+            isGitRepo: await fs
+              .stat(path.join(mount.path, ".git"))
+              .then(() => true)
+              .catch(() => false),
+          }
+        : {}),
       // A run started on the mount root overlaps every folder beneath it, so
       // the root carries its own occupancy rather than inheriting a child's.
       ...(available

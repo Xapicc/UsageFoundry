@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { db } from "./db";
+import { WORKTREE_STORE_DIR } from "./worktreeStoreDir";
 
 /**
  * The prior-read pointer: the files earlier runs on a repository opened most,
@@ -32,6 +33,11 @@ import { db } from "./db";
  * Normalised first, so `a/../b` cannot climb out of the base by spelling, and a
  * path with a control character in it is refused: it is about to be printed on
  * a line of its own into a prompt.
+ *
+ * A path into the checkout store counts as outside too. For a repository at the
+ * mount root the store is inside the base, so a read of another run's slot
+ * from the repository itself would otherwise come out as
+ * `.uf-worktrees/<repo>-2/…`, the same file in another run's tree.
  */
 export function repoRelative(filePath: string, base: string | null): string | null {
   if (!base || !path.posix.isAbsolute(filePath) || !path.posix.isAbsolute(base)) {
@@ -42,6 +48,7 @@ export function repoRelative(filePath: string, base: string | null): string | nu
   if (!file.startsWith(`${root}/`)) return null;
   const rel = file.slice(root.length + 1);
   if (rel === "" || /[\u0000-\u001f\u007f]/.test(rel)) return null;
+  if (rel.split("/")[0] === WORKTREE_STORE_DIR) return null;
   return rel;
 }
 

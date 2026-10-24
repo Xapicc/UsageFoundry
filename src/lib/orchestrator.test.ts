@@ -7372,6 +7372,22 @@ describe("planSeedCopies", () => {
     assert.deepEqual(planSeedCopies([], readerFor(monorepo)), []);
   });
 
+  it("never opens the checkout store a repository at the mount root holds", () => {
+    // The store is at that repository's root, and each slot in it has its own
+    // copy of the files a pattern names: another run's `.env` copied into this
+    // run's checkout.
+    const mountRoot: Tree = {
+      "": { dirs: ["apps", ".uf-worktrees"] },
+      apps: { dirs: ["web"] },
+      "apps/web": { files: [".env"] },
+      ".uf-worktrees": { dirs: ["vault-1"] },
+      ".uf-worktrees/vault-1": { files: [".env"] },
+    };
+    const opened: string[] = [];
+    assert.deepEqual(planSeedCopies(["*/*/.env"], readerFor(mountRoot, opened)), ["apps/web/.env"]);
+    assert.ok(!opened.includes(".uf-worktrees"), `opened ${opened.join(", ")}`);
+  });
+
   it("bounds a wildcard directory segment rather than trusting the tree", () => {
     // A pattern with a wildcard directory segment is the one shape whose walk
     // is not bounded by the pattern itself, against a repository this app did

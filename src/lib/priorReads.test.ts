@@ -30,6 +30,13 @@ describe("repoRelative", () => {
     assert.equal(repoRelative("/w/R", "/w/R"), null);
   });
 
+  it("refuses another run's slot when the store is inside the base", () => {
+    // A repository at the mount root holds the checkout store, so the slot is
+    // under the base by prefix and is still somebody else's tree.
+    assert.equal(repoRelative("/w/.uf-worktrees/r-2/src/a.ts", "/w"), null);
+    assert.equal(repoRelative("/w/.uf-worktrees-notes/a.ts", "/w"), ".uf-worktrees-notes/a.ts");
+  });
+
   it("refuses what it cannot place, rather than guessing", () => {
     assert.equal(repoRelative("src/a.ts", "/w/R"), null);
     assert.equal(repoRelative("/w/R/a.ts", null), null);

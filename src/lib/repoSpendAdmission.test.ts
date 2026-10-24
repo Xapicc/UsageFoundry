@@ -77,8 +77,8 @@ function makeRepo(dir: string): void {
 makeRepo(path.join(main, "app"));
 makeRepo(path.join(main, "mono"));
 fs.mkdirSync(path.join(main, "mono", "packages", "web"), { recursive: true });
-// A single-repository mount: the repository is the mount root, so there is no
-// "beside" for a checkout store and no run here is ever isolated.
+// A single-repository mount: the repository is the mount root and does not
+// ignore the checkout store that would sit inside it, so no run here is isolated.
 makeRepo(solo);
 fs.mkdirSync(path.join(main, "notes"), { recursive: true });
 

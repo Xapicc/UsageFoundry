@@ -1,7 +1,9 @@
 import { spawn, spawnSync } from "node:child_process";
-import { GIT_BIN } from "./config";
+import path from "node:path";
+import { GIT_BIN, WORKSPACE_MOUNTS } from "./config";
 import { childCredentials } from "./privsep";
 import { agentEnvironment } from "./stacks";
+import { WORKTREE_STORE_DIR } from "./worktreeStoreDir";
 
 /**
  * The one way this app runs git.
@@ -27,6 +29,32 @@ export interface GitResult {
   /** Raw exit status. `merge-tree` uses 1 for "conflicts", not for "failed". */
   code: number | null;
 }
+
+/**
+ * Every mount's checkout store, as a directory git's repository search never
+ * climbs into.
+ *
+ * A slot is found as a repository by its own `.git` file. A slot directory that
+ * has lost that file (a `worktree remove` cut short, an agent deleting it, a
+ * directory left by hand) found nothing above it while the mount root was not a
+ * repository. A repository at the mount root can now be isolated, and then the
+ * store is inside its working tree: git asked about an orphaned slot would
+ * walk up and answer for the operator's own checkout, and Land would read its
+ * branch as the slot's, switch it for a verify command, or commit the
+ * operator's uncommitted work as the run's. With the store as a ceiling git
+ * stops at the slot and says "not a git repository", which every caller
+ * already reads as a slot it must not use. Measured on git 2.39: a slot and a
+ * directory inside one still resolve, an orphan and anything under it do not.
+ *
+ * It does not cover the store directory itself as a working directory, which
+ * still resolves to a repository above it; nothing here runs git there. A
+ * mount path holding a colon cannot be spelled in the list and is left out.
+ * The agent's own git does not get this: what bounds an agent is its sandbox,
+ * and an agent can unset a variable.
+ */
+const STORE_CEILINGS = WORKSPACE_MOUNTS.map((m) => path.join(m.path, WORKTREE_STORE_DIR))
+  .filter((store) => !store.includes(":"))
+  .join(":");
 
 /**
  * Environment for the git this app runs on its own behalf.
@@ -64,10 +92,15 @@ export interface GitResult {
  * would at the operator's terminal.
  */
 export function gitEnv(): NodeJS.ProcessEnv {
+  const base = agentEnvironment();
+  const inherited = base.GIT_CEILING_DIRECTORIES;
   const env: NodeJS.ProcessEnv = {
-    ...agentEnvironment(),
+    ...base,
     GIT_TERMINAL_PROMPT: "0",
     GIT_OPTIONAL_LOCKS: "0",
+    // Ours first: git resolves symlinks in every entry until it meets an empty
+    // one, and an inherited list may carry one.
+    GIT_CEILING_DIRECTORIES: inherited ? `${STORE_CEILINGS}:${inherited}` : STORE_CEILINGS,
   };
   for (const k of Object.keys(env)) {
     if (

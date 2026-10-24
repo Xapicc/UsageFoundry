@@ -1210,6 +1210,11 @@ export interface WorkspaceMountDTO {
   folderCount: number;
   /** True when the listing hit its per-mount cap and is incomplete. */
   truncated: boolean;
+  /**
+   * The mount root is itself a working tree, so a run on the whole workspace can
+   * be offered a checkout of its own. Absent from an unavailable mount.
+   */
+  isGitRepo?: boolean;
   /** Run currently working here or in anything under it. */
   busyRunId?: string | null;
   /** Parked run that will want this folder back. Does not block a new run. */

@@ -851,16 +851,21 @@ export default function NewRunPage() {
   }, [templates, templateName]);
 
   // Isolation needs a repository to branch from. Offering the choice on a plain
-  // folder would promise parallelism the folder cannot give.
-  const canIsolate = folder !== "" && selectedFolder?.isGitRepo === true;
+  // folder would promise parallelism the folder cannot give. The whole workspace
+  // is offered it when the mount root is a repository; the server still refuses
+  // one that does not ignore the checkout store, and says so on the run.
+  const canIsolate =
+    folder === "" ? activeMount?.isGitRepo === true : selectedFolder?.isGitRepo === true;
   const isolated = canIsolate && isolate;
 
   const occupant = isolated ? null : (selectedFolder?.busyRunId ?? null);
-  const rootOccupant = folder === "" ? (activeMount?.busyRunId ?? null) : null;
+  // The root's figure counts runs in checkout slots too, which a run in a slot
+  // of its own does not wait for.
+  const rootOccupant = folder === "" && !isolated ? (activeMount?.busyRunId ?? null) : null;
   // A parked run has yielded the folder, so this is worth saying but is not a
   // wait — hence separate from the two above, which are.
   const parked = isolated ? null : (selectedFolder?.parkedRunId ?? null);
-  const rootParked = folder === "" ? (activeMount?.parkedRunId ?? null) : null;
+  const rootParked = folder === "" && !isolated ? (activeMount?.parkedRunId ?? null) : null;
 
   const sessionUnreadable = windowGuardUnreadable(
     maxSessionFraction,
@@ -2140,7 +2145,7 @@ export default function NewRunPage() {
                 canIsolate ? (
                   ISOLATION_CONSEQUENCE[isolate ? "worktree" : "direct"]
                 ) : folder === "" ? (
-                  "A run on the whole workspace always works in place, and holds the entire tree until it finishes"
+                  "This workspace is not a git repository, so a run on all of it works in place and holds the entire tree until it finishes"
                 ) : (
                   "No other run can use this folder until this one finishes"
                 )

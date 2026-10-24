@@ -1783,10 +1783,24 @@ function folderBusyRefusal(runId: string): string {
  *
  * `conflictKey`/`overlaps` is the same comparison the folder claim uses, so
  * "the same folder" means the same thing here as it does there.
+ *
+ * Except for a run working in a checkout of its own. `folder` is always the
+ * operator's checkout, and a slot overlaps that only when the checkout is a
+ * repository at the mount root, whose store is inside it. The slot is a
+ * separate working tree that nothing done here writes (the repository ignores
+ * it, which is what let it be isolated), so a run there is not working in this
+ * folder. Counted, it held every land, delivery and push of that repository for
+ * as long as any isolated run anywhere in the mount was active.
  */
 function runWorkingIn(folder: string): RunRow | undefined {
   const key = conflictKey(folder);
-  return activeRuns().find((r) => overlaps(key, conflictKey(workDirOf(r))));
+  return activeRuns().find(
+    (r) => !worksInOwnCheckout(r) && overlaps(key, conflictKey(workDirOf(r))),
+  );
+}
+
+function worksInOwnCheckout(run: RunRow): boolean {
+  return run.worktree_path !== null && workDirOf(run) === run.worktree_path;
 }
 
 /**

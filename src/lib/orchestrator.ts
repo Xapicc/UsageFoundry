@@ -3083,13 +3083,20 @@ export function probeIsolation(folder: string): IsolationPlan {
   }
   const mountRoot = realMountPath(mount);
 
-  // The worktree store lives beside the repo, inside the mount. If the repo is
-  // the mount root there is no "beside" that is still contained.
-  if (repoRoot === mountRoot) {
+  // The worktree store is `<mount root>/.uf-worktrees`, so for a repository at
+  // the mount root it is inside the working tree it serves. That is allowed only
+  // while the repository's own rules ignore it: otherwise every slot is a full
+  // copy of the repository in the operator's `git status`, Land refuses the
+  // checkout as dirty, and a plain `git add -A` there commits each slot as a
+  // gitlink.
+  if (repoRoot === mountRoot && !storeIgnoredBy(repoRoot)) {
     return {
       mode: "none",
       repository: repoRoot,
-      reason: "Repository is the workspace root — no place to put a checkout inside it.",
+      reason:
+        `Repository is the workspace root, so its checkouts would go inside it, in ${WORKTREE_STORE_DIR}/, ` +
+        `and its .gitignore does not ignore that directory. Add the line "${WORKTREE_STORE_DIR}/" to ` +
+        `${path.join(repoRoot, ".gitignore")} and commit it, and runs here get checkouts of their own.`,
     };
   }
 
@@ -3110,6 +3117,31 @@ export function probeIsolation(folder: string): IsolationPlan {
     base: head.stdout,
     baseBranch,
   };
+}
+
+/**
+ * Whether a repository's own ignore rules keep the checkout store out of it.
+ *
+ * Asked only of a repository at the mount root, the one whose working tree the
+ * store sits in. The user-level excludes file is switched off for the question:
+ * it is this container's, the operator's git on the host reads its own, and an
+ * answer that leaned on it would hold here and not at the operator's terminal.
+ * `.gitignore` and `info/exclude` are in the repository, so every git that
+ * opens it reads them.
+ *
+ * It asks about the directory, which is the rule an operator writes. A pattern
+ * that re-includes one slot by name under a `.uf-worktrees/*` rule would still
+ * pass; that is a rule written to defeat this, not one written by mistake.
+ */
+function storeIgnoredBy(repoRoot: string): boolean {
+  return gitSync(repoRoot, [
+    "-c",
+    "core.excludesFile=",
+    "check-ignore",
+    "-q",
+    "--",
+    `${WORKTREE_STORE_DIR}/`,
+  ]).ok;
 }
 
 /**
@@ -3144,7 +3176,7 @@ function findRepository(folder: string): { root: string } | { reason: string } {
 }
 
 /**
- * Where a repo's isolated checkouts live: a hidden sibling inside the mount.
+ * Where a repo's isolated checkouts live: a hidden directory at the mount root.
  *
  * Read-only, unlike `prepareWorktreeStore`, which validates and creates — this
  * is for a caller that wants to look at the store rather than write into it.
@@ -3153,9 +3185,11 @@ export function worktreeStore(repoRoot: string): string | null {
   const { mountId } = describeFolder(repoRoot);
   const mount = mountId ? mountById(mountId) : null;
   if (!mount) return null;
-  // Dotfile-prefixed so `/api/folders` never offers a checkout as a run target,
-  // and outside the repo so it cannot show up in `git status` or be swept into
-  // a commit as a gitlink.
+  // Dotfile-prefixed so `/api/folders` never offers a checkout as a run target.
+  // For a repository below the mount root it is outside the repo, so it cannot
+  // show up in `git status` or be swept into a commit as a gitlink. For one at
+  // the mount root it is inside, and only the repository's ignore rule keeps it
+  // out of both, which is why `probeIsolation` asks for that rule first.
   return path.join(realMountPath(mount), WORKTREE_STORE_DIR);
 }
 
@@ -3932,6 +3966,10 @@ export function planSeedCopies(
     opened += 1;
 
     for (const entry of readDir(rel)) {
+      // A repository at the mount root holds the checkout store at its own root,
+      // and a pattern like `*/*/.env` would otherwise copy every other run's
+      // `.env` out of its slot into this one.
+      if (depth === 0 && entry.name === WORKTREE_STORE_DIR) continue;
       const relPath = rel ? `${rel}/${entry.name}` : entry.name;
       if (entry.isFile) {
         if (matchesCopyGlobs(relPath, globs)) copied.push(relPath);
@@ -4544,8 +4582,10 @@ function planWorkspace(
   continueFrom: RunRow | null,
 ): { plan: IsolationPlan; workDir: string; repository: string | null } {
   // An isolated run gets its own subtree, so it contends with nothing but a run
-  // started on the workspace root — which does contain the checkout store, and
-  // correctly blocks.
+  // working in the workspace root itself, which does contain the checkout
+  // store and correctly blocks. An isolated run on a repository that *is* the
+  // workspace root is keyed on its slot like any other, so it is not one of
+  // those; the root's live slots are exactly what a run working there blocks on.
   const probe: IsolationPlan = isolate ? probeIsolation(folder) : repositoryOnly(folder);
   const repoRoot = probe.mode === "worktree" ? probe.repoRoot : null;
 
@@ -5142,9 +5182,9 @@ export function createRun(input: CreateRunInput): RunRow {
  * worktree slot is a separate claim and is *not* yielded; see `activeRuns`.
  *
  * A queued run that cannot start still reserves its folder against everything
- * younger. Without that, a run on the workspace root — which overlaps every
- * folder under it — is overtaken by every small run submitted after it and
- * never starts at all.
+ * younger. Without that, a run working in the workspace root, which overlaps
+ * every folder under it and every checkout slot, is overtaken by every small
+ * run submitted after it and never starts at all.
  *
  * The cap counts `running` only, and for the same reason the reservation set
  * does: the claim is about what is on disk, the cap is about what is spending
