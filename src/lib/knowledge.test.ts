@@ -7,6 +7,7 @@ import path from "node:path";
 import {
   buildIndex,
   clearKnowledgeCache,
+  evictedNotesRead,
   extractHeadings,
   extractLinks,
   knowledgeBrowse,
@@ -412,7 +413,7 @@ test("backlinks are the incoming edges, and degrees agree with them", () => {
   );
 });
 
-test("a note's backlinks name the note each link was written in", () => {
+test("a note's backlinks name the note each link was written in", async () => {
   // Every field of an edge that names a note (`target`, `label`, `toNotePath`)
   // names the note being viewed when the edge comes *in*, so a Backlinks
   // panel drawn from them lists the open note once per link, each row a link
@@ -421,7 +422,7 @@ test("a note's backlinks name the note each link was written in", () => {
     { rel: "Alpha.md", raw: ["---", "title: The Alpha note", "---", "", "See [[Beta]]."].join("\n") },
     { rel: "Beta.md", raw: "# Beta" },
   ]);
-  const view = knowledgeNoteView(idx, "Beta.md");
+  const view = await knowledgeNoteView(idx, "Beta.md");
   assert.ok(view);
   assert.equal(view.incoming.length, 1);
   assert.equal(view.incoming[0].fromNotePath, "Alpha.md", "the backlink does not open the linking note");
@@ -668,6 +669,43 @@ test("a deleted note leaves the index on the next scan", () => {
     !after.notes.has("1 Projects/Lonely.md"),
     "a removed note survived in the cache, which is a graph showing a file that is gone",
   );
+});
+
+test("an evicted note is indexed by its path, read in the background, and not queued again", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "uf-knowledge-evicted-"));
+  try {
+    fs.writeFileSync(path.join(root, "Linker.md"), "# Linker\n\nSee [[Placeholder]].");
+    // A sparse file stands in for an iCloud placeholder: bytes and no blocks,
+    // which is all the walk can see of one, and which no fixture can otherwise
+    // produce without a file provider.
+    const placeholder = path.join(root, "Placeholder.md");
+    fs.writeFileSync(placeholder, "");
+    fs.truncateSync(placeholder, 4096);
+    assert.equal(fs.statSync(placeholder).blocks, 0, "no sparse file here, so this case measures nothing");
+
+    clearKnowledgeCache();
+    const cold = knowledgeIndex(root);
+    assert.deepEqual([...cold.pending], ["Placeholder.md"]);
+    assert.equal(cold.brokenLinks.length, 0, "a link to a note still downloading was reported broken");
+    assert.ok(!cold.orphans.includes("Placeholder.md"), "a note whose links were never read is an orphan");
+    assert.deepEqual(
+      knowledgeHealth(cold).missingFrontmatter.map((m) => m.path),
+      ["Linker.md"],
+      "a note whose frontmatter was never read is missing one",
+    );
+    assert.equal(knowledgeIndex(root), cold, "a note still pending invalidated the index on every scan");
+
+    await evictedNotesRead();
+    const warm = knowledgeIndex(root);
+    assert.notEqual(warm, cold, "the background read never reached the index");
+    assert.equal(warm.pending.size, 0);
+    // Still zero blocks, as a file macOS evicts after it was read would be. Its
+    // stamp has not moved, so what was read is still what is in it.
+    assert.equal(knowledgeIndex(root), warm, "a note read once was queued again for still being evicted");
+  } finally {
+    clearKnowledgeCache();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 /* ------------------------------- subpath -------------------------------- */

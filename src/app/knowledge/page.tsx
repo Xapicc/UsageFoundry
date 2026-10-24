@@ -413,6 +413,16 @@ export default function KnowledgePage() {
         </Notice>
       )}
 
+      {browse && browse.pendingCount > 0 && (
+        <Notice tone="warn" quiet className="mb-4">
+          {browse.pendingCount === 1
+            ? "1 note is"
+            : `${browse.pendingCount.toLocaleString()} notes are`}{" "}
+          still downloading, so their links, tags and frontmatter are missing
+          from this page until they arrive.
+        </Notice>
+      )}
+
       {/* ---------------------------- the note ---------------------------- */}
       {/*
         First on the page, and in its own slot: see "Why the note leads the

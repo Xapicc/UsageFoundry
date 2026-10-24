@@ -75,6 +75,17 @@ import type { Settings } from "./settings";
  * — and re-reads exactly the files whose stamp moved. A vault nobody has
  * touched since the last call costs one `readdir` per directory and no reads at
  * all.
+ *
+ * ## A note that is not on this disk is never read on the event loop
+ *
+ * An iCloud Drive vault keeps notes as placeholders — measured 2026-10-25, 1,470
+ * of the operator's 2,031 — and a `readFileSync` of one waits for the file
+ * provider to download it, seconds per note. The cold scan the settings page
+ * asks for held the one event loop for the whole download, `/api/health` and
+ * every agent's stdout included, which read from outside as a server that had
+ * died. So the walk marks a placeholder, the scan indexes it by its path alone,
+ * and `fetchEvicted` reads it off the event loop for the next scan to pick up.
+ * Until it has, the index counts it as `pending` rather than reading as whole.
  */
 
 /* ------------------------------------------------------------------ */
@@ -172,6 +183,12 @@ export interface KnowledgeIndex {
   brokenLinks: KnowledgeBrokenLinkDTO[];
   /** Vault-relative paths with no note-to-note link in either direction. */
   orphans: string[];
+  /**
+   * Notes indexed by path alone because their content is not on this disk yet.
+   * Each resolves as a link target and counts as a note, but carries no links,
+   * tags, aliases or frontmatter until `fetchEvicted` has brought it in.
+   */
+  pending: ReadonlySet<string>;
 }
 
 /**
@@ -782,9 +799,22 @@ export function parseNote(rel: string, raw: string): Omit<ParsedNote, "abs" | "m
 /*                                The walk                             */
 /* ------------------------------------------------------------------ */
 
+interface NoteStamp {
+  abs: string;
+  mtimeMs: number;
+  size: number;
+  /**
+   * Bytes but no blocks holding them, which is how an iCloud Drive placeholder
+   * stats on the Mac and through Docker's virtiofs alike, and `stat` answers it
+   * without a download. A sparse or inline-stored file reads the same and costs
+   * only a detour through `fetchEvicted`, which reads it like any other.
+   */
+  evicted: boolean;
+}
+
 interface WalkResult {
   /** Note paths, vault-relative, with their invalidation stamp. */
-  notes: Map<string, { abs: string; mtimeMs: number; size: number }>;
+  notes: Map<string, NoteStamp>;
   /** Everything else, vault-relative — the attachments links can reach. */
   attachments: Map<string, string>;
   truncated: boolean;
@@ -803,7 +833,7 @@ function isNotePath(rel: string): boolean {
  * this question one module over.
  */
 function walkVault(root: string): WalkResult {
-  const notes = new Map<string, { abs: string; mtimeMs: number; size: number }>();
+  const notes = new Map<string, NoteStamp>();
   const attachments = new Map<string, string>();
   let entries = 0;
   let truncated = false;
@@ -843,7 +873,12 @@ function walkVault(root: string): WalkResult {
       } catch {
         continue;
       }
-      notes.set(rel, { abs, mtimeMs: stat.mtimeMs, size: stat.size });
+      notes.set(rel, {
+        abs,
+        mtimeMs: stat.mtimeMs,
+        size: stat.size,
+        evicted: stat.size > 0 && stat.blocks === 0,
+      });
     }
   };
 
@@ -998,6 +1033,7 @@ export function buildIndex(
   notes: Map<string, ParsedNote>,
   attachments: Map<string, string>,
   truncated: boolean,
+  pending: ReadonlySet<string> = new Set(),
 ): KnowledgeIndex {
   const resolver = buildResolver(notes, attachments);
   const nodes = new Map<string, KnowledgeNodeDTO>();
@@ -1124,8 +1160,12 @@ export function buildIndex(
 
   // Orphan is Obsidian's own reading: no link to another note and none from
   // one. Tags and attachments deliberately do not count — a note carrying
-  // `#terraform` and nothing else is exactly the note this list is for.
-  const orphans = [...notes.keys()].filter((rel) => !connected.has(NOTE_ID(rel))).sort();
+  // `#terraform` and nothing else is exactly the note this list is for. A
+  // pending note is left out: its own links have not been read, so "links to
+  // nothing" is not something this index knows about it.
+  const orphans = [...notes.keys()]
+    .filter((rel) => !connected.has(NOTE_ID(rel)) && !pending.has(rel))
+    .sort();
 
   return {
     root,
@@ -1138,6 +1178,7 @@ export function buildIndex(
     outgoing,
     brokenLinks,
     orphans,
+    pending,
   };
 }
 
@@ -1152,13 +1193,95 @@ export function buildIndex(
  *
  * A **new** key rather than a reused one, which is the rule `__ufInterrupts`
  * records — `??=` only initialises when the key is absent, so a value of an
- * older shape survives a reload and every call on it throws.
+ * older shape survives a reload and every call on it throws. `V2` since the
+ * index grew `pending`, which a cached index from before it does not carry.
  */
 const cacheHome = globalThis as unknown as {
-  __ufKnowledgeIndex?: { index: KnowledgeIndex | null };
+  __ufKnowledgeIndexV2?: { index: KnowledgeIndex | null };
 };
-cacheHome.__ufKnowledgeIndex ??= { index: null };
-const cache = cacheHome.__ufKnowledgeIndex;
+cacheHome.__ufKnowledgeIndexV2 ??= { index: null };
+const cache = cacheHome.__ufKnowledgeIndexV2;
+
+/**
+ * Evicted notes waiting to be read, and the ones read and not yet indexed.
+ *
+ * One at a time, because each read parks a libuv pool thread for as long as the
+ * download takes, and the pool is four threads shared with every other async
+ * `fs` call and with the `dns.lookup` behind `fetch` — four placeholders read at
+ * once would stall all of that the way `readFileSync` stalled everything.
+ *
+ * `arrived` is keyed by absolute path and holds the note parsed under the stamp
+ * the walk saw *before* the read, so a note edited in between mismatches on the
+ * next scan and is read again rather than kept under a stamp it does not have.
+ */
+const evictedHome = globalThis as unknown as {
+  __ufKnowledgeEvicted?: {
+    queue: Array<{ rel: string; stamp: NoteStamp }>;
+    queued: Set<string>;
+    arrived: Map<string, ParsedNote>;
+    running: boolean;
+    drained: Promise<void>;
+  };
+};
+evictedHome.__ufKnowledgeEvicted ??= {
+  queue: [],
+  queued: new Set(),
+  arrived: new Map(),
+  running: false,
+  drained: Promise.resolve(),
+};
+const evicted = evictedHome.__ufKnowledgeEvicted;
+
+function fetchEvicted(rel: string, stamp: NoteStamp): void {
+  if (evicted.queued.has(stamp.abs)) return;
+  evicted.queued.add(stamp.abs);
+  evicted.queue.push({ rel, stamp });
+  if (!evicted.running) evicted.drained = drainEvicted();
+}
+
+async function drainEvicted(): Promise<void> {
+  evicted.running = true;
+  try {
+    for (let next = evicted.queue.shift(); next; next = evicted.queue.shift()) {
+      const { rel, stamp } = next;
+      try {
+        const raw = await fs.promises.readFile(stamp.abs, "utf8");
+        evicted.arrived.set(stamp.abs, {
+          ...parseNote(rel, raw),
+          abs: stamp.abs,
+          mtimeMs: stamp.mtimeMs,
+          size: stamp.size,
+        });
+      } catch {
+        // Left pending, and counted as such: the next scan queues it again.
+      } finally {
+        evicted.queued.delete(stamp.abs);
+      }
+    }
+  } finally {
+    // In the same turn as the empty `shift`, so no `fetchEvicted` can land in
+    // between and find the queue owned by a drain that has already stopped.
+    evicted.running = false;
+  }
+}
+
+/** A note `fetchEvicted` read, if it was read under the stamp the walk sees now. */
+function takeArrived(stamp: NoteStamp): ParsedNote | null {
+  const note = evicted.arrived.get(stamp.abs);
+  if (!note) return null;
+  evicted.arrived.delete(stamp.abs);
+  return note.mtimeMs === stamp.mtimeMs && note.size === stamp.size ? note : null;
+}
+
+/**
+ * Settles once every evicted note queued so far has been read or has failed.
+ *
+ * Exported for the tests, which have to wait for the background read before the
+ * scan that picks it up; nothing else waits on it, because nothing should.
+ */
+export function evictedNotesRead(): Promise<void> {
+  return evicted.drained;
+}
 
 /**
  * The index for a vault root, re-reading only what changed.
@@ -1172,18 +1295,48 @@ const cache = cacheHome.__ufKnowledgeIndex;
  * A time-based staleness floor was considered and deliberately left out: it
  * would make an edit invisible for as long as the floor, and the walk it saves
  * is the cheap half.
+ *
+ * A cached note is reused on its stamp alone, evicted or not — macOS evicting a
+ * file it already gave us does not change what is in it — while a cached
+ * *pending* one is reused only for as long as it is still evicted and nothing
+ * has arrived for it.
  */
 export function knowledgeIndex(root: string): KnowledgeIndex {
   const walked = walkVault(root);
   const previous = cache.index && cache.index.root === root ? cache.index : null;
 
   const notes = new Map<string, ParsedNote>();
+  const pending = new Set<string>();
   let changed = previous === null || previous.truncated !== walked.truncated;
 
   for (const [rel, stamp] of walked.notes) {
     const cached = previous?.notes.get(rel);
-    if (cached && cached.mtimeMs === stamp.mtimeMs && cached.size === stamp.size) {
+    const unmoved =
+      cached !== undefined && cached.mtimeMs === stamp.mtimeMs && cached.size === stamp.size;
+    if (unmoved && !previous?.pending.has(rel)) {
       notes.set(rel, cached);
+      continue;
+    }
+    const arrived = takeArrived(stamp);
+    if (arrived) {
+      changed = true;
+      notes.set(rel, arrived);
+      continue;
+    }
+    if (stamp.evicted) {
+      fetchEvicted(rel, stamp);
+      pending.add(rel);
+      if (unmoved) {
+        notes.set(rel, cached);
+        continue;
+      }
+      changed = true;
+      notes.set(rel, {
+        ...parseNote(rel, ""),
+        abs: stamp.abs,
+        mtimeMs: stamp.mtimeMs,
+        size: stamp.size,
+      });
       continue;
     }
     changed = true;
@@ -1195,14 +1348,14 @@ export function knowledgeIndex(root: string): KnowledgeIndex {
       // this index. The next call picks it up if it comes back.
       continue;
     }
-    notes.set(rel, { ...parseNote(rel, raw), ...stamp });
+    notes.set(rel, { ...parseNote(rel, raw), abs: stamp.abs, mtimeMs: stamp.mtimeMs, size: stamp.size });
   }
 
   if (previous && previous.notes.size !== notes.size) changed = true;
 
   if (previous && !changed) return previous;
 
-  const index = buildIndex(root, notes, walked.attachments, walked.truncated);
+  const index = buildIndex(root, notes, walked.attachments, walked.truncated, pending);
   cache.index = index;
   return index;
 }
@@ -1289,8 +1442,18 @@ export function knowledgeGraphView(
   return { nodes, edges, truncated: index.truncated, capped };
 }
 
-/** One note, with its text and both directions of its links. */
-export function knowledgeNoteView(index: KnowledgeIndex, rel: string): KnowledgeNoteDTO | null {
+/**
+ * One note, with its text and both directions of its links.
+ *
+ * The body is read asynchronously, unlike the scan, because the note being
+ * opened may be one macOS has evicted since — pending, or read once and
+ * dropped — and then the read is a download that only this request should wait
+ * for.
+ */
+export async function knowledgeNoteView(
+  index: KnowledgeIndex,
+  rel: string,
+): Promise<KnowledgeNoteDTO | null> {
   const note = index.notes.get(rel);
   if (!note) return null;
 
@@ -1298,7 +1461,8 @@ export function knowledgeNoteView(index: KnowledgeIndex, rel: string): Knowledge
   try {
     // `note.abs` came from the walk rather than from the request, so the path
     // being opened is one this module has already proved is inside the vault.
-    body = splitFrontmatter(fs.readFileSync(note.abs, "utf8").replace(/\r\n/g, "\n")).body;
+    const raw = await fs.promises.readFile(note.abs, "utf8");
+    body = splitFrontmatter(raw.replace(/\r\n/g, "\n")).body;
   } catch (err) {
     body = `This note could not be read: ${(err as Error).message}`;
   }
@@ -1354,6 +1518,7 @@ export function knowledgeStatus(
     brokenLinkCount: null,
     tagCount: null,
     attachmentCount: null,
+    pendingCount: null,
     scannedAt: null,
     truncated: false,
   };
@@ -1406,6 +1571,7 @@ export function knowledgeStatus(
     brokenLinkCount: index.brokenLinks.length,
     tagCount,
     attachmentCount,
+    pendingCount: index.pending.size,
     scannedAt: index.scannedAt,
     truncated: index.truncated,
   };
@@ -1505,8 +1671,16 @@ export function noteType(frontmatter: Record<string, unknown>): string | null {
   return typeof raw === "string" && raw.trim() ? raw.trim() : null;
 }
 
-function listEntry(note: ParsedNote, nodes: Map<string, KnowledgeNodeDTO>): KnowledgeListEntryDTO {
-  const node = nodes.get(NOTE_ID(note.rel));
+/**
+ * A pending note has an empty frontmatter because nothing was read, not because
+ * the file has none, so it is never listed as missing one.
+ */
+function lacksFrontmatter(index: KnowledgeIndex, note: ParsedNote): boolean {
+  return !index.pending.has(note.rel) && Object.keys(note.frontmatter).length === 0;
+}
+
+function listEntry(note: ParsedNote, index: KnowledgeIndex): KnowledgeListEntryDTO {
+  const node = index.nodes.get(NOTE_ID(note.rel));
   return {
     path: note.rel,
     title: note.title,
@@ -1516,7 +1690,7 @@ function listEntry(note: ParsedNote, nodes: Map<string, KnowledgeNodeDTO>): Know
     inDegree: node?.inDegree ?? 0,
     outDegree: node?.outDegree ?? 0,
     updatedAt: note.mtimeMs,
-    missingFrontmatter: Object.keys(note.frontmatter).length === 0,
+    missingFrontmatter: lacksFrontmatter(index, note),
   };
 }
 
@@ -1602,7 +1776,7 @@ export function knowledgeBrowse(index: KnowledgeIndex, filter: BrowseFilter = {}
   const matched: KnowledgeListEntryDTO[] = [];
 
   for (const note of index.notes.values()) {
-    const entry = listEntry(note, index.nodes);
+    const entry = listEntry(note, index);
 
     // A folder facet counts every note *beneath* it, one entry per ancestor,
     // because that is what selecting it will show. The counts therefore sum
@@ -1642,6 +1816,7 @@ export function knowledgeBrowse(index: KnowledgeIndex, filter: BrowseFilter = {}
     types: facets(typeCounts),
     sort,
     truncated: index.truncated,
+    pendingCount: index.pending.size,
   };
 }
 
@@ -1671,7 +1846,7 @@ export function knowledgeHealth(index: KnowledgeIndex): KnowledgeHealthDTO {
 
   for (const note of index.notes.values()) {
     if (orphanSet.has(note.rel)) orphans.push(noteRef(note));
-    if (Object.keys(note.frontmatter).length === 0) missingFrontmatter.push(noteRef(note));
+    if (lacksFrontmatter(index, note)) missingFrontmatter.push(noteRef(note));
   }
   orphans.sort((a, b) => a.path.localeCompare(b.path));
   missingFrontmatter.sort((a, b) => a.path.localeCompare(b.path));

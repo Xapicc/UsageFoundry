@@ -5168,6 +5168,12 @@ export interface KnowledgeStatusDTO {
   brokenLinkCount: number | null;
   tagCount: number | null;
   attachmentCount: number | null;
+  /**
+   * Notes whose content is not on this disk yet — iCloud placeholders being
+   * read in the background. Counted in `noteCount`, but their links, tags and
+   * frontmatter are not in any figure above until this reaches 0.
+   */
+  pendingCount: number | null;
   /** Epoch ms of the scan these figures came from. */
   scannedAt: number | null;
   /**
@@ -5273,6 +5279,8 @@ export interface KnowledgeBrowseDTO {
   sort: KnowledgeSortDTO;
   /** The vault walk hit its cap, so `total` is a floor rather than a total. */
   truncated: boolean;
+  /** `KnowledgeStatusDTO.pendingCount`, for the page that has no status. */
+  pendingCount: number;
 }
 
 /** A note named by one of the health lists. */

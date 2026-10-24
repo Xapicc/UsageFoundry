@@ -1578,6 +1578,17 @@ function KnowledgeFigures({
         </span>
       </ListRow>
 
+      {(report.pendingCount ?? 0) > 0 && (
+        <ListRow
+          label="Still downloading"
+          description="Notes not on disk yet, read in the background; the figures above settle once this reaches 0"
+        >
+          <span className="tabular-nums text-sm">
+            {(report.pendingCount ?? 0).toLocaleString()}
+          </span>
+        </ListRow>
+      )}
+
       {report.truncated && (
         <ListRow
           label="The scan stopped early"

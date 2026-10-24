@@ -22,7 +22,7 @@ export async function GET(req: Request) {
   const root = resolveKnowledgeRoot(getSettings());
   if (!root.ok) return NextResponse.json({ error: root.reason }, { status: 409 });
 
-  const note = knowledgeNoteView(knowledgeIndex(root.root), path);
+  const note = await knowledgeNoteView(knowledgeIndex(root.root), path);
   if (!note) {
     return NextResponse.json(
       { error: `No note at "${path}" in the knowledge base.` },

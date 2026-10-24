@@ -88,7 +88,21 @@
   `Beta.md`'s row read "Alpha" and linked to `Alpha.md`, with no console
   error. Seen at 1280px in the standard light skin only.
 
+- **The settings page over an iCloud-evicted vault, 2026-10-25, over
+  `4b227ee`:** before the fix, with 1,470 of 2,031 notes `dataless`, a
+  restarted container's server sat in `read()` on one vault note at a time
+  (`wchan` `__fuse_simple_request`, about 1s each), and neither `/settings` nor
+  `/api/health` answered for 17 minutes. After it, from 246 still evicted:
+  `/api/knowledge/status` in 126ms, `/settings` in 41ms, health at 200 in under
+  10ms throughout, and `pendingCount` 246 to 0 in 3.5 minutes, settling on 27
+  orphans and 1 broken link. Caveat: HTTP only; nothing was rendered.
+
 ## Not yet verified by hand
+
+- **The pending figures have never rendered.** Settings' *Still downloading*
+  row and the Knowledge page's notice are unseen, and so is a pending note's
+  body arriving on open. Settled by evicting the vault (Finder › Remove
+  Download), restarting the container and opening both pages.
 
 - **The MCP status has not been seen rendered.** The run log's "MCP servers"
   line and the per-plugin status in Settings › Plugins are unit-tested
