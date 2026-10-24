@@ -27,6 +27,7 @@ Twenty-three are renderings rather than functions — every `*.test.tsx` in the 
 | `cutOffCheckout.test.ts` | [cycle] |
 | `diff.test.ts` |  |
 | `land.test.ts` | [landing], [merge-queue], [harnesses] |
+| `mountRootIsolation.test.ts` |  |
 | `orchestrator.test.ts` | [cycle], [argv], [ceiling], [pruning], [parsers], [codex-cycle], [budgets], [pricing], [landing], [merge-queue], [sandbox], [harnesses] |
 | `patch.test.ts` |  |
 | `planUsage.test.ts` |  |

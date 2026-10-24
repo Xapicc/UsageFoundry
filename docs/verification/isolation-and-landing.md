@@ -228,6 +228,13 @@
   hand will not produce; folding needs a few-hundred-path conflict or a lowered
   `MAX_DRAWN_FILES`.
 
+- **No run on a repository at the mount root has been isolated by a running
+  app** (allowed 2026-10-24 when the repository ignores `.uf-worktrees/`).
+  Settle: after landing and a restart, start a run on the KnowledgeBase mount
+  root with isolation on; its view must show a branch, its slot must be under
+  `/workspace2/.uf-worktrees/`, and `git -C /workspace2 status --porcelain`
+  must stay empty while it works.
+
 - **No run has met a real exhausted checkout store.** `resolveIsolation`'s
   refusal is unit-tested only. Dirty `<mount>/.uf-worktrees/<slug>-1` … `-64`,
   confirm Branches shows `0 of 64` free and an isolated run is refused with the

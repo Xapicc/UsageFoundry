@@ -168,6 +168,21 @@
   filter three times on a stat-dirty file under plain git. Caveat: as uid
   1000 in an agent worktree, not as root with the uid split on.
 
+- **A linked worktree inside its own main worktree, the store ignored
+  (2026-10-24, git 2.39.5, a scratch repository, by hand):** with
+  `.uf-worktrees/` in `.gitignore` and a slot added under it, the main
+  checkout's `status --porcelain` is empty and `add -A` stages nothing; `status
+  --ignored` shows `!! .uf-worktrees/`; `clean -fdx` skips the slot as a
+  repository and `clean -ffdx` would remove the whole store. git run in the
+  store directory, or in a slot directory without `.git`, resolves to the main
+  repository; with `GIT_CEILING_DIRECTORIES` naming the store the second says
+  "not a git repository" while a slot and a directory inside one still resolve.
+  `check-ignore -- .uf-worktrees/` answers 0 for a `/.uf-worktrees/*` rule even
+  with a `!` line re-including a slot that `status` then lists, and `-c
+  core.excludesFile=` drops a global excludes file and one set through
+  `GIT_CONFIG_COUNT`. Caveat: never the operator's host git or the real vault;
+  the ceiling and the excludes half are now in `mountRootIsolation.test.ts`.
+
 ## Not yet verified by hand
 
 - **The signing pins and filter blanking in a booted image, against a land.**
