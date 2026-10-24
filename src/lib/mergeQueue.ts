@@ -494,6 +494,20 @@ export function queuedRunIds(): Set<string> {
   return new Set(rows.map((r) => r.run_id));
 }
 
+/**
+ * The newest queue row for a run, whatever its status, or null if it was never
+ * queued. For a caller that queued a branch itself and has to know how that
+ * went without keeping a batch id: Dreaming settles its night from this.
+ */
+export function latestQueueRowFor(runId: string): QueueRow | null {
+  const row = db()
+    .prepare(
+      "SELECT * FROM merge_queue WHERE run_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+    )
+    .get(runId) as QueueRow | undefined;
+  return row ?? null;
+}
+
 export type EnqueueOutcome =
   | { ok: true; batchId: string; queued: number }
   | { ok: false; reason: string };

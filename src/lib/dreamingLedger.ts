@@ -8,12 +8,14 @@ import type { RunStatus } from "./orchestrator";
 /**
  * What Dreaming has written, and what a night decided.
  *
- * Two tables and no model. `dreaming_notes` is the deduplication key *and* the
- * retraction list — the vault has no `.git`, no author field and nothing in a
- * note that says this app produced it, so "what did Dreaming write" is a
- * question only this side can answer. `dreaming_nights` is the other half: a
- * night that selected nothing wrote no notes, and a pane reading only the first
- * table cannot tell that from a night that never ran.
+ * Three tables and no model. `dreaming_notes` is the deduplication key *and* the
+ * retraction list: the vault has no author field and nothing in a note that
+ * says this app produced it (and was not a repository when this was written),
+ * so "what did Dreaming write" is a question only this side can answer.
+ * `dreaming_nights` is the other half: a night that selected nothing wrote no
+ * notes, and a pane reading only the first table cannot tell that from a night
+ * that never ran. `dreaming_pending` holds a night whose notes are on a branch
+ * that has not landed, between those two.
  *
  * Everything here is synchronous, like every other reader of this database.
  */
@@ -91,7 +93,8 @@ export function listNotes(limit = NOTE_LIMIT): DreamingNote[] {
 
 /**
  * Claim a set of signatures for one night, before the run that writes them
- * exists.
+ * exists. For a run that works in the vault's own folder: one that works on a
+ * branch is claimed by `claimPendingLanding`, when the branch has landed.
  *
  * Claimed up front rather than recorded on the way out, and the ordering is the
  * whole point: a run that crashes halfway through has still written some of the
@@ -137,6 +140,88 @@ export function claimSignatures(
     }
     return claimed;
   })();
+}
+
+/** A night's selection whose notes are on a branch that has not landed. */
+export interface PendingLanding {
+  runId: string;
+  night: string;
+  /** The array the prompt numbered, in its order (`claimSignatures`' contract). */
+  selected: SignatureRollup[];
+  createdAt: number;
+  /** When the branch was last put in the merge queue, or null if it never was. */
+  attemptedAt: number | null;
+}
+
+/**
+ * Record a selection to be claimed when its run's branch lands.
+ *
+ * What `claimSignatures` is for a run that works in the vault itself, for a run
+ * that works on a branch: the signatures are held here instead of in
+ * `dreaming_notes`, because that table says "a note was written" and nothing
+ * has been written into the vault until the branch lands. Claiming up front
+ * would suppress a signature for a note that a refused land then never
+ * delivers, and the next night would not try it again.
+ */
+export function recordPendingLanding(
+  night: string,
+  runId: string,
+  rollups: readonly SignatureRollup[],
+  now = Date.now(),
+): void {
+  db()
+    .prepare(
+      `INSERT OR REPLACE INTO dreaming_pending (run_id, night, selected, created_at, attempted_at)
+       VALUES (?, ?, ?, ?, NULL)`,
+    )
+    .run(runId, night, JSON.stringify(rollups), now);
+}
+
+/** Oldest first, so a settle works through them in the order they were started. */
+export function pendingLandings(): PendingLanding[] {
+  const rows = db()
+    .prepare(
+      `SELECT run_id, night, selected, created_at, attempted_at
+         FROM dreaming_pending ORDER BY created_at, rowid`,
+    )
+    .all() as Record<string, unknown>[];
+  return rows.map((r) => ({
+    runId: String(r.run_id),
+    night: String(r.night),
+    selected: JSON.parse(String(r.selected)) as SignatureRollup[],
+    createdAt: Number(r.created_at),
+    attemptedAt: (r.attempted_at as number | null) ?? null,
+  }));
+}
+
+export function markLandingAttempted(runId: string, at = Date.now()): void {
+  db().prepare("UPDATE dreaming_pending SET attempted_at = ? WHERE run_id = ?").run(at, runId);
+}
+
+/**
+ * Move a pending selection into `dreaming_notes` and delete the pending row, as
+ * one transaction so a crash between the two cannot leave a signature claimed
+ * and also still pending, or pending with no claim after the row is gone.
+ * Returns how many signatures were newly claimed; 0 when the row was already
+ * settled, which is what makes a second settle on the same run harmless.
+ */
+export function claimPendingLanding(runId: string, now = Date.now()): number {
+  return db().transaction(() => {
+    const pending = pendingLandings().find((p) => p.runId === runId);
+    if (!pending) return 0;
+    const claimed = claimSignatures(pending.night, runId, pending.selected, now);
+    db().prepare("DELETE FROM dreaming_pending WHERE run_id = ?").run(runId);
+    return claimed;
+  })();
+}
+
+/**
+ * Let a pending selection go without claiming it, so a later night may select
+ * those signatures again. For a branch somebody deleted or purged, which is a
+ * decision that the notes on it are not wanted in the vault.
+ */
+export function dropPendingLanding(runId: string): boolean {
+  return db().prepare("DELETE FROM dreaming_pending WHERE run_id = ?").run(runId).changes > 0;
 }
 
 /**

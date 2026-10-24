@@ -3,7 +3,8 @@
 > Each paragraph records a correctness or safety decision whose violation is
 > silent — nothing throws, nothing fails to typecheck, and the page looks right.
 > **Read before editing `src/lib/dreaming.ts`, `src/lib/dreamingLedger.ts`,
-> `src/lib/dreamingRun.ts`, `src/app/dreaming/`, or `src/app/api/dreaming/`.**
+> `src/lib/dreamingLanding.ts`, `src/lib/dreamingRun.ts`, `src/app/dreaming/`, or
+> `src/app/api/dreaming/`.**
 > The reasoning behind the shape is `git show a74a1bb:"proposals/implemented - Dreaming/"`, whose figures every
 > constant here comes from.
 
@@ -40,6 +41,16 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - The writer is a run, never an assist.
 - `dreamingMaxCostUSD` has no way to express "no limit".
 - Everything the licence rests on lives in `buildDreamingPrompt`, which is why it is pure and tested.
+
+## [Landing: a night on a branch, and when its signatures are claimed](dreaming/landing.md)
+
+- A night is isolated whenever its vault can be, and where it cannot be nothing changes.
+- The signatures are claimed when the branch lands, never when the run starts.
+- One night's branch is in flight at a time, and the next night refuses while it is.
+- The minute tick tries a branch once, and the next night tries again.
+- A stopped night is not landed for the operator.
+- What reaches the queue is `enqueue` with `autoResolve: false` and the operator's `landStrategy`.
+- What this does not cover.
 
 ## [The nightly clock](dreaming/the-clock.md)
 

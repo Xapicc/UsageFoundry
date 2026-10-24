@@ -2,7 +2,7 @@
 
 [← dreaming index](../dreaming.md)
 
-Read before editing `runDreamingNight`, `dreamingRefusal` or `buildDreamingPrompt` in `src/lib/dreamingRun.ts`, or how `dreamingMaxCostUSD` is validated.
+Read before editing `runDreamingNight`, `startDreamingWriter`, `dreamingRefusal` or `buildDreamingPrompt` in `src/lib/dreamingRun.ts`, or how `dreamingMaxCostUSD` is validated.
 
 **The writer is a run, never an assist.** A run lands in `runs.spent_usd`, which
 is where `installSpend`'s rolling 24 hours looks, and appears on `/runs` with a
@@ -10,9 +10,11 @@ log, a cost, a status and an origin. A third `AssistKind` would inherit the
 review's ten-minute clock (`review.ts:78`), log itself as a review
 (`logLine.ts:561`) and spend where the install limit cannot see it
 (`installBudget.ts:79`) — three defects that reproduce at HEAD and that this
-feature sidesteps by not being an assist. It is also never isolated: an isolated
-run works in a copy and lands a branch, the vault is not a repository, and a note
-written into a worktree that is later discarded is a note nobody ever sees.
+feature sidesteps by not being an assist. It is isolated when the vault can be:
+an isolated run works in a copy and lands a branch, and a note written into a
+worktree that is never landed is a note nobody ever sees, which is why
+`landing.md` has the branch landed and the ledger wait for it. Where the vault is
+not a repository, or cannot be isolated, the run works in the folder as it first did.
 
 **`dreamingMaxCostUSD` has no way to express "no limit",** on
 `scheduleRefusal`'s reasoning quoted word for word: every other press of Run is

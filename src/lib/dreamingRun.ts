@@ -1,14 +1,24 @@
 import { db, getJSON, setJSON } from "./db";
 import { dayKey, scanDreaming, selectWritable, type SignatureRollup } from "./dreaming";
+import { settleDreamingLandings } from "./dreamingLanding";
 import {
   claimSignatures,
+  pendingLandings,
   recordNight,
   recordNotePath,
+  recordPendingLanding,
   writtenSignatures,
   type NightOutcome,
 } from "./dreamingLedger";
 import { resolveKnowledgeRoot } from "./knowledge";
-import { TERMINAL_STATUSES, createRun, getRun, runEvents } from "./orchestrator";
+import {
+  TERMINAL_STATUSES,
+  createRun,
+  getRun,
+  probeIsolation,
+  resolveWorkspaceFolder,
+  runEvents,
+} from "./orchestrator";
 import { nextOccurrence } from "./schedules";
 import { mayWriteDataDir } from "./serverLock";
 import { getSettings, type Settings } from "./settings";
@@ -386,6 +396,35 @@ export async function runDreamingNight(opts: {
     return result;
   }
 
+  // After the live check and before the scan, because a settle can claim an
+  // earlier night's signatures and the selection below has to read them. One
+  // branch of notes in flight at a time: a second night would be cut from a
+  // vault that does not have the first one's notes, so the two would edit the
+  // same hub notes and the later land would conflict, and it would select the
+  // signatures the first has not yet claimed.
+  const reports = await settleDreamingLandings({ revisit: true, now });
+  const unlanded = pendingLandings()[0];
+  if (unlanded) {
+    const report = reports.find((r) => r.runId === unlanded.runId);
+    const where =
+      report?.result.kind === "waiting"
+        ? report.result.why
+        : report?.result.kind === "queued"
+          ? "its branch was only now put in the merge queue"
+          : "its branch has not been settled yet";
+    const result: NightResult = {
+      night,
+      outcome: "refused",
+      reason:
+        `The night of ${unlanded.night} has not landed in the vault yet: ${where}. ` +
+        "Land its branch from the run page, or purge it, and the next night goes ahead.",
+      runId: unlanded.runId,
+      selected: [],
+    };
+    recordNight({ ...result, startedAt: now, selected: 0 });
+    return result;
+  }
+
   const readout = await scanDreaming({
     timeZone: settings.dreamingTimeZone,
     sinceDays: settings.transcriptRetentionDays,
@@ -412,19 +451,52 @@ export async function runDreamingNight(opts: {
     return result;
   }
 
+  return startDreamingWriter({ night, now, origin: opts.origin, root: root.root, settings, selected });
+}
+
+/**
+ * Start the run that writes `selected` and record the night.
+ *
+ * Split out of `runDreamingNight` for its test: everything before it needs a
+ * transcript corpus to have anything recurring, and everything here is what
+ * decides whether a night's notes land in the operator's vault or sit in its
+ * checkout.
+ *
+ * Isolated whenever the vault can be, asked of the same `probeIsolation` the run
+ * path asks. A run writing into the vault's own checkout leaves modified and
+ * untracked notes there, which `landRefusal`'s checkout test reads as uncommitted
+ * changes, so every night would refuse every other land into the vault. Isolated,
+ * the notes are on a branch, `settleDreamingLandings` queues it, and the
+ * signatures are claimed when it lands. Where the vault cannot be isolated (not a
+ * repository, a subdirectory of one, submodules, a mount-root repository that
+ * does not ignore the checkout store) the run works in the folder and claims
+ * its signatures now, exactly as it always did.
+ *
+ * Whether it was isolated is read off the run that was created, not off the probe:
+ * the run's own row is what the land will read.
+ */
+export function startDreamingWriter(opts: {
+  night: string;
+  now: number;
+  origin: "schedule" | "form";
+  root: string;
+  settings: Settings;
+  selected: SignatureRollup[];
+}): NightResult {
+  const { night, now, root, settings, selected } = opts;
   const prompt = buildDreamingPrompt(selected, night);
 
   let runId: string;
+  let isolated: boolean;
   try {
+    const isolate =
+      probeIsolation(resolveWorkspaceFolder(root, settings.knowledgeBaseMountId)).mode ===
+      "worktree";
     const run = createRun({
-      folder: root.root,
+      folder: root,
       mountId: settings.knowledgeBaseMountId,
       prompt,
-      // Never isolated. An isolated run works in a copy and lands a branch, and
-      // the vault is not a repository — there is nothing to land it into, and a
-      // note written into a worktree that is later discarded is a note nobody
-      // ever sees.
-      isolate: false,
+      isolate,
       // Nobody is watching a run a timer started. `acceptEdits` still prompts
       // for everything that is not a file edit, and a prompt with no operator
       // behind it stalls the run until the duration guard ends it — no note
@@ -445,6 +517,7 @@ export async function runDreamingNight(opts: {
       originRef: `dreaming:${night}`,
     });
     runId = run.id;
+    isolated = run.isolation === "worktree";
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     const result: NightResult = {
@@ -458,10 +531,17 @@ export async function runDreamingNight(opts: {
     return result;
   }
 
-  // Claimed *after* the run exists so the row can name it, and before the run
-  // has written anything so a crash mid-way cannot hand the same signatures to
-  // tomorrow. `claimSignatures` documents which way that trade runs.
-  claimSignatures(night, runId, selected, now);
+  if (isolated) {
+    // Held, not claimed: nothing is in the vault until the branch lands, and a
+    // land can be refused. The row is made before the run has done anything so
+    // a crash mid-way leaves a night the next settle can find.
+    recordPendingLanding(night, runId, selected, now);
+  } else {
+    // Claimed *after* the run exists so the row can name it, and before the run
+    // has written anything so a crash mid-way cannot hand the same signatures to
+    // tomorrow. `claimSignatures` documents which way that trade runs.
+    claimSignatures(night, runId, selected, now);
+  }
 
   const result: NightResult = {
     night,
@@ -588,6 +668,17 @@ export async function tickDreaming(): Promise<void> {
     return;
   }
   if (timer.__ufDreamingRunning) return;
+
+  // Every tick, not only on a due one: a night's branch lands whenever its run
+  // ends, which has nothing to do with when the next window opens. It lives in
+  // the timer rather than in the run loop, so with Dreaming off this stops with
+  // the timer: a branch left over from a night that was running when the switch
+  // went off waits for the operator, or for it to be switched on again.
+  try {
+    await settleDreamingLandings({ revisit: false });
+  } catch (err) {
+    console.error("[usagefoundry] dreaming could not settle a night's landing", err);
+  }
 
   const now = Date.now();
   const { due, dueAt } = dreamingDue(now);

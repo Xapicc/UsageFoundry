@@ -2613,6 +2613,32 @@ function migrate(db: Database.Database) {
     );
   `);
 
+  // A night whose run worked on a branch, between the run starting and its
+  // notes reaching the vault. The signatures it selected are **not** in
+  // `dreaming_notes` yet: that table is the deduplication key, and a branch
+  // that has not landed has put nothing in the vault, so claiming for it would
+  // suppress a signature whose note does not exist. This row holds what the
+  // claim needs: the night and the exact array the prompt numbered, since
+  // `prompt_item` is a place in it, until `settleDreamingLandings` sees the
+  // branch land and moves it across, or sees the branch gone and lets it go.
+  //
+  // `run_id` is the key because a night has at most one run in flight at a time
+  // (a second is refused while this row exists), and it is a plain column on
+  // `dreaming_notes.run_id`'s reasoning. `attempted_at` is null until the first
+  // try at putting the branch in the merge queue, which is what stops the
+  // minute tick retrying a refusal sixty times an hour; only the next night's
+  // pass tries again.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS dreaming_pending (
+      run_id       TEXT PRIMARY KEY,
+      night        TEXT NOT NULL,
+      -- JSON array of SignatureRollup, in the order buildDreamingPrompt numbered them.
+      selected     TEXT NOT NULL,
+      created_at   INTEGER NOT NULL,
+      attempted_at INTEGER
+    );
+  `);
+
   // Dreaming's cursor was a `YYYY-MM-DD` day key and is now an instant under a
   // different key, because a day key closed the whole day a boot landed in and
   // so stopped the nightly pass firing at all on any day the server restarted.

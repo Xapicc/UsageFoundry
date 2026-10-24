@@ -5,11 +5,14 @@
 Read before editing `src/lib/dreamingLedger.ts`, the `dreaming_notes` and `dreaming_nights` tables, or `reconcileDreamingNotes` in `src/lib/dreamingRun.ts`.
 
 **The ledger is the retraction mechanism, and that is why the feature can ship.**
-The vault is not a git repository: no history, no author field, and nothing in a
-note that marks it as machine-written, so "what did this app write" is a question
-only this side can answer. `dreaming_notes` is keyed on the signature itself —
-the deduplication test *is* the primary-key lookup — and it is not version
-control, it is the list a person deletes *from*. **`forgetNote` deletes the row
+The vault had no history, no author field, and nothing in a note that marks it as
+machine-written, so "what did this app write" is a question only this side can
+answer. It has since become a git repository (2026-10-24), and that does not
+change the answer: a landed branch says where a night's notes entered, not which
+of them a person later edited, and a person's own commits sit beside them.
+`dreaming_notes` is keyed on the signature itself, so the deduplication test *is*
+the primary-key lookup, and it is not version control, it is the list a person
+deletes *from*. **`forgetNote` deletes the row
 and never the file.** Retraction in the vault is a person moving a file in
 Obsidian, and an app that deleted from a mount it does not own would be doing
 something heavier than anything else in this codebase, against a store with no
@@ -25,7 +28,10 @@ exist to prevent. Over-claiming loses a note; under-claiming leaves a second not
 beside one that is already there, and only the second is a mess in somebody's
 document store. `note_path` stays null until a report says otherwise, so a
 claimed-but-unwritten row reads as "attempted, no file recorded" rather than as a
-note that exists.
+note that exists. That is the rule for a run working in the vault's own folder. A
+run on a branch writes nothing into the vault until the branch lands, so its
+signatures wait in `dreaming_pending` and are claimed then, which is
+[`landing.md`](landing.md)'s.
 
 **`reconcileDreamingNotes` is keyed on the run and never on the night.** Two
 passes share a calendar night — a press at noon and the timer at 03:04 — but not
