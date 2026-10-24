@@ -4,6 +4,21 @@
 
 ## Verified
 
+- **A Dreaming night in a vault that can be isolated puts its notes in the vault
+  before its signatures are claimed, 2026-10-24**, at `8d39cff1`, by
+  `dreamingLanding.test.ts` against a real repository at a mount root that
+  ignores `.uf-worktrees/` and the real merge worker. After the run's branch
+  (a note committed by hand on it) lands through the merge queue the note is in
+  the vault, `git status --porcelain` there is empty, and the two signatures are
+  in `dreaming_notes` with `prompt_item` 1 and 2; with an uncommitted note of the
+  operator's in the checkout the land is refused, nothing is claimed and
+  `dreaming_pending` still holds the night. A mount that is not a repository, and
+  a mount-root repository that does not ignore the store, still get a run in the
+  folder that claims at the start. Caveat: the agent's commit is made by the test,
+  not by a Claude run, and the vault is a fixture, so nothing here says that a
+  real night's agent commits on its branch, reports paths relative to its slot, or
+  that the vault's own `.gitignore` leaves its checkout clean while Obsidian is open.
+
 - **Dreaming's nightly timer fired unattended at its default time on 16 days,
   2026-10-08**, at `9bf2ef8c`, read from the session transcripts under
   `~/.claude/projects/-workspace2/`. Nineteen sessions open with
@@ -52,6 +67,23 @@
   boot with an `UPDATE` through a second connection.
 
 ## Not yet verified by hand
+
+- **No real Dreaming night has landed through the merge queue**: the code that
+  queues a night's branch and claims after it (`dreamingLanding.ts`) has run only
+  against fixtures. Unseen on the real vault at `/workspace2`: that the agent
+  commits on its branch (it is granted `git commit` and told to, and
+  `commitPending` is the fallback, which has never run on a real night's slot),
+  that the land is not refused by the operator's own uncommitted Obsidian files
+  (the one open question, filed as its own board task), and that the pane's
+  paths for the landed notes read as present. Settle, after the first night
+  Dreaming runs on a build that carries it, from a shell that can read
+  `DATA_DIR`: `git -C /workspace2 status --porcelain` should print nothing;
+  `SELECT run_id, night, attempted_at FROM dreaming_pending` should return no
+  rows once the land finished, or one row whose night's last
+  `SELECT status, message FROM merge_queue WHERE run_id = <it> ORDER BY
+  created_at DESC LIMIT 1` says why; and `git -C /workspace2 log --oneline -3`
+  should show the merge. A night refused with "has not landed in the vault yet"
+  is that last case.
 
 - **Dreaming's timer has not been read off a live install, and nothing has
   shown a restart leaving it armed**: the 16 fires above are inferred from
