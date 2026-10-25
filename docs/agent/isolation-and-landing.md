@@ -103,6 +103,12 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - Nothing on the landing path has a clock on its duration, and that is a rule rather than an omission. (was line 54)
 - A resolution's child has one deadline, and it is an hour of silence rather than any length of run. (was line 56)
 
+## [Clocks on the checkout start path](isolation-and-landing/checkout-start-clock.md)
+
+- A git call that walks a whole tree while a run is given its checkout has thirty minutes, not `git()`'s twenty seconds.
+- A call the clock ended says so, and the reason is never empty.
+- A leftover `index.lock` is git's to explain, and nothing here removes it.
+
 ## [The merge queue: batches, workers and restarts](isolation-and-landing/merge-queue-batches-workers-and-boot.md)
 
 - Several branches are a queue, never a batch, and the queue re-decides at every turn. (was line 34)

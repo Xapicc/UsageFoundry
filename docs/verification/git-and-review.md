@@ -183,7 +183,31 @@
   `GIT_CONFIG_COUNT`. Caveat: never the operator's host git or the real vault;
   the ceiling and the excludes half are now in `mountRootIsolation.test.ts`.
 
+- **A reused slot's `status` and `checkout -b` ran under `git()`'s 20 s and
+  failed with an empty reason, 2026-10-25**, git 2.39.5, scratch repositories
+  under `$TMPDIR` on `a9b61621`, `checkoutGitClock.test.ts` built into its
+  own `--outDir`: a `GIT_BIN` stub hanging the reuse path's one call, and
+  `mock.timers` advanced 20,001 ms. Before the change the run failed at once
+  with `Could not start branch uf/…: ` ending at the colon (`checkout -b`) and
+  `Checkout … still has uncommitted work` (`status`); after it both calls were
+  still running, and at 30 minutes failed with `git … in <slot> was killed
+  after 30m 0s without finishing`. A real `index.lock` in the slot's git
+  directory gave git's `fatal: Unable to create '…/index.lock': File exists.`
+  in the run's reason, unaltered, before and after. Caveat: the slowness is a
+  stub's. That a vault's evicted iCloud files make `status` or `checkout` pass
+  20 s is the nightly failure's likely cause and is not measured.
+
 ## Not yet verified by hand
+
+- **That an evicted iCloud checkout is what outlasted 20 s.** Reported from a
+  read-only look at the failed run's slot, not repeated here: `git status
+  --porcelain` did not finish in 60 s and 100 s there and takes 0.02 s in the
+  main checkout, and a zero-byte `index.lock` from 03:05 was in its git
+  directory. Unmeasured: whether the files were placeholders, and whether the
+  new thirty minutes is enough. To
+  settle it, on the host, `time git -C <slot> status --porcelain` with the
+  `.uf-worktrees` store's files evicted, then again once downloaded, and
+  compare; the stale lock is the operator's to clear first.
 
 - **The signing pins and filter blanking in a booted image, against a land.**
   Unmeasured: `ensureWorktree`, commitPending and a Land press each running

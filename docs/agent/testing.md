@@ -24,6 +24,7 @@ Twenty-three are renderings rather than functions — every `*.test.tsx` in the 
 |---|---|
 | `branchRival.test.ts` |  |
 | `budget.test.ts` | [harnesses] |
+| `checkoutGitClock.test.ts` |  |
 | `cutOffCheckout.test.ts` | [cycle] |
 | `diff.test.ts` |  |
 | `land.test.ts` | [landing], [merge-queue], [harnesses] |
