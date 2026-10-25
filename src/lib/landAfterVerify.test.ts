@@ -597,6 +597,61 @@ describe("a checkout a later run reused, with a verify command set", () => {
       assert.equal(landedAt(s.runId), null);
     });
 
+    it("is seen by the card before any press, which withholds Land in the press's own sentence", async () => {
+      const s = ignoredScene("switch-ignored-card");
+      verifyWith("mark", s.signals);
+
+      // `git status` lists no ignored file, so this read used to offer the switch
+      // and leave the press to find the file.
+      const state = await land.landState(s.runId);
+
+      assert.match(
+        state?.blocked ?? "",
+        /git would not switch it: .*overwritten by checkout: local\.settings\.json — ignored/,
+      );
+      assert.equal(state?.verifySwitch, null, "the card offered a switch git would refuse");
+
+      const landed = await land.landRun(s.runId, "merge");
+
+      assert.equal(landed.ok, false);
+      assert.equal(landed.ok ? "" : landed.reason, state?.blocked, "the card and the press said different things");
+      assert.equal(fs.existsSync(path.join(s.signals, "ran")), false, "the command ran anyway");
+      assert.equal(headOf(s.slot), s.laterBranch);
+      assert.equal(fs.readFileSync(keptFile(s), "utf8"), LATERS_OWN);
+    });
+
+    it("still refuses at the checkout when the file arrives after the card's read", async (t) => {
+      // What `--no-overwrite-ignore` is left to do: the blocker names the files
+      // at the paths the branch adds, and a file written after that read is only
+      // seen by git. Held at `checkout` so the file is there when it runs.
+      const s = takeOverSlot(trackedIgnoredScene("switch-ignored-late", { operatorFile: false }));
+      verifyWith("mark", s.signals);
+      const gitModule = await import("./git");
+      const realGit = gitModule.git;
+      t.mock.method(gitModule, "git", async (...call: Parameters<typeof realGit>) => {
+        const [cwd, args] = call;
+        if (cwd === s.slot && args[0] === "checkout" && args.includes(s.branch)) {
+          fs.writeFileSync(keptFile(s), LATERS_OWN);
+        }
+        return realGit(...call);
+      });
+
+      const state = await land.landState(s.runId);
+      assert.equal(state?.blocked, null, "the file was there before the card read");
+      assert.ok(state?.verifySwitch, "the card did not offer the switch");
+
+      const landed = await land.landRun(s.runId, "merge");
+
+      assert.equal(landed.ok, false, "landed after switching over a file written at the checkout");
+      assert.match(
+        landed.ok ? "" : landed.reason,
+        /git would not switch it: .*overwritten by checkout: local\.settings\.json — ignored/,
+      );
+      assert.equal(fs.existsSync(path.join(s.signals, "ran")), false, "the command ran anyway");
+      assert.equal(headOf(s.slot), s.laterBranch);
+      assert.equal(fs.readFileSync(keptFile(s), "utf8"), LATERS_OWN);
+    });
+
     it("refuses a review block's switch the same way", async () => {
       const s = ignoredScene("switch-ignored-review");
 

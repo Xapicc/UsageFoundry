@@ -4463,7 +4463,16 @@ async function switchRefusal(taken: TakenOverSlot): Promise<string | null> {
   return switchBlocker(taken);
 }
 
-/** What the later run left in the slot that makes a switch unsafe, or null. */
+/**
+ * What the later run left in the slot that makes a switch unsafe, or null.
+ *
+ * The last read is the one `git status` cannot make: a file the slot holds that
+ * git ignores, at a path the run's branch tracks. The slot reads clean over it,
+ * and `runOnSwitchedBranch`'s `checkout` refuses it, so the card and the press
+ * would otherwise give two answers: the card offering the switch and the press
+ * refusing it. The press asks this function too, before it runs a checkout, so
+ * both say it in `git would not switch it`'s words.
+ */
 async function switchBlocker(taken: TakenOverSlot): Promise<string | null> {
   const { path: slot, branch, holds } = taken;
   const [status, merging, exists, elsewhere] = await Promise.all([
@@ -4486,6 +4495,21 @@ async function switchBlocker(taken: TakenOverSlot): Promise<string | null> {
   // branch to a slot of its own. git refuses the switch either way, and the
   // card would have drawn Land over it.
   if (elsewhere) return `${branch} is checked out in ${elsewhere}`;
+
+  // Plumbing, so no diff driver and no rename detection, `mergePastSquash`'s
+  // reason: a renamed file's new path is a path the slot may already hold. The
+  // slot reads clean, so anything on the disk at one of these paths is a file
+  // git ignores, which is exactly what a switch must not replace.
+  const added = await git(
+    slot,
+    ["diff-tree", "-r", "-z", "--name-only", "--no-renames", "--diff-filter=A", "HEAD", `refs/heads/${branch}`],
+    { ...NO_CLOCK, trim: false },
+  );
+  if (!added.ok) {
+    return `git could not read which files ${branch} would add to it: ${gitFailureLine(added.stderr) || "unknown error"}`;
+  }
+  const inTheWay = untrackedAt(slot, added.stdout.split("\0").filter((file) => file !== ""));
+  if (inTheWay.length > 0) return `git would not switch it: ${inTheWayLine(CHECKOUT_OVERWRITES, inTheWay)}`;
   return null;
 }
 
@@ -4498,7 +4522,19 @@ async function switchBlocker(taken: TakenOverSlot): Promise<string | null> {
 function checkoutRefusalLine(stderr: string): string {
   const first = stderr.split("\n")[0] || "unknown error";
   const inTheWay = untrackedInTheWay(stderr);
-  if (inTheWay.length === 0) return first;
+  return inTheWay.length === 0 ? first : inTheWayLine(first, inTheWay);
+}
+
+/**
+ * git's own first line for a `checkout` over files it does not track, which
+ * `switchBlocker` says in place of running one so that the card's sentence and
+ * the press's are the same string.
+ */
+const CHECKOUT_OVERWRITES =
+  "error: The following untracked working tree files would be overwritten by checkout:";
+
+/** `first`, git's line for the refusal, then the paths in the way, as many as `DIRT_NAMED`. */
+function inTheWayLine(first: string, inTheWay: readonly string[]): string {
   const rest = inTheWay.length - DIRT_NAMED;
   return (
     `${first.replace(/:$/, "")}: ${inTheWay.slice(0, DIRT_NAMED).join(", ")}` +
@@ -4517,10 +4553,11 @@ async function runOnSwitchedBranch(
   const blocker = await switchBlocker(taken);
   if (blocker) return notRun(unswitchedReason(taken, blocker, asker));
 
-  // `--no-overwrite-ignore` because the blocker above reads `git status`, which
-  // never lists an ignored file, and git's default replaces one: a seeded `.env`
-  // or `local.settings.json` the later run holds at a path this branch tracks
-  // would be overwritten here and deleted by the switch back. Refused instead.
+  // `--no-overwrite-ignore` because git's default replaces an ignored file, and
+  // a seeded `.env` or `local.settings.json` the later run holds at a path this
+  // branch tracks would be overwritten here and deleted by the switch back. The
+  // blocker above has already looked for the ones at a path the branch adds; this
+  // is what refuses one written since that read, or one it did not name.
   const switched = await git(slot, ["checkout", "-q", "--no-overwrite-ignore", branch, "--"], NO_CLOCK);
   if (!switched.ok) {
     const why = `git would not switch it: ${checkoutRefusalLine(switched.stderr)}`;
