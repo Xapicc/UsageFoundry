@@ -20,7 +20,7 @@ import {
   spawnCommand,
   type WorkspaceMount,
 } from "./config";
-import { git, gitSync, headBranchOf } from "./git";
+import { git, gitFailureReason, gitSync, headBranchOf } from "./git";
 import { runningVerifyChildren } from "./landGate";
 import { withRepoAdmin } from "./repoLock";
 import { checkoutWriter, type CheckoutOwner } from "./checkoutClaim";
@@ -3330,12 +3330,12 @@ function foreignSlotOwner(
  * explains. Allocation skips such a directory now, so this is the sentence for
  * a slot that became somebody else's between the two.
  */
-function checkoutFailure(repoRoot: string, slotPath: string, stderr: string): Error {
+function checkoutFailure(repoRoot: string, slotPath: string, reason: string): Error {
   const owner = foreignSlotOwner(slotPath, repoRoot);
-  if (!owner) return new Error(`Could not create a checkout: ${stderr}`);
+  if (!owner) return new Error(`Could not create a checkout: ${reason}`);
   const name = describeFolder(owner).relPath || owner;
   return new Error(
-    `Could not create a checkout: ${stderr} — ${path.basename(slotPath)} is a checkout of ${name}, ` +
+    `Could not create a checkout: ${reason} — ${path.basename(slotPath)} is a checkout of ${name}, ` +
       "not of this repository. Remove it once that repository is done with it, then start this run again.",
   );
 }
@@ -3534,6 +3534,37 @@ export function borrowSlot(slotPath: string): SlotBorrow {
 }
 
 /**
+ * The clock for a git call that reads or writes a whole working tree while a run
+ * is being given its checkout.
+ *
+ * Not `git()`'s 20 seconds, which is a `SIGKILL` in the middle of a call that is
+ * making progress: a full checkout is minutes on a large repository, and a
+ * `status` or a `checkout` of a tree whose files are slow to read (an iCloud
+ * Drive folder with most of its files evicted, each read waiting on a download)
+ * is slower than that without being stuck. A run killed there failed at setup
+ * with nothing after the colon, and every later run reusing the slot met the
+ * lock the kill left behind. Thirty minutes is the figure the `worktree add`
+ * calls already used, kept as the one number for this whole path; what is left
+ * to it is a call that is really hung, which it ends rather than waits on for
+ * ever.
+ *
+ * Only for the calls that walk the tree. A `worktree unlock` or a `rev-parse`
+ * stays on the default, because for those twenty seconds already means hung and
+ * a longer clock would only make a hung one slower to report.
+ */
+const CHECKOUT_GIT_TIMEOUT_MS = 30 * 60_000;
+
+/**
+ * One tree-walking git call of the start path, under `CHECKOUT_GIT_TIMEOUT_MS`,
+ * with the sentence for why it failed — never an empty one, and naming the
+ * clock when the clock is what ended it. See `gitFailureReason`.
+ */
+async function checkoutGit(cwd: string, args: string[]) {
+  const res = await git(cwd, args, { timeoutMs: CHECKOUT_GIT_TIMEOUT_MS });
+  return { ...res, why: res.ok ? "" : gitFailureReason(res, cwd, args) };
+}
+
+/**
  * Create or reuse this run's checkout and return the directory to work in.
  *
  * Reuse is what keeps isolation practical. A slot is reusable only when
@@ -3609,7 +3640,7 @@ async function ensureWorktree(run: RunRow): Promise<string> {
         // because inheriting someone else's half-finished edits silently is the
         // part that would be surprising. The agent is told too, by
         // `continuedWorkNotice`.
-        const leftover = await git(slotPath, ["status", "--porcelain"]);
+        const leftover = await checkoutGit(slotPath, ["status", "--porcelain"]);
         const paths = leftover.ok
           ? leftover.stdout.split("\n").filter(Boolean).length
           : null;
@@ -3617,7 +3648,7 @@ async function ensureWorktree(run: RunRow): Promise<string> {
         log(
           run.id,
           paths === null
-            ? `Taking over ${from}'s checkout on branch ${branch}. Its status could not be read, so it may still hold uncommitted work.`
+            ? `Taking over ${from}'s checkout on branch ${branch}. Its status could not be read (${leftover.why}), so it may still hold uncommitted work.`
             : paths === 0
               ? `Taking over ${from}'s checkout on branch ${branch}, with nothing left uncommitted in it.`
               : `Taking over ${from}'s checkout on branch ${branch}, which still holds ${paths} uncommitted path(s) from that run. They are left exactly as they are, as work in progress this run inherits.`,
@@ -3635,21 +3666,29 @@ async function ensureWorktree(run: RunRow): Promise<string> {
       // Finished just now, so it is a new checkout and is seeded and announced
       // as one below.
     } else {
-      const status = await git(slotPath, ["status", "--porcelain"]);
-      if (!status.ok || status.stdout !== "") {
+      const status = await checkoutGit(slotPath, ["status", "--porcelain"]);
+      // Unreadable still refuses — reusing a tree nobody could read is the
+      // unrecoverable mistake — but it is not "uncommitted work", and saying so
+      // sent an operator to clean a checkout that was never dirty.
+      if (!status.ok) {
+        throw new Error(
+          `Could not tell whether checkout ${path.basename(slotPath)} has uncommitted work, so it is not reused: ${status.why}`,
+        );
+      }
+      if (status.stdout !== "") {
         throw new Error(
           `Checkout ${path.basename(slotPath)} still has uncommitted work. Commit or remove it first.`,
         );
       }
       if (continuing) {
         await requireBranch(repoRoot, run, branch);
-        const co = await git(slotPath, ["checkout", branch]);
+        const co = await checkoutGit(slotPath, ["checkout", branch]);
         if (!co.ok) {
-          throw new Error(`Could not check out branch ${branch}: ${co.stderr}`);
+          throw new Error(`Could not check out branch ${branch}: ${co.why}`);
         }
       } else {
-        const co = await git(slotPath, ["checkout", "-b", branch, base]);
-        if (!co.ok) throw new Error(`Could not start branch ${branch}: ${co.stderr}`);
+        const co = await checkoutGit(slotPath, ["checkout", "-b", branch, base]);
+        if (!co.ok) throw new Error(`Could not start branch ${branch}: ${co.why}`);
       }
     }
   } else if (continuing) {
@@ -3661,10 +3700,8 @@ async function ensureWorktree(run: RunRow): Promise<string> {
     // ref is what is being checked out. The half of the guard that is a real
     // fact is kept: a branch that has been deleted is refused by name.
     await requireBranch(repoRoot, run, branch);
-    const add = await git(repoRoot, ["worktree", "add", slotPath, branch], {
-      timeoutMs: 30 * 60_000,
-    });
-    if (!add.ok) throw checkoutFailure(repoRoot, slotPath, add.stderr);
+    const add = await checkoutGit(repoRoot, ["worktree", "add", slotPath, branch]);
+    if (!add.ok) throw checkoutFailure(repoRoot, slotPath, add.why);
   } else if (run.iterations > 0 || (run.pause_count ?? 0) > 0) {
     // A resuming run whose checkout has been removed from under it. Creating a
     // fresh one would silently orphan every commit it already made, so name the
@@ -3687,14 +3724,9 @@ async function ensureWorktree(run: RunRow): Promise<string> {
           "this run to carry on from. Start it again as a new run.",
     );
   } else {
-    // No timeout worth enforcing: this is a full checkout, and a big repository
-    // legitimately takes minutes.
-    const add = await git(
-      repoRoot,
-      ["worktree", "add", "-b", branch, slotPath, base],
-      { timeoutMs: 30 * 60_000 },
-    );
-    if (!add.ok) throw checkoutFailure(repoRoot, slotPath, add.stderr);
+    // A full checkout, and a big repository legitimately takes minutes.
+    const add = await checkoutGit(repoRoot, ["worktree", "add", "-b", branch, slotPath, base]);
+    if (!add.ok) throw checkoutFailure(repoRoot, slotPath, add.why);
   }
 
   const settings = getSettings();
@@ -3791,18 +3823,18 @@ async function finishCutOffCheckout(
           `\`git -C ${slotPath} reset --hard\` and \`git worktree unlock ${slotPath}\`, and pick this run up again.`,
       );
     }
-    // No timeout worth enforcing, for the reason the add itself has none.
-    const reset = await git(slotPath, ["reset", "--hard", "--quiet"], {
-      timeoutMs: 30 * 60_000,
-    });
+    // Writes the whole tree, so it is on the add's clock.
+    const reset = await checkoutGit(slotPath, ["reset", "--hard", "--quiet"]);
     if (!reset.ok) {
-      throw new Error(`Checkout ${name} was never finished, and finishing it failed: ${reset.stderr}`);
+      throw new Error(`Checkout ${name} was never finished, and finishing it failed: ${reset.why}`);
     }
     // After the reset and never before it, as git orders them: cut off in
     // between, the lock is still there and the next pick-up finishes it again.
     const unlock = await git(run.repo_root!, ["worktree", "unlock", slotPath]);
     if (!unlock.ok) {
-      throw new Error(`Checkout ${name} was finished, but git would not unlock it: ${unlock.stderr}`);
+      throw new Error(
+        `Checkout ${name} was finished, but git would not unlock it: ${gitFailureReason(unlock, run.repo_root!, ["worktree", "unlock", slotPath])}`,
+      );
     }
     log(
       run.id,
@@ -3816,9 +3848,9 @@ async function finishCutOffCheckout(
   // Tracked paths only. An untracked one is what seeding copies in, and a run
   // refused before its first child — a signed-out local provider, its own
   // guard — comes back to exactly that.
-  const changed = await git(slotPath, ["status", "--porcelain", "--untracked-files=no"]);
+  const changed = await checkoutGit(slotPath, ["status", "--porcelain", "--untracked-files=no"]);
   if (!changed.ok) {
-    throw new Error(`Could not read the status of checkout ${name}: ${changed.stderr}`);
+    throw new Error(`Could not read the status of checkout ${name}: ${changed.why}`);
   }
   const paths = changed.stdout.split("\n").filter(Boolean).length;
   if (paths === 0) return false;
