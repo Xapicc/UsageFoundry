@@ -154,7 +154,16 @@ export const PRIOR_READS_EXPERIMENT = "prior-read-pointer";
  * had anything to be shown is recorded beside its arm and never decides it.
  */
 export function inHoldout(runId: string): boolean {
-  const digest = createHash("sha256").update(`${PRIOR_READS_EXPERIMENT}:${runId}`).digest();
+  return holdoutOf(PRIOR_READS_EXPERIMENT, runId);
+}
+
+/**
+ * The same split for any experiment, so that a second one keyed on run ids
+ * draws its arms the way this one does and from a different preimage —
+ * `vaultPointer.ts` is the second.
+ */
+export function holdoutOf(experiment: string, runId: string): boolean {
+  const digest = createHash("sha256").update(`${experiment}:${runId}`).digest();
   return digest.readUInt32BE(0) < 0x8000_0000;
 }
 
