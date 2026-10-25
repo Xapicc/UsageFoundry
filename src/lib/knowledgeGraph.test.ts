@@ -5,7 +5,6 @@ import {
   GRAPH_DEFAULTS,
   GRAPH_RANGES,
   GROUP_PALETTE,
-  MAX_GROUPS,
   capGraph,
   coerceGraphSettings,
   defaultGraphSettings,
@@ -15,6 +14,7 @@ import {
   groupIndexFor,
   localGraph,
   matchesGraphQuery,
+  nextGroupColor,
   noteNodeId,
   parseGraphQuery,
   SEED_GROUPS,
@@ -421,9 +421,11 @@ test("a stored group keeps its order, gets an id, and never carries an unusable 
   assert.ok(settings.groups[1].id, "a group with no id has no React key and no colour input");
 });
 
-test("the stored group list is capped where the panel is", () => {
+test("a stored group list of any length survives", () => {
   const many = Array.from({ length: 40 }, (_, i) => ({ id: `g${i}`, query: "a", color: "#112233" }));
-  assert.equal(coerceGraphSettings({ groups: many }).groups.length, MAX_GROUPS);
+  const restored = coerceGraphSettings({ groups: many }).groups;
+  assert.equal(restored.length, 40);
+  assert.deepEqual(restored.map((g) => g.id), many.map((g) => g.id));
 });
 
 test("reset hands back a fresh object, not the shared defaults", () => {
@@ -513,30 +515,63 @@ test("a tag's query finds the notes carrying it, whitespace and all", () => {
   );
 });
 
-test("the seed stops at SEED_GROUPS, and the ceiling is still MAX_GROUPS", () => {
-  const tags = Array.from({ length: MAX_GROUPS + 5 }, (_, i) => ({
+test("the seed stops at SEED_GROUPS, and an explicit limit overrides it", () => {
+  const tags = Array.from({ length: 12 }, (_, i) => ({
     name: `t${i}`,
     count: 100 - i,
   }));
   const seeded = tagGroups(tags);
 
-  // Two different numbers, and the whole reason `limit` is a parameter: an
-  // unasked-for seed of seven is the crowding the panel was folded to fix,
-  // while seven is still what an operator may build up to by hand.
+  // The seed is what an operator is handed unasked, and an unasked-for seed of
+  // seven is the crowding the panel was folded to fix, which is why `limit`
+  // defaults low and is still a parameter.
   assert.equal(seeded.length, SEED_GROUPS);
   assert.equal(new Set(seeded.map((g) => g.id)).size, SEED_GROUPS);
   assert.deepEqual(seeded.map((g) => g.color), GROUP_PALETTE.slice(0, SEED_GROUPS));
   assert.deepEqual(seeded.map((g) => g.query), ["tag:t0", "tag:t1", "tag:t2"]);
 
-  const full = tagGroups(tags, MAX_GROUPS);
-  assert.equal(full.length, MAX_GROUPS);
-  assert.equal(new Set(full.map((g) => g.id)).size, MAX_GROUPS);
+  const full = tagGroups(tags, 7);
+  assert.equal(full.length, 7);
+  assert.equal(new Set(full.map((g) => g.id)).size, 7);
   assert.deepEqual(full.map((g) => g.color), [...GROUP_PALETTE]);
   assert.deepEqual(full.map((g) => g.query), ["tag:t0", "tag:t1", "tag:t2", "tag:t3", "tag:t4", "tag:t5", "tag:t6"]);
 
   assert.deepEqual(tagGroups([]), []);
   // Fewer tags than the seed is the small vault, not an error.
   assert.equal(tagGroups(tags.slice(0, 2)).length, 2);
+});
+
+test("a new group takes the first palette colour nobody is using", () => {
+  assert.equal(nextGroupColor([]), GROUP_PALETTE[0]);
+  assert.equal(nextGroupColor([{ color: GROUP_PALETTE[0] }]), GROUP_PALETTE[1]);
+
+  // Removing one from the middle leaves a gap, and counting by length would
+  // hand out the last colour a second time instead of filling it.
+  const gapped = [GROUP_PALETTE[0], GROUP_PALETTE[2]].map((color) => ({ color }));
+  assert.equal(nextGroupColor(gapped), GROUP_PALETTE[1]);
+  const removedFromMiddle = GROUP_PALETTE.filter((_, i) => i !== 3).map((color) => ({ color }));
+  assert.equal(nextGroupColor(removedFromMiddle), GROUP_PALETTE[3]);
+
+  // A colour the operator picked that is not in the palette occupies nothing.
+  assert.equal(nextGroupColor([{ color: "#123456" }]), GROUP_PALETTE[0]);
+});
+
+test("a palette colour counts as used whichever way its hex is cased", () => {
+  const upper = [{ color: GROUP_PALETTE[0].toUpperCase() }];
+  assert.equal(nextGroupColor(upper), GROUP_PALETTE[1]);
+  assert.equal(nextGroupColor([{ color: GROUP_PALETTE[0] }]), GROUP_PALETTE[1]);
+});
+
+test("once every palette colour is in use a new group still gets one", () => {
+  const all = GROUP_PALETTE.map((color) => ({ color }));
+  assert.equal(nextGroupColor(all), GROUP_PALETTE[0]);
+
+  const twelve = Array.from({ length: 12 }, (_, i) => ({
+    color: GROUP_PALETTE[i % GROUP_PALETTE.length],
+  }));
+  const colour = nextGroupColor(twelve);
+  assert.ok((GROUP_PALETTE as readonly string[]).includes(colour));
+  assert.equal(colour, GROUP_PALETTE[12 % GROUP_PALETTE.length]);
 });
 
 test("a seeded group survives a round trip through storage", () => {

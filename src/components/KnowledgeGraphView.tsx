@@ -7,9 +7,7 @@ import { jsonRequest } from "@/lib/jsonRequest";
 import {
   GRAPH_DEFAULTS,
   GRAPH_RANGES,
-  GROUP_PALETTE,
   MAX_DRAWN_NODES,
-  MAX_GROUPS,
   MAX_TAG_CHOICES,
   capGraph,
   coerceGraphSettings,
@@ -19,6 +17,7 @@ import {
   graphTags,
   groupIndexFor,
   localGraph,
+  nextGroupColor,
   noteNodeId,
   parseGraphQuery,
   tagGroupId,
@@ -971,7 +970,6 @@ function GroupList({
   onChange: (next: GraphGroup[]) => void;
 }) {
   const nextId = useRef(0);
-  const full = groups.length >= MAX_GROUPS;
 
   /* A chip finds its group by the query it would write rather than by the id
      it minted, so a group typed out by hand lights the chip too — and a seeded
@@ -1000,7 +998,7 @@ function GroupList({
       {
         id: freshId(tagGroupId(tag.name)),
         query,
-        color: GROUP_PALETTE[groups.length % GROUP_PALETTE.length],
+        color: nextGroupColor(groups),
       },
     ]);
   }
@@ -1010,11 +1008,11 @@ function GroupList({
     onChange([
       ...groups,
       {
-        // Time-free and collision-free within a session: the list is at most
-        // seven long and an id only has to be unique among its siblings.
+        // Time-free and collision-free within a session: an id only has to be
+        // unique among its siblings.
         id: `group-${groups.length}-${nextId.current}`,
         query: "",
-        color: GROUP_PALETTE[groups.length % GROUP_PALETTE.length],
+        color: nextGroupColor(groups),
       },
     ]);
   }
@@ -1129,8 +1127,6 @@ function GroupList({
                   variant={group ? "secondary" : "ghost"}
                   size="compact"
                   aria-pressed={group !== undefined}
-                  // An unlit chip is an eighth group; a lit one still turns off.
-                  disabled={!group && full}
                   onClick={() => toggleTag(tag)}
                 >
                   <span
@@ -1159,10 +1155,9 @@ function GroupList({
       )}
 
       <ButtonRow className="mt-1.5">
-        <Button variant="secondary" size="compact" disabled={full} onClick={add}>
+        <Button variant="secondary" size="compact" onClick={add}>
           Add group
         </Button>
-        {full && <span className="text-xs text-ink-faint">{MAX_GROUPS} is the most</span>}
       </ButtonRow>
     </Disclosure>
   );

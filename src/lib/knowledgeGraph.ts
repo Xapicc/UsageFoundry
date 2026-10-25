@@ -275,11 +275,9 @@ export function tagGroupId(tag: string): string {
  * Colour groups for the vault's most-used tags, in palette order.
  *
  * What the panel opens on when nobody has set a colour group up yet — see the
- * seed in `KnowledgeGraphView`. `limit` defaults to `SEED_GROUPS` rather than to
- * `MAX_GROUPS`, which is the one place the two numbers have to be told apart:
- * the ceiling is what an operator may build up to, and this is what they are
- * handed unasked. It stays a parameter so a caller that means the ceiling can
- * say so, and so the difference is testable.
+ * seed in `KnowledgeGraphView`. `limit` defaults to `SEED_GROUPS`: what an
+ * operator is handed unasked is deliberately fewer than what they may build up
+ * to, and it stays a parameter so a caller that wants more can say so.
  */
 export function tagGroups(
   tags: readonly GraphTag[],
@@ -647,8 +645,7 @@ export function coerceGraphSettings(raw: unknown): KnowledgeGraphSettings {
         id: typeof g.id === "string" && g.id ? g.id : `group-${i}`,
         query: typeof g.query === "string" ? g.query : "",
         color: isHexColor(g.color) ? g.color : GROUP_PALETTE[i % GROUP_PALETTE.length],
-      }))
-      .slice(0, MAX_GROUPS);
+      }));
   }
 
   const display = (source.display ?? {}) as Record<string, unknown>;
@@ -713,30 +710,41 @@ export const GROUP_PALETTE = [
   "#b062c4",
 ] as const;
 
-/** More than this is a legend nobody reads, and seven distinct colours is
- * already past what most people can tell apart on a dim node. */
-export const MAX_GROUPS = 7;
+/**
+ * The colour a new group starts with: the first palette colour no group uses.
+ *
+ * Counting by `groups.length` would hand the next group a colour another group
+ * already has as soon as one in the middle is removed. Compared case-insensitively
+ * because a stored colour is whatever the picker or a hand-edited settings file
+ * wrote. Once every palette colour is taken it cycles by length, so a repeat
+ * is the best this can do and the group's own swatch is where to change it.
+ */
+export function nextGroupColor(groups: readonly Pick<GraphGroup, "color">[]): string {
+  const used = new Set(groups.map((g) => g.color.toLowerCase()));
+  return (
+    GROUP_PALETTE.find((colour) => !used.has(colour.toLowerCase())) ??
+    GROUP_PALETTE[groups.length % GROUP_PALETTE.length]
+  );
+}
 
 /**
  * Colour groups a first visit is given.
  *
- * Below `MAX_GROUPS` deliberately, and the gap between the two numbers is the
- * point: that one is a ceiling on how many an operator may *have*, argued from
- * legibility, and seeding straight to a ceiling argued from legibility is the
- * thing the argument is against. Three names the vault's three biggest tags,
- * which is where the signal is, and a fourth is one chip away.
+ * Three names the vault's three biggest tags, which is where the signal is, and
+ * a fourth is one chip away. A larger seed is the crowding the panel was folded
+ * to fix, and it is an unasked-for default rather than a limit on what an
+ * operator may add.
  */
 export const SEED_GROUPS = 3;
 
 /**
  * The most tag chips the panel offers.
  *
- * Bounded by count rather than put in a scroll box, and the bound is small
- * because only `MAX_GROUPS` of them can be on at once — a longer list is chips
- * nobody can spend. A vault carrying four hundred tags would otherwise grow the
- * panel without limit, and the panel is now what gives the canvas beside it its
- * height, so an unbounded list is an unbounded graph box as well. What is past
- * the cap is still reachable: `tag:` typed into a group is the same rule.
+ * Bounded by count rather than put in a scroll box. A vault carrying four
+ * hundred tags would otherwise grow the panel without limit, and the panel is
+ * now what gives the canvas beside it its height, so an unbounded list is an
+ * unbounded graph box as well. What is past the cap is still reachable: `tag:`
+ * typed into a group is the same rule.
  */
 export const MAX_TAG_CHOICES = 12;
 
