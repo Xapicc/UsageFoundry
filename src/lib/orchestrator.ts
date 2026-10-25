@@ -2679,6 +2679,24 @@ export function exitStopReason(
 }
 
 /**
+ * The log line for a resume that came back under a different session id.
+ *
+ * Named for the CLI that reported the id, `exitStopReason`'s rule: the
+ * `onSession` callback is shared by both providers and `handleCodexStreamLine`
+ * calls it with the Codex thread id, so a Codex cycle whose `thread.started`
+ * names another thread was logged as Claude Code's doing. A local run is still
+ * Claude Code.
+ */
+export function changedSessionNotice(
+  provider: RunProviderDTO | null,
+  resumeTarget: string,
+  reportedSessionId: string,
+): string {
+  const cli = RUN_PROVIDER_LABEL[provider === "codex" ? "codex" : "claude"];
+  return `This work cycle asked to resume session ${resumeTarget}, and ${cli} reported session ${reportedSessionId}. Later cycles will continue ${reportedSessionId}.`;
+}
+
+/**
  * Sleep, unless the run is interrupted first.
  *
  * The loop's `cancelled` checkpoints only run between cycles, so sleeping
@@ -12773,10 +12791,7 @@ export async function startRun(id: string): Promise<void> {
             // run that quietly changed conversation looks, from outside,
             // exactly like one that restarted.
             if (resumeTarget && sid !== resumeTarget && sessionId === resumeTarget) {
-              log(
-                id,
-                `This work cycle asked to resume session ${resumeTarget}, and Claude Code reported session ${sid}. Later cycles will continue ${sid}.`,
-              );
+              log(id, changedSessionNotice(run.provider, resumeTarget, sid));
             }
             adoptSession(sid);
             if (run.provider === "codex") noteCodexThread(id, sid);

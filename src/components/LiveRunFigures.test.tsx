@@ -20,7 +20,7 @@ const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " "
 test("a run with no telemetry says so and never shows it as $0", () => {
   const html = text(
     renderToStaticMarkup(
-      <LiveRunFigures run={{ provider: "claude", spent_usd: 1.25, spent_tokens: 0, cycleTelemetry: null, cycleCodex: null }} />,
+      <LiveRunFigures run={{ provider: "claude", spent_usd: 1.25, spent_tokens: 0, spent_tokens_est: 0, cycleTelemetry: null, cycleCodex: null }} />,
     ),
   );
   assert.match(html, /none reported this cycle/);
@@ -35,7 +35,7 @@ test("both figures are shown apart and never added", () => {
         run={{
           provider: "claude",
           spent_usd: 1.25,
-          spent_tokens: 0,
+          spent_tokens: 0, spent_tokens_est: 0,
           cycleTelemetry: { requests: 4, costUSD: 0.5, tokens: 120_000 },
           cycleCodex: null,
         }}
@@ -52,7 +52,7 @@ test("both figures are shown apart and never added", () => {
 test("a provider that reports no cost gets no spent figure at all", () => {
   const html = text(
     renderToStaticMarkup(
-      <LiveRunFigures run={{ provider: "local", spent_usd: 0, spent_tokens: 0, cycleTelemetry: null, cycleCodex: null }} />,
+      <LiveRunFigures run={{ provider: "local", spent_usd: 0, spent_tokens: 0, spent_tokens_est: 0, cycleTelemetry: null, cycleCodex: null }} />,
     ),
   );
   assert.match(html, /provider reports no cost/);
@@ -69,7 +69,7 @@ test("a Codex run shows its tokens, finished and in flight, and no money", () =>
         run={{
           provider: "codex",
           spent_usd: 0,
-          spent_tokens: 130_963,
+          spent_tokens: 130_963, spent_tokens_est: 0,
           cycleTelemetry: null,
           cycleCodex: { requests: 3, tokens: 45_285 },
         }}
@@ -86,10 +86,51 @@ test("a Codex cycle nothing has been read for is a dash, not zero tokens", () =>
   const html = text(
     renderToStaticMarkup(
       <LiveRunFigures
-        run={{ provider: "codex", spent_usd: 0, spent_tokens: 0, cycleTelemetry: null, cycleCodex: null }}
+        run={{ provider: "codex", spent_usd: 0, spent_tokens: 0, spent_tokens_est: 0, cycleTelemetry: null, cycleCodex: null }}
       />,
     ),
   );
   assert.match(html, /none read this cycle/);
   assert.doesNotMatch(html, /\$0\.00/);
+});
+
+// The token limit adds a killed cycle's rollout total to what Codex reported,
+// so a run ended on that limit would otherwise show a total under it.
+test("a Codex run shows what its token limit counts and names the part Codex never reported", () => {
+  const html = text(
+    renderToStaticMarkup(
+      <LiveRunFigures
+        run={{
+          provider: "codex",
+          spent_usd: 0,
+          spent_tokens: 34_000,
+          spent_tokens_est: 30_000,
+          cycleTelemetry: null,
+          cycleCodex: null,
+        }}
+      />,
+    ),
+  );
+  assert.match(html, /64\.0k/);
+  assert.match(html, /30\.0k of them counted from the session log/);
+  assert.doesNotMatch(html, /34\.0k/);
+});
+
+test("a Codex run with nothing banked says nothing about the session log", () => {
+  const html = text(
+    renderToStaticMarkup(
+      <LiveRunFigures
+        run={{
+          provider: "codex",
+          spent_usd: 0,
+          spent_tokens: 34_000,
+          spent_tokens_est: 0,
+          cycleTelemetry: null,
+          cycleCodex: null,
+        }}
+      />,
+    ),
+  );
+  assert.match(html, /34\.0k/);
+  assert.doesNotMatch(html, /session log/);
 });

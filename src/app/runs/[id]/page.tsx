@@ -27,6 +27,7 @@ import type {
 import { pruneStatement } from "@/lib/pruneStatement";
 import {
   STATUS_TONE,
+  fmtBankedTokens,
   fmtClock,
   fmtCycleInFlight,
   fmtCycles,
@@ -39,6 +40,7 @@ import {
   fmtUSD,
   grantedCycles,
   pollFailureMessage,
+  runTokenFigures,
   shortPath,
   STATUS_LABEL,
   endingLabel,
@@ -1459,6 +1461,7 @@ export default function RunDetail({
   // the guard meter. One local so a provider added to the list cannot leave one
   // of them formatting a zero as a measurement.
   const reportsSpend = providerReportsSpend(run.provider);
+  const tokenFigures = runTokenFigures(run);
   const bars = guardBars(run, nowTick);
   const cyclesGranted = grantedCycles(run);
   // The column itself rather than `grantedCycles`: `reopenRun` adds it to
@@ -2032,10 +2035,29 @@ export default function RunDetail({
                   ) : (
                     <Stat>&mdash;</Stat>
                   )}
+                  {/* What the token limit counts, with the part Codex never
+                      reported named, so a run ended on that limit does not read
+                      under it. The reported-only sentence stands whenever
+                      nothing was banked. */}
                   <div className={SUB}>
-                    {fmtTokens(run.spent_tokens)} tokens, as{" "}
-                    {RUN_PROVIDER_LABEL[run.provider ?? "claude"]} reported them
+                    {tokenFigures.banked > 0 ? (
+                      <>
+                        {fmtTokens(tokenFigures.counted)} tokens,{" "}
+                        {fmtBankedTokens(tokenFigures.banked)}
+                      </>
+                    ) : (
+                      <>
+                        {fmtTokens(run.spent_tokens)} tokens, as{" "}
+                        {RUN_PROVIDER_LABEL[run.provider ?? "claude"]} reported them
+                      </>
+                    )}
                   </div>
+                  {tokenFigures.banked > 0 && (
+                    <Hint tone="warn">
+                      Codex reported {fmtTokens(tokenFigures.reported)}; a cycle cut
+                      short reports none
+                    </Hint>
+                  )}
                   {!reportsSpend && (
                     <div className={SUB}>
                       {RUN_PROVIDER_LABEL[run.provider ?? "claude"]} reports no
@@ -2118,8 +2140,11 @@ export default function RunDetail({
                   <p className="max-w-[68ch] text-xs leading-snug text-ink-muted">
                     Not split for a Codex run: Codex reports tokens, not cost, and
                     names no sub-agents. It has used{" "}
-                    <span className="tabular-nums">{fmtTokens(run.spent_tokens)}</span>{" "}
-                    tokens over its finished work cycles.
+                    <span className="tabular-nums">{fmtTokens(tokenFigures.counted)}</span>{" "}
+                    tokens over its{" "}
+                    {tokenFigures.banked > 0
+                      ? `work cycles, ${fmtBankedTokens(tokenFigures.banked)}.`
+                      : "finished work cycles."}
                   </p>
                 ) : run.provider === "local" ? (
                   <p className="max-w-[68ch] text-xs leading-snug text-ink-muted">
