@@ -60,7 +60,8 @@ assert.equal(
 
 const { startDreamingWriter, runDreamingNight, tickDreaming } =
   require("./dreamingRun") as typeof import("./dreamingRun");
-const { settleDreamingLandings } = require("./dreamingLanding") as typeof import("./dreamingLanding");
+const { awaitingLandings, describeWaiting, settleDreamingLandings } =
+  require("./dreamingLanding") as typeof import("./dreamingLanding");
 const { pendingLandings } = require("./dreamingLedger") as typeof import("./dreamingLedger");
 const { isQueueActive, latestQueueRowFor } = require("./mergeQueue") as typeof import("./mergeQueue");
 const { getSettings, saveSettings } = require("./settings") as typeof import("./settings");
@@ -68,6 +69,8 @@ const { WORKTREE_STORE_DIR } = require("./worktreeStoreDir") as typeof import(".
 const { db } = require("./db") as typeof import("./db");
 
 import type { SignatureRollup } from "./dreaming";
+import type { PendingLanding } from "./dreamingLedger";
+import type { QueueRow } from "./mergeQueue";
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -363,5 +366,118 @@ describe("a night in a vault that cannot be isolated", () => {
     assert.equal(runInfo(result.runId!).isolation, "none");
     assert.deepEqual(pendingLandings(), []);
     assert.equal(claimed(result.runId!).length, 1);
+  });
+});
+
+/**
+ * What the Dreaming pane is told about a night that has not landed.
+ *
+ * The pane reads `dreaming_nights` and the run's ending, and a night on a branch
+ * ends with a completed run whatever becomes of its notes, so without this it
+ * reads finished while nothing is in the vault. The reason is read off the rows
+ * and not off the settle pass, so the two are asserted to say the same thing.
+ */
+describe("a night that is waiting to land, as the pane reads it", () => {
+  const pending = (attemptedAt: number | null): PendingLanding => ({
+    runId: "run-1",
+    night: NIGHT,
+    selected: [rollup("a"), rollup("b")],
+    createdAt: 1,
+    attemptedAt,
+  });
+  const runOf = (status: string, landedAt: number | null = null) =>
+    ({ status, landed_at: landedAt }) as Parameters<typeof describeWaiting>[1];
+  const rowOf = (status: QueueRow["status"], message: string | null = null) =>
+    ({ status, message }) as Parameters<typeof describeWaiting>[2];
+
+  it("says nothing for a night whose run is gone, which the next settle lets go", () => {
+    assert.equal(describeWaiting(pending(null), null, null), null);
+  });
+
+  it("calls a live run, a queued branch and a land nobody has recorded settling", () => {
+    assert.equal(describeWaiting(pending(null), runOf("running"), null)?.settling, true);
+    assert.equal(describeWaiting(pending(1), runOf("completed", 5), null)?.settling, true);
+    assert.equal(describeWaiting(pending(1), runOf("completed"), rowOf("landed"))?.settling, true);
+    assert.equal(describeWaiting(pending(1), runOf("completed"), rowOf("already-landed"))?.settling, true);
+    assert.equal(describeWaiting(pending(null), runOf("completed"), null)?.settling, true);
+  });
+
+  it("never carries an active queue status, which is stale once it has been read", () => {
+    for (const status of ["queued", "landing", "resolving"] as const) {
+      const wait = describeWaiting(pending(1), runOf("completed"), rowOf(status, "a progress note"));
+      assert.equal(wait?.settling, true, status);
+      assert.equal(wait?.queueEnding, null, status);
+    }
+  });
+
+  it("carries how a refused land ended and the queue's own message, and stays until somebody acts", () => {
+    for (const status of ["failed", "skipped", "cancelled"] as const) {
+      const wait = describeWaiting(pending(1), runOf("completed"), rowOf(status, "the checkout has changes"));
+      assert.equal(wait?.settling, false, status);
+      assert.deepEqual(wait?.queueEnding, { status, message: "the checkout has changes" }, status);
+    }
+    assert.equal(describeWaiting(pending(1), runOf("completed"), rowOf("failed"))?.queueEnding?.message, null);
+  });
+
+  it("reads a landed_at before the queue row, as the settle pass does", () => {
+    const wait = describeWaiting(pending(1), runOf("completed", 5), rowOf("failed", "refused earlier"));
+    assert.equal(wait?.settling, true);
+    assert.equal(wait?.queueEnding, null);
+  });
+
+  it("says a stopped night is left for the operator, and tells that apart from a try that queued nothing", () => {
+    const stopped = describeWaiting(pending(1), runOf("stopped"), null);
+    const other = describeWaiting(pending(1), runOf("completed"), null);
+    assert.match(stopped?.why ?? "", /stopped/);
+    assert.equal(other?.settling, false);
+    assert.notEqual(stopped?.why, other?.why);
+  });
+
+  it("reports the settle pass's reason for the same rows, and the queue's message for a refusal", async () => {
+    const result = startNight("vault", vault, ["a", "b"]);
+    const runId = result.runId!;
+    const settleWhy = async (revisit: boolean) => {
+      const report = (await settleDreamingLandings({ revisit }))[0].result;
+      assert.equal(report.kind, "waiting");
+      return report.kind === "waiting" ? report.why : "";
+    };
+
+    // The run is live.
+    let [wait] = awaitingLandings();
+    assert.deepEqual([wait.runId, wait.night, wait.selected, wait.settling], [runId, NIGHT, 2, true]);
+    assert.equal(wait.why, await settleWhy(false));
+
+    // Refused by the operator's uncommitted note, then left alone by the tick.
+    // A name no earlier case has landed: the vault's main keeps what they put there.
+    endRun(runId, { note: "Pane Readout.md" });
+    fs.writeFileSync(path.join(vault, "Operator note.md"), "mid-sentence\n");
+    assert.equal((await settleDreamingLandings({ revisit: false }))[0].result.kind, "queued");
+    const refused = await queueSettles(runId);
+    assert.notEqual(refused?.status, "landed");
+    assert.ok(refused?.message, "a refusal says why, which is what the pane shows");
+
+    [wait] = awaitingLandings();
+    assert.equal(wait.settling, false);
+    assert.deepEqual(wait.queueEnding, { status: refused!.status, message: refused!.message });
+    assert.equal(wait.why, await settleWhy(false));
+
+    // Landed once the checkout is clean, and then there is nothing to wait for.
+    fs.rmSync(path.join(vault, "Operator note.md"));
+    assert.equal((await settleDreamingLandings({ revisit: true }))[0].result.kind, "queued");
+    assert.equal((await queueSettles(runId))?.status, "landed");
+    assert.equal(awaitingLandings()[0]?.settling, true, "landed and unclaimed is not drawn as final either");
+    assert.equal((await settleDreamingLandings({ revisit: false }))[0].result.kind, "claimed");
+    assert.deepEqual(awaitingLandings(), []);
+  });
+
+  it("reports a stopped night in the settle pass's words", async () => {
+    const result = startNight("vault", vault, ["a"]);
+    endRun(result.runId!, { note: "Pane Stopped.md", status: "stopped" });
+    const settled = (await settleDreamingLandings({ revisit: true }))[0].result;
+
+    assert.equal(settled.kind, "waiting");
+    const [wait] = awaitingLandings();
+    assert.equal(wait.settling, false);
+    assert.equal(wait.why, settled.kind === "waiting" ? settled.why : "");
   });
 });
