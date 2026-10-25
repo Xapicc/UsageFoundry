@@ -34,6 +34,7 @@ const base = {
   maxRunCostUSD: null,
   maxRunCostFactor: null,
   spentGuardUSD: 0,
+  headroomUSD: null,
 };
 
 const known = { provider: null, sandbox: "on" as const, uid: 1000, env: {} };

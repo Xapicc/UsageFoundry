@@ -85,9 +85,11 @@ import {
   evaluateInstanceBudget,
   instanceBudgetIsOff,
   normalizeInstanceBudget,
+  spendHeadroom,
   type BudgetVerdict,
   type InstanceBudgetPolicy,
   type InstanceProgress,
+  type SpendHeadroom,
   normalizePolicy,
   providerTerminusRefusal,
 } from "./budget";
@@ -5276,6 +5278,36 @@ export function enforceInstanceBudget(
   const instance = guardedInstanceOf(runId);
   if (!instance) return null;
   return guardInstance(instance.instanceId, instance.status, instance.budget, snapshot);
+}
+
+/**
+ * What the workflow this run is a member of has left of its dollar limit, or
+ * `null` when the run is in none or the workflow has no `maxInstanceCostUSD`.
+ *
+ * Read by `startRun` straight after `enforceInstanceBudget` passed, from the
+ * same `instanceSpend`, so a limit already reached has halted the instance
+ * before this is asked and what comes back is positive. It is what a member with
+ * no `maxRunCostUSD` is handed as `--max-budget-usd` (`cycleBudgetUSD`), so that
+ * its cycle's own telemetry cannot add more than that to the figure the
+ * instance judges every other member by. A workflow limited by window fractions
+ * alone answers `null`: a fraction is not a number of dollars a child can be
+ * handed, and the fractions are enforced between cycles as before.
+ *
+ * Deliberately not gated on the instance's status. `guardInstance` ignores a
+ * `stopping` or `failed` instance because there is nothing left to halt, but a
+ * member still reaching a spawn through one is better bounded by the number
+ * than left with none.
+ */
+export function instanceHeadroom(runId: string): SpendHeadroom | null {
+  const instance = guardedInstanceOf(runId);
+  if (!instance) return null;
+  const limitUSD = instance.budget.maxInstanceCostUSD;
+  if (limitUSD === null) return null;
+  return spendHeadroom(
+    "workflow",
+    limitUSD,
+    instanceSpend(instance.instanceId).spentGuardUSD,
+  );
 }
 
 /**

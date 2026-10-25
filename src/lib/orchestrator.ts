@@ -64,8 +64,9 @@ import {
   guardEnding,
   normalizePolicy,
   planReadingAgeMs,
+  tighterHeadroom,
 } from "./budget";
-import { installBudgetRefusal, installBudgetVerdict } from "./installBudget";
+import { installBudgetReading, installBudgetRefusal } from "./installBudget";
 import {
   lastScanReadFailures,
   readCompactions,
@@ -12076,7 +12077,8 @@ export async function startRun(id: string): Promise<void> {
       // limit: a run refused by it would be refused whatever workflow it
       // belongs to, and halting a whole instance over a limit that is not about
       // that instance would take down blocks that are not the problem.
-      const installVerdict = installBudgetVerdict();
+      const installReading = installBudgetReading();
+      const installVerdict = installReading.verdict;
       if (installVerdict) {
         emit({
           runId: id,
@@ -12111,7 +12113,7 @@ export async function startRun(id: string): Promise<void> {
       // imports this module for `createRun` and `stopRun`, and a static import
       // back would make the pair a cycle. This call is already inside an async
       // function, past the point where both modules are fully evaluated.
-      const { enforceInstanceBudget } = await import("./workflows");
+      const { enforceInstanceBudget, instanceHeadroom } = await import("./workflows");
       const instanceGuard = enforceInstanceBudget(id, snapshot);
       if (instanceGuard?.kind === "halted") {
         // One row, on the run whose check found it. The instance carries the
@@ -12140,6 +12142,27 @@ export async function startRun(id: string): Promise<void> {
           `This run's workflow has a limit that cannot be enforced right now: ${instanceGuard.verdict.reason}`,
         );
       }
+
+      // What bounds this cycle when the run has no limit of its own: the tighter
+      // of what the install's and the workflow's dollar limits have left, read
+      // here off the figures the two checks above just passed, so a limit
+      // already reached has ended the run before this and what is read is
+      // positive. A run with a limit is bounded by it (`cycleBudgetUSD`), and
+      // neither a Codex cycle nor a local one is handed a `--max-budget-usd` at
+      // all. The reason it exists is the telemetry reading other runs are judged
+      // by: a cycle with no budget was taken in full, and its ingest token is in
+      // its own environment (`docs/agent/metering/run-spend-readings.md`).
+      //
+      // Read once for the pass, here and not at the spawn, so the argv and the
+      // row stamped below are one figure. It is stale by the awaits between,
+      // and what other runs spend meanwhile is the overshoot a guard read once
+      // at the door has always left.
+      const cycleHeadroom =
+        policy.maxRunCostUSD === null &&
+        run.provider !== "codex" &&
+        run.provider !== "local"
+          ? tighterHeadroom(installReading.headroom, instanceHeadroom(id))
+          : null;
 
       // A session whose transcript is gone is restarted rather than resumed.
       // The pinned CLI deletes its own transcripts 30 days after they were last
@@ -12487,10 +12510,11 @@ export async function startRun(id: string): Promise<void> {
       // `active_started_at` travels with it because a workflow instance's guard
       // reads this run's in-flight spend and has nowhere else to learn where the
       // cycle began — see the column's note on `RunRow`. `active_budget_usd`
-      // with it, off the same two inputs `buildArgs` is handed below, so the
+      // with it, off the same three inputs `buildArgs` is handed below, so the
       // cap on that reading is the argv's own figure. Null on the cycles whose
-      // argv carries none: a local one (see `maxRunCostUSD` below) and a Codex
-      // one, whose CLI takes no such flag.
+      // argv carries none: a local one (see `maxRunCostUSD` below), a Codex
+      // one, whose CLI takes no such flag, and a Claude run with no limit of its
+      // own when neither the install nor its workflow has a dollar limit.
       db()
         .prepare(
           "UPDATE runs SET active_iteration = ?, active_started_at = ?," +
@@ -12501,7 +12525,11 @@ export async function startRun(id: string): Promise<void> {
           cycleStartedAt,
           local || run.provider === "codex"
             ? null
-            : cycleBudgetUSD(policy.maxRunCostUSD, spentGuardBeforeCycle),
+            : cycleBudgetUSD(
+                policy.maxRunCostUSD,
+                spentGuardBeforeCycle,
+                cycleHeadroom?.leftUSD ?? null,
+              ),
           id,
         );
 
@@ -12643,6 +12671,9 @@ export async function startRun(id: string): Promise<void> {
         // on a figure nobody was charged.
         maxRunCostUSD: local ? null : policy.maxRunCostUSD,
         spentGuardUSD: spentGuardBeforeCycle,
+        // Null for a local cycle for the reason above, which `cycleHeadroom`
+        // already is.
+        headroomUSD: cycleHeadroom?.leftUSD ?? null,
         // The run's own frozen copy, so every cycle — including one a restart
         // picks up hours later — opens as exactly the agent the operator started
         // it with, whatever has happened to the registry since. A copy rather
@@ -13228,13 +13259,21 @@ export async function startRun(id: string): Promise<void> {
       // because it happened.
       if (res.subtype === "error_max_budget_usd") {
         stopReason =
-          policy.maxRunCostUSD === null
-            ? "Claude Code stopped this work cycle at a spending limit of its own."
-            : `This work cycle was given what was left of this run's $${policy.maxRunCostUSD.toFixed(
+          policy.maxRunCostUSD !== null
+            ? `This work cycle was given what was left of this run's $${policy.maxRunCostUSD.toFixed(
                 2,
               )} spending limit after the $${spentGuardBeforeCycle.toFixed(
                 2,
-              )} already spent, and Claude Code stopped it there.`;
+              )} already spent, and Claude Code stopped it there.`
+            : cycleHeadroom
+              ? `This work cycle was given the $${cycleHeadroom.leftUSD.toFixed(
+                  2,
+                )} left of ${
+                  cycleHeadroom.scope === "install"
+                    ? "the install's rolling spending limit"
+                    : "this workflow's spending limit"
+                } of $${cycleHeadroom.limitUSD.toFixed(2)}, and Claude Code stopped it there.`
+              : "Claude Code stopped this work cycle at a spending limit of its own.";
         // Into the log as well as onto the row. Every other way a run ends puts
         // a sentence in the stream — a refusal emits `error`, a tripped guard
         // emits `budget` — and a run that simply changed status with the reason
@@ -13245,9 +13284,18 @@ export async function startRun(id: string): Promise<void> {
         log(id, stopReason);
         finalStatus = "stopped";
         // The run's own spending limit when it has one — the CLI only enforced
-        // what this app handed it — and the CLI's own limit otherwise.
+        // what this app handed it — and otherwise the install's or the
+        // workflow's, when that is what it was handed: the cycle ended where the
+        // pre-cycle guard would have ended the run, so it records that ending.
+        // `cli_budget` is left for a limit nobody here set.
         endingCode =
-          policy.maxRunCostUSD === null ? "cli_budget" : "guard:run_cost";
+          policy.maxRunCostUSD !== null
+            ? "guard:run_cost"
+            : cycleHeadroom
+              ? cycleHeadroom.scope === "install"
+                ? "guard:install_cost"
+                : "workflow_guard"
+              : "cli_budget";
         break;
       }
 

@@ -1153,18 +1153,32 @@ export function promptArgs(prompt: string): string[] {
 
 /**
  * The `--max-budget-usd` a cycle is spawned with: what is left of the run's own
- * limit after the guard figure, or null when the run has none. `buildArgs`'s
- * `maxRunCostUSD` says why each half is what it is.
+ * limit after the guard figure, or, for a run with none, what the install's
+ * and its workflow's dollar limits have left (`headroomUSD`), or null when
+ * nothing applies. `buildArgs`'s `maxRunCostUSD` and `headroomUSD` say why each
+ * half is what it is.
  *
  * Its own function because two readers must agree on it to the cent: the argv,
  * and the row `startRun` stamps it on as `active_budget_usd`, which is what
  * bounds the cycle's own telemetry in the figures other runs are judged by.
+ *
+ * A run's own limit wins outright and `headroomUSD` is not consulted: that
+ * limit already bounds the cycle, and handing a run with one a second, tighter
+ * ceiling would change the argv and the sentence a stop at it is explained by
+ * for a gap this closes only where there is no limit at all.
  */
 export function cycleBudgetUSD(
   maxRunCostUSD: number | null,
   spentGuardUSD: number,
+  headroomUSD: number | null,
 ): number | null {
-  return maxRunCostUSD === null ? null : Math.max(0, maxRunCostUSD - spentGuardUSD);
+  if (maxRunCostUSD !== null) return Math.max(0, maxRunCostUSD - spentGuardUSD);
+  // `Math.max(0, …)` for the run limit's reason: a negative would reach the CLI
+  // as no limit. A headroom of 0 is *exhausted*, and an exhausted limit has
+  // ended the run at the pre-cycle guard before anything is spawned, so what
+  // this protects is the day that stops being true: the child is handed a
+  // budget no child can satisfy rather than none.
+  return headroomUSD === null ? null : Math.max(0, headroomUSD);
 }
 
 export function buildArgs(opts: {
@@ -1203,6 +1217,25 @@ export function buildArgs(opts: {
    */
   maxRunCostUSD: number | null;
   spentGuardUSD: number;
+  /**
+   * What the install's rolling limit and the run's workflow's dollar limit have
+   * left, whichever is tighter, for a run with **no** `maxRunCostUSD`; null when
+   * the run has one, when neither limit is configured, and always for a local
+   * cycle (which carries no `--max-budget-usd` at all).
+   *
+   * A cycle handed no budget used to be uncapped, and that was deliberate: any
+   * ceiling this app made up would be a guess, and one too low blinds the
+   * install and workflow limits to money really being spent. This one is not a
+   * guess. It is the figure those limits would end the run at between cycles,
+   * so a cycle bounded by it loses nothing they would have allowed. It is also
+   * what lets `inFlightCostForOthers` cap the cycle's telemetry in the figures
+   * other runs are judged by, which for an uncapped cycle took one forged
+   * `cost_usd: 1e9` whole. Required, with the two above, so a caller cannot
+   * drop it by omission: the stamped `active_budget_usd` and this argv must be
+   * one figure, and a loop that stamped it and forgot to pass it here would cap
+   * the reading at a ceiling the CLI was never given.
+   */
+  headroomUSD: number | null;
   /**
    * The agent this run **is**, or null for an ordinary run.
    *
@@ -1566,7 +1599,11 @@ export function buildArgs(opts: {
   // cycle that crosses the threshold rather than the one after it. Per
   // invocation, so a resumed session is bounded by what is left *now* rather
   // than by what the conversation has cost since it opened.
-  const cycleBudget = cycleBudgetUSD(opts.maxRunCostUSD, opts.spentGuardUSD);
+  const cycleBudget = cycleBudgetUSD(
+    opts.maxRunCostUSD,
+    opts.spentGuardUSD,
+    opts.headroomUSD,
+  );
   if (cycleBudget !== null) {
     args.push("--max-budget-usd", String(cycleBudget));
   }

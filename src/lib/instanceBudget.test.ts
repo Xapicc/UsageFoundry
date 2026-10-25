@@ -261,6 +261,45 @@ describe("the workflow-wide budget, once a member has spent", () => {
   });
 });
 
+describe("what the workflow has left for a member's next cycle", () => {
+  // Handed to a member with no `maxRunCostUSD` as `--max-budget-usd`, so that
+  // what its own telemetry adds to the instance's figure is bounded by the
+  // limit the instance is judged against. Each case is a way for a member to
+  // go out with a ceiling that is wrong, or none, and nothing reports it.
+
+  it("is the limit less what the instance has spent, estimates and the member's own included", () => {
+    const { runIds } = instance("Headroom", { maxInstanceCostUSD: 20 }, [
+      { status: "completed", spent: 6, est: 2 },
+      { status: "queued", spent: 3 },
+    ]);
+    assert.deepEqual(workflows.instanceHeadroom(runIds[1]), {
+      scope: "workflow",
+      limitUSD: 20,
+      spentGuardUSD: 11,
+      leftUSD: 9,
+    });
+  });
+
+  it("is null for a run in no workflow, one with no dollar limit, and one limited by a window fraction alone", () => {
+    // Not zero: `null` is "nothing to hand the child", and these are the cases
+    // where the workflow's limit cannot be expressed as dollars at all.
+    assert.equal(workflows.instanceHeadroom("no-such-run"), null);
+    const unlimited = instance("No budget here", {}, [{ status: "queued", spent: 1 }]);
+    assert.equal(workflows.instanceHeadroom(unlimited.runIds[0]), null);
+    const fraction = instance("Fraction only", { maxSessionFraction: 0.5 }, [
+      { status: "queued", spent: 1 },
+    ]);
+    assert.equal(workflows.instanceHeadroom(fraction.runIds[0]), null);
+  });
+
+  it("is 0 rather than null once the limit is reached", () => {
+    const { runIds } = instance("Spent", { maxInstanceCostUSD: 5 }, [
+      { status: "queued", spent: 7 },
+    ]);
+    assert.equal(workflows.instanceHeadroom(runIds[0])?.leftUSD, 0);
+  });
+});
+
 /**
  * An instance whose one block is an orchestrator, its row in the state given.
  *

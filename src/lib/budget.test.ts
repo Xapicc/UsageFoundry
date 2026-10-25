@@ -18,6 +18,8 @@ import {
   planReadingAgeMs,
   providerTerminusRefusal,
   readWindowGuard,
+  spendHeadroom,
+  tighterHeadroom,
   windowGuardRefusal,
 } from "./budget";
 import { pctField, pctSubmit } from "./format";
@@ -1494,5 +1496,43 @@ describe("evaluateInstallBudget — the cap on everything this install spends", 
     // Unlike `no_ceiling`, this is a fact about money that has been spent, so
     // the pre-cycle guard acts on it rather than logging past it.
     assert.equal(RUN_ENFORCEABLE_CODES.includes("install_cost"), true);
+  });
+});
+
+describe("spendHeadroom and tighterHeadroom: what a cycle with no limit of its own is handed", () => {
+  // The figure becomes `--max-budget-usd` for a run with no `maxRunCostUSD`, so
+  // each case is a way to hand a child a ceiling that is wrong in a direction
+  // nothing reports: too high leaves the forged reading it exists to cap, and
+  // `null` for a limit that is merely used up hands a child no budget at all.
+
+  it("is what the limit has left over the figure the guard compares, and null only for no limit", () => {
+    assert.deepEqual(spendHeadroom("install", 100, 37.5), {
+      scope: "install",
+      limitUSD: 100,
+      spentGuardUSD: 37.5,
+      leftUSD: 62.5,
+    });
+    // A workflow limited by window fractions alone has no dollar limit to be
+    // handed, and is out of scope rather than exhausted.
+    assert.equal(spendHeadroom("workflow", null, 12), null);
+  });
+
+  it("answers 0 for a limit that is used up or passed, never null and never negative", () => {
+    // `null` means no limit applies, which would send the child out unbounded
+    // from the one state in which it must not go at all.
+    assert.equal(spendHeadroom("install", 100, 100)?.leftUSD, 0);
+    assert.equal(spendHeadroom("workflow", 100, 140)?.leftUSD, 0);
+  });
+
+  it("takes the tighter limit, the install on a tie, and the other when one is absent", () => {
+    const install = spendHeadroom("install", 100, 70);
+    const tighterWorkflow = spendHeadroom("workflow", 20, 5);
+    const looserWorkflow = spendHeadroom("workflow", 50, 5);
+    assert.equal(tighterHeadroom(install, tighterWorkflow)?.scope, "workflow");
+    assert.equal(tighterHeadroom(install, looserWorkflow)?.scope, "install");
+    assert.equal(tighterHeadroom(install, spendHeadroom("workflow", 40, 10))?.scope, "install", "30 and 30");
+    assert.equal(tighterHeadroom(install, null), install);
+    assert.equal(tighterHeadroom(null, tighterWorkflow), tighterWorkflow);
+    assert.equal(tighterHeadroom(null, null), null);
   });
 });

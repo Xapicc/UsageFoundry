@@ -76,6 +76,15 @@
   above), but no billed cycle has hit it, so how far a real cycle overshoots is
   reasoned, not measured.
 
+- **A work cycle with no run limit stopping at the install's headroom (added
+  2026-10-25).** `resumedCycleSpend.test.ts` hands a stub child the headroom
+  and has it answer `error_max_budget_usd`; no billed cycle has hit it, so that
+  the pinned CLI stops a `-p` cycle there and the run ends `guard:install_cost`
+  is reasoned, not measured, on the premise of the entry above. Settle: set the
+  install's daily limit a dollar above what it holds, clear a run's cost limit
+  and start one that will spend more; it should end `stopped` on
+  `guard:install_cost` with the `$1.00 left` sentence.
+
 - **A conflict resolution stopping at `resolutionBudgetUSD` (added
   2026-09-27).** `resolutionBudget.test.ts` asserts the argv against a stub
   CLI; no billed resolution has hit it, so that the pinned CLI ends a `-p`
