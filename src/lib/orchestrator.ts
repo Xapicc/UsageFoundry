@@ -20,7 +20,7 @@ import {
   spawnCommand,
   type WorkspaceMount,
 } from "./config";
-import { git, gitFailureReason, gitSync, headBranchOf } from "./git";
+import { addWorktree, git, gitFailureReason, gitSync, headBranchOf } from "./git";
 import { runningVerifyChildren } from "./landGate";
 import { withRepoAdmin } from "./repoLock";
 import { checkoutWriter, type CheckoutOwner } from "./checkoutClaim";
@@ -3768,8 +3768,8 @@ async function ensureWorktree(run: RunRow): Promise<string> {
     // ref is what is being checked out. The half of the guard that is a real
     // fact is kept: a branch that has been deleted is refused by name.
     await requireBranch(repoRoot, run, branch);
-    const add = await checkoutGit(repoRoot, ["worktree", "add", slotPath, branch]);
-    if (!add.ok) throw checkoutFailure(repoRoot, slotPath, add.why);
+    const add = await addWorktree(repoRoot, slotPath, branch, { timeoutMs: CHECKOUT_GIT_TIMEOUT_MS });
+    if (!add.ok) throw checkoutFailure(repoRoot, slotPath, gitFailureReason(add, add.cwd, add.args));
   } else if (run.iterations > 0 || (run.pause_count ?? 0) > 0) {
     // A resuming run whose checkout has been removed from under it. Creating a
     // fresh one would silently orphan every commit it already made, so name the
@@ -3793,8 +3793,11 @@ async function ensureWorktree(run: RunRow): Promise<string> {
     );
   } else {
     // A full checkout, and a big repository legitimately takes minutes.
-    const add = await checkoutGit(repoRoot, ["worktree", "add", "-b", branch, slotPath, base]);
-    if (!add.ok) throw checkoutFailure(repoRoot, slotPath, add.why);
+    const add = await addWorktree(repoRoot, slotPath, base, {
+      newBranch: branch,
+      timeoutMs: CHECKOUT_GIT_TIMEOUT_MS,
+    });
+    if (!add.ok) throw checkoutFailure(repoRoot, slotPath, gitFailureReason(add, add.cwd, add.args));
   }
 
   const settings = getSettings();

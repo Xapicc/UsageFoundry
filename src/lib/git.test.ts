@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
 
-import { git, gitArgs, gitEnv, gitSync } from "./git";
+import { addWorktree, git, gitArgs, gitEnv, gitSync } from "./git";
 import { agentEnvironment } from "./stacks";
 
 /**
@@ -353,11 +353,11 @@ describe("the server's own git refuses a command a work cycle planted in .git", 
     );
   });
 
-  it("filter.<x>.smudge: `git worktree add` runs nothing on checkout", async () => {
+  it("filter.<x>.smudge: `addWorktree` runs nothing on checkout", async () => {
     const { repo, marker, prog } = repoWithPlant("smudge");
     plain(repo, ["config", "filter.x.smudge", prog]);
     attribute(repo);
-    const res = await git(repo, ["worktree", "add", "-b", "uf/x", path.join(root, "smudge-wt"), "main"]);
+    const res = await addWorktree(repo, path.join(root, "smudge-wt"), "main", { newBranch: "uf/x" });
 
     assert.equal(res.ok, true, `worktree add failed: ${res.stderr}`);
     assert.equal(

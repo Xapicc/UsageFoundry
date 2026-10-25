@@ -55,7 +55,7 @@ fs.writeFileSync(
 );
 process.env.GIT_BIN = gitStub;
 
-const { git, gitSync } = require("./git") as typeof import("./git");
+const { addWorktree, git, gitSync } = require("./git") as typeof import("./git");
 
 const setMode = (mode: string) => fs.writeFileSync(modeFile, mode);
 
@@ -311,5 +311,135 @@ describe("a planted merge driver runs in neither merge-tree nor merge", () => {
     const { repo, marker } = plantedMergeRepo();
     plain(repo, ["merge-tree", "--write-tree", "-z", "main", "side"]);
     assert.equal(fs.existsSync(marker), true, "the planted merge driver did not fire, so the cases above measure nothing");
+  });
+});
+
+/**
+ * A repository whose filter `evil` is defined only in `.git/evil.inc`, pulled
+ * in by `[includeIf "<condition>"]`, so whether git sees it depends on which
+ * worktree is asking. Its smudge and clean both leave `marker` if they run.
+ */
+function includedFilterRepo(condition: (repo: string) => string): { repo: string; marker: string } {
+  const name = `repo${count++}`;
+  const repo = path.join(root, name);
+  fs.mkdirSync(repo);
+  plain(repo, ["init", "-q", "-b", "main"]);
+  plain(repo, ["config", "user.email", "a@b.c"]);
+  plain(repo, ["config", "user.name", "a"]);
+  fs.writeFileSync(path.join(repo, "f.txt"), "one\n");
+  plain(repo, ["add", "-A"]);
+  plain(repo, ["commit", "-q", "-m", "init"]);
+  const marker = path.join(root, `${name}.ran`);
+  const prog = path.join(root, `${name}.sh`);
+  fs.writeFileSync(prog, `#!/bin/sh\necho "ran $*" >> ${marker}\ncat\n`, { mode: 0o755 });
+  fs.writeFileSync(
+    path.join(repo, ".git", "evil.inc"),
+    `[filter "evil"]\n\tsmudge = ${prog} %f\n\tclean = ${prog} %f\n`,
+  );
+  plain(repo, ["config", `includeIf.${condition(repo)}.path`, "evil.inc"]);
+  fs.mkdirSync(path.join(repo, ".git", "info"), { recursive: true });
+  fs.writeFileSync(path.join(repo, ".git", "info", "attributes"), "* filter=evil\n");
+  return { repo, marker };
+}
+
+const CONDITIONS: [string, (repo: string) => string][] = [
+  ["onbranch:", () => "onbranch:uf/**"],
+  ["gitdir:", (repo) => `gitdir:${repo}/.git/worktrees/`],
+];
+
+/**
+ * The probe reads configuration as git in the caller's checkout sees it, but
+ * `worktree add` checks out in a child inside the new tree, and `worktree
+ * remove` runs a `status` inside the tree it removes. Each re-reads
+ * configuration with that tree's HEAD and git directory, so a filter behind
+ * either include form was invisible to the probe and ran (board task
+ * d8cae532): its smudge on every isolated run's `worktree add`, its clean on
+ * retention's `worktree remove`.
+ */
+describe("a driver behind a conditional include is probed where the child reads it", () => {
+  before(() => setMode("pass"));
+
+  for (const [label, condition] of CONDITIONS) {
+    it(`git(): worktree add runs no smudge (${label} include)`, async () => {
+      const { repo, marker } = includedFilterRepo(condition);
+      const slot = `${repo}-slot`;
+      const res = await git(repo, ["worktree", "add", "-b", "uf/slot-1", slot, "main"]);
+
+      ranNothing(marker);
+      // The add is refused before it runs rather than run with a guess, so the
+      // only way in is `addWorktree`, below.
+      assert.equal(res.ok, false);
+      assert.match(res.stderr, /addWorktree/);
+    });
+
+    it(`addWorktree(): the checkout is made and runs nothing (${label} include)`, async () => {
+      const { repo, marker } = includedFilterRepo(condition);
+      const slot = `${repo}-slot`;
+      const res = await addWorktree(repo, slot, "main", { newBranch: "uf/slot-1" });
+
+      ranNothing(marker);
+      assert.equal(res.ok, true, res.stderr);
+      assert.equal(fs.readFileSync(path.join(slot, "f.txt"), "utf8"), "one\n");
+      assert.equal(plain(slot, ["status", "--porcelain"]), "", "the checkout is not whole");
+      assert.equal(plain(slot, ["rev-parse", "--abbrev-ref", "HEAD"]).trim(), "uf/slot-1");
+      assert.doesNotMatch(plain(repo, ["worktree", "list", "--porcelain"]), /^locked/m);
+    });
+
+    it(`git(): worktree remove runs no clean filter (${label} include)`, async () => {
+      const { repo, marker } = includedFilterRepo(condition);
+      const slot = `${repo}-slot`;
+      // Made with nothing able to run, then made stat-dirty, which is what has
+      // the remove's `status` re-hash the file through its clean filter.
+      plain(repo, ["worktree", "add", "-q", "--no-checkout", "-b", "uf/slot-1", slot, "main"]);
+      plain(slot, ["-c", "filter.evil.smudge=", "-c", "filter.evil.clean=", "reset", "-q", "--hard"]);
+      const past = new Date("2001-01-01T00:00:00Z");
+      fs.utimesSync(path.join(slot, "f.txt"), past, past);
+      fs.rmSync(marker, { force: true });
+      const res = await git(repo, ["worktree", "remove", slot]);
+
+      ranNothing(marker);
+      assert.equal(res.ok, true, res.stderr);
+      assert.equal(fs.existsSync(slot), false);
+    });
+  }
+
+  it("gitSync(): a worktree add that would check out is refused too", () => {
+    const { repo, marker } = includedFilterRepo(CONDITIONS[0][1]);
+    const res = gitSync(repo, ["worktree", "add", "-b", "uf/slot-1", `${repo}-slot`, "main"]);
+
+    ranNothing(marker);
+    assert.equal(res.ok, false);
+  });
+
+  it("addWorktree(): a checkout that fails takes its tree with it and keeps the branch", async () => {
+    // A required filter fails the checkout once its smudge is blanked, which is
+    // the failure that reaches the third step.
+    const { repo, marker } = plantedRepo("req");
+    plain(repo, ["config", "filter.req.smudge", marker.replace(/\.ran$/, ".sh")]);
+    plain(repo, ["config", "filter.req.required", "true"]);
+    const slot = `${repo}-slot`;
+    const res = await addWorktree(repo, slot, "main", { newBranch: "uf/slot-1" });
+
+    ranNothing(marker);
+    assert.equal(res.ok, false);
+    assert.match(res.stderr, /smudge filter req failed/);
+    assert.deepEqual(res.args.slice(0, 2), ["reset", "--hard"]);
+    assert.equal(fs.existsSync(slot), false, "the half-made checkout was left behind");
+    assert.doesNotMatch(plain(repo, ["worktree", "list", "--porcelain"]), new RegExp(slot));
+    plain(repo, ["rev-parse", "--verify", "-q", "refs/heads/uf/slot-1"]);
+  });
+
+  it("control: the same plants run under plain git's worktree add and remove", () => {
+    for (const [, condition] of CONDITIONS) {
+      const { repo, marker } = includedFilterRepo(condition);
+      const slot = `${repo}-slot`;
+      plain(repo, ["worktree", "add", "-q", "-b", "uf/slot-1", slot, "main"]);
+      assert.equal(fs.existsSync(marker), true, `${condition(repo)}: the smudge did not fire on add`);
+      fs.rmSync(marker);
+      const past = new Date("2001-01-01T00:00:00Z");
+      fs.utimesSync(path.join(slot, "f.txt"), past, past);
+      plain(repo, ["worktree", "remove", slot]);
+      assert.equal(fs.existsSync(marker), true, `${condition(repo)}: the clean filter did not fire on remove`);
+    }
   });
 });

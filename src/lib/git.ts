@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import { GIT_BIN, WORKSPACE_MOUNTS } from "./config";
 import { fmtDuration } from "./format";
@@ -376,6 +377,51 @@ const CONTENT_SUBCOMMANDS = new Set([
 ]);
 
 /**
+ * The directories a content subcommand's probe runs in, or why the call is
+ * refused before any probe runs.
+ *
+ * The probe reads configuration as git in `cwd` sees it, and two `worktree`
+ * subcommands hand their content work to a child git inside another worktree:
+ * `worktree add` checks the new tree out with a `reset --hard` run in it, and
+ * `worktree remove` without `--force` runs a `status` in the tree it removes.
+ * That child reads configuration with its own HEAD, git directory and
+ * `config.worktree`, so a driver behind `[includeIf "onbranch:uf/**"]` or
+ * `[includeIf "gitdir:<repo>/.git/worktrees/"]` was invisible to a probe in the
+ * operator's checkout and live in the child, and its smudge ran on every
+ * isolated run's `worktree add` (board task d8cae532; the remove's `status` ran
+ * a clean filter the same way, measured on 2.39.5). This app never evaluates a
+ * condition itself; it probes where the child will read.
+ *
+ * A remove is probed in the tree it removes as well as in `cwd`. An add has no
+ * tree to probe until it has made one, so it is refused unless it is
+ * `--no-checkout`, and `addWorktree` makes the checkout a call of its own
+ * inside the new tree. An in-process `checkout` or `switch` needs neither:
+ * git reads configuration once, before HEAD moves, which is the view the probe
+ * had (measured, 2.39.5, onto a branch an `onbranch:` include matches).
+ */
+function probeSites(
+  cwd: string,
+  args: string[],
+): { ok: true; dirs: string[] } | { ok: false; reason: string } {
+  if (args[0] !== "worktree") return { ok: true, dirs: [cwd] };
+  if (args[1] === "add" && (!args.includes("--no-checkout") || args.includes("--checkout"))) {
+    return {
+      ok: false,
+      reason:
+        `git worktree add was not run in ${cwd}: its checkout would run in a tree ` +
+        "the filter probe cannot read first. Add it with addWorktree.",
+    };
+  }
+  if (args[1] === "remove" && !args.includes("--force") && !args.includes("-f")) {
+    const operands = args.slice(2).filter((a) => !a.startsWith("-"));
+    const tree = operands.length > 0 ? path.resolve(cwd, operands[operands.length - 1]) : null;
+    // A tree that is not there has nowhere for `status` to run.
+    if (tree !== null && fs.existsSync(tree)) return { ok: true, dirs: [cwd, tree] };
+  }
+  return { ok: true, dirs: [cwd] };
+}
+
+/**
  * The longest one synchronous git call may hold the event loop.
  *
  * Named rather than inlined because it is read from outside this module:
@@ -399,23 +445,29 @@ export const GIT_SYNC_TIMEOUT_MS = 20_000;
 export function gitSync(cwd: string, args: string[]): GitResult {
   let extra: string[] = [];
   if (CONTENT_SUBCOMMANDS.has(args[0])) {
-    const probe = spawnGitSync(cwd, FILTER_PROBE, []);
-    // `spawnSync` reports its own clock as an error with this code, and a child
-    // that could not start as one with its message, which is all there is to say.
-    const timedOut = (probe.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
-    const verdict = readFilterProbe(
-      {
-        code: probe.status,
-        signal: probe.signal,
-        stdout: probe.stdout ?? "",
-        stderr: (probe.stderr ?? "").trim() || probe.error?.message || "",
-        timedOutAfterMs: timedOut ? GIT_SYNC_TIMEOUT_MS : null,
-      },
-      cwd,
-      args,
-    );
-    if (!verdict.ok) return { ok: false, stdout: "", stderr: verdict.reason, code: null };
-    extra = verdict.extra;
+    const sites = probeSites(cwd, args);
+    if (!sites.ok) return { ok: false, stdout: "", stderr: sites.reason, code: null };
+    const blanks = new Set<string>();
+    for (const dir of sites.dirs) {
+      const probe = spawnGitSync(dir, FILTER_PROBE, []);
+      // `spawnSync` reports its own clock as an error with this code, and a child
+      // that could not start as one with its message, which is all there is to say.
+      const timedOut = (probe.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
+      const verdict = readFilterProbe(
+        {
+          code: probe.status,
+          signal: probe.signal,
+          stdout: probe.stdout ?? "",
+          stderr: (probe.stderr ?? "").trim() || probe.error?.message || "",
+          timedOutAfterMs: timedOut ? GIT_SYNC_TIMEOUT_MS : null,
+        },
+        dir,
+        args,
+      );
+      if (!verdict.ok) return { ok: false, stdout: "", stderr: verdict.reason, code: null };
+      for (const blank of verdict.extra) blanks.add(blank);
+    }
+    extra = [...blanks];
   }
   const res = spawnGitSync(cwd, args, extra);
 
@@ -525,33 +577,107 @@ export async function git(
 ): Promise<GitResult & { overflowed: boolean; timedOutAfterMs: number | null }> {
   let extra: string[] = [];
   if (CONTENT_SUBCOMMANDS.has(args[0])) {
-    // The probe is a `config` read, never a content subcommand, so it is spawned
-    // directly and never recurses. It takes the clock the caller gave the call: a
-    // probe that fails now fails the call, so a call that has no clock (landing)
-    // must not have one on its probe either. `trim: false` keeps the `-z` record
-    // separators intact.
-    const probe = await spawnGit(cwd, FILTER_PROBE, [], {
-      env: opts.env,
-      timeoutMs: opts.timeoutMs,
-      trim: false,
+    const refused = (reason: string) => ({
+      ok: false,
+      stdout: "",
+      stderr: reason,
+      code: null,
+      overflowed: false,
+      timedOutAfterMs: null,
     });
-    const verdict = readFilterProbe(probe, cwd, args);
-    if (!verdict.ok) {
-      return {
-        ok: false,
-        stdout: "",
-        stderr: verdict.reason,
-        code: null,
-        overflowed: false,
-        timedOutAfterMs: null,
-      };
+    const sites = probeSites(cwd, args);
+    if (!sites.ok) return refused(sites.reason);
+    const blanks = new Set<string>();
+    for (const dir of sites.dirs) {
+      // The probe is a `config` read, never a content subcommand, so it is spawned
+      // directly and never recurses. It takes the clock the caller gave the call: a
+      // probe that fails now fails the call, so a call that has no clock (landing)
+      // must not have one on its probe either. `trim: false` keeps the `-z` record
+      // separators intact.
+      const probe = await spawnGit(dir, FILTER_PROBE, [], {
+        env: opts.env,
+        timeoutMs: opts.timeoutMs,
+        trim: false,
+      });
+      const verdict = readFilterProbe(probe, dir, args);
+      if (!verdict.ok) return refused(verdict.reason);
+      for (const blank of verdict.extra) blanks.add(blank);
     }
-    extra = verdict.extra;
+    extra = [...blanks];
   }
 
   // `signal` is the probe's to read; the public result has never carried it.
   const { signal: _signal, ...result } = await spawnGit(cwd, args, extra, opts);
   return result;
+}
+
+/**
+ * `git worktree add`, with its checkout made by a call of its own inside the
+ * new tree, which is the only way `git()` adds one (see `probeSites`).
+ *
+ * `--no-checkout` makes the tree's git directory, its HEAD and any `-b` branch
+ * and writes no file; `reset --hard --no-recurse-submodules` in the new tree is
+ * the checkout `worktree add` would have run as its child, and through `git()`
+ * its probe reads configuration as that tree does.
+ *
+ * The tree is locked with the reason `initializing` from the add until the
+ * checkout is done, because that is the record git's own `worktree add` keeps
+ * across its checkout and `finishCutOffCheckout` reads it: a server killed
+ * between the two calls would otherwise leave a registered tree on the branch
+ * with no files and no lock, which a continuing run adopts as it stands and
+ * whose every file an agent's `git add -A` commits as deleted.
+ *
+ * A checkout that fails takes the tree with it and leaves a `-b` branch in
+ * place, which is what git's own `worktree add` leaves when its checkout fails
+ * (measured, 2.39.5), so the caller's next attempt finds the path free. The
+ * result is the step that decided it, with that step's `cwd` and `args` for
+ * `gitFailureReason`.
+ */
+export async function addWorktree(
+  repoRoot: string,
+  tree: string,
+  commitish: string,
+  opts: { newBranch?: string; timeoutMs?: number } = {},
+): Promise<
+  GitResult & { overflowed: boolean; timedOutAfterMs: number | null; cwd: string; args: string[] }
+> {
+  const { newBranch, timeoutMs } = opts;
+  const addArgs = [
+    "worktree",
+    "add",
+    "--no-checkout",
+    "--lock",
+    "--reason",
+    "initializing",
+    ...(newBranch === undefined ? [] : ["-b", newBranch]),
+    tree,
+    commitish,
+  ];
+  const add = await git(repoRoot, addArgs, { timeoutMs });
+  if (!add.ok) return { ...add, cwd: repoRoot, args: addArgs };
+
+  const checkoutArgs = ["reset", "--hard", "--no-recurse-submodules"];
+  const checkout = await git(tree, checkoutArgs, { timeoutMs });
+  if (checkout.ok) {
+    const unlockArgs = ["worktree", "unlock", tree];
+    const unlock = await git(repoRoot, unlockArgs);
+    return { ...unlock, cwd: repoRoot, args: unlockArgs };
+  }
+
+  // Forced twice, because the tree is still locked; and forced at all because
+  // a tree whose checkout failed has no index, so every file reads as deleted.
+  // A forced remove runs no `status` in it.
+  const removeArgs = ["worktree", "remove", "--force", "--force", tree];
+  const removed = await git(repoRoot, removeArgs, { timeoutMs });
+  const stderr = removed.ok
+    ? checkout.stderr
+    : [
+        checkout.stderr,
+        `The checkout that failed is still at ${tree}: ${gitFailureReason(removed, repoRoot, removeArgs)}`,
+      ]
+        .filter((line) => line !== "")
+        .join("\n");
+  return { ...checkout, stderr, cwd: tree, args: checkoutArgs };
 }
 
 /**

@@ -86,6 +86,25 @@
   `--config-env='merge.a=b.driver=E'` with `E` empty. Caveat: uid 1000 in an
   agent container, not a booted image.
 
+- **A filter behind `includeIf "onbranch:uf/**"` or `includeIf
+  "gitdir:<repo>/.git/worktrees/"` is invisible from the main checkout and
+  runs in `worktree add` and in an unforced `worktree remove`, 2026-10-25.**
+  Board task `d8cae532`, same harness. The filter's `smudge` and `clean` were
+  in `.git/evil.inc`, reached only through the include, with `* filter=evil`
+  in `.git/info/attributes`. In the main checkout `git config --includes
+  --get-regexp '^filter\.'` listed nothing. `worktree add -b uf/slot-1` ran
+  the smudge in both forms. `worktree add --no-checkout` ran nothing; the
+  same probe inside the new tree listed both commands; and `reset --hard
+  --no-recurse-submodules` there with them blanked by `--config-env` ran
+  nothing and left `status` clean. `worktree remove` of that tree after a
+  `touch` ran the clean filter in both forms, and `remove --force` did not.
+  In the main checkout, an in-process `checkout -b uf/new` and a `checkout` of
+  an existing `uf/old` whose file differed ran nothing. When a plain add's
+  checkout failed (a required filter), git deleted the tree and its
+  registration and kept the `-b` branch. `--lock --reason initializing` shows
+  as `locked initializing` in `worktree list --porcelain`, and a locked tree
+  needs `remove -f -f`.
+
 ## Not yet verified by hand
 
 - **Any way to keep this app's git from running hooks defined in config.**

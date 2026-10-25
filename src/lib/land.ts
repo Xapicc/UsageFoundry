@@ -2,7 +2,7 @@ import fs from "node:fs";
 import { runVerify, type VerifyOutcome } from "./landGate";
 import { openPullRequest, planDelivery, type DeliveryRequest } from "./delivery";
 import path from "node:path";
-import { git, headBranchOf } from "./git";
+import { addWorktree, git, headBranchOf } from "./git";
 import { withRepoAdmin } from "./repoLock";
 import { checkoutWriter, claimCheckout, releaseCheckout } from "./checkoutClaim";
 import { db } from "./db";
@@ -2796,7 +2796,7 @@ export async function resolveCheckout(
 
   // A full checkout, and one that is being made in order to merge. The half
   // hour it used to be given was the same guess as the merge's two minutes.
-  const add = await git(repoRoot, ["worktree", "add", slot, branch], NO_CLOCK);
+  const add = await addWorktree(repoRoot, slot, branch, NO_CLOCK);
   if (!add.ok) {
     throw new Error(
       `Could not create a checkout to resolve in: ${gitFailureLine(add.stderr) || "unknown error"}`,
