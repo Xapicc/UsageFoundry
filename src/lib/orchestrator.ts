@@ -15552,65 +15552,81 @@ function branchHolderRefusal(run: RunRow): string | null {
 }
 
 /**
- * Why a branch continuer that never ran a work cycle may not rejoin the queue
- * on that branch, or null.
+ * Why a run that never ran a work cycle may not rejoin the queue as it is, or
+ * null.
  *
- * The two questions the release pass asks a `waiting` continuer — `admitWaiting`
- * the one-continuer rule, `releasableRuns` its condition — asked again for the
- * row `reopenRun` queues directly because it already holds a workspace. Both
- * answers can have changed since its release, and because it ran nothing:
- * `branchRivalOf` reads a terminal continuer with no work cycle as not holding
- * the branch, which is what let another continuer onto it, and a predecessor
- * picked up since may have ended in a way its condition does not accept. Queued
- * anyway, it committed to one ref beside that other run, or carried an
- * `on-success` prompt onto the branch of a run that failed.
+ * The questions the release pass asks a `waiting` row — `releasableRuns` the
+ * condition on each of its edges, and `admitWaiting` the one-continuer rule for
+ * a branch continuer — asked again for the row `reopenRun` queues directly
+ * because it already holds a workspace. Both answers can have changed since its
+ * release. A predecessor picked up since may have ended in a way its condition
+ * does not accept, or be running again; queued anyway, an `on-success` run
+ * started behind a failed dependency, or beside the one it was ordered behind.
+ * And for a continuer, `branchRivalOf` reads a terminal continuer with no work
+ * cycle as not holding the branch, which is what let another continuer onto it:
+ * queued anyway, it committed to one ref beside that other run.
  *
- * A continuer that ran a cycle is not asked: it holds the branch, so admission
- * refused every rival, and the condition it started on was spent by starting.
+ * Every edge is asked, not the one that names the branch: a fan-in's other
+ * dependencies are conditions this run started on just the same, and a run that
+ * carries no branch has no other question to be asked.
+ *
+ * A run that ran a cycle is not asked: its condition was spent by starting, and
+ * a continuer holds the branch, so admission refused every rival.
  */
-function unworkedContinuerRefusal(run: RunRow): string | null {
-  const predecessorId = run.continues_run;
-  if (!predecessorId) return null;
+function unworkedPickupRefusal(run: RunRow): string | null {
   if (ranWorkCycle({ iterations: run.iterations, refundedCycles: refundedCyclesOf(run) })) {
     return null;
   }
-  const mine = db()
-    .prepare("SELECT edge FROM run_deps WHERE run_id = ? AND depends_on = ?")
-    .get(run.id, predecessorId) as { edge: DependencyEdge } | undefined;
-  const rival = branchRivalOf(run.id, predecessorId, mine?.edge ?? null);
-  if (rival) {
-    return (
-      `Run ${shortId(rival.id)} carries on run ${shortId(predecessorId)}'s branch now (it is ${rival.status}), ` +
-      "and two runs cannot extend the same branch. This run never ran a work cycle on it, so there is " +
-      `no work of its own to pick up; start a new run continuing run ${shortId(rival.id)}'s branch instead.`
-    );
+  const predecessorId = run.continues_run;
+  if (predecessorId) {
+    const mine = db()
+      .prepare("SELECT edge FROM run_deps WHERE run_id = ? AND depends_on = ?")
+      .get(run.id, predecessorId) as { edge: DependencyEdge } | undefined;
+    const rival = branchRivalOf(run.id, predecessorId, mine?.edge ?? null);
+    if (rival) {
+      return (
+        `Run ${shortId(rival.id)} carries on run ${shortId(predecessorId)}'s branch now (it is ${rival.status}), ` +
+        "and two runs cannot extend the same branch. This run never ran a work cycle on it, so there is " +
+        `no work of its own to pick up; start a new run continuing run ${shortId(rival.id)}'s branch instead.`
+      );
+    }
   }
 
-  // `run_deps` cascade-deletes with the predecessor, and with it the condition
-  // there would be to ask again.
-  const predecessor = getRun(predecessorId);
-  if (!mine || !predecessor) return null;
+  // `run_deps` cascades with the dependency, so a dependency that is gone takes
+  // its condition with it and there is none left to ask again.
+  const links = db()
+    .prepare("SELECT run_id AS runId, depends_on AS dependsOn, edge FROM run_deps WHERE run_id = ?")
+    .all(run.id) as DependencyLink[];
+  const dependencies = links
+    .map((link) => getRun(link.dependsOn))
+    .filter((dependency): dependency is RunRow => dependency !== undefined);
   const { release, block, notNeeded } = releasableRuns(
     [
       { id: run.id, status: "waiting", iterations: 0, refundedCycles: 0, restartClosed: false },
-      {
-        id: predecessor.id,
-        status: predecessor.status,
-        iterations: predecessor.iterations,
-        refundedCycles: refundedCyclesOf(predecessor),
-        restartClosed: restartClosedOf(predecessor),
-      },
+      ...dependencies.map((dependency) => ({
+        id: dependency.id,
+        status: dependency.status,
+        iterations: dependency.iterations,
+        refundedCycles: refundedCyclesOf(dependency),
+        restartClosed: restartClosedOf(dependency),
+      })),
     ],
-    [{ runId: run.id, dependsOn: predecessor.id, edge: mine.edge }],
+    links,
   );
   if (release.includes(run.id)) return null;
   const verdict = block[0]?.reason ?? notNeeded[0]?.reason;
   if (verdict) {
-    return `It never ran a work cycle, and the run whose branch it continues no longer lets it start. ${verdict}`;
+    return `It never ran a work cycle, and a run it was set to start after no longer lets it start. ${verdict}`;
+  }
+  // Neither verdict, so the pass left it waiting on a dependency still in
+  // flight — the one a pick-up put back in the queue.
+  const running = dependencies.find((dependency) => !TERMINAL_STATUSES.includes(dependency.status));
+  if (!running) {
+    return "A run it was set to start after has not ended. Pick this one up again after that.";
   }
   return (
-    `Run ${shortId(predecessor.id)} is ${predecessor.status} again, and this run carries on its branch ` +
-    "only once it has ended. Pick this one up again after that."
+    `Run ${shortId(running.id)} is ${running.status} again, and this run starts only once it has ended. ` +
+    "Pick this one up again after that."
   );
 }
 
@@ -15719,8 +15735,8 @@ export function reopenRun(
   // questions by the release pass. Ahead of the checkout below, whose "wait for
   // that run to finish" is wrong advice when the holder is a rival continuer.
   if (!waitingAgain) {
-    const branchTaken = unworkedContinuerRefusal(run);
-    if (branchTaken) return { ok: false, reason: branchTaken };
+    const notReleasable = unworkedPickupRefusal(run);
+    if (notReleasable) return { ok: false, reason: notReleasable };
   }
 
   // Its checkout may have been handed to a newer run while it was dead:

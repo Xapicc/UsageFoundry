@@ -24,6 +24,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - A dependent that can never start is terminated with a sentence naming what stopped it, and so is everything behind it.
 - Every terminal transition wakes the dependents, and a boot deliberately does not.
 - A run a restart closed out satisfies no edge until it is picked up, and nothing new is chained onto it meanwhile.
+- A run that was released and ran nothing is asked every one of its conditions again when it is picked up.
 
 ## [What an isolated run may do with git, and what is reported when it is refused](dependencies/git-permissions-and-denials.md)
 
