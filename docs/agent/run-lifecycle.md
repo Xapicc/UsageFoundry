@@ -100,6 +100,19 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - Every session-less cycle the pointer considered records `priorReads: { arm, paths }` on its `iteration` event, in both arms.
 - There is no setting.
 
+## [The vault pointer and its holdout](run-lifecycle/vault-pointer.md)
+
+- A run's first prompt names the vault notes that bear on its task, on half of all runs, and for most runs there are none.
+- The vault's search proposes and a model decides, because search alone names the wrong notes.
+- The judge's prompt is the strict one, and it was chosen by measurement.
+- What reaches the run is a pointer, never a note.
+- Its slot is ahead of the prior-read pointer, on the session-less branch only.
+- It is resolved once per segment, before the loop, and only for a segment that opens a conversation.
+- Who is never considered, so is in neither arm.
+- Both children run as the agents' uid, and neither is a fifth kind of agent child.
+- Its cost is priced by this app, recorded on the run, and kept out of `runs.spent_usd`.
+- The arm is `vaultPointerHoldout(runId)`, and it must never change.
+
 ## [A cycle's CLI, argv and appended notices](run-lifecycle/cycle-argv-and-notices.md)
 
 - Three flags ride *every* cycle's argv, not the opening one, and `--resume` restores none of them.

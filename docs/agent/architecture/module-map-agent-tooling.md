@@ -113,6 +113,13 @@ vaultSkill.ts   the vault-lookup skill, delivered the same way and for the same
                 or the skill names a path the run may not read; measurement says
                 that flag grants **write**, so the skill's own text is the only
                 thing forbidding writes into the vault
+vaultPointer.ts the vault's notes named in a run's opening prompt rather than left
+                for the skill to be asked about, because the skill was asked in
+                6 of 592 runs. The vault's own search proposes and a Haiku call
+                picks at most three or none; both children run as the agent uid,
+                since the search is a script runs can edit. Off wherever the
+                vault skill is off. The rules are in
+                docs/agent/run-lifecycle/vault-pointer.md
 readGuard.ts    the second *generated* directory on that same --plugin-dir list
                 — which now carries three kinds of entry, the plugins found in
                 the mounts, the vault skill and this — and the only one shipping
