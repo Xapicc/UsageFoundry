@@ -41,6 +41,35 @@ const SLOW_REVIEW_MS = 3_000;
  */
 let duringSnapshot: (() => boolean) | null = null;
 
+/**
+ * While set, every snapshot read waits for a second reader before it returns,
+ * or `MEETING_MS`, whichever comes first.
+ *
+ * It holds two reviews that are in flight together at the same await, which is
+ * the whole of what a review door's race needs: the case that sets it fails on
+ * the pair arriving and not on the machine being busy. Where a door keeps the
+ * second reader out until the first has left, the first waits alone for the
+ * timeout and nothing else changes.
+ */
+let snapshotMeeting: Array<() => void> | null = null;
+let meetingTimer: NodeJS.Timeout | undefined;
+const MEETING_MS = 100;
+
+function meetAtSnapshot(): Promise<void> {
+  return new Promise((resolve) => {
+    const meeting = snapshotMeeting;
+    if (!meeting) return resolve();
+    const release = () => {
+      clearTimeout(meetingTimer);
+      meetingTimer = undefined;
+      meeting.splice(0).forEach((waiting) => waiting());
+    };
+    meeting.push(resolve);
+    if (meeting.length >= 2) release();
+    else meetingTimer ??= setTimeout(release, MEETING_MS);
+  });
+}
+
 const MOUNT_DIR = "review-block-mount";
 const INSTANCE = "inst-review-1";
 const TASK = "task-hard-one";
@@ -159,6 +188,7 @@ before(async () => {
   (orch as { currentSnapshot: unknown }).currentSnapshot = async () => {
     const snapshot = await realSnapshot();
     if (duringSnapshot?.()) duringSnapshot = null;
+    await meetAtSnapshot();
     return snapshot;
   };
   const db = dbMod.db();
@@ -341,6 +371,8 @@ function reviewScene(
     fixRounds?: number;
     verdictSource?: { kind: string; command?: string };
     budget?: Record<string, number>;
+    /** A second review block, `r2`, claimed `thinking` beside `r` in the same instance. */
+    secondBlock?: boolean;
     runs: Array<{
       id: string;
       prompt: string;
@@ -357,7 +389,7 @@ function reviewScene(
   const db = dbMod.db();
   const node = (id: string, kind: string) => ({
     id,
-    name: id === "r" ? "Review" : "Land",
+    name: kind === "review" ? "Review" : "Land",
     kind,
     templateId: null,
     mountId: "",
@@ -376,9 +408,13 @@ function reviewScene(
     fixRounds: kind === "review" ? (opts.fixRounds ?? 0) : null,
     verdictSource: kind === "review" ? (opts.verdictSource ?? null) : null,
   });
+  const second = opts.secondBlock ? [node("r2", "review")] : [];
   const graph = JSON.stringify({
-    nodes: [node("r", "review"), node("m", "merge")],
-    edges: [{ from: "r", to: "m", edge: "on-success", continueBranch: false }],
+    nodes: [node("r", "review"), ...second, node("m", "merge")],
+    edges: [
+      { from: "r", to: "m", edge: "on-success", continueBranch: false },
+      ...second.map(() => ({ from: "r2", to: "m", edge: "on-success", continueBranch: false })),
+    ],
   });
   const budget = opts.budget ? JSON.stringify(opts.budget) : null;
   db.prepare(
@@ -394,6 +430,13 @@ function reviewScene(
        (instance_id, node_id, node_name, position, kind, status, started_at)
      VALUES (?, 'r', 'Review', 0, 'review', 'thinking', ?)`,
   ).run(instanceId, Date.now());
+  if (opts.secondBlock) {
+    db.prepare(
+      `INSERT INTO workflow_instance_blocks
+         (instance_id, node_id, node_name, position, kind, status, started_at)
+       VALUES (?, 'r2', 'Review', 1, 'review', 'thinking', ?)`,
+    ).run(instanceId, Date.now());
+  }
 
   const insertRun = db.prepare(
     `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
@@ -731,6 +774,40 @@ describe("a review block and its workflow's limit", () => {
     const stored = dbMod
       .db()
       .prepare("SELECT status, stop_cause AS cause FROM workflow_instances WHERE id='inst-queued'")
+      .get() as { status: string; cause: string | null };
+    assert.equal(stored.cause, "guard");
+  });
+
+  it("starts one review across two blocks of one instance when a second would cross its limit", async () => {
+    // Two blocks side by side, one assist slot, and a limit the first review's
+    // $0.02 crosses: the second block's branch must find the slot taken and then
+    // the limit spent. Each block's own door cannot see the other's, so both
+    // passed the one free slot and the guard at $0 in the same tick.
+    const settings = await import("./settings");
+    settings.saveSettings({ maxConcurrentAssists: 1 });
+    const ids = ["two-blocks-x", "two-blocks-y"];
+    snapshotMeeting = [];
+    try {
+      reviewScene("inst-two-blocks", {
+        budget: { maxInstanceCostUSD: 0.01 },
+        secondBlock: true,
+        runs: ids.map((id) => ({ id, prompt: "Do it. APPROVE-ME", branch: "uf/repo-good" })),
+      });
+      await Promise.all([
+        settledWithin(workflows.startReviewBlock("inst-two-blocks", "r", [ids[0]]), 30_000, "startReviewBlock r"),
+        settledWithin(workflows.startReviewBlock("inst-two-blocks", "r2", [ids[1]]), 30_000, "startReviewBlock r2"),
+      ]);
+    } finally {
+      snapshotMeeting = null;
+      settings.saveSettings({ maxConcurrentAssists: 2 });
+    }
+
+    const started = ids.filter((id) => reviewsOf(id).length > 0).length;
+    const total = workflows.instanceSpend("inst-two-blocks").spentUSD;
+    assert.equal(started, 1, `${started} reviews started; $${total.toFixed(2)} against a $0.01 limit`);
+    const stored = dbMod
+      .db()
+      .prepare("SELECT status, stop_cause AS cause FROM workflow_instances WHERE id='inst-two-blocks'")
       .get() as { status: string; cause: string | null };
     assert.equal(stored.cause, "guard");
   });
