@@ -243,6 +243,7 @@ import {
   cycleBudgetUSD,
   cycleDidNoWork,
   cycleEnding,
+  cycleEnvPins,
   nextPrompt,
   priorReadsNotice,
   startsFresh,
@@ -6830,8 +6831,8 @@ const CARRIES_NO_CONTEXT = new Set([
   "--resume",
   "--autocompact",
   "--max-budget-usd",
-  // Hooks and a sandbox write set. The table's own row: "Hooks — not
-  // applicable; hooks run as code, not context."
+  // Hooks, a sandbox write set and the pinned endpoint variables. The table's
+  // own row: "Hooks — not applicable; hooks run as code, not context."
   "--settings",
 ]);
 
@@ -7821,6 +7822,25 @@ export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv 
 }
 
 /**
+ * The environment a work cycle is spawned with: `childEnv`'s, with a local
+ * cycle's server and token over it.
+ *
+ * One function for `runIteration`'s spawn and for the `cycleEnvPins` the run
+ * loop puts on that cycle's argv, so the pins name the endpoint the cycle was
+ * actually given. A local cycle's is its own server, and pinned off
+ * `childEnv()` alone it would be sent to Anthropic under a model id Anthropic
+ * does not have. The extras differ between the two calls and none of them sets
+ * a pinned variable.
+ */
+export function cycleEnv(
+  extra: Record<string, string>,
+  local: { signIn: LocalSignIn; model: string } | null,
+): NodeJS.ProcessEnv {
+  const env = childEnv(extra);
+  return local ? localCycleEnv(env, local.signIn, local.model) : env;
+}
+
+/**
  * Does this policy need telemetry to mean what it says?
  *
  * `run_cost` and `run_tokens` are on `LIVE_ENFORCEABLE_CODES`, but the figures
@@ -8494,14 +8514,17 @@ export function runIteration(
 
     // No shell: arguments are passed as an array, so a prompt containing
     // quotes, backticks, or semicolons is inert rather than interpreted.
-    const env = childEnv({
-      ...cycleTelemetryEnv(runId, adapter, telemetryRequired),
-      ...agentGitEnv(githubToken, excludes.path),
-      ...(backgroundWaitMs === null ? {} : { [BACKGROUND_WAIT_ENV]: backgroundWaitMs }),
-    });
+    const env = cycleEnv(
+      {
+        ...cycleTelemetryEnv(runId, adapter, telemetryRequired),
+        ...agentGitEnv(githubToken, excludes.path),
+        ...(backgroundWaitMs === null ? {} : { [BACKGROUND_WAIT_ENV]: backgroundWaitMs }),
+      },
+      local,
+    );
     const child: AgentProcess = spawn(launcher.command, [...launcher.args, ...args], {
       cwd,
-      env: local ? localCycleEnv(env, local.signIn, local.model) : env,
+      env,
       // The uid `childEnv`'s strip only means something against: same process,
       // one step down, so `/proc/<server>/environ` and `/data` stop being
       // readable by the thing whose prompt came out of a repository.
@@ -12772,6 +12795,11 @@ export async function startRun(id: string): Promise<void> {
           run.provider === "codex"
             ? codexWritableRoots(sandbox, agentWritableStackStateDirs())
             : sandboxWritableRoots(sandbox, confinement),
+        // On every cycle, sandbox or none: the checkout's own
+        // `.claude/settings.json` can otherwise send this cycle's credential,
+        // and the usage figures, to a host the repository names.
+        // `PINNED_CYCLE_ENV` has the measurements.
+        envPins: cycleEnvPins(cycleEnv({}, local)),
         // Ignored by Claude Code, which has no such flag. See `runIteration`
         // for why the file is preferred over the stream where it exists, and
         // why it is removed before the spawn rather than after the read.
