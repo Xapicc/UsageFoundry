@@ -244,8 +244,8 @@ export function installBudgetVerdict(
  * `installSpend` could be zero or negative beside a verdict that had just said
  * yes. `headroom` is therefore `null` both when the limit is off and when the
  * verdict refuses, and in the second case nothing is spawned, so nothing needs
- * a number. It is what a work cycle with no `maxRunCostUSD` is handed as
- * `--max-budget-usd` (`cycleBudgetUSD`).
+ * a number. A work cycle is handed it as `--max-budget-usd` wherever it is
+ * smaller than what the run's own `maxRunCostUSD` has left (`cycleBudgetUSD`).
  */
 export function installBudgetReading(now = Date.now()): {
   verdict: (BudgetVerdict & { allowed: false }) | null;
