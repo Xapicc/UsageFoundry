@@ -135,6 +135,11 @@ export function gitEnv(): NodeJS.ProcessEnv {
  * the CLI's permission model entirely. `/dev/null` is not a directory, so git
  * finds no hook there and carries on; verified against 2.39, including that it
  * outranks a `core.hooksPath` the repository sets in its own `.git/config`.
+ * On git 2.54 and later that covers only the hooks directory: a hook named in
+ * config (`hook.<name>.command` plus `.event`) still runs, and git has no switch
+ * that turns all of those off (measured on 2.54.0 and 2.56.0,
+ * `docs/verification/security-and-sandboxing-server-git.md`). The image's 2.39
+ * has no such hooks, which is the only reason that gap is not live.
  *
  * This is the git *this app* runs, and nothing here reaches the agent's own:
  * `buildArgs` passes no config at all, so a repository's `pre-commit` still runs

@@ -16,6 +16,7 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - The agent is spawned with an argument array and `stdio: ["ignore", "pipe", "pipe"]`, **never a shell**, so prompt metacharacters are inert. (was line 14)
 - A review block's verify command is argv and never a shell, and only a person saves one.
 - `gitArgs` pins the signing programs and neutralises the repository's filter drivers, for the same reason it clears `core.hooksPath`.
+- `core.hooksPath=/dev/null` does not switch off a hook defined in config on git 2.54 or later, and git has no switch that does.
 - `gitArgs` also passes `safe.directory=*`, and the image sets it system-wide for the agent's own git. (was line 15)
 - `permissionMode` is narrowed against the four literals in `POST /api/runs` before it reaches `--permission-mode`. (was line 17)
 - `bypassPermissions` is offered in the new-run form with a warning; the default stays `acceptEdits`. (was line 35)
