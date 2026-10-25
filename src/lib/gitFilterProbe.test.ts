@@ -68,39 +68,40 @@ const plainEnv = (): NodeJS.ProcessEnv => ({
 const plain = (cwd: string, args: string[]) =>
   execFileSync(realGit, args, { cwd, env: plainEnv(), encoding: "utf8" });
 
+after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+let count = 0;
+
+/** A repository whose planted clean filter `driver` would leave `marker` if it ran. */
+function plantedRepo(driver = "x"): { repo: string; marker: string } {
+  const name = `repo${count++}`;
+  const repo = path.join(root, name);
+  fs.mkdirSync(repo);
+  plain(repo, ["init", "-q", "-b", "main"]);
+  plain(repo, ["config", "user.email", "a@b.c"]);
+  plain(repo, ["config", "user.name", "a"]);
+  fs.writeFileSync(path.join(repo, "f.txt"), "one\n");
+  plain(repo, ["add", "-A"]);
+  plain(repo, ["commit", "-q", "-m", "init"]);
+  const marker = path.join(root, `${name}.ran`);
+  const prog = path.join(root, `${name}.sh`);
+  fs.writeFileSync(prog, `#!/bin/sh\necho "ran $*" >> ${marker}\ncat\n`, { mode: 0o755 });
+  plain(repo, ["config", `filter.${driver}.clean`, prog]);
+  fs.mkdirSync(path.join(repo, ".git", "info"), { recursive: true });
+  fs.writeFileSync(path.join(repo, ".git", "info", "attributes"), `* filter=${driver}\n`);
+  fs.writeFileSync(path.join(repo, "f.txt"), "two\n");
+  return { repo, marker };
+}
+
+const ranNothing = (marker: string) =>
+  assert.equal(
+    fs.existsSync(marker),
+    false,
+    `the planted program ran: ${fs.existsSync(marker) ? fs.readFileSync(marker, "utf8") : ""}`,
+  );
+
 describe("a filter probe that failed does not read as 'no filters'", () => {
-  let count = 0;
-
   before(() => setMode("pass"));
-  after(() => fs.rmSync(root, { recursive: true, force: true }));
-
-  /** A repository whose planted clean filter would leave `marker` if it ran. */
-  function plantedRepo(): { repo: string; marker: string } {
-    const name = `repo${count++}`;
-    const repo = path.join(root, name);
-    fs.mkdirSync(repo);
-    plain(repo, ["init", "-q", "-b", "main"]);
-    plain(repo, ["config", "user.email", "a@b.c"]);
-    plain(repo, ["config", "user.name", "a"]);
-    fs.writeFileSync(path.join(repo, "f.txt"), "one\n");
-    plain(repo, ["add", "-A"]);
-    plain(repo, ["commit", "-q", "-m", "init"]);
-    const marker = path.join(root, `${name}.ran`);
-    const prog = path.join(root, `${name}.sh`);
-    fs.writeFileSync(prog, `#!/bin/sh\necho "ran $*" >> ${marker}\ncat\n`, { mode: 0o755 });
-    plain(repo, ["config", "filter.x.clean", prog]);
-    fs.mkdirSync(path.join(repo, ".git", "info"), { recursive: true });
-    fs.writeFileSync(path.join(repo, ".git", "info", "attributes"), "* filter=x\n");
-    fs.writeFileSync(path.join(repo, "f.txt"), "two\n");
-    return { repo, marker };
-  }
-
-  const ranNothing = (marker: string) =>
-    assert.equal(
-      fs.existsSync(marker),
-      false,
-      `the planted clean filter ran: ${fs.existsSync(marker) ? fs.readFileSync(marker, "utf8") : ""}`,
-    );
 
   it("git(): a probe the repository's git refused fails the call and runs no driver", async () => {
     const { repo, marker } = plantedRepo();
@@ -202,5 +203,38 @@ describe("a filter probe that failed does not read as 'no filters'", () => {
     const viaSync = gitSync(repo, ["rev-parse", "--abbrev-ref", "HEAD"]);
     assert.equal(viaSync.ok, true, viaSync.stderr);
     assert.equal(viaSync.stdout, "main");
+  });
+});
+
+/**
+ * git splits a `-c` at its first `=`, so `-c filter.a=b.clean=` set a key
+ * `filter.a` to `b.clean=` and left the planted `filter.a=b.clean` running on
+ * every content subcommand (board task a9fde194). A driver name is the
+ * repository's to choose, so the blank has to reach git by a carrier that
+ * splits somewhere the name cannot reach.
+ */
+describe("a driver name the -c form cannot spell is still blanked", () => {
+  before(() => setMode("pass"));
+
+  it("git(): a clean filter named a=b runs nothing on add", async () => {
+    const { repo, marker } = plantedRepo("a=b");
+    const res = await git(repo, ["add", "-A"]);
+
+    ranNothing(marker);
+    assert.equal(res.ok, true, res.stderr);
+  });
+
+  it("gitSync(): a clean filter named a=b runs nothing on add", () => {
+    const { repo, marker } = plantedRepo("a=b");
+    const res = gitSync(repo, ["add", "-A"]);
+
+    ranNothing(marker);
+    assert.equal(res.ok, true, res.stderr);
+  });
+
+  it("control: the same plant runs under plain git", () => {
+    const { repo, marker } = plantedRepo("a=b");
+    plain(repo, ["add", "-A"]);
+    assert.equal(fs.existsSync(marker), true, "the planted a=b filter did not fire, so the cases above measure nothing");
   });
 });

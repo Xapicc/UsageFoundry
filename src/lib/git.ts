@@ -166,7 +166,7 @@ export function gitEnv(): NodeJS.ProcessEnv {
  * so those two belong to Deliver's own fetch/push env, not to every git child.
  *
  * `extraConfig` is where `git()`/`gitSync()` splice the filter neutralisers for
- * the content-moving subcommands (see `filterNeutralizers`); it precedes the
+ * the content-moving subcommands (see `driverNeutralizers`); it precedes the
  * subcommand because it is config, and defaults to none so a read call is
  * unchanged.
  */
@@ -190,6 +190,16 @@ export const gitArgs = (args: string[], extraConfig: string[] = []) => [
 ];
 
 /**
+ * The variable every neutraliser's `--config-env` takes its value from: set,
+ * and empty, in the environment of every git child this module spawns.
+ *
+ * Deliberately outside the `UF_` namespace `gitEnv()` scrubs, so that "no `UF_`
+ * variable reaches a git child" stays true, and set after `opts.env` so no
+ * caller can hand a neutraliser a value.
+ */
+const BLANK_VAR = "USAGEFOUNDRY_BLANK";
+
+/**
  * Blanking the filter drivers is what the signing pins above cannot be: a flat
  * `-c` list. A `filter.<x>.clean`/`smudge`/`process` is run whenever git
  * converts a file between the working tree and the object store, and the driver
@@ -203,11 +213,20 @@ export const gitArgs = (args: string[], extraConfig: string[] = []) => [
  * than running the planted program (measured, 2.39), which is the right failure:
  * nothing of the repository's choosing runs either way.
  *
+ * Each blank is a `--config-env=<key>=BLANK_VAR` and never a `-c <key>=`,
+ * because git splits a `-c` at its first `=` and a driver name may hold one:
+ * `-c filter.a=b.clean=` sets `filter.a` to `b.clean=`, and the planted
+ * `filter.a=b.clean` ran (board task a9fde194). `--config-env` splits at its
+ * last `=`, and the variable's name has none, so whatever the subsection holds
+ * stays in the key (measured, 2.39; the flag exists since 2.31). The carrier
+ * `GIT_CONFIG_COUNT` would do too, but an inherited block would have to be
+ * appended to rather than replaced, and the flag has nothing to merge.
+ *
  * `-z` output is `key\nvalue` per record; the driver name is the subsection,
  * whose case git preserves and which the override must match, so it is captured
  * verbatim and never lower-cased.
  */
-function filterNeutralizers(configOutput: string): string[] {
+function driverNeutralizers(configOutput: string): string[] {
   const names = new Set<string>();
   for (const record of configOutput.split("\0")) {
     if (!record) continue;
@@ -217,14 +236,9 @@ function filterNeutralizers(configOutput: string): string[] {
   }
   const out: string[] = [];
   for (const name of names) {
-    out.push(
-      "-c",
-      `filter.${name}.clean=`,
-      "-c",
-      `filter.${name}.smudge=`,
-      "-c",
-      `filter.${name}.process=`,
-    );
+    for (const command of ["clean", "smudge", "process"]) {
+      out.push(`--config-env=filter.${name}.${command}=${BLANK_VAR}`);
+    }
   }
   return out;
 }
@@ -275,7 +289,7 @@ function readFilterProbe(
   cwd: string,
   args: string[],
 ): { ok: true; extra: string[] } | { ok: false; reason: string } {
-  if (probe.code === 0) return { ok: true, extra: filterNeutralizers(probe.stdout) };
+  if (probe.code === 0) return { ok: true, extra: driverNeutralizers(probe.stdout) };
   if (probe.code === 1 && probe.stdout === "") return { ok: true, extra: [] };
 
   let how: string;
@@ -394,7 +408,7 @@ export function gitSync(cwd: string, args: string[]): GitResult {
 function spawnGitSync(cwd: string, args: string[], extra: string[]) {
   return spawnSync(GIT_BIN, gitArgs(args, extra), {
     cwd,
-    env: gitEnv(),
+    env: { ...gitEnv(), [BLANK_VAR]: "" },
     ...childCredentials(),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
@@ -565,7 +579,7 @@ function spawnGit(
     try {
       const options = {
         cwd,
-        env: opts.env ? { ...gitEnv(), ...opts.env } : gitEnv(),
+        env: { ...gitEnv(), ...opts.env, [BLANK_VAR]: "" },
         ...childCredentials(),
       };
       const child =

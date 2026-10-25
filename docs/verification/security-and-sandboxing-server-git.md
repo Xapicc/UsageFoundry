@@ -56,6 +56,20 @@
   `post-merge`. `status --porcelain`, `rev-parse HEAD` and `diff HEAD~1 HEAD`
   fired nothing. Caveat: `fetch`, `push` and `gc --auto` were not run.
 
+- **A `--config-env` blank stops a filter driver named `a=b` on 2.39.5, and
+  the `-c` blank does not, 2026-10-25.** Board task `a9fde194`, `main` at
+  `5ba27e95`. The image's git 2.39.5, every `GIT_*` variable unset, a scratch
+  `HOME` and `GIT_CONFIG_NOSYSTEM=1`. A fresh repository per case had
+  `[filter "a=b"] clean = <prog>` in `.git/config`, `* filter=a=b` in
+  `.git/info/attributes` and an edited tracked file, and `<prog>` writes a
+  marker. `git -c 'filter.a=b.clean=' add -A` wrote the marker.
+  `E= git --config-env='filter.a=b.clean=E' add -A` exited 0 and wrote none,
+  and neither did `GIT_CONFIG_COUNT=1` with `GIT_CONFIG_KEY_0='filter.a=b.clean'`
+  and an empty value. With `E` unset, `--config-env` exits 128 naming it. With
+  `filter.a=b.required=true` as well, the three `--config-env` blanks made
+  `add` exit 128 (`clean filter 'a=b' failed`) and wrote no marker. Caveat:
+  uid 1000 in an agent container, not a booted image.
+
 ## Not yet verified by hand
 
 - **Any way to keep this app's git from running hooks defined in config.**
