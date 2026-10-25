@@ -22,6 +22,7 @@ import {
   INSTANCE_OUTCOME_LABEL,
   INSTANCE_OUTCOME_TONE,
   instanceOutcomeDetail,
+  instanceSpendReading,
   pollFailureMessage,
 } from "@/lib/format";
 import { worstCaseRuns } from "@/lib/canvasGraph";
@@ -907,15 +908,23 @@ export default function WorkflowPage() {
                           press that is still working shows what has been
                           reported so far (its Outcome says it is working), and
                           one with a block that reported no cost says that
-                          rather than passing the rest off as the whole. */}
+                          rather than passing the rest off as the whole. A
+                          press where no block reported one has no figure to
+                          floor, so it is `—` and not `$0.00`. */}
                       <Td
                         num
                         label="Spent"
                         className="whitespace-nowrap align-top text-ink-muted"
                       >
-                        {fmtUSD(inst.spentUSD)}
-                        {inst.spentUnmeasured > 0 && (
-                          <div className="text-xs">reported so far</div>
+                        {instanceSpendReading(inst) === null ? (
+                          "—"
+                        ) : (
+                          <>
+                            {fmtUSD(inst.spentUSD)}
+                            {inst.spentUnmeasured > 0 && (
+                              <div className="text-xs">reported so far</div>
+                            )}
+                          </>
                         )}
                       </Td>
                     </Tr>

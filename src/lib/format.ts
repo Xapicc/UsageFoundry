@@ -1312,6 +1312,29 @@ export function instanceOutcomeDetail(
 }
 
 /**
+ * What a press's Spent cell may claim, from the three figures the DTO carries.
+ *
+ * `null` is "no block reported a cost", which the cell draws as `—`:
+ * `spentUSD` is 0 there because the members' `+=` is withheld, not because
+ * anything cost nothing, and `$0.00` down a column of presses is the
+ * measurement claim `memberSpendReading` and `blockSpendReading` refuse one
+ * column over. A press where only some blocks went unreported keeps its figure,
+ * which is a floor that `spentUnmeasured` says so beside. Here rather than next
+ * to those two because this page is a client component and `workflows.ts` opens
+ * the database.
+ */
+export function instanceSpendReading(
+  inst: Pick<
+    WorkflowInstanceDTO,
+    "spentUSD" | "spentSubjects" | "spentUnmeasured"
+  >,
+): number | null {
+  const nothingReported =
+    inst.spentSubjects > 0 && inst.spentUnmeasured === inst.spentSubjects;
+  return nothingReported ? null : inst.spentUSD;
+}
+
+/**
  * Whether an instance can still change on its own or by a press, so whether the
  * page showing it should keep asking.
  *

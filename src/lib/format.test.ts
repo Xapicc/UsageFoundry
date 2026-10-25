@@ -15,6 +15,7 @@ import {
   INSTANCE_OUTCOME_TONE,
   instanceCanMove,
   instanceOutcomeDetail,
+  instanceSpendReading,
   landingSummary,
   loopSpendShown,
   passRuns,
@@ -1112,4 +1113,27 @@ test("instanceOutcomeDetail says what the badge cannot, and nothing for finished
     "no folder",
   );
   assert.equal(instanceOutcomeDetail({ ...base, status: "finished" }), null);
+});
+
+test("instanceSpendReading is unknown, not $0.00, when no block reported a cost", () => {
+  // An all-Codex press: every member is a subject, none was measured, and the
+  // sum is 0 because the run loop withholds its `+=`.
+  assert.equal(
+    instanceSpendReading({ spentUSD: 0, spentSubjects: 2, spentUnmeasured: 2 }),
+    null,
+  );
+  // A partly measured press keeps its floor, and a measured $0.00 stays one.
+  assert.equal(
+    instanceSpendReading({ spentUSD: 1.5, spentSubjects: 3, spentUnmeasured: 1 }),
+    1.5,
+  );
+  assert.equal(
+    instanceSpendReading({ spentUSD: 0, spentSubjects: 2, spentUnmeasured: 0 }),
+    0,
+  );
+  // No subjects at all is nothing to have failed to report.
+  assert.equal(
+    instanceSpendReading({ spentUSD: 0, spentSubjects: 0, spentUnmeasured: 0 }),
+    0,
+  );
 });

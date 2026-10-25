@@ -194,6 +194,21 @@
   after the 1280px pass had already pressed Stop, so the narrow card was not
   photographed with a gate held.
 
+- **A press where no block reported a cost reads `—` in the workflow page's
+  runs table, 2026-10-25** (production standalone build of this branch at
+  `a8f53a05`, scratch `DATA_DIR`, Chromium at 1280px and 390px): one workflow
+  with three presses inserted into the database, the first with two Codex
+  members, the second with one Codex member and one Claude member that spent
+  $1.50, the third with two Claude members that spent $0.75 and $0.25. The
+  "Runs of this workflow" table, fed by the real `GET /api/workflows/<id>/instances`,
+  read `—`, `$1.50 reported so far` and `$1.00` in the Spent column, and the same
+  three under the "Spent" label at 390px. `npm run smoke-pages` on the same
+  build: 100 of 100 page loads clean, served from the standalone bundle. Caveat: the `$0.00` this replaces was
+  not re-measured on a build before the change; it is the task's report of
+  2026-10-17 and what `fmtUSD(0)` with `spentUnmeasured > 0` printed. The members
+  were inserted rather than started by a press of Run, so no real Codex run
+  produced the zero.
+
 ## Not yet verified by hand
 
 - **No review block has run against a real model (2026-09-28).** The block's
