@@ -3483,6 +3483,28 @@ describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
     assert.match(refusal, /at most 60/);
   });
 
+  it("counts a section that works in the folder the same way", () => {
+    // `worstCaseRuns` reads kinds and never guards, and there is no merge block
+    // here to be left out of the sum: four run blocks and 20 passes is 80
+    // whether or not anything lands.
+    const flat = { templateId: "t-flat" };
+    const refusal = error(
+      graph(
+        [
+          repeater("l", { maxPasses: 20 }),
+          node("a", flat),
+          node("b", flat),
+          node("c", flat),
+          node("d", flat),
+        ],
+        [repeats("l", "a"), edge("a", "b"), edge("b", "c"), edge("c", "d")],
+      ),
+    );
+    assert.match(refusal, /repeats 4 block\(s\) up to 20 time\(s\)/);
+    assert.match(refusal, /Each pass is 4 run\(s\)/);
+    assert.match(refusal, /which is 80 runs/);
+  });
+
   it("charges an orchestrator member's fan-out again on every pass", () => {
     // The arithmetic the operator chose, and the whole cost of letting one into
     // a section: a fan-out cap is what that block may start each time it is

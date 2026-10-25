@@ -303,7 +303,7 @@ from it would have no commits to show. Both are refused when you save the graph.
 
 **Because nothing asks, three places are closed to it.** A loop's section may
 not hold one, since every pass would push and open pull requests, up to the pass
-cap, and a pass already lands its own work through the section's merge block. A
+cap, and a pass already lands its own work through the section's merge block (or, working in the folder, has none to publish). A
 workflow that holds one cannot be put on a schedule, however well its limits
 bound the spend: a schedule presses Run with nobody there to look at what is
 being published. And the chat cannot draft one; add it in the editor, where its
@@ -553,17 +553,25 @@ it bound how many times the section *repeats*; they can only ever end it
 earlier, they can never raise what a pass may spend, and the workflow-wide
 limits below still apply on top of them.
 
-**Each pass lands its own work.** The section ends in a merge block, that block
-lands what the pass produced, and the next pass starts from the landed branch.
-There is no ref handed from one pass to the next and no *Land* button waiting at
-the end of the loop: by the time a loop hands on, everything it did is already
-on the target.
+**Each pass lands its own work, or has nothing to land.** A section is one of
+two kinds, decided by its blocks. If any block works in a checkout of its own —
+a run or orchestrator block whose guards isolate, or a review block — the
+section **lands**: it ends in a merge block, that block lands what the pass
+produced, and the next pass starts from the landed branch. There is no ref
+handed from one pass to the next and no *Land* button waiting at the end of the
+loop: by the time a loop hands on, everything it did is already on the target.
 
-That is why the exit has to be a merge block rather than merely being allowed to
-be one. A section that does not land leaves the next pass working from a branch
-that cannot see what the last pass did — nothing fails, nothing is refused at
-run time, and the agent simply starts again on work it already did, one billed
-pass at a time until the cap catches it.
+That is why a landing section's exit has to be a merge block rather than merely
+being allowed to be one. A section that does not land leaves the next pass
+working from a branch that cannot see what the last pass did — nothing fails,
+nothing is refused at run time, and the agent simply starts again on work it
+already did, one billed pass at a time until the cap catches it.
+
+If **every** block works directly in the folder, there are no branches: each
+pass's work is already in the folder, so the next pass sees it with nothing to
+land, and the section may end at any block. The canvas marks that exit **ends
+the pass** instead of *lands the pass*. A merge block in such a section has
+nothing to land and is refused with that reason.
 
 The next pass is created only once the previous one has settled, which means
 that between two passes there is briefly nothing running. That is intended: four
@@ -623,7 +631,7 @@ would draw it as a seventh block in a graph of six. Its strip carries the name,
 how many blocks are in the pass, the pass cap and what ends it, plus its two
 handles — **Put in**, and **Link** for what runs before and after the whole
 loop. Each member is marked with where it sits in the pass: *starts a pass*, *2
-of 3*, *lands the pass*. So "what runs first" and "where the work lands" are
+of 3*, *lands the pass* (*ends the pass* in a section that works in the folder). So "what runs first" and "where the work lands" are
 answerable by looking.
 
 There is **no arrow for containment**. The frame says it. An arrow from the loop
@@ -643,17 +651,19 @@ ends.
 
 **One way in and one way out.** The way in is the frame's **entry**, the block
 each pass starts at. The way out is its **exit**, the single block the section
-ends at, and it must be a merge block. Both are marked on the frame. Between
-those two ends the shape is free: the section may fork, and two branches that
-fork may meet again at the merge that lands them both.
+ends at. In a landing section it must be a merge block; in a section that works
+in the folder throughout it may be any block. Both are marked on the frame.
+Between those two ends the shape is free: the section may fork, and two branches
+that fork may meet again at the merge that lands them both.
 
 Three things are refused, each naming the block to fix:
 
 - A section that **ends in more than one place**. The second ending is a block
   whose work nothing lands, which is the same defect as a member with no path to
   the exit — link it on towards the block that lands.
-- A section whose **last block is not a merge block**. Add one at the end and
-  link the last block to it.
+- A landing section whose **last block is not a merge block**. Add one at the
+  end and link the last block to it, or give every block of the section guards
+  that work in the folder, so there is nothing to land.
 - A **link across the boundary**. A block outside the frame cannot link to a
   block inside it: link it to the frame instead, and the loop hands on to it
   after the last pass. Otherwise "when does this block start" has two answers —
@@ -666,10 +676,15 @@ another is a number nobody can work out from the two they typed. Repeat one
 section, not a section that repeats. A deliver block is left out too, for a
 different reason: it publishes, and a section would publish once per pass.
 
-Every block of a section that works in a checkout needs guards that isolate,
-because it has to leave a branch for the section's merge block to land. An
-orchestrator block spends nothing on disk and a merge block has no guards at
-all, so neither is asked.
+**A section is not mixed.** In a landing section every run block needs guards
+that isolate, because it has to leave a branch for the section's merge block to
+land. A run block whose guards work in the folder is refused there, naming the
+block that makes the section a landing one: either give it guards that isolate,
+or make every block of the section work in the folder. Landing a branch into a
+checkout that the same pass is also editing in place is not a state this tool
+supports, so it is refused rather than half handled. An orchestrator block
+spends nothing on disk and a merge block has no guards at all, so neither is
+asked.
 
 **Count the runs before you press Run.** A section multiplies, and an
 orchestrator block in one multiplies twice over — its fan-out cap is what it may
@@ -679,7 +694,8 @@ pass is:
 > one run for each run block, **plus** for each orchestrator block the deciding
 > turn and every run its fan-out cap allows.
 
-A merge block is neither: it lands branches and starts no run. Three run blocks
+A merge block is neither: it lands branches and starts no run, and a section
+that works in the folder is counted the same way. Three run blocks
 and a merge over 10 passes is 30 runs; swap one of those for an orchestrator
 capped at 5 and the same 10 passes is 80. A loop whose worst case is more than
 **60 runs** is refused when you save it, with the arithmetic spelled out and
