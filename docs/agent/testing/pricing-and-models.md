@@ -119,8 +119,8 @@ halves the read term on the column nobody checks, so the first case pins the row
 whole and a million reads at $0.20 in dollars, and that a fast request falls to
 the base row because the page offers fast mode on the three Opus rows only. The
 second runs `[1m]`, a snapshot and both provider decorations onto it; the pinned
-CLI names no `claude-sonnet-5-5[1m]`, but a newer CLI's or a transcript's would
-price there.
+2.1.310 names `claude-sonnet-5-5[1m]` (2.1.280 did not), and a transcript's would
+price there too.
 
 **Sonnet 5.5's cache read was cut after launch, so it earned a third block, and
 it is the dated rate the two above were deleted for lack of.** It shipped at the

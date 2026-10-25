@@ -88,6 +88,53 @@ describe("the model catalogue", () => {
     assert.equal(byId.get("claude-opus-5")?.enabled, true);
   });
 
+  it("seeds the 5.5 Sonnet and Haiku on, with a 1M variant for Sonnet only", () => {
+    // The pin moved to 2.1.310, which names `claude-sonnet-5-5`,
+    // `claude-sonnet-5-5[1m]` and `claude-haiku-5-5`, and the seed's own rule is
+    // that the pinned CLI naming a current, generally available model is what
+    // turns it on. Left as it was under 2.1.280 the three arrive switched off,
+    // and the install that never touched its list offers neither 5.5 model on
+    // any picker, with nothing anywhere saying one shipped. Haiku has no `[1m]`
+    // row because the pinned CLI names none, and a row for an id it does not name
+    // is the guess `ONE_MEGA_VARIANTS` exists to refuse.
+    const byId = new Map(SEEDED_MODEL_CATALOGUE.map((e) => [e.id, e]));
+    assert.deepEqual(byId.get("claude-sonnet-5-5"), {
+      id: "claude-sonnet-5-5",
+      label: "Claude Sonnet 5.5",
+      enabled: true,
+    });
+    assert.deepEqual(byId.get("claude-sonnet-5-5[1m]"), {
+      id: "claude-sonnet-5-5[1m]",
+      label: "Claude Sonnet 5.5 (1M context)",
+      enabled: true,
+    });
+    assert.deepEqual(byId.get("claude-haiku-5-5"), {
+      id: "claude-haiku-5-5",
+      label: "Claude Haiku 5.5",
+      enabled: true,
+    });
+    assert.equal(byId.has("claude-haiku-5-5[1m]"), false);
+    // Additions, not replacements: Sonnet 5 stays on beside its successor.
+    assert.equal(byId.get("claude-sonnet-5")?.enabled, true);
+  });
+
+  it("does not seed a [1m] id the pinned CLI no longer names", () => {
+    // 2.1.310 dropped `claude-opus-4-7[1m]` from the nine it carries. A fresh
+    // install that still offered it would show an option the CLI's own picker no
+    // longer does, while the base model, which the CLI still names, stays on.
+    // Nothing prices or labels a transcript through this table, so dropping the
+    // row costs an old transcript nothing; what it must not do is take
+    // `claude-opus-4-7` down with it.
+    const byId = new Map(SEEDED_MODEL_CATALOGUE.map((e) => [e.id, e]));
+    assert.equal(byId.has("claude-opus-4-7[1m]"), false);
+    assert.equal(byId.get("claude-opus-4-7")?.enabled, true);
+    assert.equal(
+      SEEDED_MODEL_CATALOGUE.filter((e) => e.id.endsWith("[1m]")).length,
+      9,
+      "the pinned CLI names nine claude-…[1m] ids",
+    );
+  });
+
   it("gives every [1m] variant a base the price table can resolve", () => {
     // The suffix is the CLI's and the base is the price table's, so a variant
     // whose base has been renamed prices at `UNKNOWN_MODEL_PRICE` — $10/$50 on
@@ -293,6 +340,26 @@ describe("the model catalogue", () => {
         { id: "acme-one", label: "acme-one", enabled: true },
         { id: "acme-two", label: "acme-two", enabled: false },
       ]);
+    });
+
+    it("keeps a [1m] id the seed has since dropped, with the operator's answer", () => {
+      // `claude-opus-4-7[1m]` left the seed with the 2.1.310 pin, and the CLI
+      // still runs it, so an install that lists it is not wrong to. Dropping the
+      // row from a stored list would refuse, at every door, a model the operator
+      // may have in a template or as their default, on the strength of a seed
+      // they never edited. It stays as they left it and moves behind the seeded
+      // ids, which is where an entry the build does not declare always sits.
+      const stored = [
+        { id: "claude-opus-4-7", label: "Claude Opus 4.7", enabled: true },
+        { id: "claude-opus-4-7[1m]", label: "Claude Opus 4.7 (1M context)", enabled: true },
+        { id: "claude-opus-4-6", label: "Claude Opus 4.6", enabled: false },
+      ];
+      const merged = mergeSeededModels(stored);
+      assert.deepEqual(merged.at(-1), stored[1]);
+      assert.deepEqual(
+        merged.find((e) => e.id === "claude-opus-4-6"),
+        stored[2],
+      );
     });
 
     it("names a model the operator had typed in before it was seeded", () => {

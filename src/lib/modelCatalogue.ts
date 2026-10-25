@@ -117,17 +117,28 @@ const MODEL_LABELS: Record<string, string> = {
  * The `[1m]` ids, and the price-table key each sits under.
  *
  * MEASURED rather than reasoned: these are exactly the nine `claude-…[1m]`
- * strings the pinned CLI carries (2.1.280, the `CLAUDE_CLI_VERSION` in
+ * strings the pinned CLI carries (2.1.310, the `CLAUDE_CLI_VERSION` in
  * `Dockerfile`), read out of `@anthropic-ai/claude-code-linux-arm64`'s binary.
  * The suffix is a request for the 1M-context deployment of that model, so the
  * list is the CLI's to grow and not this build's to guess —
  * `claude-fable-5-1[1m]` looks like it should exist and the pinned CLI does not
  * name it, which is precisely why nothing here derives a variant from a base.
  *
+ * It is also the CLI's to shrink. 2.1.310 added `claude-sonnet-5-5[1m]` to
+ * 2.1.280's nine and dropped `claude-opus-4-7[1m]`, so the count is still nine
+ * and is not the same nine. A dropped id is dropped here rather than seeded off:
+ * nothing prices or labels a transcript through this table (`pricing.ts` reads
+ * any bracketed suffix as decoration), and the CLI still runs the id when an
+ * install names it, so the only thing a row here decides is whether a *fresh*
+ * install offers it. An install that stores a list with it keeps the row, moved
+ * behind the seeded ones and with a Remove button, because it is no longer a
+ * seeded one; an install still following the seed stops listing it.
+ *
  * Re-measuring it is one grep, and the count to expect is nine rather than what
  * that grep prints: the binary also carries the CLI's short aliases
- * (`opus[1m]`, `sonnet-4-6[1m]`, `opusplan[1m]` and four more), which are not
- * model ids and are not this list's business.
+ * (`opus[1m]`, `opusplan[1m]`, `fable[1m]`, `sonnet[1m]` and
+ * `sonnet-4-5-20250929[1m]`, five on 2.1.310), which are not model ids and are
+ * not this list's business.
  *
  * `base` is a price-table key rather than a label, so a variant cannot end up
  * named after a model the price table has never heard of.
@@ -137,8 +148,8 @@ const ONE_MEGA_VARIANTS: { id: string; base: string }[] = [
   { id: "claude-opus-5-5[1m]", base: "claude-opus-5-5" },
   { id: "claude-opus-5[1m]", base: "claude-opus-5" },
   { id: "claude-opus-4-8[1m]", base: "claude-opus-4-8" },
-  { id: "claude-opus-4-7[1m]", base: "claude-opus-4-7" },
   { id: "claude-opus-4-6[1m]", base: "claude-opus-4-6" },
+  { id: "claude-sonnet-5-5[1m]", base: "claude-sonnet-5-5" },
   { id: "claude-sonnet-5[1m]", base: "claude-sonnet-5" },
   { id: "claude-sonnet-4-6[1m]", base: "claude-sonnet-4-6" },
   // The one dated id in the set: the CLI names `claude-sonnet-4-5-20250929[1m]`
@@ -158,12 +169,13 @@ const ONE_MEGA_VARIANTS: { id: string; base: string }[] = [
  * a transcript may still name one, which is not a reason to start new work on
  * one. Every one of them is one switch away.
  *
- * `claude-sonnet-5-5` is off for the first clause: current, GA and priced, but
- * the pinned 2.1.280 binary names neither it nor a `[1m]` of it, which is also
- * why `ONE_MEGA_VARIANTS` has no row for it. `claude-haiku-5-5` is off and
- * variant-less for the same reason, measured the same way (0 hits for
- * `haiku-5-5`), and a `[1m]` of it would in any case price like its base: its
- * 1M window is native, and what raises its rate is the length of a request's
+ * `claude-sonnet-5-5`, its `[1m]` and `claude-haiku-5-5` were off for the first
+ * clause while the pin was 2.1.280, which names none of them. 2.1.310 names all
+ * three (12 hits for `sonnet-5-5`, 10 for `haiku-5-5`, and a
+ * `claude-sonnet-5-5[1m]`), so they are on, which makes twenty of the seed's
+ * thirty-six entries. `claude-haiku-5-5` still has no `[1m]` row: the pinned CLI
+ * names none, and one would in any case price like its base, since its 1M
+ * window is native and what raises its rate is the length of a request's
  * prompt, not which deployment sent it.
  */
 const ENABLED_ON_SEED: ReadonlySet<string> = new Set([
@@ -177,13 +189,15 @@ const ENABLED_ON_SEED: ReadonlySet<string> = new Set([
   "claude-opus-4-8",
   "claude-opus-4-8[1m]",
   "claude-opus-4-7",
-  "claude-opus-4-7[1m]",
   "claude-opus-4-6",
   "claude-opus-4-6[1m]",
+  "claude-sonnet-5-5",
+  "claude-sonnet-5-5[1m]",
   "claude-sonnet-5",
   "claude-sonnet-5[1m]",
   "claude-sonnet-4-6",
   "claude-sonnet-4-6[1m]",
+  "claude-haiku-5-5",
   "claude-haiku-4-5",
 ]);
 
