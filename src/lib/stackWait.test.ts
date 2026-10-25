@@ -1171,5 +1171,57 @@ describe("a task check left in flight by a park", () => {
     it("a verdict that lands after the pick-up's first spawn buys nothing either", async () => {
       await pickedUp("needs-review-verdict-after-pickup", true);
     });
+
+    /**
+     * The check from the cycle before the pick-up is still reading when the
+     * pick-up's cycle ends. Its verdict is never acted on, so the boundary
+     * used to wait out its ten minutes for nothing, holding the run's folder
+     * and slot while its dependents and the runs queued behind it waited.
+     */
+    it("is not held at the pick-up's first boundary by a check still reading from before it", async () => {
+      settings.saveSettings({ validateTaskCompletion: true, maxValidationCycles: 2 });
+      // An array rather than a variable the closure assigns, which the compiler
+      // narrows to null at every later read.
+      const claims: { taskId: string; reviewId: string }[] = [];
+      const id = start("needs-review-check-still-reading", [
+        {
+          during: () => {
+            claims.push(claimAndValidate(scriptedRun));
+          },
+          reply: "Called complete_task, then hit a wall I cannot pass.\nNEEDS_REVIEW",
+        },
+        { reply: "Answered the operator's note.\nDONE" },
+      ]);
+      try {
+        const first = await settled(id);
+        assert.equal(first.status, "needs-review", first.stop_reason ?? "");
+        // A clock tick, so the pick-up cannot share the claim's millisecond.
+        await new Promise((r) => setTimeout(r, 20));
+        const pickedAt = Date.now();
+        const picked = reopenRun(id, { maxIterations: 2 }, "Use the other compiler and carry on.");
+        assert.equal(picked.ok, true, JSON.stringify(picked));
+
+        const done = await settled(id);
+        const elapsed = Date.now() - pickedAt;
+        assert.equal(done.status, "completed", done.stop_reason ?? "");
+        assert.equal(argvs.length, 2);
+        assert.equal(done.validation_cycles, 0);
+        // The boundary polls every two seconds and waits eleven minutes for a
+        // check that never answers, so any wait at all is far past this.
+        assert.ok(elapsed < 6_000, `the pick-up's boundary waited ${elapsed}ms for the old check`);
+        const row = db()
+          .prepare("SELECT status FROM run_reviews WHERE id = ?")
+          .get(claims[0].reviewId) as { status: string };
+        assert.equal(row.status, "running", "the old check settled, so nothing was left to wait for");
+      } finally {
+        // A failing case leaves the boundary polling this row; settle it so the
+        // wait ends rather than holding the test process open.
+        for (const claim of claims) {
+          db()
+            .prepare("UPDATE run_reviews SET status='failed', finished_at=? WHERE id=?")
+            .run(Date.now(), claim.reviewId);
+        }
+      }
+    });
   });
 });

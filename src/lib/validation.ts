@@ -500,6 +500,29 @@ const startingChecks = ((globalThis as unknown as {
 }).__ufValidationStarting ??= new Map<string, string>());
 
 /**
+ * When the claim in `startingChecks` was asked for: the door's call, or the
+ * queue row's `asked_at` for a claim that waited.
+ *
+ * Its own `globalThis` key rather than a widened value in the map above, for
+ * CLAUDE.md's reason — a pre-upgrade map survives a hot reload with task ids
+ * for values. A missing entry reads as "asked in this segment", which is the
+ * wait the boundary always made.
+ */
+const startingAskedAt = ((globalThis as unknown as {
+  __ufValidationStartingAsked?: Map<string, number>;
+}).__ufValidationStartingAsked ??= new Map<string, number>());
+
+/**
+ * Whether a check asked for, or begun, at `at` belongs to the segment starting
+ * at `segmentStart` — the last pick-up (`runs.reopened_at`), null for a run
+ * never picked up. One test for the boundary's wait and for the verdicts it
+ * acts on, so the two cannot disagree about which checks are this segment's.
+ */
+function inSegment(at: number, segmentStart: number | null): boolean {
+  return segmentStart === null || at >= segmentStart;
+}
+
+/**
  * Whether this run's claim can be checked at all.
  *
  * Pure, and every branch of it fails **open** — the answer is a reason to close
@@ -605,10 +628,15 @@ export async function completeTaskWithValidation(
  * up once the row is written or the task closed, and a claim that got no child
  * hands the turn to the next one queued, since there is no settle to do it.
  */
-async function startCheck(task: Task, run: RunRow): Promise<CompletionAnswer> {
+async function startCheck(
+  task: Task,
+  run: RunRow,
+  askedAt: number = Date.now(),
+): Promise<CompletionAnswer> {
   const runId = run.id;
   const settings = getSettings();
   startingChecks.set(runId, task.id);
+  startingAskedAt.set(runId, askedAt);
   let spawned = false;
   try {
     const diff = await runDiff(runId);
@@ -701,6 +729,7 @@ async function startCheck(task: Task, run: RunRow): Promise<CompletionAnswer> {
     return { kind: "checking", task, reviewId: started.id };
   } finally {
     startingChecks.delete(runId);
+    startingAskedAt.delete(runId);
     // A queued claim leaves the queue here, after its check row or its close
     // and with no await between, rather than when the drain took it: a process
     // killed during the diff read or the window scan left neither row, and the
@@ -716,17 +745,28 @@ async function startCheck(task: Task, run: RunRow): Promise<CompletionAnswer> {
 
 /**
  * This run's claims waiting their turn, oldest first: not the one `startCheck`
- * is taking, whose row stays until its check row is written.
+ * is taking, whose row stays until its check row is written. With a
+ * `segmentStart`, only those asked for in that segment.
  */
-function queuedChecks(runId: string): string[] {
+function queuedChecks(runId: string, segmentStart: number | null = null): string[] {
   const starting = startingChecks.get(runId);
   return (
     db()
-      .prepare("SELECT task_id FROM validation_queue WHERE run_id = ? ORDER BY asked_at, rowid")
-      .all(runId) as { task_id: string }[]
+      .prepare(
+        "SELECT task_id, asked_at FROM validation_queue WHERE run_id = ? ORDER BY asked_at, rowid",
+      )
+      .all(runId) as { task_id: string; asked_at: number }[]
   )
-    .map((row) => row.task_id)
-    .filter((taskId) => taskId !== starting);
+    .filter((row) => row.task_id !== starting && inSegment(row.asked_at, segmentStart))
+    .map((row) => row.task_id);
+}
+
+/** When a waiting claim was asked for, read before `startCheck` takes its row off. */
+function queuedAskedAt(runId: string, taskId: string): number | undefined {
+  const row = db()
+    .prepare("SELECT asked_at FROM validation_queue WHERE run_id = ? AND task_id = ?")
+    .get(runId, taskId) as { asked_at: number } | undefined;
+  return row?.asked_at;
 }
 
 /** Take a claim off the queue, once something else names it or it is closed. */
@@ -843,7 +883,7 @@ async function startQueuedCheck(taskId: string, runId: string): Promise<void> {
     // claimed by this run until a boot closed them.
     setImmediate(() => void drainValidationQueue(runId));
   } else {
-    outcome = await startCheck(task, run);
+    outcome = await startCheck(task, run, queuedAskedAt(runId, taskId));
   }
 
   if (outcome.kind === "closed") {
@@ -1045,12 +1085,19 @@ export function closeStrandedValidations(rows: readonly ReviewRow[]): void {
 /**
  * Whether this run has a check reading, starting, or waiting its turn — every
  * state whose verdict the boundary has not seen yet.
+ *
+ * With a `segmentStart`, only checks begun or asked for since then count: the
+ * floor `verdictsToActOn` puts on the verdicts, applied to the wait that comes
+ * before it. A check from before the last pick-up is never acted on, so
+ * waiting for it — up to eleven minutes each, holding the run's folder and
+ * slot while its dependents and the runs queued behind it wait — buys nothing.
  */
-export function validationInFlight(runId: string): boolean {
+export function validationInFlight(runId: string, segmentStart: number | null = null): boolean {
+  const askedAt = startingAskedAt.get(runId);
   return (
-    assistRunning(runId, "validate") ||
-    startingChecks.has(runId) ||
-    queuedChecks(runId).length > 0
+    assistRunning(runId, "validate", segmentStart) ||
+    (startingChecks.has(runId) && (askedAt === undefined || inSegment(askedAt, segmentStart))) ||
+    queuedChecks(runId, segmentStart).length > 0
   );
 }
 
@@ -1112,7 +1159,7 @@ export function verdictsToActOn<
         row.verdict === "not-finished" &&
         row.finished_at !== null &&
         row.finished_at >= since &&
-        (segmentStart === null || row.created_at >= segmentStart) &&
+        inSegment(row.created_at, segmentStart) &&
         heldTaskIds.has(taskId),
     )
     .map(([, row]) => row)
@@ -1254,9 +1301,15 @@ export async function validationAtBoundary(
   // is the one reading. It still ends: the queue is at most the tasks the run
   // holds, `MAX_RUN_TASKS`, and nothing joins it while no cycle is running.
   // What it holds meanwhile is the run's own folder and slot.
+  //
+  // Only the checks of this segment, by `verdictsToActOn`'s floor: one begun
+  // before the last pick-up is never acted on, so it is not waited for either.
+  // Read once, since a pick-up needs an ended run and this one is between two
+  // cycles.
+  const segmentStart = getRun(runId)?.reopened_at ?? null;
   let reading: string | null = null;
   let deadline = Date.now() + VERDICT_WAIT_MS;
-  while (validationInFlight(runId)) {
+  while (validationInFlight(runId, segmentStart)) {
     if (interrupted()) return null;
     const current = runningValidation(runId)?.id ?? null;
     if (current !== reading) {

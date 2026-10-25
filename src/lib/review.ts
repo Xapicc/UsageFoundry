@@ -226,12 +226,17 @@ export function getAssist(id: string): ReviewRow | null {
   );
 }
 
-export function assistRunning(runId: string, kind: AssistKind): boolean {
+/**
+ * Whether one of this kind is running — with `since`, one begun at or after it,
+ * which is how a boundary leaves out a check from before the run's last
+ * pick-up. Null counts every one.
+ */
+export function assistRunning(runId: string, kind: AssistKind, since: number | null = null): boolean {
   const row = db()
     .prepare(
-      "SELECT COUNT(*) AS n FROM run_reviews WHERE run_id = ? AND kind = ? AND status = 'running'",
+      "SELECT COUNT(*) AS n FROM run_reviews WHERE run_id = ? AND kind = ? AND status = 'running' AND created_at >= ?",
     )
-    .get(runId, kind) as { n: number };
+    .get(runId, kind, since ?? 0) as { n: number };
   return row.n > 0;
 }
 
