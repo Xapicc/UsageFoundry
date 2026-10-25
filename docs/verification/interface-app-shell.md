@@ -137,13 +137,48 @@
   turn-to-dashes branch after a good answer being covered by the unit test and not
   by a browser, since the poll is 120s.
 
+- **A `Sheet` takes its wrapping from itself and not from the element it is
+  written inside, 2026-10-25** (`npm run build` at `9460b274`, standalone
+  bundle against a scratch `DATA_DIR`, `CLAUDE_BIN` and `CODEX_BIN` that cannot
+  spawn, Chromium 151.0.7922.34 via Playwright 1.62.1, skin in `localStorage`
+  before first paint; `/api/claude-auth` and `/api/codex-auth` intercepted so the
+  sheets could be opened signed out, signed in and mid-flow). Before: the seven
+  sheets `/settings` writes inside an `EnvRow` had a `<dialog>` whose computed
+  `word-break` was `break-all`, inherited from the row's `<dd class="break-all">`
+  through the top layer; `overflow-wrap` read `normal` and `hyphens` `manual`.
+  The other 21 dialogs on those eight pages (`/`, `/runs`, `/agents`,
+  `/branches`, `/projects`, `/tasks`, `/workflows`, `/settings`) all read
+  `normal`. "Sign in to Claude" wrapped "…The link works f" / "rom any device."
+  at 1280 default and "…The li" / "nk works…" at 1280 ascii; at 390 that paragraph
+  broke on a space only because the width happens to end a line there, while the
+  sign-out sheet broke twice and the error line broke "paste its c" / "ode." in
+  both skins.
+
+  After: `word-break: normal` and `overflow-wrap: anywhere` on the dialog, and all
+  28 dialogs read that. 0 mid-word breaks outside the two `break-all` URL lines in
+  32 readings (six sheets: Claude sign-in with its error line, Claude sign-out,
+  Codex sign-in, Codex API key with its error line, and both `FleetControls`
+  sheets; both skins; 1280 and 390), against 14 of those 32 before. The panel's
+  `scrollWidth` and `clientWidth` are the same before and after in every state
+  (542/542 and 388/388 default, 549/542 and 395/388 ascii, the frame's own 7px).
+  `npm run smoke-pages`: 100/100 page loads clean, standalone bundle. Caveats: the
+  `FleetControls` sheets were opened by calling `showModal()` on the
+  always-rendered `<dialog>` with no stopped run behind it, so they read "Pick up
+  0 runs" over the real text; the local model's two sheets, `/projects`,
+  `/agents`, `/branches`, the workflow pages, `RunLand`, `RestartClosed` and
+  `TaskEditor` were not opened, only their dialog's computed `word-break` read.
+  One Chromium, one font stack.
+
 ## Not yet verified by hand
 
 - **The shared layer's 390px pass (2026-09-10) was never on a real phone or
   with a keyboard up**; the long-label `Meter` case was a fixture only.
 
-- **No other sheet has been seen at 390px, and none on a real phone or with a
+- **Few sheets have been seen at 390px, and none on a real phone or with a
   software keyboard up**, the case `--keyboard-inset` and the `100dvh` cap are
-  for. Of the eleven other files that open one, only Codex's `Use API key` has
-  been opened, width unrecorded; the workflow pass did not trigger
-  `WorkflowEditor`'s or `WorkflowSchedule`'s confirmations.
+  for. Opened so far: Codex's `Use API key`, `Sign in to Codex`, the two Claude
+  account sheets and `FleetControls`' two (the last by `showModal()` over a count
+  of zero), and quick open. The workflow pass did not trigger `WorkflowEditor`'s
+  or `WorkflowSchedule`'s confirmations, and the local model's two, `RunLand`,
+  `RestartClosed`, `TaskEditor` and the `/projects`, `/agents`, `/branches` and
+  workflow-page sheets have not been opened.

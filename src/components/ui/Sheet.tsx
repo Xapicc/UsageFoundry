@@ -111,7 +111,20 @@ export function Sheet({
       // inset-0 with the UA margin cleared makes the element the whole viewport,
       // so the panel below can sit at the top of it. The three `-none`s defeat
       // the UA's own max-width/max-height on a modal dialog.
-      className="fixed inset-0 m-0 h-auto max-h-none w-auto max-w-none overflow-hidden bg-transparent p-0 [&::backdrop]:bg-black/25"
+      //
+      // The two bracketed properties are the sheet's own word-wrapping, stated
+      // because the top layer takes a `<dialog>` out of the page's *painting*
+      // and not out of its *inheritance*: it still inherits from the element
+      // it is written inside. Settings writes its account sheets inside an
+      // `EnvRow`'s `<dd>`, which is `break-all` so that a mount path (one
+      // unbreakable token) cannot widen its column, and every sentence in
+      // those sheets inherited it and wrapped at the last character that fit
+      // ("The link works f" / "rom any device"). `word-break: normal` hands
+      // prose its word boundaries back; `overflow-wrap: anywhere` keeps what
+      // `break-all` was there for, since a token longer than the panel breaks
+      // only when it cannot fit a line of its own, and unlike `break-word`
+      // it also counts in the panel's min-content width.
+      className="fixed inset-0 m-0 h-auto max-h-none w-auto max-w-none overflow-hidden bg-transparent p-0 [word-break:normal] [overflow-wrap:anywhere] [&::backdrop]:bg-black/25"
       style={VIEWPORT_INSETS}
     >
       <div
