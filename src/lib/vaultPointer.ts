@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { CLAUDE_BIN, spawnCommand } from "./config";
 import { promptArgs } from "./cycleInvocation";
+import { knowledgeIndex } from "./knowledge";
 import { costOf, resolvePrice } from "./pricing";
 import { holdoutOf } from "./priorReads";
 import { childCredentials, privilegeSeparated } from "./privsep";
@@ -196,9 +197,106 @@ export function mergeCandidates<T extends { path: string }>(lists: readonly (rea
     .map((b) => b.hit);
 }
 
-export const QUERY_SYSTEM = `You write search queries for a personal knowledge vault of research notes (LLM agents, containers and virtualisation on macOS, local inference, software engineering, web design) and of measured failures in the agent infrastructure that runs coding tasks.
+/** One subject area of the vault, as its tags declare it. */
+export interface VaultTopic {
+  /** The tag's first segment, below a `topic/` namespace when the vault has one. */
+  area: string;
+  /** Notes carrying any tag in the area. */
+  notes: number;
+  /** The area's most-used second segments, most-used first. */
+  subtopics: string[];
+}
+
+/** The subject namespace, when a vault uses one: what this vault's own conventions call it. */
+const TOPIC_NAMESPACE = "topic/";
+
+/**
+ * What a vault is about, read off its own tags.
+ *
+ * The query writer has to be told what kind of notes it is searching, and that
+ * description used to be a sentence about one operator's vault, true of no
+ * other. Tags are the vault's own statement of its subjects, so the areas are
+ * counted from them on every pointer: each tag's first segment is an area and
+ * its second a subtopic, each counted once per note.
+ *
+ * A vault that namespaces its subjects under `topic/` — the convention the
+ * vault this was written against documents, beside `type/`, `status/` and
+ * `source/` for the form of a note — is read through that namespace alone,
+ * because counted whole, the form tags every note carries would head the list
+ * and say nothing about subject. A vault with no `topic/` tag at all is read
+ * through every tag it has. Areas are listed whole rather than as a flat
+ * top-N of subtopics because one large area would otherwise crowd the rest
+ * out: on the vault this was measured on, `ai/` alone holds 26 of the 40 most
+ * used subtopics, and a query writer told only about those would never aim at
+ * the version-control or security notes.
+ */
+export function vaultTopics(
+  tagLists: Iterable<readonly string[]>,
+  { areas = 16, subtopics = 5 }: { areas?: number; subtopics?: number } = {},
+): VaultTopic[] {
+  const notesTags = [...tagLists].map((tags) => [...new Set(tags.map((t) => t.replace(/^#/, "").trim()).filter(Boolean))]);
+  const namespaced = notesTags.some((tags) => tags.some((t) => t.startsWith(TOPIC_NAMESPACE)));
+  const areaCount = new Map<string, number>();
+  const subCount = new Map<string, Map<string, number>>();
+  for (const tags of notesTags) {
+    const subjects = namespaced
+      ? tags.filter((t) => t.startsWith(TOPIC_NAMESPACE)).map((t) => t.slice(TOPIC_NAMESPACE.length))
+      : tags;
+    const seenAreas = new Set<string>();
+    const seenSubs = new Set<string>();
+    for (const subject of subjects) {
+      const [area, sub] = subject.split("/");
+      if (!area) continue;
+      seenAreas.add(area);
+      if (sub) seenSubs.add(`${area}/${sub}`);
+    }
+    for (const area of seenAreas) areaCount.set(area, (areaCount.get(area) ?? 0) + 1);
+    for (const key of seenSubs) {
+      const [area, sub] = key.split("/");
+      const subs = subCount.get(area) ?? new Map<string, number>();
+      subs.set(sub, (subs.get(sub) ?? 0) + 1);
+      subCount.set(area, subs);
+    }
+  }
+  const byCount = <K extends string>(a: [K, number], b: [K, number]) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1);
+  return [...areaCount]
+    .sort(byCount)
+    .slice(0, areas)
+    .map(([area, notes]) => ({
+      area,
+      notes,
+      subtopics: [...(subCount.get(area) ?? new Map<string, number>())]
+        .sort(byCount)
+        .slice(0, subtopics)
+        .map(([sub]) => sub),
+    }));
+}
+
+/**
+ * The query writer's instructions, describing the vault by its own topics.
+ *
+ * With no tags to read there is no description at all rather than a guessed
+ * one: a query writer told nothing about the vault still writes queries about
+ * the task, which is the half that matters.
+ */
+export function querySystem(topics: readonly VaultTopic[]): string {
+  const about =
+    topics.length === 0
+      ? "You write search queries for a personal knowledge vault."
+      : "You write search queries for a personal knowledge vault. By its own tags it covers, " +
+        "largest area first, with each area's main subtopics: " +
+        topics
+          .map(
+            (t) =>
+              `${t.area} (${t.notes.toLocaleString("en-US")} ${t.notes === 1 ? "note" : "notes"}` +
+              `${t.subtopics.length > 0 ? `: ${t.subtopics.join(", ")}` : ""})`,
+          )
+          .join("; ") +
+        ".";
+  return `${about}
 
 Given a coding agent's task, write up to three short queries (3-8 words each) naming the mechanisms, components, failures or design questions the task is actually about. Never query for boilerplate: repository names, commit or branch instructions, board-task procedure, the DONE/NEEDS_REVIEW protocol.`;
+}
 
 export const JUDGE_SYSTEM = `You decide whether any notes from a personal knowledge vault would change how an unattended coding agent does its task. The agent will see your picks before it starts, and any note it opens is paid for on every later turn, so a pick that turns out to be background costs it thousands of tokens for nothing.
 
@@ -553,7 +651,11 @@ export async function resolveVaultPointer(o: {
   try {
     return await withGateSlot(async () => {
       const cwd = gateCwd();
-      const asked = await askGate(QUERY_SYSTEM, gateTask(o.task), QUERY_SCHEMA, cwd);
+      // Through the app's own cached reader of the vault, the one behind the
+      // Knowledge page: on a warm cache this is a stat walk, and a note still
+      // being downloaded from iCloud simply carries no tags yet.
+      const topics = vaultTopics([...knowledgeIndex(o.vaultRoot).notes.values()].map((n) => n.tags));
+      const asked = await askGate(querySystem(topics), gateTask(o.task), QUERY_SCHEMA, cwd);
       costUsd += asked.costUsd;
       const written = (asked.output as { queries?: unknown })?.queries;
       const queries = [
