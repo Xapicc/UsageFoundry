@@ -3121,6 +3121,24 @@ export function probeIsolation(folder: string): IsolationPlan {
     };
   }
 
+  // The same store seen from the repository nested below a mount root that is
+  // itself a repository: the store is outside the nested one and inside the
+  // outer one, with the same three consequences, and it is the outer repository's
+  // rules that decide them. Refused rather than isolated anyway because one line
+  // in the outer `.gitignore` clears the refusal, where slots already made
+  // clear only by emptying the store.
+  if (repoRoot !== mountRoot && isRepositoryRoot(mountRoot) && !storeIgnoredBy(mountRoot)) {
+    return {
+      mode: "none",
+      repository: repoRoot,
+      reason:
+        `The workspace root ${mountRoot} is itself a repository, so checkouts of this one would go inside it, ` +
+        `in ${WORKTREE_STORE_DIR}/, and its .gitignore does not ignore that directory. Add the line ` +
+        `"${WORKTREE_STORE_DIR}/" to ${path.join(mountRoot, ".gitignore")} and commit it, and runs here get ` +
+        `checkouts of their own.`,
+    };
+  }
+
   // Recorded alongside the commit, because the commit alone cannot say where
   // this work is supposed to end up. A detached HEAD answers the literal string
   // "HEAD", which names no branch — stored as null so the landing path refuses
@@ -3144,7 +3162,8 @@ export function probeIsolation(folder: string): IsolationPlan {
  * Whether a repository's own ignore rules keep the checkout store out of it.
  *
  * Asked only of a repository at the mount root, the one whose working tree the
- * store sits in. The user-level excludes file is switched off for the question:
+ * store sits in, whether the run is on that repository or on one nested below
+ * it. The user-level excludes file is switched off for the question:
  * it is this container's, the operator's git on the host reads its own, and an
  * answer that leaned on it would hold here and not at the operator's terminal.
  * `.gitignore` and `info/exclude` are in the repository, so every git that
@@ -3163,6 +3182,31 @@ function storeIgnoredBy(repoRoot: string): boolean {
     "--",
     `${WORKTREE_STORE_DIR}/`,
   ]).ok;
+}
+
+/**
+ * Whether `dir` is itself a repository's working tree, by git's own answer.
+ *
+ * For a mount root that may or may not be one, and never more than a `stat`
+ * when it is not. Asked of git alone, a mount root that is not a repository
+ * climbs out of the mount to whatever repository is above it, which the
+ * checkout store is not inside and which this app has no business refusing
+ * over. So `.git` is looked for at `dir` itself first, and git's answer is
+ * accepted only when it names `dir`: an empty `.git` directory is skipped by
+ * git's discovery and would answer with the repository above. A `.git` git
+ * cannot use, such as a host checkout's gitdir that does not exist under the
+ * mount, is not a repository here, because the refusal this feeds names a
+ * `.gitignore` line that no edit would make git able to read.
+ */
+function isRepositoryRoot(dir: string): boolean {
+  if (!fs.existsSync(path.join(dir, ".git"))) return false;
+  const top = gitSync(dir, ["rev-parse", "--show-toplevel"]);
+  if (!top.ok || !top.stdout) return false;
+  try {
+    return fs.realpathSync(top.stdout) === dir;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -3210,7 +3254,9 @@ export function worktreeStore(repoRoot: string): string | null {
   // For a repository below the mount root it is outside the repo, so it cannot
   // show up in `git status` or be swept into a commit as a gitlink. For one at
   // the mount root it is inside, and only the repository's ignore rule keeps it
-  // out of both, which is why `probeIsolation` asks for that rule first.
+  // out of both, which is why `probeIsolation` asks for that rule first. It asks
+  // the same of a mount-root repository when the run is on one nested below it,
+  // because the store is then inside that outer repository instead.
   return path.join(realMountPath(mount), WORKTREE_STORE_DIR);
 }
 
