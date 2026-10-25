@@ -70,6 +70,22 @@
   `add` exit 128 (`clean filter 'a=b' failed`) and wrote no marker. Caveat:
   uid 1000 in an agent container, not a booted image.
 
+- **An empty `merge.<x>.driver` runs nothing and fails the merge on 2.39.5,
+  where `false` and `true` each give a wrong merge, 2026-10-25.** Board task
+  `a38856ec`, same harness as the entry above. Two branches changed lines 2
+  and 5 of one file, `[merge "evil"] driver = <prog> %O %A %B` was in
+  `.git/config` and `* merge=evil` in `.git/info/attributes`, and `<prog>`
+  writes a marker and keeps theirs. With only `-c core.hooksPath=/dev/null`,
+  `merge-tree --write-tree -z` and `merge --no-edit` each ran it. With `-c
+  merge.evil.driver=` neither did: both printed `error: cannot run : No such
+  file or directory`, `merge-tree` exited 128 and `merge` exited 2, and
+  afterwards `status` was clean with no `MERGE_HEAD`. With `false`, both
+  reported a content conflict in the file, and the marker was not written. With `true`, both
+  reported a clean merge and the result was ours. A driver named `a=b` still
+  ran under `-c 'merge.a=b.driver='` and did not under
+  `--config-env='merge.a=b.driver=E'` with `E` empty. Caveat: uid 1000 in an
+  agent container, not a booted image.
+
 ## Not yet verified by hand
 
 - **Any way to keep this app's git from running hooks defined in config.**

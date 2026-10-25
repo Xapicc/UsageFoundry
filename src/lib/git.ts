@@ -222,37 +222,55 @@ const BLANK_VAR = "USAGEFOUNDRY_BLANK";
  * `GIT_CONFIG_COUNT` would do too, but an inherited block would have to be
  * appended to rather than replaced, and the flag has nothing to merge.
  *
+ * A `merge.<x>.driver` is the same kind of program, run on every three-way
+ * content merge of a file whose attributes say `merge=x`, and Land runs two
+ * such merges with nobody watching (board task a38856ec). Its blank is an empty
+ * driver: git then runs nothing, says `cannot run :` and fails the merge, which
+ * `merge-tree` reports as exit 128 and `merge` as exit 2 with no `MERGE_HEAD`
+ * left behind (measured, 2.39.5). The two values that look gentler are worse:
+ * `false` reads as a conflict whose file holds ours without a marker in it, and
+ * `true` as a clean merge that dropped theirs. So a repository that relies on a
+ * merge driver has this app's merges of such a file fail, the cost a required
+ * filter already has. `merge.default` needs nothing of its own: it names a
+ * driver, and a driver it names is defined by keys this blanks.
+ *
  * `-z` output is `key\nvalue` per record; the driver name is the subsection,
  * whose case git preserves and which the override must match, so it is captured
  * verbatim and never lower-cased.
  */
 function driverNeutralizers(configOutput: string): string[] {
-  const names = new Set<string>();
+  const filters = new Set<string>();
+  const merges = new Set<string>();
   for (const record of configOutput.split("\0")) {
     if (!record) continue;
     const key = record.split("\n", 1)[0];
-    const match = /^filter\.(.+)\.(?:clean|smudge|process|required)$/i.exec(key);
-    if (match) names.add(match[1]);
+    const filter = /^filter\.(.+)\.(?:clean|smudge|process|required)$/i.exec(key);
+    if (filter) filters.add(filter[1]);
+    const merge = /^merge\.(.+)\.(?:driver|name|recursive)$/i.exec(key);
+    if (merge) merges.add(merge[1]);
   }
   const out: string[] = [];
-  for (const name of names) {
+  for (const name of filters) {
     for (const command of ["clean", "smudge", "process"]) {
       out.push(`--config-env=filter.${name}.${command}=${BLANK_VAR}`);
     }
   }
+  for (const name of merges) out.push(`--config-env=merge.${name}.driver=${BLANK_VAR}`);
   return out;
 }
 
 /**
- * Reads the repository's filter drivers, without running any of them.
+ * Reads the repository's filter and merge drivers, without running any of them.
  *
  * `config` is a read that runs nothing the repository chose, so it is never
  * itself a content subcommand and the enumeration never recurses. `--includes`
  * because a driver reached through an `include.path` would fire too. It exits 1
  * with nothing on stdout when no driver is defined, which is the common case;
  * `readFilterProbe` is where every other ending is told apart from that one.
+ * The `merge` section also holds plain settings (`merge.ff`, `merge.renames`),
+ * so exit 0 can be a list with no driver in it, which blanks nothing.
  */
-const FILTER_PROBE = ["config", "-z", "--includes", "--get-regexp", "^filter\\."];
+const FILTER_PROBE = ["config", "-z", "--includes", "--get-regexp", "^(filter|merge)\\."];
 
 /** How a probe child ended, as `readFilterProbe` reads it. */
 interface ProbeEnding {
@@ -326,13 +344,17 @@ function readFilterProbe(
  * mid-merge (measured, 2.39), though `--name-only` opens no blob for a diff
  * driver. `diff` is gated whole rather than only against the working tree,
  * since telling a range from a pathspec means parsing git's own grammar, and
- * the probe is small beside a diff. The gate reads `args[0]`, which every call
- * site passes as the subcommand; this app never puts a global flag before it.
+ * the probe is small beside a diff. `merge-tree` writes no working tree and is
+ * on the list for the merge drivers: Land's preview is a three-way content
+ * merge, and a planted driver ran there before it was. The gate reads
+ * `args[0]`, which every call site passes as the subcommand; this app never
+ * puts a global flag before it.
  */
 const CONTENT_SUBCOMMANDS = new Set([
   "add",
   "commit",
   "merge",
+  "merge-tree",
   "checkout",
   "switch",
   "restore",

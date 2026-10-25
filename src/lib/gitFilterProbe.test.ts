@@ -6,10 +6,11 @@ import path from "node:path";
 import { after, before, describe, it } from "node:test";
 
 /**
- * What `git()` and `gitSync()` do when the filter-driver probe itself fails.
+ * What `git()` and `gitSync()` do when the driver probe itself fails, and what
+ * the blanks it yields keep from running; each later `describe` says its own.
  *
- * Before a content subcommand the probe (`git config --get-regexp ^filter\.`)
- * lists the repository's filter drivers so each can be blanked on the real call.
+ * Before a content subcommand the probe (`git config --get-regexp`) lists the
+ * repository's filter and merge drivers so each can be blanked on the real call.
  * It exits 1 when there are none, which is the common case, and its status was
  * therefore never read: a probe killed by its clock, killed by a signal, or
  * refused by git read as "no filters", and the real call then ran *without* the
@@ -90,6 +91,37 @@ function plantedRepo(driver = "x"): { repo: string; marker: string } {
   fs.mkdirSync(path.join(repo, ".git", "info"), { recursive: true });
   fs.writeFileSync(path.join(repo, ".git", "info", "attributes"), `* filter=${driver}\n`);
   fs.writeFileSync(path.join(repo, "f.txt"), "two\n");
+  return { repo, marker };
+}
+
+/**
+ * Two branches that change different lines of one file, so merging them is a
+ * three-way content merge, which is where git hands a file to a merge driver.
+ * The planted driver `driver` leaves `marker` if it runs.
+ */
+function plantedMergeRepo(driver = "evil"): { repo: string; marker: string } {
+  const name = `repo${count++}`;
+  const repo = path.join(root, name);
+  const file = path.join(repo, "f.txt");
+  fs.mkdirSync(repo);
+  plain(repo, ["init", "-q", "-b", "main"]);
+  plain(repo, ["config", "user.email", "a@b.c"]);
+  plain(repo, ["config", "user.name", "a"]);
+  fs.writeFileSync(file, "a\nb\nc\nd\ne\n");
+  plain(repo, ["add", "-A"]);
+  plain(repo, ["commit", "-q", "-m", "init"]);
+  plain(repo, ["checkout", "-q", "-b", "side"]);
+  fs.writeFileSync(file, "a\nB\nc\nd\ne\n");
+  plain(repo, ["commit", "-q", "-am", "side"]);
+  plain(repo, ["checkout", "-q", "main"]);
+  fs.writeFileSync(file, "a\nb\nc\nd\nE\n");
+  plain(repo, ["commit", "-q", "-am", "main"]);
+  const marker = path.join(root, `${name}.ran`);
+  const prog = path.join(root, `${name}.sh`);
+  fs.writeFileSync(prog, `#!/bin/sh\necho "ran $*" >> ${marker}\n`, { mode: 0o755 });
+  plain(repo, ["config", `merge.${driver}.driver`, `${prog} %O %A %B`]);
+  fs.mkdirSync(path.join(repo, ".git", "info"), { recursive: true });
+  fs.writeFileSync(path.join(repo, ".git", "info", "attributes"), `* merge=${driver}\n`);
   return { repo, marker };
 }
 
@@ -236,5 +268,48 @@ describe("a driver name the -c form cannot spell is still blanked", () => {
     const { repo, marker } = plantedRepo("a=b");
     plain(repo, ["add", "-A"]);
     assert.equal(fs.existsSync(marker), true, "the planted a=b filter did not fire, so the cases above measure nothing");
+  });
+});
+
+/**
+ * A `merge.<x>.driver` paired with `* merge=x` is a program git runs on every
+ * three-way content merge of a file, and Land runs two: the `merge-tree` that
+ * previews a land, which was not even probed, and the real `merge` (board task
+ * a38856ec). An empty driver is what turns one off: git then runs nothing and
+ * fails the merge, where `false` reads as a conflict whose file holds ours
+ * without markers and `true` as a clean merge that dropped theirs (measured,
+ * 2.39.5).
+ */
+describe("a planted merge driver runs in neither merge-tree nor merge", () => {
+  before(() => setMode("pass"));
+
+  it("git(): merge-tree --write-tree runs nothing and does not report a merge", async () => {
+    const { repo, marker } = plantedMergeRepo();
+    const res = await git(repo, ["merge-tree", "--write-tree", "-z", "main", "side"]);
+
+    ranNothing(marker);
+    assert.equal(res.ok, false, "a merge the driver was kept out of cannot have succeeded");
+  });
+
+  it("git(): merge runs nothing and fails", async () => {
+    const { repo, marker } = plantedMergeRepo();
+    const res = await git(repo, ["merge", "--no-edit", "side"]);
+
+    ranNothing(marker);
+    assert.equal(res.ok, false);
+  });
+
+  it("git(): a merge driver named a=b runs nothing either", async () => {
+    const { repo, marker } = plantedMergeRepo("a=b");
+    const res = await git(repo, ["merge-tree", "--write-tree", "-z", "main", "side"]);
+
+    ranNothing(marker);
+    assert.equal(res.ok, false);
+  });
+
+  it("control: the same plant runs under plain git's merge-tree", () => {
+    const { repo, marker } = plantedMergeRepo();
+    plain(repo, ["merge-tree", "--write-tree", "-z", "main", "side"]);
+    assert.equal(fs.existsSync(marker), true, "the planted merge driver did not fire, so the cases above measure nothing");
   });
 });
