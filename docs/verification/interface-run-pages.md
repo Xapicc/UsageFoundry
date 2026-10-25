@@ -195,7 +195,8 @@ panels and the API payloads are in
   `/api/runs?status=nope` should answer `Unknown run status: nope`.
 
 - **The run log's filter has never been rendered, and the settings field
-  search only for the one query the model-list rail entry above names.** They
+  search only for the one query the model-list rail entry in
+  `interface-pages-and-api.md` names.** They
   rest on six unit cases (`matchesLogFilter`, `logFilterActive`) and the build;
   the settings search has no unit test, as it reads `textContent`. Open: counts
   and truncation hint, Jump to live, results opening closed Prompts folds, the
