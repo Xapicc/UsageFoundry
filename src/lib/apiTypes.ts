@@ -3195,7 +3195,10 @@ export type WorkflowPickUpDTO =
       retryRefusal: string | null;
     }
   | {
-      /** A stopped loop whose latest pass would now go through. */
+      /**
+       * A stopped loop whose latest pass would now go through, or `pass` 0: a
+       * loop that failed before it had a pass, which carrying on releases again.
+       */
       kind: "loop";
       nodeId: string;
       nodeName: string;
