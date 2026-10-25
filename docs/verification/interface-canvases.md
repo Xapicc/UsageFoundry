@@ -120,6 +120,35 @@
   refused 400 with the folder-mid-merge sentence. Seeded over HTTP, not drawn by
   hand.
 
+- **How the editor reads an in-folder loop, a tail with two ends and gate-fed
+  merges, in the built editor 2026-10-25 (branch
+  `uf/usagefoundry-721638d11c0b-12` at `f3ab0853`, standalone build over a
+  scratch `DATA_DIR`, Chromium at 1600×1000 and 2400×1000, default skin, bearer
+  auth; the 2400px frames are in `scratch/loop-section-readings/`).** Three
+  graphs seeded over `POST /api/workflows`, the loop's frame pressed, no console
+  error on any. *An in-folder loop* (`a -> b`, both on a template with
+  `isolate: false`) saved (200); the frame's label read "starting at Block a,
+  ending at Block b" and not "landing through", the loop's panel "Every pass works
+  in the folder itself and ends at Block b, and the next pass starts from what it
+  left", the card *ends the pass* and the member list *ends the pass*. *A tail
+  with two ends* (`o -> m`, `m -> b`, `m -> c`) was refused 400 by
+  `POST /api/workflows` ("repeats ends in 2 places: “Block b”, “Block c”"), so
+  the editor was handed it by intercepting `GET /api/workflows/<id>` over the
+  saved `o -> m -> b`: the frame's label read "The pass ends in more than one
+  place" and the panel, in the danger tone, "The section ends in more than one
+  place, so a pass has no single end" — where it said "No merge block" over a
+  graph with one — while the merge still read *lands the branches* and the
+  editor's own validation printed the server's refusal under the canvas. *Merges
+  fed through gates* (`e` fans out to `o1` and `o2`, `o1 -> m1 -> g1 -> f`,
+  `o2 -> m2 -> g2 -> f`) saved (200); the panel read "Every pass lands its
+  branches through Merge m1, Merge m2, then works in the folder itself and ends at
+  Block f" and priced it "up to 27 runs", both merge cards read *lands the
+  branches · merge* and the member list marked both merges and the end. Caveat: the
+  readings are of the fixed tree only — no browser was pointed at `5ba27e95` for a
+  before — and the Put in gesture over a tailed or merge-ended section was not
+  pressed, only asserted against the server's normalizer in
+  `canvasGraph.test.ts`; 390px, the dark and the ASCII skins were not looked at.
+
 ## Not yet verified by hand
 
 - **The tail's editor gestures are untried by hand.** Open: that drawing a link
@@ -137,6 +166,14 @@
   not been reproduced, which is why an `on-finish` link into the tail is refused
   rather than allowed.
 
+
+- **Put in over a section that ends in a tail is untried by hand.** Open: that
+  pressing Put in on a frame of `o -> m -> b` and then a block that isolates puts
+  it beside the section into the merge, that a block that works in the folder
+  lands after `b`, and that Save accepts both. The pure half is checked in
+  `canvasGraph.test.ts` through `normalizeWorkflowInput`. To settle it: open a
+  saved tailed section in `/workflows/<id>/edit` on a build over a scratch
+  `DATA_DIR`, draw each, and press Save.
 
 - **The touched map has never been looked at on a real run.** Its 300-file fold
   has never fired on real data, and none of the hand checks is done: CPU idle
