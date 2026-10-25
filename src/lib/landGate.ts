@@ -70,6 +70,12 @@ export type VerifyOutcome = {
    * new one, and a commit that reached the branch in between is one no check saw.
    */
   commit?: string;
+  /**
+   * Set when the command was ended because the caller's signal fired, which is
+   * not a verdict on the branch: a caller that was stopped reads it to say so
+   * rather than to report a check that failed.
+   */
+  aborted?: true;
 };
 
 /**
@@ -85,6 +91,8 @@ export function landVerdict(o: {
   signal?: NodeJS.Signals | null;
   timedOut: boolean;
   timeoutMs?: number;
+  /** The caller's signal ended the command; never a pass, whatever the exit said. */
+  aborted?: boolean;
   tail: string;
 }): VerifyOutcome {
   if (!o.configured) return { ran: false, passed: true, reason: "", ending: "", tail: "" };
@@ -101,6 +109,18 @@ export function landVerdict(o: {
     };
   }
   const tail = o.tail.trim();
+  if (o.aborted) {
+    return {
+      ran: true,
+      passed: false,
+      reason:
+        "The verify command was ended before it finished because what asked for it was " +
+        "called off, so nothing here knows whether this branch is good.",
+      ending: "was ended before it finished because what asked for it was called off",
+      tail,
+      aborted: true,
+    };
+  }
   if (o.timedOut) {
     const after = spokenDuration(o.timeoutMs ?? VERIFY_TIMEOUT_MS);
     return {
@@ -274,11 +294,18 @@ export function runningVerifyChildren(): ChildProcess[] {
  * otherwise keep running in the tree Land is about to merge. Not gated on
  * `killProcessGroup`, which is about agents: without a group this timeout
  * cannot end the check at all.
+ *
+ * `signal` ends it the same way, for a caller that stops wanting the answer
+ * while the check runs: a workflow's deliver block, whose Stop used to leave the
+ * command running, and the `landing` claim `deliverRun` holds across it, until
+ * the command ended on its own or the timeout. A signal already aborted spawns
+ * nothing, and one that arrives after the command has exited is ignored, since
+ * the check has by then answered.
  */
 export function runVerify(
   cwd: string,
   raw: string,
-  deps: { timeoutMs?: number } = {},
+  deps: { timeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<VerifyOutcome> {
   const configured = Boolean((raw ?? "").trim());
   const parse = parseVerifyCommand(raw);
@@ -289,9 +316,16 @@ export function runVerify(
   }
   const [bin, ...args] = parse.argv;
   const timeoutMs = deps.timeoutMs ?? VERIFY_TIMEOUT_MS;
+  const { signal: callerSignal } = deps;
+  if (callerSignal?.aborted) {
+    return Promise.resolve(
+      landVerdict({ configured, parse, exitCode: null, timedOut: false, aborted: true, tail: "" }),
+    );
+  }
   return new Promise((resolve) => {
     let out = "";
     let timedOut = false;
+    let aborted = false;
     let settled = false;
     let exitCode: number | null = null;
     let signal: NodeJS.Signals | null = null;
@@ -301,8 +335,9 @@ export function runVerify(
       settled = true;
       clearTimeout(timer);
       clearTimeout(drain);
+      callerSignal?.removeEventListener("abort", onAbort);
       resolve(
-        landVerdict({ configured, parse, exitCode, signal, timedOut, timeoutMs, tail: out }),
+        landVerdict({ configured, parse, exitCode, signal, timedOut, timeoutMs, aborted, tail: out }),
       );
     };
     // Armed by the timeout as well as by the exit, so a child that a SIGKILL
@@ -338,6 +373,16 @@ export function runVerify(
       signalGroup(child, "SIGKILL");
       drainThenFinish();
     }, timeoutMs);
+    // The same kill and the same drain as the timeout, for its reason: a child
+    // a SIGKILL cannot end still lets the caller's claim go on the drain's word.
+    function onAbort() {
+      if (settled || timedOut) return;
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      aborted = true;
+      signalGroup(child, "SIGKILL");
+      drainThenFinish();
+    }
+    callerSignal?.addEventListener("abort", onAbort, { once: true });
     const take = (chunk: string) => {
       out = (out + chunk).slice(-VERIFY_TAIL_BYTES);
     };
@@ -358,6 +403,7 @@ export function runVerify(
       settled = true;
       clearTimeout(timer);
       clearTimeout(drain);
+      callerSignal?.removeEventListener("abort", onAbort);
       resolve({
         ran: false,
         passed: false,

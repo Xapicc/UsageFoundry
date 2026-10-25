@@ -4124,6 +4124,7 @@ async function verifyInSlot(
   branch: string,
   command: string,
   asker: VerifyAsker,
+  signal?: AbortSignal,
 ): Promise<VerifyOutcome> {
   const release = holdSlot(slot);
   if (!release) {
@@ -4151,7 +4152,7 @@ async function verifyInSlot(
     );
   }
   try {
-    return await verifyHeldSlot(slot, branch, command, asker);
+    return await verifyHeldSlot(slot, branch, command, asker, signal);
   } finally {
     release();
   }
@@ -4172,6 +4173,7 @@ async function verifyHeldSlot(
   branch: string,
   command: string,
   asker: VerifyAsker,
+  signal?: AbortSignal,
 ): Promise<VerifyOutcome> {
   // HEAD rather than the branch: it is what the command's tree is, and
   // `verifyTreeVerdict` proved the slot clean on this branch. If the two had parted
@@ -4185,7 +4187,7 @@ async function verifyHeldSlot(
         verifyRefusalEnd(asker, (exit) => `Nothing was ${EXIT_WORDS[exit].done}.`),
     );
   }
-  const verdict = await runVerify(slot, command);
+  const verdict = await runVerify(slot, command, { signal });
   if (!verdict.passed) return verdict;
   const tip = await git(slot, ["rev-parse", "--verify", "-q", branch], NO_CLOCK);
   if (!tip.ok || tip.stdout !== checked.stdout) {
@@ -4303,6 +4305,7 @@ async function verifyRunBranch(
   run: RunRow,
   command: string,
   asker: VerifyAsker,
+  signal?: AbortSignal,
 ): Promise<ReviewVerifyOutcome> {
   const slot = await slotState(run);
   const tree = verifyTreeIn(run, slot, asker);
@@ -4311,11 +4314,11 @@ async function verifyRunBranch(
     // a borrowed slot too, but with the sentence Land and Deliver are given.
     if (asker === "review" && isSlotBorrowed(tree.path)) return busyOutcome(tree.path);
     // `verifyTreeVerdict` refuses a run with no branch, so the name is there.
-    return verifyInSlot(tree.path, run.worktree_branch!, command, asker);
+    return verifyInSlot(tree.path, run.worktree_branch!, command, asker, signal);
   }
   const taken = takenOverBy(run, slot);
   if (!taken) return notRun(tree.reason);
-  return verifyOnSwitchedSlot(run, taken, command, asker);
+  return verifyOnSwitchedSlot(run, taken, command, asker, signal);
 }
 
 /** The checkout a run was recorded in, standing on another run's branch. */
@@ -4440,6 +4443,7 @@ async function verifyOnSwitchedSlot(
   taken: TakenOverSlot,
   command: string,
   asker: VerifyAsker,
+  signal?: AbortSignal,
 ): Promise<ReviewVerifyOutcome> {
   const borrow = borrowSlot(taken.path);
   if (!borrow.ok) {
@@ -4449,10 +4453,10 @@ async function verifyOnSwitchedSlot(
   try {
     const held = await slotState(run);
     const tree = verifyTreeIn(run, held, asker);
-    if (tree.ok) return await verifyHeldSlot(tree.path, taken.branch, command, asker);
+    if (tree.ok) return await verifyHeldSlot(tree.path, taken.branch, command, asker, signal);
     const still = takenOverBy(run, held);
     if (!still) return notRun(tree.reason);
-    return await runOnSwitchedBranch(still, command, asker);
+    return await runOnSwitchedBranch(still, command, asker, signal);
   } finally {
     borrow.release();
   }
@@ -4517,6 +4521,7 @@ async function runOnSwitchedBranch(
   taken: TakenOverSlot,
   command: string,
   asker: VerifyAsker,
+  signal?: AbortSignal,
 ): Promise<VerifyOutcome> {
   const { path: slot, branch, holds } = taken;
   const blocker = await switchBlocker(taken);
@@ -4532,7 +4537,7 @@ async function runOnSwitchedBranch(
     return notRun(unswitchedReason(taken, why, asker));
   }
   try {
-    return await verifyHeldSlot(slot, branch, command, asker);
+    return await verifyHeldSlot(slot, branch, command, asker, signal);
   } finally {
     await switchBack(slot, branch, holds);
   }
@@ -6606,6 +6611,14 @@ export async function deliverRun(
    * once the check ended, under a page that already read Stopped.
    */
   stillWanted: () => boolean = () => true,
+  /**
+   * Ends the verify command when it fires, and `stillWanted` is not enough for
+   * that: it is only asked at the two places that precede the push, so a Stop
+   * inside the command left the command running for up to `VERIFY_TIMEOUT_MS`,
+   * with the checkout's `landing` claim held for all of it. The refusal then
+   * comes back at once and the claim goes with it, in the `finally` below.
+   */
+  signal?: AbortSignal,
 ): Promise<
   | { ok: true; url: string; number: number }
   | { ok: false; reason: string }
@@ -6674,7 +6687,7 @@ export async function deliverRun(
   // on the run saying it was pushed.
   const untrack = trackLand();
   try {
-    return await pushAndOpen({ run, state, folder, o, stillWanted });
+    return await pushAndOpen({ run, state, folder, o, stillWanted, signal });
   } finally {
     landing.delete(folder);
     untrack();
@@ -6693,6 +6706,20 @@ const DELIVER_SHUTDOWN_REFUSAL =
 const DELIVER_WITHDRAWN_REFUSAL =
   "The delivery was called off before its push began, so nothing was pushed and no " +
   "pull request was opened.";
+
+/**
+ * What `deliverRun` returns when its `signal` ended the verify command: the
+ * caller's own words for why, when it gave any (a workflow's halt gives its
+ * "Stopped by the operator ..." sentence), and what became of the delivery.
+ */
+function deliverStoppedRefusal(signal: AbortSignal | undefined): string {
+  const given = typeof signal?.reason === "string" ? signal.reason.replace(/\.$/, "") : "";
+  const why = given || "The delivery was called off";
+  return (
+    `${why} while its verify command was running, so the command was ended, nothing was ` +
+    "pushed and no pull request was opened."
+  );
+}
 
 /** The remote Deliver pushes to, and so the one whose tracking refs it measures from. */
 const DELIVER_REMOTE = "origin";
@@ -6724,10 +6751,11 @@ async function pushAndOpen(a: {
   folder: string;
   o: DeliveryRequest;
   stillWanted: () => boolean;
+  signal?: AbortSignal;
 }): Promise<
   { ok: true; url: string; number: number } | { ok: false; reason: string }
 > {
-  const { run, state, folder, o, stillWanted } = a;
+  const { run, state, folder, o, stillWanted, signal } = a;
   const runId = run.id;
 
   // The credential is chosen from the **repository**, not from the checkout
@@ -6753,7 +6781,8 @@ async function pushAndOpen(a: {
   const verifyCommand = getSettings().landVerifyCommand;
   let verified: string | undefined;
   if (verifyCommand.trim()) {
-    const verify = await verifyRunBranch(run, verifyCommand, "deliver");
+    const verify = await verifyRunBranch(run, verifyCommand, "deliver", signal);
+    if (verify.aborted) return { ok: false, reason: deliverStoppedRefusal(signal) };
     if (!verify.passed) return { ok: false, reason: verify.reason };
     verified = verify.commit;
   }

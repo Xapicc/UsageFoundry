@@ -615,10 +615,17 @@ describe("retrying a deliver block that failed", () => {
  * read its latch only before each branch, and `deliverRun` asked nothing of the
  * workflow. The check is held on a file rather than a clock, so the Stop lands
  * inside it every time.
+ *
+ * The check itself is ended too, and that is the second claim: the push was
+ * refused but the command ran on, holding the checkout's `landing` claim for as
+ * long as it ran, and a Land press, a queue drain and a project Push on that
+ * checkout were held behind a workflow already reading Stopped. The check
+ * there is held for twenty seconds and these cases wait five, so only a signal
+ * to it ends the wait.
  */
 describe("a deliver block stopped while it verifies a branch", () => {
-  async function until(done: () => boolean, failure: string): Promise<void> {
-    const deadline = Date.now() + 20_000;
+  async function until(done: () => boolean, failure: string, limitMs = 20_000): Promise<void> {
+    const deadline = Date.now() + limitMs;
     while (!done()) {
       if (Date.now() > deadline) assert.fail(failure);
       await new Promise((resolve) => setTimeout(resolve, 20));
@@ -663,6 +670,125 @@ while (!fs.existsSync(path.join(dir, "go"))) {
     assert.equal(land.deliveredPullRequest(s.runId), null);
     assert.match(ship().error ?? "", /^Stopped by the operator .* while it was delivering branches\.$/);
     assert.equal(workflows.getInstance(s.instanceId)!.status, "stopped");
+  });
+
+  /**
+   * A verify command that records its pid and the moment it began, then holds
+   * until `go` appears or twenty seconds pass. Set as the install's command.
+   */
+  function heldCheck(name: string) {
+    const signals = path.join(root, `signals-${name}`);
+    fs.mkdirSync(signals);
+    const probe = path.join(root, `held-check-${name}.js`);
+    fs.writeFileSync(
+      probe,
+      `const fs = require("node:fs");
+const path = require("node:path");
+const dir = process.argv[2];
+fs.writeFileSync(path.join(dir, "pid"), String(process.pid));
+fs.writeFileSync(path.join(dir, "started"), "");
+const deadline = Date.now() + 20000;
+while (!fs.existsSync(path.join(dir, "go"))) {
+  if (Date.now() > deadline) process.exit(3);
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+}
+`,
+    );
+    settings.saveSettings({ landVerifyCommand: `${process.execPath} ${probe} ${signals}` });
+    return {
+      started: () => fs.existsSync(path.join(signals, "started")),
+      pid: () => Number(fs.readFileSync(path.join(signals, "pid"), "utf8")),
+      release: () => fs.writeFileSync(path.join(signals, "go"), ""),
+    };
+  }
+
+  const isAlive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (err) {
+      return (err as NodeJS.ErrnoException).code !== "ESRCH";
+    }
+  };
+
+  it("ends the check and frees the checkout's claim at the Stop, not when the check would have ended", async () => {
+    const s = scene("stop-ends-check");
+    const check = heldCheck("stop-ends-check");
+    try {
+      workflows.advanceInstances();
+      await until(check.started, "the branch's check never started");
+      const pid = check.pid();
+      assert.equal(land.checkoutHolder(s.repo).landing, true, "the check was not running under the claim");
+
+      const halted = workflows.stopInstance(s.instanceId, { kind: "operator" });
+      assert.equal(halted.ok, true, halted.ok ? "" : halted.reason);
+
+      // `go` is never written before these: the check holds for twenty seconds,
+      // so a claim let go inside five was let go because the check was ended.
+      await until(
+        () => !land.checkoutHolder(s.repo).landing,
+        "the checkout's claim was still held five seconds after the Stop",
+        5_000,
+      );
+      assert.equal(isAlive(pid), false, "the check was still running after the claim was let go");
+      assert.equal(remoteTip(s), null, "the branch was pushed after the workflow was stopped");
+      assert.deepEqual(opened, [], "a pull request was opened after the workflow was stopped");
+    } finally {
+      check.release();
+    }
+  });
+
+  it("returns a refusal that names the Stop when the signal fires inside the check", async () => {
+    const s = branchScene("signal-names-stop");
+    const check = heldCheck("signal-names-stop");
+    const controller = new AbortController();
+    let delivery: Awaited<ReturnType<typeof land.deliverRun>> | undefined;
+    const pressed = land
+      .deliverRun(s.runId, {}, () => true, controller.signal)
+      .then((answer) => {
+        delivery = answer;
+      });
+    try {
+      await until(check.started, "the branch's check never started");
+      controller.abort("Stopped by the operator at noon");
+      await until(
+        () => delivery !== undefined,
+        "deliverRun was still waiting on the check five seconds after the signal",
+        5_000,
+      );
+      assert.deepEqual(delivery, {
+        ok: false,
+        reason:
+          "Stopped by the operator at noon while its verify command was running, so the command " +
+          "was ended, nothing was pushed and no pull request was opened.",
+      });
+      assert.equal(land.checkoutHolder(s.repo).landing, false);
+      assert.equal(remoteTip(s), null);
+      assert.deepEqual(opened, []);
+    } finally {
+      check.release();
+      await pressed;
+    }
+  });
+
+  it("still refuses the push when the caller withdraws during a check that then passes", async () => {
+    // What the first case in this describe pinned before the check was ended:
+    // the check is not interrupted here, so only `stillWanted`'s read after it
+    // stands between a passing check and the push.
+    const s = branchScene("withdrawn-in-check");
+    const check = heldCheck("withdrawn-in-check");
+    const pressed = land.deliverRun(s.runId, {}, () => !check.started());
+    try {
+      await until(check.started, "the branch's check never started");
+    } finally {
+      check.release();
+    }
+    const delivery = await pressed;
+    assert.equal(delivery.ok, false);
+    assert.match(delivery.ok ? "" : delivery.reason, /called off before its push began/);
+    assert.equal(land.checkoutHolder(s.repo).landing, false);
+    assert.equal(remoteTip(s), null);
+    assert.deepEqual(opened, []);
   });
 });
 

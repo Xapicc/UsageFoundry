@@ -5052,6 +5052,8 @@ function haltBlocks(instanceId: string, cause: string): number {
         // would leave a published branch with no record. One not yet begun is
         // refused, because `deliverRun` asks the block's latch where nothing
         // awaits before the push, and the block stops before the next branch.
+        // A verify command still running is ended below, since it publishes
+        // nothing and holds the checkout.
         `${cause} while it was delivering branches.`,
         `${cause} while it was reviewing branches.`,
         `${cause} while it was deciding what to start.`,
@@ -5071,6 +5073,18 @@ function haltBlocks(instanceId: string, cause: string): number {
     if (!key.startsWith(`${instanceId}:`)) continue;
     blockTurns.delete(key);
     signalLadder(child);
+  }
+
+  // A deliver block's verify command, after the rows above are written so the
+  // refusal that follows the kill finds the block already written off. The push
+  // is refused through `stillWanted` either way; this is what frees the
+  // checkout's `landing` claim, which `deliverRun` holds across the command,
+  // rather than leaving a Land press, a queue drain and a project Push held
+  // behind a workflow that already reads stopped.
+  for (const [key, check] of deliverChecks) {
+    if (!key.startsWith(`${instanceId}:`)) continue;
+    deliverChecks.delete(key);
+    check.abort(cause);
   }
 
   // A review block's reviewers too: each is a billed child this instance
@@ -5401,6 +5415,21 @@ const blockTurns = ((globalThis as unknown as {
 }).__ufBlockTurns ??= new Map<string, ChatProcess>());
 
 const turnKey = (instanceId: string, nodeId: string) => `${instanceId}:${nodeId}`;
+
+/**
+ * The deliver blocks whose branch may be inside its verify command, one signal
+ * each, which `haltBlocks` fires.
+ *
+ * Not `blockTurns`, which holds the child of a block that decides: a deliver
+ * block has no child of its own, and the command it waits on is `deliverRun`'s,
+ * under the checkout's `landing` claim, ended through `runVerify`'s signal and
+ * not through `signalLadder`'s `SIGINT` first, since nothing in a check wants
+ * to report its cost. Its own `globalThis` key for CLAUDE.md's reason about
+ * shapes.
+ */
+const deliverChecks = ((globalThis as unknown as {
+  __ufDeliverChecks?: Map<string, AbortController>;
+}).__ufDeliverChecks ??= new Map<string, AbortController>());
 
 /**
  * The words every note about a refused `emit_runs` starts with.
@@ -8793,8 +8822,10 @@ export function deliverBlockOutcome(branches: readonly DeliveryOutcome[]): {
  * push is not something to begin in a workflow that is being taken down, and
  * a Stop during a branch's verify command, which may run for fifteen minutes,
  * used to be followed by the push and the pull request once the check ended.
- * The branches already pushed are recorded on their own runs whatever this
- * block says.
+ * It is also ended: `haltBlocks` fires this block's signal, which `deliverRun`
+ * hands to `runVerify`, so the command stops and the checkout's `landing` claim
+ * is let go at the Stop rather than at the command's own end. The branches
+ * already pushed are recorded on their own runs whatever this block says.
  */
 async function startDeliverBlock(
   instanceId: string,
@@ -8820,20 +8851,28 @@ async function startDeliverBlock(
     );
   };
   const outcomes: DeliveryOutcome[] = [];
-  for (const runId of runIds) {
-    // The halt has already written the block off with its own wording, and
-    // `finishMergeBlock`'s latch would refuse ours.
-    if (!stillDelivering()) return;
-    outcomes.push(await deliverBranch(runId, stillDelivering));
-  }
+  const check = new AbortController();
+  const key = turnKey(instanceId, nodeId);
+  deliverChecks.set(key, check);
+  try {
+    for (const runId of runIds) {
+      // The halt has already written the block off with its own wording, and
+      // `finishMergeBlock`'s latch would refuse ours.
+      if (!stillDelivering()) return;
+      outcomes.push(await deliverBranch(runId, stillDelivering, check.signal));
+    }
 
-  finishMergeBlock(instanceId, nodeId, deliverBlockOutcome(outcomes));
+    finishMergeBlock(instanceId, nodeId, deliverBlockOutcome(outcomes));
+  } finally {
+    if (deliverChecks.get(key) === check) deliverChecks.delete(key);
+  }
 }
 
 /** One predecessor run, delivered or the reason it was not. */
 async function deliverBranch(
   runId: string,
   stillDelivering: () => boolean,
+  signal: AbortSignal,
 ): Promise<DeliveryOutcome> {
   const branch = branchLabel(runId);
 
@@ -8865,7 +8904,7 @@ async function deliverBranch(
   // off as one that "could not start delivering" and lose the branches already
   // pushed from its note.
   try {
-    const delivery = await deliverRun(runId, {}, stillDelivering);
+    const delivery = await deliverRun(runId, {}, stillDelivering, signal);
     return delivery.ok
       ? {
           branch,
