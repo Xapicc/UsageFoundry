@@ -256,6 +256,7 @@ Units that are about no test file in the tree:
 | Test file | Also in |
 |---|---|
 | `git.test.ts` | [landing] |
+| `gitFilterProbe.test.ts` |  |
 
 ## [Landing, delivery and the land gate](testing/landing-and-delivery.md)
 
