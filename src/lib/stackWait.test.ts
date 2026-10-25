@@ -975,6 +975,85 @@ describe("a second run continuing a branch whose continuer was refunded", () => 
       );
       assert.equal(getRun(success)!.status, "stopped");
     });
+
+    // The same pick-up for a run that carries no branch: nothing is shared, so
+    // `branchRivalOf` has nothing to say, and the only thing left to re-ask is
+    // the dependency condition itself.
+    describe("with no branch handed over", () => {
+      /** A completed predecessor, and a plain on-success dependent released onto it and stopped at zero cycles. */
+      function stoppedPlainDependent() {
+        seq += 1;
+        setNewWorkPaused(true);
+        const folder = `pick-up-plain-${seq}`;
+        makeRepo(folder);
+        const predecessor = create(folder, []);
+        settle(predecessor, "completed");
+        const dependent = create(folder, [{ runId: predecessor, edge: "on-success", continueBranch: false }]);
+        assert.equal(getRun(dependent)!.status, "queued", "the premise: released at creation");
+        assert.notEqual(getRun(dependent)!.work_dir, null, "the premise: it holds a workspace, so it skips waiting");
+        assert.equal(getRun(dependent)!.continues_run, null, "the premise: it shares no branch");
+        assert.equal(stopRun(dependent), "cancelled");
+        assert.equal(getRun(dependent)!.iterations, 0);
+        return { folder, predecessor, dependent };
+      }
+
+      it("control: queues it while the predecessor it waited for is still completed", () => {
+        const { dependent } = stoppedPlainDependent();
+        assert.deepEqual(reopenRun(dependent, RAISED), { ok: true });
+        assert.equal(getRun(dependent)!.status, "queued");
+      });
+
+      it("refuses it behind a predecessor picked up and failed", () => {
+        const { predecessor, dependent } = stoppedPlainDependent();
+        assert.deepEqual(reopenRun(predecessor, RAISED), { ok: true });
+        settle(predecessor, "failed");
+        const outcome = reopenRun(dependent, RAISED);
+        assert.equal(outcome.ok, false, "queued as an on-success run behind a failed dependency");
+        assert.match(
+          outcome.ok ? "" : outcome.reason,
+          new RegExp(`Set to start only after run ${predecessor.slice(0, 8)} succeeded \\(on-success\\); it ended failed`),
+        );
+        assert.equal(getRun(dependent)!.status, "stopped");
+      });
+
+      it("refuses it, saying to wait, while the predecessor picked up is still running", () => {
+        const { predecessor, dependent } = stoppedPlainDependent();
+        assert.deepEqual(reopenRun(predecessor, RAISED), { ok: true });
+        assert.equal(getRun(predecessor)!.status, "queued", "the premise: the predecessor is back in the queue");
+        const outcome = reopenRun(dependent, RAISED);
+        assert.equal(outcome.ok, false, "queued beside the dependency it was ordered behind");
+        assert.match(outcome.ok ? "" : outcome.reason, new RegExp(`Run ${predecessor.slice(0, 8)} is queued`));
+        assert.equal(getRun(dependent)!.status, "stopped");
+      });
+
+      it("asks every edge of a fan-in, not only the one that names the branch", () => {
+        seq += 1;
+        setNewWorkPaused(true);
+        const folder = `pick-up-fan-in-${seq}`;
+        makeRepo(folder);
+        const first = create(folder, []);
+        const second = create(folder, []);
+        settle(first, "completed");
+        settle(second, "completed");
+        const continuer = create(folder, [
+          { runId: first, edge: "on-success", continueBranch: true },
+          { runId: second, edge: "on-success", continueBranch: false },
+        ]);
+        assert.equal(getRun(continuer)!.status, "queued", "the premise: released at creation");
+        assert.equal(getRun(continuer)!.continues_run, first, "the premise: the branch is the first one's");
+        assert.equal(stopRun(continuer), "cancelled");
+        // The edge that names the branch still holds; the other one does not.
+        assert.deepEqual(reopenRun(second, RAISED), { ok: true });
+        settle(second, "failed");
+        const outcome = reopenRun(continuer, RAISED);
+        assert.equal(outcome.ok, false, "queued behind a failed dependency on an edge that hands over no branch");
+        assert.match(
+          outcome.ok ? "" : outcome.reason,
+          new RegExp(`Set to start only after run ${second.slice(0, 8)} succeeded \\(on-success\\); it ended failed`),
+        );
+        assert.equal(getRun(continuer)!.status, "stopped");
+      });
+    });
   });
 });
 
