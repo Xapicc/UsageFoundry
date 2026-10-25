@@ -354,6 +354,25 @@ describe("a waiting block with nothing left of its workflow", () => {
     assert.match(block.error ?? "", /closed out by the same restart/);
   });
 
+  it("is failed and retryable, not blocked, when the run in front of it had finished and the block had not begun", async () => {
+    // A merge claim during a hard stop that never reached its advance: every
+    // input ready, nothing in flight. `pickUpsOf` offers only a `failed` exit
+    // block, so `blocked` under a sentence about work in flight left the page
+    // with nothing to press and the sentence untrue.
+    const { instanceId, runId } = scene("Ready merge", { status: "completed" });
+    dbMod.db().prepare("UPDATE runs SET iterations=1, finished_at=? WHERE id=?").run(Date.now(), runId);
+
+    await boot();
+
+    const block = blockOf(instanceId);
+    assert.equal(block.status, "failed", block.error ?? "");
+    assert.match(block.error ?? "", /restarted before this block began landing/);
+    assert.deepEqual(
+      workflows.pickUpsOf(workflows.getInstance(instanceId)!).map((p) => [p.kind, p.kind === "merge" ? p.retryRefusal : "-"]),
+      [["merge", null]],
+    );
+  });
+
   it("is closed out when the pause was too stale to keep", async () => {
     const { instanceId, runId } = scene("Stale pause", {
       status: "paused",

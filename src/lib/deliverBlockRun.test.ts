@@ -724,4 +724,43 @@ describe("a deliver block reached while the server is shutting down", () => {
     assert.deepEqual(opened, [{ head: a.branch, base: "main" }]);
     assert.notEqual(successor().status, "waiting");
   });
+
+  it("is closed out failed by the boot, offered on the instance page, and delivered by the retry before its successor is decided", async () => {
+    const a = branchScene("shut-boot-a");
+    const instanceId = instanceFor("shut-boot", [{ id: "build", branch: a }], { afterOnFinish: true });
+    const flag = (globalThis as unknown as { __ufShutdown: { active: boolean } }).__ufShutdown;
+    const successor = () => workflows.blocksOf(instanceId).find((x) => x.nodeId === "after")!;
+
+    flag.active = true;
+    try {
+      workflows.advanceInstances();
+      assert.equal(shipBlock(instanceId).status, "waiting", "the claim was not held by the shutdown");
+    } finally {
+      flag.active = false;
+    }
+
+    // The restart: nothing of the workflow is in flight, so the boot closes out
+    // every block it left waiting.
+    workflows.reconcileBlocksOnBoot();
+    const closed = shipBlock(instanceId);
+    assert.equal(closed.status, "failed", closed.error ?? "");
+    assert.match(closed.error ?? "", /restarted before this block began delivering/);
+    assert.doesNotMatch(closed.error ?? "", /in flight/);
+    assert.equal(successor().status, "blocked");
+    assert.equal(remoteTip(a), null, "the boot pushed");
+    assert.deepEqual(opened, [], "the boot opened a pull request");
+
+    const offered = workflows
+      .pickUpsOf(workflows.getInstance(instanceId)!)
+      .map((p) => [p.kind, p.kind === "run" ? p.runId : p.nodeId, p.kind === "deliver" ? p.retryRefusal : "-"]);
+    assert.deepEqual(offered, [["deliver", "ship", null]]);
+
+    assert.deepEqual(workflows.retryDeliverBlock(instanceId, "ship"), { ok: true });
+    assert.equal(successor().status, "waiting", "the successor was decided before the delivery");
+    const block = await settleBlock({ instanceId });
+    assert.equal(block.status, "emitted", block.error ?? "");
+    assert.equal(remoteTip(a), git(a.slot, "rev-parse", "HEAD").trim());
+    assert.deepEqual(opened, [{ head: a.branch, base: "main" }]);
+    assert.notEqual(successor().status, "waiting");
+  });
 });

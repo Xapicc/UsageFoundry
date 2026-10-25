@@ -10276,6 +10276,25 @@ export function bootBlockPlan(
 }
 
 /**
+ * The merge and deliver blocks of one instance that were ready to be claimed:
+ * every edge into them satisfied, which is the question `advanceInstance` asks
+ * before it claims one. Read off `planInstanceStep` rather than restated, so a
+ * block behind a run the restart closed out — whose edge reads as blocked — is
+ * not among them and stays the generic close-out's.
+ */
+function readyExitBlocks(
+  instanceId: string,
+): Array<{ nodeId: string; kind: "merge" | "deliver" }> {
+  const instance = getInstance(instanceId);
+  if (!instance) return [];
+  const step = planInstanceStep(instance.graph, instanceState(instance));
+  return [
+    ...step.merge.map((m) => ({ nodeId: m.nodeId, kind: "merge" as const })),
+    ...step.deliver.map((d) => ({ nodeId: d.nodeId, kind: "deliver" as const })),
+  ];
+}
+
+/**
  * Close out block turns a restart left mid-flight.
  *
  * `reconcileOnBoot`'s rule for a `waiting` run, applied one level up and for the
@@ -10311,6 +10330,18 @@ export function bootBlockPlan(
  * the run half's ready-and-held row one level up: lifting the hold is what
  * wakes it, and `bootBlockPlan` says why that is not the unattended decision
  * the rule above refuses.
+ *
+ * **A merge or deliver block that was ready when nothing survived is `failed`,
+ * not `blocked`.** A shutdown leaves a deliver block `waiting` with every input
+ * finished (`advanceInstance` does not claim one during it), and the generic
+ * close-out would write it `blocked` under a sentence about work "in flight"
+ * that is not true of it — and `pickUpsOf` offers only a `failed` exit block, so
+ * the page would have nothing to press. Written `failed` with `restart_closed`
+ * as a `thinking` one is, `edgeVerdict` blocks its edges and `retryExitBlock`
+ * takes it back, and nothing is re-decided here: a push is outward-facing and
+ * the boot never makes one. A deciding block in the same state is left to the
+ * generic close-out, because its `thinking` sweep bills a turn that ran and this
+ * one never began, and a retry that read that bill would need a rule of its own.
  *
  * Ordering makes that readable rather than guessed at: `src/instrumentation.ts`
  * runs `reconcileOnBoot` first, so a run row that is still live here is one that
@@ -10420,6 +10451,27 @@ export function reconcileBlocksOnBoot(): void {
   // Every kind of survivor is left alone by both sweeps below.
   const kept = [...plan.spared, ...plan.gated, ...plan.held];
 
+  // Before the close-out below, which would write the same rows `blocked`. Only
+  // an abandoned instance: one with a survivor or a hold decides these blocks
+  // when it next advances, as it always did.
+  const markCut = db().prepare(
+    "UPDATE workflow_instance_blocks SET status='failed', finished_at=?, restart_closed=1, error=?" +
+      " WHERE instance_id=? AND node_id=? AND status='waiting'",
+  );
+  let cutBeforeStart = 0;
+  for (const instanceId of plan.abandoned) {
+    for (const { nodeId, kind } of readyExitBlocks(instanceId)) {
+      cutBeforeStart += markCut.run(
+        now,
+        kind === "merge"
+          ? "The server restarted before this block began landing branches, so nothing was queued or merged. Everything it was waiting for had finished: retrying it lands them from here."
+          : "The server restarted before this block began delivering branches, so nothing was pushed and no pull request was opened. Everything it was waiting for had finished: retrying it delivers them from here.",
+        instanceId,
+        nodeId,
+      ).changes;
+    }
+  }
+
   // A loop is closed out for the queued-run reason rather than the `thinking`
   // one: its passes were failed by the same boot, so another pass would be an
   // unattended agent started hours after anyone asked for it — and `failed`
@@ -10465,9 +10517,9 @@ export function reconcileBlocksOnBoot(): void {
       "The server restarted while this block was waiting for earlier work, and its workflow was no longer running.",
     );
 
-  if (thinking + waiting + looping > 0) {
+  if (thinking + waiting + looping + cutBeforeStart > 0) {
     console.warn(
-      `[usagefoundry] Closed out ${thinking + waiting + looping} workflow block(s) interrupted by a restart.`,
+      `[usagefoundry] Closed out ${thinking + waiting + looping + cutBeforeStart} workflow block(s) interrupted by a restart.`,
     );
   }
   if (kept.length > 0) {
