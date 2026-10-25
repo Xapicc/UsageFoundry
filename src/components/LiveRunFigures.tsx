@@ -2,7 +2,7 @@
 // rewrites the path alias at runtime, so a tested component has to import the
 // way src/lib and LiveTelemetry.tsx already do.
 import { providerReportsSpend, type LiveRunDTO } from "../lib/apiTypes";
-import { fmtTokens, fmtUSD } from "../lib/format";
+import { fmtBankedTokens, fmtTokens, fmtUSD, runTokenFigures } from "../lib/format";
 import { Stat } from "./ui/Card";
 
 const SUB = "mt-0.5 text-xs tabular-nums text-ink-muted";
@@ -30,7 +30,12 @@ export function LiveRunFigures({
 }: {
   run: Pick<
     LiveRunDTO,
-    "provider" | "spent_usd" | "cycleTelemetry" | "spent_tokens" | "cycleCodex"
+    | "provider"
+    | "spent_usd"
+    | "cycleTelemetry"
+    | "spent_tokens"
+    | "spent_tokens_est"
+    | "cycleCodex"
   >;
 }) {
   if (run.provider === "codex") return <CodexFigures run={run} />;
@@ -67,22 +72,30 @@ export function LiveRunFigures({
 
 /**
  * The same two figures for a Codex run, in tokens: what its finished cycles
- * reported on `turn.completed`, and what its cycle in flight has used so far
- * by its session file. Codex reports no cost, so there is no money to show and
+ * used, and what its cycle in flight has used so far by its session file. A
+ * finished cycle that never reported is counted from its session file too, and
+ * the tile says how many tokens that is. Codex reports no cost, so there is no money to show and
  * none is derived; the cycle figure is a dash until something has been read.
  */
 function CodexFigures({
   run,
 }: {
-  run: Pick<LiveRunDTO, "spent_tokens" | "cycleCodex">;
+  run: Pick<
+    LiveRunDTO,
+    "provider" | "spent_tokens" | "spent_tokens_est" | "cycleCodex"
+  >;
 }) {
   const cycle = run.cycleCodex;
+  // What the token limit counts, not what Codex reported: a cycle cut short
+  // reports nothing, and the tile would read under the limit that ended it.
+  const tokens = runTokenFigures(run);
   return (
     <div className="grid grid-cols-2 gap-3">
       <div className="min-w-0">
         <div className="text-xs font-semibold text-ink">Tokens used</div>
-        <Stat>{fmtTokens(run.spent_tokens)}</Stat>
+        <Stat>{fmtTokens(tokens.counted)}</Stat>
         <div className={SUB}>finished cycles · no cost reported</div>
+        {tokens.banked > 0 && <div className={SUB}>{fmtBankedTokens(tokens.banked)}</div>}
       </div>
       <div className="min-w-0">
         <div className="text-xs font-semibold text-ink">This cycle — Codex</div>

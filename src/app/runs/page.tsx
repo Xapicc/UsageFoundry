@@ -20,6 +20,7 @@ import {
   folderLabel,
   grantedCycles,
   pollFailureMessage,
+  runTokenFigures,
   STATUS_LABEL,
   endingLabel,
 } from "@/lib/format";
@@ -643,6 +644,8 @@ function RunList({
             runs.map((r) => {
               const detail = kind === "active" ? waitingDetail(r, now) : null;
               const granted = grantedCycles(r);
+              // What the token limit counts, as the run's own page shows it.
+              const tokens = runTokenFigures(r);
               return (
                 <Tr
                   key={r.id}
@@ -778,7 +781,12 @@ function RunList({
                       label="Tokens"
                       className="whitespace-nowrap align-top text-ink-muted"
                     >
-                      {fmtTokens(r.spent_tokens)}
+                      {fmtTokens(tokens.counted)}
+                      {tokens.banked > 0 && (
+                        <div className="text-xs">
+                          includes {fmtTokens(tokens.banked)} from session log
+                        </div>
+                      )}
                     </Td>
                   )}
                   {/* A dash for a provider that reports no money, on the same

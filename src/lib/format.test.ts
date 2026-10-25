@@ -23,6 +23,7 @@ import {
   readFailureMessage,
   resolveLiveModel,
   runPageNotes,
+  runTokenFigures,
   storedFolderState,
   taskProjectDraft,
   taskProjectPayload,
@@ -428,6 +429,30 @@ test("a negative token figure is scaled and signed like a positive one", () => {
   assert.equal(fmtTokens(-5), "−5");
   assert.equal(fmtTokens(0), "0");
   assert.equal(fmtTokens(81_822), "81.8k");
+});
+
+/**
+ * What a Codex run's token limit counts, as a display reads it.
+ *
+ * `spentGuardTokens` is `spent_tokens + spent_tokens_est` and the run page, the
+ * runs list and the live tile read `spent_tokens` alone, so a run killed at
+ * 120,500 tokens of a 100,000 limit showed 20,500. The column is only ever
+ * written for Codex, so another provider's figure is left as it was reported.
+ */
+test("a Codex run's token figure is the one its limit counts, and an absent column is zero banked", () => {
+  assert.deepEqual(
+    runTokenFigures({ provider: "codex", spent_tokens: 90_000, spent_tokens_est: 30_500 }),
+    { counted: 120_500, reported: 90_000, banked: 30_500 },
+  );
+  assert.deepEqual(runTokenFigures({ provider: "codex", spent_tokens: 90_000 }), {
+    counted: 90_000,
+    reported: 90_000,
+    banked: 0,
+  });
+  assert.deepEqual(
+    runTokenFigures({ provider: "claude", spent_tokens: 90_000, spent_tokens_est: 30_500 }),
+    { counted: 90_000, reported: 90_000, banked: 0 },
+  );
 });
 
 /**
