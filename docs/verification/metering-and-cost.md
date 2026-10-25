@@ -279,6 +279,17 @@
   deliberately, so that the model-id list being measured against exactly this
   build stays a claim about the program the image installs.
 
+- **The pin moved to 2.1.310 on 2026-10-25, and nothing measured on 2.1.280
+  has been re-measured against it.** The entry above applies one version on:
+  the `stream-json` shapes, OTLP records, compaction boundary, hook events and
+  background-task names read off 2.1.280 stand as history. Checked before the
+  bump: the flags (*Run lifecycle*), the model ids and the sandbox binds
+  (*Agents, templates and models*), each read out of the linux-arm64 binary
+  rather than run; and, on the host's darwin build of 2.1.310, the vault gate's
+  calls, about 300 of them, which parse. What settles the rest is the first
+  `docker compose up --build` with a real cycle. Chosen as npm's newest, two
+  days old, and the build the host's own CLI was already on.
+
 - **The per-repository cost card has never been rendered or read against a
   real multi-repository install.** `groupRunSpend` is unit-tested only. Check
   its total against `SELECT SUM(spent_usd) FROM runs WHERE created_at >= …`,
