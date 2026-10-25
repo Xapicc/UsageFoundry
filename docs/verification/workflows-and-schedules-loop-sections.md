@@ -295,3 +295,17 @@
   `loopSection.test.ts`'s repository, never against a real checkout with real
   branches. Settle it by picking a stuck loop up in the container and reading
   the merge queue's rows and the target branch afterwards.
+
+- **A tail that leaves the folder dirty, and a guard switched mid-loop, on a
+  built server.** The loop's refusal to open a pass over what an in-folder tail
+  left (`tailLeftDirt`) and its refusal of a member whose guards no longer match
+  its section (`sectionKindRefusal`) are driven under `npm test` against a real
+  repository and the real merge queue (`loopMergeOwnership.test.ts`,
+  `loopSection.test.ts`), and nothing else. Nothing has drawn the stop sentence
+  on the instance page or the loop's *Carry on* with it as the refusal, and the
+  synchronous `git status --porcelain` at the pass boundary has not been timed
+  on a large checkout. Settle: seed a two-pass landing section whose tail edits
+  a tracked file, serve a build over it, read the failed loop's row and its
+  pick-up at 390px and 1280px, commit the edit and press *Carry on*; then time
+  `gitSync(folder, ["status", "--porcelain"])` on the largest repository in the
+  mount.

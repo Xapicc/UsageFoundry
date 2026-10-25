@@ -7631,6 +7631,61 @@ function openPass(
 }
 
 /**
+ * Why a run or orchestrator member of a loop's section may not work under the
+ * isolation its guards now give it, or null when it may.
+ *
+ * A section's kind is decided at Save and again at Run, from the guards as they
+ * stood, and the shape rules hold it there: a section with a merge block lands,
+ * so every block in front of the last merge isolates and every block behind it
+ * works in the folder; a section without one works in the folder throughout.
+ * The guards are read again for every pass, though — a template's isolate
+ * switch or Settings' default guards can change while the loop repeats — and
+ * nothing else asks whether what a pass now plans is still what the section was
+ * accepted as. Unasked, an in-folder section's second pass cuts branches that no
+ * merge lands and the loop carries on repeating work no pass reads, and a
+ * landing section's head edits the folder in place while its merge lands into
+ * it. Both are the silent, billed repetition the landing rule exists to stop.
+ *
+ * **Blocked, not frozen.** Pinning each member's isolation at Run would keep the
+ * loop going on guards the operator has since changed; a refusal that names the
+ * switch and the way back leaves that choice with them. The kind is read off the
+ * instance's own graph — a merge block is what makes a section land — so it
+ * needs nothing recorded at Run and holds for pass 1 as for pass 2.
+ */
+function sectionKindRefusal(
+  loop: WorkflowNode,
+  section: LoopSection,
+  member: WorkflowNode,
+  isolates: boolean,
+): string | null {
+  if (member.kind !== "run" && member.kind !== "orchestrator") return null;
+  const lands = section.nodes.some((n) => n.kind === "merge");
+  const { afterMerges } = sectionTail(section.nodes, section.graph.edges, () => false);
+  const wantsCheckout = lands && !afterMerges.has(member.id);
+  if (isolates === wantsCheckout) return null;
+
+  const template = member.templateId ? getTemplate(member.templateId) : null;
+  const subject =
+    member.kind === "orchestrator" ? `the runs “${member.name}” starts` : `“${member.name}”`;
+  const because = template
+    ? `its template “${template.name}” ${isolates ? "isolates" : "does not isolate"}`
+    : `the default guards in Settings ${isolates ? "isolate" : "do not isolate"}`;
+  const switchedOn = template ? `“${template.name}”` : "the default guards in Settings";
+  return isolates
+    ? `${subject} would now work in a checkout of its own, because ${because}, but ` +
+        (lands
+          ? `it comes after the last merge block of the section “${loop.name}” repeats, where blocks work in the folder`
+          : `the section “${loop.name}” repeats has no merge block, so nothing would land the branch it cuts`) +
+        `. Its work would sit on a branch no pass reads, and the loop would go on repeating it. ` +
+        `Put ${switchedOn} back to working in the folder, or start the workflow again so the section is checked afresh.`
+    : `${subject} would now work directly in the folder, because ${because}, but the ` +
+        `section “${loop.name}” repeats lands each pass's branches into that folder through its ` +
+        `merge block, and a block editing the folder in place while they land is a state nothing ` +
+        `was designed for. Put ${switchedOn} back to isolating, or start the workflow again so ` +
+        "the section is checked afresh.";
+}
+
+/**
  * Carry one pass forward: whatever the section can do now, done.
  *
  * **There is one scheduler.** A pass is the section instantiated, so what may go
@@ -7727,6 +7782,17 @@ function stepPass(
       // starting a run that is not the thing the graph named.
       node.agentId ? getAgent(node.agentId) : null,
     );
+    // The guards are read again for every pass, so what they now say is checked
+    // against the kind the section was accepted as — see `sectionKindRefusal`.
+    const kind = plan.ok
+      ? // `createRun` reads an absent switch as isolating, so this does too.
+        sectionKindRefusal(loop, section, node, plan.input.isolate !== false)
+      : null;
+    if (kind) {
+      upsertBlock(instanceId, passNode(node, pass, memberId(node.id)), "blocked", kind);
+      wrote = true;
+      continue;
+    }
     const ready = plan.ok ? readyToCreate(plan.input, node.name) : plan;
     if (!ready.ok) {
       upsertBlock(instanceId, passNode(node, pass, memberId(node.id)), "blocked", ready.reason);
@@ -8020,6 +8086,31 @@ async function startBlockTurn(
     const missing = agentRefusal(node.agentId, agentKnowledgeOf(own));
     if (missing) {
       settleBlock(instanceId, nodeId, { status: "failed", error: missing, costUSD: 0 });
+      return;
+    }
+  }
+
+  // A pass's orchestrator takes the same question as a run member, for the same
+  // reason and before the same spend: its emitted runs take its guards, which are
+  // read again for every pass. A template that has gone is `emitBlockRuns`'
+  // refusal to make, not a flip to read here.
+  const inPass = passMemberIn(instance.graph, nodeId);
+  const owner = inPass
+    ? instance.graph.nodes.find((n) => n.id === inPass.loopNodeId)
+    : undefined;
+  const bodyNode = inPass?.bodyNodeId
+    ? instance.graph.nodes.find((n) => n.id === inPass.bodyNodeId)
+    : undefined;
+  const bodyTemplate = bodyNode?.templateId ? getTemplate(bodyNode.templateId) : null;
+  if (owner && bodyNode && (!bodyNode.templateId || bodyTemplate)) {
+    const mismatch = sectionKindRefusal(
+      owner,
+      loopSection(instance.graph, owner),
+      bodyNode,
+      guardsFor(bodyTemplate, chatGuards()).isolate,
+    );
+    if (mismatch) {
+      settleBlock(instanceId, nodeId, { status: "failed", error: mismatch, costUSD: 0 });
       return;
     }
   }

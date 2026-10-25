@@ -2362,3 +2362,136 @@ describe("a loop failed on a missing pass cap, with its pass settled whole", () 
     assert.equal(blockRow(instanceId, "after").status, "blocked", "a refusal wrote nothing");
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* A section's kind is fixed at Run; the guards are read for every pass */
+/* ------------------------------------------------------------------ */
+
+describe("a section whose guards are switched while its loop repeats", () => {
+  let restore: import("./settings").RunGuards;
+  let settings: typeof import("./settings");
+
+  before(async () => {
+    settings = await import("./settings");
+    restore = settings.getSettings().chatDefaultGuards;
+  });
+
+  after(() => {
+    settings.saveSettings({ chatDefaultGuards: restore });
+  });
+
+  const IN_FOLDER = {
+    nodes: [node("a"), node("b")],
+    edges: [
+      { from: "L", to: "a", edge: "repeats" },
+      { from: "a", to: "b", edge: "on-success" },
+    ],
+    body: ["a", "b"],
+  };
+
+  const setIsolate = (isolate: boolean) =>
+    settings.saveSettings({ chatDefaultGuards: { ...restore, isolate } });
+
+  const isolationOf = (runId: string) =>
+    (
+      dbMod.db().prepare("SELECT isolation FROM runs WHERE id = ?").get(runId) as {
+        isolation: string | null;
+      }
+    ).isolation;
+
+  it("blocks pass 2 of an in-folder section once the default guards isolate, instead of cutting branches nothing lands", async () => {
+    setIsolate(false);
+    const instanceId = scene({ ...IN_FOLDER, maxPasses: 3 });
+
+    // Pass 1 under guards that work in the folder: `a` is created, then `b`.
+    workflows.advanceInstances();
+    settleQueuedRuns(instanceId, { inFolder: true });
+    workflows.advanceInstances();
+    settleQueuedRuns(instanceId, { inFolder: true });
+    assert.deepEqual(
+      membersOf(instanceId).map((m) => [m.memberId, isolationOf(m.runId)]),
+      [
+        [passMemberId("L", 1, "a"), "none"],
+        [passMemberId("L", 1, "b"), "none"],
+      ],
+    );
+
+    setIsolate(true);
+    workflows.advanceInstances();
+
+    assert.deepEqual(
+      membersOf(instanceId).map((m) => m.memberId),
+      [passMemberId("L", 1, "a"), passMemberId("L", 1, "b")],
+      "pass 2 created a run under guards the section was not accepted with",
+    );
+    const blocked = blockRow(instanceId, passMemberId("L", 2, "a"));
+    assert.equal(blocked.status, "blocked");
+    assert.match(blocked.error ?? "", /“A” would now work in a checkout of its own/);
+    assert.match(blocked.error ?? "", /the default guards in Settings isolate/);
+    assert.match(blocked.error ?? "", /has no merge block/);
+    assert.equal(loopBlock(instanceId).status, "failed");
+  });
+
+  it("blocks pass 2 of a landing section once the default guards stop isolating", async () => {
+    setIsolate(true);
+    const instanceId = scene({
+      nodes: [node("a"), mergeNode("m")],
+      edges: [
+        { from: "L", to: "a", edge: "repeats" },
+        { from: "a", to: "m", edge: "on-success" },
+      ],
+      body: ["a", "m"],
+      maxPasses: 3,
+    });
+
+    workflows.advanceInstances();
+    settleQueuedRuns(instanceId);
+    // Switched while pass 1's merge is still to run: pass 2's entry is planned
+    // only once the whole pass has settled, under whatever the guards say then.
+    setIsolate(false);
+    await drive(instanceId);
+
+    assert.equal(blockRow(instanceId, passMemberId("L", 1, "m")).status, "emitted");
+    assert.deepEqual(
+      membersOf(instanceId).map((m) => m.memberId),
+      [passMemberId("L", 1, "a")],
+      "pass 2 edited the folder in place while its merge was to land into it",
+    );
+    const blocked = blockRow(instanceId, passMemberId("L", 2, "a"));
+    assert.equal(blocked.status, "blocked");
+    assert.match(blocked.error ?? "", /“A” would now work directly in the folder/);
+    assert.match(blocked.error ?? "", /the default guards in Settings do not isolate/);
+    assert.equal(loopBlock(instanceId).status, "failed");
+  });
+
+  it("keeps taking passes while the guards still say what the section was accepted with", async () => {
+    setIsolate(false);
+    const instanceId = scene({ ...IN_FOLDER, maxPasses: 2 });
+    await drive(instanceId, { inFolder: true });
+    assert.equal(membersOf(instanceId).length, 4);
+    assert.equal(loopBlock(instanceId).status, "emitted");
+  });
+
+  it("refuses an orchestrator's turn before it is paid for, for the same flip", async () => {
+    setIsolate(false);
+    const instanceId = scene({
+      nodes: [
+        node("o", { kind: "orchestrator", fanOut: 2, folder: "" }),
+        mergeNode("m"),
+      ],
+      edges: [
+        { from: "L", to: "o", edge: "repeats" },
+        { from: "o", to: "m", edge: "on-finish" },
+      ],
+      body: ["o", "m"],
+      maxPasses: 2,
+    });
+
+    workflows.advanceInstances();
+
+    const turn = workflows.blocksOf(instanceId).find((b) => b.nodeId === passMemberId("L", 1, "o"));
+    assert.equal(turn?.status, "failed");
+    assert.match(turn?.error ?? "", /the runs “O” starts would now work directly in the folder/);
+    assert.equal(turn?.costUSD, 0, "a turn was paid for under guards the section was not accepted with");
+  });
+});
