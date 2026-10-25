@@ -2139,9 +2139,6 @@ describe("a loop that failed before its first pass", () => {
     const instanceId = scene({ ...withPredecessor, stopWhenTasks });
     fs.rmSync(boardDir, { recursive: true });
     await drive(instanceId);
-    // A loop that fails at its release is written off behind by the next advance,
-    // which in a running app is any terminal run anywhere.
-    workflows.advanceInstances();
 
     const loop = loopBlock(instanceId);
     assert.equal(loop.status, "failed");
@@ -2229,6 +2226,82 @@ describe("a loop that failed before its first pass", () => {
     assert.equal(loopBlock(instanceId).status, "failed");
     assert.match(loopBlock(instanceId).error ?? "", /repeats no section/);
     assert.deepEqual(loopPickUp(instanceId), []);
+  });
+});
+
+describe("a loop that settles at its own release", () => {
+  // Nothing in front of the loop, so the first advance is also the release, and
+  // an `on-success` block behind it that the loop's ending decides.
+  const behindTheLoop = {
+    nodes: [node("a"), mergeNode("m"), node("after")],
+    edges: [
+      { from: "L", to: "a", edge: "repeats" },
+      { from: "a", to: "m", edge: "on-success" },
+      { from: "L", to: "after", edge: "on-success" },
+    ],
+    body: ["a", "m"],
+    ownBlocks: [{ id: "after", kind: "run" }],
+  };
+
+  const startedPassOne = (instanceId: string) =>
+    membersOf(instanceId).some((m) => m.memberId === passMemberId("L", 1, "a"));
+
+  // One advance and no more: in a quiet app nothing else makes the next one, so
+  // what is behind the loop has to be decided by the advance that settled it.
+  it("creates the block behind it in the same advance when the board is already clear", () => {
+    const { stopWhenTasks } = openBoard();
+    dbMod.db().prepare("UPDATE tasks SET status='done'").run();
+    const instanceId = scene({ ...behindTheLoop, stopWhenTasks });
+
+    workflows.advanceInstances();
+
+    const loop = loopBlock(instanceId);
+    assert.equal(loop.status, "emitted", loop.error ?? "");
+    assert.match(loop.error ?? "", /had at most 0 open task\(s\) left/);
+    assert.equal(startedPassOne(instanceId), false, "a pass was billed on a clear board");
+    assert.ok(
+      membersOf(instanceId).some((m) => m.memberId === "after"),
+      "the block behind a settled loop waited for an advance nothing would make",
+    );
+    assert.equal(workflows.getInstance(instanceId)!.status, "started");
+  });
+
+  it("writes the block behind it off in the same advance when its board folder is gone", () => {
+    const { boardDir, stopWhenTasks } = openBoard();
+    const instanceId = scene({ ...behindTheLoop, stopWhenTasks });
+    fs.rmSync(boardDir, { recursive: true });
+
+    workflows.advanceInstances();
+
+    const loop = loopBlock(instanceId);
+    assert.equal(loop.status, "failed");
+    assert.match(loop.error ?? "", /could not be counted/);
+    assert.equal(startedPassOne(instanceId), false, "a pass was opened on a board that could not be counted");
+    assert.equal(
+      blockRow(instanceId, "after").status,
+      "blocked",
+      "the block behind a failed loop was left waiting for the next advance",
+    );
+    assert.equal(workflows.getInstance(instanceId)!.status, "blocked");
+  });
+
+  it("leaves the block behind a loop that took a pass waiting, however often it is advanced", () => {
+    // The converse, and what keeps the re-plan from being a spin: a loop that is
+    // still repeating settled nothing, so nothing behind it may move.
+    const { stopWhenTasks } = openBoard();
+    const instanceId = scene({ ...behindTheLoop, stopWhenTasks });
+
+    workflows.advanceInstances();
+    workflows.advanceInstances();
+
+    assert.equal(loopBlock(instanceId).status, "looping");
+    assert.equal(startedPassOne(instanceId), true);
+    assert.equal(blockRow(instanceId, "after").status, "waiting");
+    assert.equal(
+      membersOf(instanceId).filter((m) => m.memberId === passMemberId("L", 1, "a")).length,
+      1,
+      "pass 1's entry was created more than once",
+    );
   });
 });
 

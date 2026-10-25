@@ -6149,10 +6149,6 @@ export function resumeLoop(instanceId: string, loopNodeId: string): PickUpOutcom
   })();
 
   advanceInstances();
-  // A loop reopened before its first pass is released by the scheduler, and a
-  // loop that settles at its release (the board is clear by now) leaves what is
-  // behind it for the next advance, which nothing in a quiet app would make.
-  if (pass === 0) advanceInstances();
   return { ok: true };
 }
 
@@ -6539,8 +6535,31 @@ export function advanceInstances(): void {
   for (const row of rows) advanceInstance(row.id);
 }
 
-/** One instance: apply whatever `planInstanceStep` says can happen now. */
+/**
+ * One instance: apply whatever `planInstanceStep` says can happen now, and plan
+ * again for as long as a loop released by that plan settled inside its release.
+ *
+ * A loop is released by a plan and can end inside the very call that claims it —
+ * its board is already clear, its board folder is gone, its graph has no cap —
+ * and the plan was read before that. What sits behind it is `waiting` on a
+ * loop that is no longer pending, and nothing else would decide it: no run was
+ * started, so no terminal run transition will advance the instance again, and
+ * in a quiet app it would sit `started` for as long as the app did.
+ *
+ * Each round after the first needs a loop that left `waiting` in the round
+ * before, and only a pick-up puts a loop back there, so the rounds are bounded
+ * by the loops the graph holds. `MAX_WORKFLOW_NODES` states that anyway: a
+ * round that is wrong about it falls back to the next trigger, which is what
+ * every loop that settled at its release used to wait for.
+ */
 function advanceInstance(instanceId: string): void {
+  for (let round = 0; round <= MAX_WORKFLOW_NODES; round += 1) {
+    if (!advanceInstanceRound(instanceId)) return;
+  }
+}
+
+/** One plan and what it says, answering whether a loop settled at its release. */
+function advanceInstanceRound(instanceId: string): boolean {
   // Loops first, so a loop that settles here is already settled when the plan
   // below is computed and what is behind it is released in this pass rather
   // than one advance later. It cannot go the other way round: a loop that takes
@@ -6549,7 +6568,7 @@ function advanceInstance(instanceId: string): void {
   advanceLoops(instanceId);
 
   const instance = getInstance(instanceId);
-  if (!instance || !instanceIsOpen(instance.status)) return;
+  if (!instance || !instanceIsOpen(instance.status)) return false;
 
   const step = planInstanceStep(instance.graph, instanceState(instance));
 
@@ -6638,10 +6657,18 @@ function advanceInstance(instanceId: string): void {
   // and that is the whole of what this indirection buys. The claim goes first
   // for the reason it always did, and it is also what makes the instance read
   // `started` on the very next line.
+  //
+  // A loop that is no longer `looping` once it has been advanced settled inside
+  // its release, which is the one ending the plan above could not see: it is
+  // reported so the caller reads the graph again with the loop settled.
+  let loopSettledAtRelease = false;
   for (const creation of step.loop) {
     if (!instance.graph.nodes.some((n) => n.id === creation.nodeId)) continue;
     if (!claimLoop(instanceId, creation.nodeId)) continue;
     advanceLoop(instanceId, creation.nodeId, creation.dependsOn);
+    if (getBlock(instanceId, creation.nodeId)?.status !== "looping") {
+      loopSettledAtRelease = true;
+    }
   }
 
   // A gate the instance has just reached. Nothing is spawned and nothing is
@@ -6753,6 +6780,8 @@ function advanceInstance(instanceId: string): void {
       });
     });
   }
+
+  return loopSettledAtRelease;
 }
 
 /** Every node of an instance, in the terms `planInstanceStep` reads. */

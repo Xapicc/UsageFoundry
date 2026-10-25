@@ -113,6 +113,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - The instance page draws a pass as the group of members it is, and `passesOf` is the one reader that decides what is in one.
 - `passMemberId` owns the spelling of a member id and `passNumberOf` is the only thing that reads one back.
 - `looping` is the one exception to "a block adds no status", and it is an exception rather than a precedent.
+- A loop that settles inside its own release does not end that advance, because the plan it was released by is already stale.
 
 ## [The workflow canvas and block layout](workflows-and-schedules/canvas-and-layout.md)
 
