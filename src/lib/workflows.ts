@@ -9415,11 +9415,8 @@ async function driveReviewItem(
     if (!current || current.status === "approved" || current.status === "set-aside") return;
     if (!open()) return;
 
-    // One branch of this block at a time from the queue check to the row
-    // `startAssist` writes, which is what fills the slot: siblings that asked in
-    // the same tick each passed one slot and the guard at the same banked
-    // figure, and two to four billed reviews started where the limit allowed
-    // one more — `atReviewDoor` says why that was not left as an overshoot.
+    // One branch of this block at a time, from the queue check to the row
+    // `startAssist` writes, which is what fills the slot: `atReviewDoor` says why.
     const started = await atReviewDoor(instanceId, blockId, async () => {
       // The wait for the door is an await, and a halt can land in it.
       if (!open()) return "stop" as const;
