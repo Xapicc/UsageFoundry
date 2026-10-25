@@ -87,6 +87,19 @@
   fitted view and is not clamped; the reading says nothing about a view the
   operator has panned.
 
+- **A section that works in the folder throughout, drawn in the built editor
+  2026-10-25 (branch `uf/usagefoundry-721638d11c0b-31-7aaf7aa7`, standalone build over a
+  scratch `DATA_DIR`, Chromium at 1600×900, auth off).** A loop over two blocks on
+  a template with `isolate: false` saved through `POST /api/workflows` (200), and
+  the same section with the second block on the default guards, which isolate,
+  was refused 400 with the mixed-section sentence naming “Block a”. The edit page
+  marked the entry *starts a pass* and the exit *ends the pass*, the loop's panel
+  read "Every pass works in the folder itself and ends at Block b, and the next
+  pass starts from what it left", and its member list marked Block b *ends the
+  pass*. Seeded over HTTP, not drawn by hand: a link gesture, a template change
+  on a drawn block and a switch of the settings default were not exercised in the
+  browser, and no section has been run end to end by a real agent.
+
 ## Not yet verified by hand
 
 - **The touched map has never been looked at on a real run.** Its 300-file fold
@@ -98,3 +111,21 @@
   is findable in motion, whether the wash reads as progress or noise, whether
   `TARGET_SECONDS = 20` (chosen by reasoning, not watching) suits a real run's
   length, and that space neither double-toggles Play nor scrolls the page.
+
+- **The editor's gestures over a section that works in the folder are untried by
+  hand.** Open: that drawing a link out of a flat block inside the frame, Put in
+  and Take out all save without the server refusing a branch, that switching a
+  drawn block's template to a flat one clears its link's branch, and that the
+  frame's label flips from *lands* to *ends* when the settings default changes
+  (it is read once, from the settings the editor already fetches, and assumed
+  isolating until they answer). The pure half is checked against the server's own
+  normalizer in `canvasGraph.test.ts`. To settle it: open a saved flat section in
+  `/workflows/<id>/edit` on a build over a scratch `DATA_DIR`, draw each gesture,
+  and press Save.
+
+- **No in-folder section has run under a real agent.** Two passes were driven
+  through the scheduler with stub runs in `loopSection.test.ts`; whether a real
+  cycle that edits the folder in place settles a pass the same way, and whether
+  pass 2's agent reads what pass 1 left, has not been watched. To settle it: save
+  a two-pass section of one flat block against a scratch repository with a
+  throwaway budget and read the folder between passes.
