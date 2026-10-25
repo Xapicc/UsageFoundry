@@ -7,6 +7,8 @@ import { after, before, describe, it } from "node:test";
 
 import type Database from "better-sqlite3";
 
+import { PICK_UP_SHEET_DEFAULTS, pickUpBudget } from "./fleetPickUp";
+
 /**
  * The two halves of the install-wide control, and both are database subjects.
  *
@@ -1032,8 +1034,12 @@ describe("the pick-up sheet at its defaults", () => {
   before(() => settings.setNewWorkPaused(true));
   after(() => settings.setNewWorkPaused(false));
 
-  /** Exactly what `FleetControls` puts on the wire with neither field touched. */
-  const SHEET_DEFAULT = { moreIterations: 1, maxRunCostUSD: null };
+  /**
+   * What `FleetControls` puts on the wire with nothing touched, built by the
+   * function it calls rather than copied from it, so this cannot drift from the
+   * sheet.
+   */
+  const SHEET_DEFAULT = pickUpBudget(PICK_UP_SHEET_DEFAULTS);
   const capOf = (id: string) =>
     (JSON.parse(orch.getRun(id)!.budget) as { maxIterations: number | null })
       .maxIterations;
@@ -1081,6 +1087,61 @@ describe("the pick-up sheet at its defaults", () => {
       granted,
     ]);
     assert.equal(capOf(granted), 3, "3 used, 1 of them granted: cap 3 + 1 = 4");
+  });
+
+  it("keeps each run's own spending limit when nobody touched that field", () => {
+    // The field used to send `null` when blank, and `reopenFleet` lays the wire
+    // over each run's stored budget, so an explicit `null` removed the limit
+    // the run was started with.
+    const limited = run("default-limited", "stopped", {
+      iterations: 1,
+      budget: '{"maxIterations":5,"maxRunCostUSD":5,"permissionMode":"acceptEdits"}',
+    });
+    const unlimited = run("default-unlimited", "stopped", {
+      iterations: 1,
+      budget: ROOMY,
+    });
+
+    const report = fleet.reopenFleet([limited, unlimited], SHEET_DEFAULT);
+
+    assert.deepEqual(report.refused, []);
+    const costOf = (id: string) =>
+      (JSON.parse(orch.getRun(id)!.budget) as { maxRunCostUSD?: number | null })
+        .maxRunCostUSD;
+    assert.equal(costOf(limited), 5);
+    assert.ok(
+      costOf(unlimited) == null,
+      "a run with no limit of its own is not given one",
+    );
+  });
+
+  it("still lets the operator set or remove the spending limit on purpose", () => {
+    const a = run("explicit-a", "stopped", {
+      iterations: 1,
+      budget: '{"maxIterations":5,"maxRunCostUSD":5,"permissionMode":"acceptEdits"}',
+    });
+    const b = run("explicit-b", "stopped", { iterations: 1, budget: ROOMY });
+    const c = run("explicit-c", "stopped", {
+      iterations: 1,
+      budget: '{"maxIterations":5,"maxRunCostUSD":5,"permissionMode":"acceptEdits"}',
+    });
+    const costOf = (id: string) =>
+      (JSON.parse(orch.getRun(id)!.budget) as { maxRunCostUSD?: number | null })
+        .maxRunCostUSD;
+
+    const set = pickUpBudget({ ...PICK_UP_SHEET_DEFAULTS, spendLimit: "8" });
+    assert.deepEqual(fleet.reopenFleet([a, b], set).refused, []);
+    assert.equal(costOf(a), 8, "a number replaces the run's own limit");
+    assert.equal(costOf(b), 8, "and gives one to a run that had none");
+
+    // The switch wins over a number still sitting in the disabled field.
+    const removed = pickUpBudget({
+      ...PICK_UP_SHEET_DEFAULTS,
+      spendLimit: "8",
+      removeSpendLimit: true,
+    });
+    assert.deepEqual(fleet.reopenFleet([c], removed).refused, []);
+    assert.equal(costOf(c), null, "only the explicit switch takes it off");
   });
 
   it("names every run it refused when it refused them all", async () => {

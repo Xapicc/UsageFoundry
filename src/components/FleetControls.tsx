@@ -7,11 +7,12 @@ import type {
   FleetStopReportDTO,
 } from "@/lib/apiTypes";
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
+import { PICK_UP_SHEET_DEFAULTS, pickUpBudget } from "@/lib/fleetPickUp";
 import { startPoll } from "@/lib/poll";
 import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonRow } from "@/components/ui/Button";
 import { Card, CardTitle } from "@/components/ui/Card";
-import { Field, Input } from "@/components/ui/Field";
+import { Field, Input, Switch } from "@/components/ui/Field";
 import { Notice } from "@/components/ui/Notice";
 import { Sheet } from "@/components/ui/Sheet";
 
@@ -59,8 +60,15 @@ export function FleetControls({
   const [error, setError] = useState<string | null>(null);
   const [confirmStop, setConfirmStop] = useState(false);
   const [confirmReopen, setConfirmReopen] = useState(false);
-  const [moreIterations, setMoreIterations] = useState("1");
-  const [maxRunCostUSD, setMaxRunCostUSD] = useState("");
+  const [moreIterations, setMoreIterations] = useState(
+    PICK_UP_SHEET_DEFAULTS.moreCycles,
+  );
+  const [maxRunCostUSD, setMaxRunCostUSD] = useState(
+    PICK_UP_SHEET_DEFAULTS.spendLimit,
+  );
+  const [removeSpendLimit, setRemoveSpendLimit] = useState(
+    PICK_UP_SHEET_DEFAULTS.removeSpendLimit,
+  );
 
   // Taken by every read and every press, and a read's answer is drawn only
   // while it holds the newest one: a poll sent just before Stop everything can
@@ -172,7 +180,13 @@ export function FleetControls({
         <Button
           variant="secondary"
           disabled={busy || reopenable.length === 0}
-          onClick={() => setConfirmReopen(true)}
+          onClick={() => {
+            // Off at every opening: a switch left on by an earlier look at the
+            // sheet would remove every run's spending limit on a press that
+            // never asked.
+            setRemoveSpendLimit(PICK_UP_SHEET_DEFAULTS.removeSpendLimit);
+            setConfirmReopen(true);
+          }}
         >
           Pick up {reopenable.length} stopped
         </Button>
@@ -209,12 +223,11 @@ export function FleetControls({
             {
               action: "reopen",
               runIds: reopenable.map((r) => r.id),
-              budget: {
-                moreIterations:
-                  moreIterations === "" ? null : Number(moreIterations),
-                maxRunCostUSD:
-                  maxRunCostUSD === "" ? null : Number(maxRunCostUSD),
-              },
+              budget: pickUpBudget({
+                moreCycles: moreIterations,
+                spendLimit: maxRunCostUSD,
+                removeSpendLimit,
+              }),
             },
             "pick those up",
           )
@@ -239,7 +252,11 @@ export function FleetControls({
             onChange={(e) => setMoreIterations(e.target.value)}
           />
         </Field>
-        <Field label="Spending limit (USD)" hint="Blank switches it off">
+        <Field
+          label="Spending limit (USD)"
+          hint="Blank keeps each run's own limit"
+          disabled={removeSpendLimit}
+        >
           <Input
             type="number"
             min={0}
@@ -248,6 +265,19 @@ export function FleetControls({
             onChange={(e) => setMaxRunCostUSD(e.target.value)}
           />
         </Field>
+        <div className="mb-3.5 flex items-center justify-between gap-3">
+          <label
+            htmlFor="fleet-remove-spend-limit"
+            className="text-sm text-ink"
+          >
+            Remove each run&apos;s spending limit
+          </label>
+          <Switch
+            id="fleet-remove-spend-limit"
+            checked={removeSpendLimit}
+            onChange={setRemoveSpendLimit}
+          />
+        </div>
       </Sheet>
     </Card>
   );
