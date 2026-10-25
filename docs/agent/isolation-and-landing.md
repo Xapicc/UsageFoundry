@@ -7,30 +7,36 @@
 
 Each paragraph now lives in the topic file its heading links to: find the rule by its claim below and open that one file. A line number cited elsewhere as `docs/agent/isolation-and-landing.md:N` counts lines of this file before it was split on 2026-09-27; each entry ends with the line its paragraph started on at the split, and a citation older than that may be off by a few lines.
 
-## [Worktrees, seeding and branch chains](isolation-and-landing/worktrees-and-branch-chains.md)
+## [Worktrees, seeding and slots](isolation-and-landing/worktrees-and-branch-chains.md)
 
 - An isolated run works on a branch, and a worktree contains committed work only. (was line 20)
 - The merge target is recorded, never assumed. (was line 58)
 - Work an agent left uncommitted goes onto its own branch, and nowhere else. (was line 62)
-- A run can be told to carry on the branch its dependency was working on, and what it claims is the branch rather than the checkout. (was line 8)
-- A continued branch takes the chain's base, never the predecessor's tip. (was line 10)
-- The chain claims a branch, not a slot, and that is what makes an unrelated run taking the checkout harmless. (was line 12)
-- A handed-over checkout keeps what the predecessor left uncommitted, and says how much. (was line 14)
 - A checkout on the run's branch is adopted as it stands only once git is known to have finished writing it.
-- A continuing agent is told whose commits it is standing on. (was line 18)
 - A null `isolation` means isolated-but-not-yet-planned, and every reader of the column takes it that way.
 - `repo_root` is the repository a checkout was cut from, and is null on a run that was not given one.
 - A slot outlives the run that worked in it, so anything read from one has to prove the slot still holds that run's branch first.
 
+## [Branch chains](isolation-and-landing/branch-chains.md)
+
+- A run can be told to carry on the branch its dependency was working on, and what it claims is the branch rather than the checkout. (was line 8)
+- A continued branch takes the chain's base, never the predecessor's tip. (was line 10)
+- The chain claims a branch, not a slot, and that is what makes an unrelated run taking the checkout harmless. (was line 12)
+- A handed-over checkout keeps what the predecessor left uncommitted, and says how much. (was line 14)
+- A continuing agent is told whose commits it is standing on. (was line 18)
+
 ## [Land and the verify gate](isolation-and-landing/land-verify-and-deliver.md)
 
 - The tool does now merge, and every protection the old "never merges" rule bought is a check in `land.ts` rather than a caveat. (was line 22)
-- One branch, one Land button: the last run on it, and only once nothing behind it can still commit. (was line 16)
-- A branch a live pass of a workflow loop is working on may be landed by that pass's own merge block and by nothing else, and every other refusal names the pass. (was line 52)
 - The check in front of Land, and what an empty one means. (was lines 69–81)
 - Which tree the check runs in is the whole of whether it checks anything. (was lines 83–97)
 - A review block's verify command is the one gate that switches a slot a later run took over; Land and Deliver refuse it.
 - Land is withheld on the gate's refusals that need no command run, and the card says why.
+
+## [Who may land a branch](isolation-and-landing/who-may-land-a-branch.md)
+
+- One branch, one Land button: the last run on it, and only once nothing behind it can still commit. (was line 16)
+- A branch a live pass of a workflow loop is working on may be landed by that pass's own merge block and by nothing else, and every other refusal names the pass. (was line 52)
 
 ## [A verify command on a slot a later run reused](isolation-and-landing/review-verify-command.md)
 
