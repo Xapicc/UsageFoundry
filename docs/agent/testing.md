@@ -156,7 +156,7 @@ Twenty-three are renderings rather than functions — every `*.test.tsx` in the 
 
 | Test file | Also in |
 |---|---|
-| `bootBlocks.test.ts` | [harnesses] |
+| `bootBlocks.test.ts` | [harnesses], [pick-ups] |
 | `src/app/api/workflows/dto.test.ts` |  |
 | `haltedMembers.test.ts` |  |
 | `instanceReading.test.ts` |  |
@@ -280,7 +280,7 @@ Units that are about no test file in the tree:
 
 | Test file | Also in |
 |---|---|
-| `deliverBlockRun.test.ts` |  |
+| `deliverBlockRun.test.ts` | [pick-ups] |
 | `deliverMovedBranch.test.ts` |  |
 | `deliverRun.test.ts` |  |
 | `delivery.test.ts` |  |
