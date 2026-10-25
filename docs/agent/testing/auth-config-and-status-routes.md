@@ -8,7 +8,7 @@ Read before adding or editing tests of `authGuard.ts`, `sessionToken.ts`, `/api/
 
 `config.ts`'s three (`config.test.ts`) each fail *as an ordinary state* rather than as an error — a fifth workspace slot compose never mounted looks exactly like a mounted directory with nothing in it, and the wrong GitHub token **works**, leaving a commit in somebody else's history as the only evidence.
 
-`configCheck`'s two (`configCheck.test.ts`) decide which configurations boot and which are refused, which is the one decision made before anything else can report.
+`configCheck`'s two (`configCheck.test.ts`) decide which configurations boot and which are refused, which is the one decision made before anything else can report. A third case and `ignoredGithubVars`' own pin the warning for a `GH_TOKEN` or `GITHUB_TOKEN` in the server's environment, which every child strip drops: it is silent in both directions — an operator who exported one loses a working `gh` with no message anywhere but a refused tool call, and a warning that fired on a blank or unset name would sit on the dashboard of every stock install — and the case feeds a fake token through the same path the boot uses to hold that the sentence never carries the value.
 
 `sessionToken`'s four (`sessionToken.test.ts`) are the whole of what keeps a captured cookie from being the master credential.
 
