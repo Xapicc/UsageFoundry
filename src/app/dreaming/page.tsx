@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { DreamingDTO, DreamingNoteDTO, DreamingSignatureDTO } from "@/lib/apiTypes";
+import type {
+  DreamingDTO,
+  DreamingLandingDTO,
+  DreamingNoteDTO,
+  DreamingSignatureDTO,
+} from "@/lib/apiTypes";
 import { STATUS_LABEL, STATUS_TONE, fmtDateTime, pollFailureMessage } from "@/lib/format";
 import { jsonRequest } from "@/lib/jsonRequest";
 import { Badge } from "@/components/ui/Badge";
@@ -324,6 +329,40 @@ function SignatureRow({ row }: { row: DreamingSignatureDTO }) {
   );
 }
 
+/**
+ * `why` is a lower-case fragment in the settle pass's own words. A settling
+ * reason is dated, because the pane reads once and does not poll: "in the merge
+ * queue" is a moment that has passed by the time somebody reads it.
+ */
+function landingText(landing: DreamingLandingDTO, readAt: number): string {
+  const reason = landing.settling
+    ? `As of ${fmtDateTime(readAt)}: ${landing.why}.`
+    : `${landing.why.charAt(0).toUpperCase()}${landing.why.slice(1)}.`;
+  if (!landing.queueEnding) return reason;
+  const { status, message } = landing.queueEnding;
+  return `${reason} Merge queue ${status}${message ? `: ${message}` : "."}`;
+}
+
+/**
+ * A night whose notes are on a branch that has not landed.
+ *
+ * The notes tab lists claimed rows and a night on a branch has none until it
+ * lands, so without this the tab reads "nothing written" about a night that
+ * wrote.
+ */
+function Waiting({ landing, readAt }: { landing: DreamingLandingDTO; readAt: number }) {
+  return (
+    <Notice tone={landing.settling ? "info" : "warn"} quiet={landing.settling} className="mb-3">
+      <strong>The night of {landing.night} is waiting to land.</strong> {landing.selected}{" "}
+      failure(s) selected, and their notes are on a branch that is not in the vault.{" "}
+      {landingText(landing, readAt)}{" "}
+      <ButtonLink href={`/runs/${landing.runId}`} variant="secondary">
+        {landing.settling ? "Open run" : "Land or purge"}
+      </ButtonLink>
+    </Notice>
+  );
+}
+
 function Written({
   data,
   onForget,
@@ -331,17 +370,25 @@ function Written({
   data: DreamingDTO;
   onForget: (signature: string) => void;
 }) {
+  const waiting = data.awaitingLanding.map((l) => (
+    <Waiting key={l.runId} landing={l} readAt={data.scannedAt} />
+  ));
+
   if (data.notes.length === 0) {
     return (
-      <Empty>
-        Nothing has been written into the vault yet.
-        {data.refusal && " Writing is off."}
-      </Empty>
+      <>
+        {waiting}
+        <Empty>
+          Nothing has been written into the vault yet.
+          {data.refusal && " Writing is off."}
+        </Empty>
+      </>
     );
   }
 
   return (
     <TableWrap>
+      {waiting}
       {data.notesTruncated && (
         <Notice tone="warn" quiet className="mb-3">
           Showing the newest {data.noteLimit} notes.
@@ -424,6 +471,8 @@ function NoteRow({
 }
 
 function Nights({ data }: { data: DreamingDTO }) {
+  const landingFor = (night: string) => data.awaitingLanding.find((l) => l.night === night);
+
   if (data.nights.length === 0) {
     return (
       <Empty>
@@ -450,7 +499,9 @@ function Nights({ data }: { data: DreamingDTO }) {
           </Tr>
         </THead>
         <TBody>
-          {data.nights.map((n) => (
+          {data.nights.map((n) => {
+            const landing = landingFor(n.night);
+            return (
             <Tr key={n.night}>
               <Td>{n.night}</Td>
               <Td>
@@ -468,6 +519,12 @@ function Nights({ data }: { data: DreamingDTO }) {
                     {n.runEnding && (
                       <Badge tone={STATUS_TONE[n.runEnding]}>{STATUS_LABEL[n.runEnding]}</Badge>
                     )}
+                    {/* A completed run is not a landed night: the notes are on a
+                        branch until it lands. Neutral while the reason is one
+                        that moves by itself, because it is read once. */}
+                    {landing && (
+                      <Badge tone={landing.settling ? "neutral" : "warn"}>waiting to land</Badge>
+                    )}
                   </span>
                 )}
                 {n.outcome === "quiet" && <Badge tone="ok">nothing recurred</Badge>}
@@ -476,19 +533,25 @@ function Nights({ data }: { data: DreamingDTO }) {
                 {n.reason && (
                   <div className="mt-1 text-xs text-ink-muted">{n.reason}</div>
                 )}
+                {landing && (
+                  <div className="mt-1 text-xs text-ink-muted">
+                    {landingText(landing, data.scannedAt)}
+                  </div>
+                )}
               </Td>
               <Td num>{n.selected}</Td>
               <Td>
                 {n.runId ? (
                   <ButtonLink href={`/runs/${n.runId}`} variant="secondary">
-                    Log
+                    {landing && !landing.settling ? "Land or purge" : "Log"}
                   </ButtonLink>
                 ) : (
                   <span className="text-xs text-ink-faint">—</span>
                 )}
               </Td>
             </Tr>
-          ))}
+            );
+          })}
         </TBody>
       </Table>
     </TableWrap>
