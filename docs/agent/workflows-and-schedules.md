@@ -84,12 +84,16 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 
 ## [The two kinds of section](workflows-and-schedules/loop-section-kinds.md)
 
-- A section is a landing section or an in-folder section, decided by its members, and the two are never mixed.
+- A section is a landing section or an in-folder section, decided by its members, and the two are mixed in one place only: a landing section's tail.
 - Mixed is refused rather than half supported, and that is the line and not an omission.
+- A landing section may end in an in-folder tail.
+- Why the tail is safe, and what that rests on.
+- A link from a merge into the tail may not be `on-finish`, and the sentence says why.
 - A merge block drawn at the end of an in-folder section is answered by `graphRefusal`'s merge rule, and a second refusal for it in `loopBodyRefusal` would be wrong.
 - Nothing in a pass assumes the exit is a merge block, and the loop holds no claim on a folder.
-- `startWorkflow` probes the run members of landing sections only.
+- `startWorkflow` probes the run members of landing sections that cut a branch, and nothing else.
 - The editor reads isolation off what its page already holds, and keeps its own copy of the kind table.
+- The inspector says which of the two a block is, from what the editor already holds.
 
 ## [When a loop stops: exit conditions, caps and the board condition](workflows-and-schedules/loop-termination.md)
 

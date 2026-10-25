@@ -767,6 +767,17 @@ export interface BodyRegion {
    * in-folder kind, whose exit is where a pass *ends* and may be any block.
    */
   lands: boolean;
+  /**
+   * Whether the exit is a merge block that lands the pass. False when there is
+   * no exit, and false when the exit is the last block of the section's
+   * in-folder tail — a landing section may end there, working in the folder
+   * after its last merge block, and a block there *ends* the pass.
+   */
+  exitLands: boolean;
+  /** The in-folder tail, in pass order: empty for a section without one. */
+  tail: string[];
+  /** The merge blocks that hand straight on to the tail. */
+  tailFedBy: string[];
   x: number;
   y: number;
   width: number;
@@ -827,16 +838,60 @@ export function sectionLands(
 }
 
 /**
+ * The **in-folder tail** of a landing section: the members after *every* merge
+ * block of it, when none of them hands on a branch — the client's copy of
+ * `sectionTail`, which says why that is safe. Empty for a section with no merge
+ * block, and empty when something after the last merge cuts a branch, because
+ * nothing lands it and the ordinary rules are the ones that refuse the section.
+ *
+ * Read off the links as drawn, so a graph not judged yet gets a reading and
+ * not an opinion; the `repeats` link is containment and is not a way on.
+ */
+export function sectionTail(
+  memberIds: readonly string[],
+  blocks: readonly IsolationBlock[],
+  links: readonly LinkDraft[],
+  known?: IsolationKnowledge,
+): string[] {
+  const inside = new Set(memberIds);
+  const within = links.filter(
+    (l) => l.edge !== "repeats" && inside.has(l.from) && inside.has(l.to),
+  );
+  const merges = memberIds.filter(
+    (id) => blocks.find((b) => b.id === id)?.kind === "merge",
+  );
+  if (merges.length === 0) return [];
+
+  const descendants = (start: string): Set<string> => {
+    const seen = new Set<string>();
+    const queue = [start];
+    for (let id = queue.pop(); id !== undefined; id = queue.pop()) {
+      for (const l of within) {
+        if (l.from !== id || seen.has(l.to)) continue;
+        seen.add(l.to);
+        queue.push(l.to);
+      }
+    }
+    return seen;
+  };
+  const behind = merges.map(descendants);
+  const after = memberIds.filter((id) => behind.every((set) => set.has(id)));
+  const cuts = after.some((id) => sectionLands([id], blocks, known));
+  return cuts ? [] : after;
+}
+
+/**
  * The block a pass ends at, or null where there is not exactly one.
  *
  * The client's reading of the rule `graphRefusal` enforces — a section is one
  * way in and one way out. For a landing section the way out must be a merge
- * block, because that is what makes a pass's work visible to the next one; for
- * an in-folder section it may be any block, because the work is already in the
- * folder. Read rather than asserted: this surface draws graphs the server has
- * not judged yet, so a section with two sinks, or a landing one whose sink
- * lands nothing, has **no** exit to mark and the frame says so rather than
- * picking one.
+ * block, because that is what makes a pass's work visible to the next one, or
+ * the last block of its in-folder tail, which works in the folder after every
+ * merge has settled; for an in-folder section it may be any block, because the
+ * work is already in the folder. Read rather than asserted: this surface draws
+ * graphs the server has not judged yet, so a section with two sinks, or a
+ * landing one whose sink lands nothing, has **no** exit to mark and the frame
+ * says so rather than picking one.
  */
 export function sectionExit(
   memberIds: readonly string[],
@@ -853,9 +908,45 @@ export function sectionExit(
   );
   if (sinks.length !== 1) return null;
   if (!sectionLands(memberIds, blocks, known)) return sinks[0];
-  return blocks.find((b) => b.id === sinks[0])?.kind === "merge"
+  return blocks.find((b) => b.id === sinks[0])?.kind === "merge" ||
+    sectionTail(memberIds, blocks, links, known).includes(sinks[0])
     ? sinks[0]
     : null;
+}
+
+/**
+ * Everything the frame and the inspector say about how a section ends, from
+ * one reading so they cannot disagree: whether it lands, where it ends, whether
+ * that is a landing, and the in-folder tail with the merges that feed it.
+ */
+export function sectionShape(
+  memberIds: readonly string[],
+  blocks: readonly IsolationBlock[],
+  links: readonly LinkDraft[],
+  known?: IsolationKnowledge,
+): {
+  lands: boolean;
+  exitId: string | null;
+  exitLands: boolean;
+  tail: string[];
+  tailFedBy: string[];
+} {
+  const exitId = sectionExit(memberIds, blocks, links, known);
+  const tail = sectionTail(memberIds, blocks, links, known);
+  const intoTail = new Set(tail);
+  return {
+    lands: sectionLands(memberIds, blocks, known),
+    exitId,
+    exitLands: exitId !== null && !intoTail.has(exitId),
+    tail,
+    tailFedBy: memberIds.filter(
+      (id) =>
+        blocks.find((b) => b.id === id)?.kind === "merge" &&
+        links.some(
+          (l) => l.edge !== "repeats" && l.from === id && intoTail.has(l.to),
+        ),
+    ),
+  };
 }
 
 /**
@@ -912,8 +1003,7 @@ export function bodyRegions(
       loopId: block.id,
       memberIds,
       entryId: memberIds[0] ?? null,
-      exitId: sectionExit(memberIds, blocks, links, known),
-      lands: sectionLands(memberIds, blocks, known),
+      ...sectionShape(memberIds, blocks, links, known),
       x,
       y,
       width: right + BODY_PAD - x,

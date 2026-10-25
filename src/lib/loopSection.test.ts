@@ -316,8 +316,12 @@ function settleQueuedRuns(
     done?: boolean;
     costUSD?: number;
     branch?: (runId: string) => string;
-    /** Settle as a run that worked in the folder itself: no branch, no checkout. */
-    inFolder?: boolean;
+    /**
+     * Settle as a run that worked in the folder itself: no branch, no checkout.
+     * A predicate on the member's id settles only those, for a section that
+     * mixes a landing head with an in-folder tail.
+     */
+    inFolder?: boolean | ((memberId: string) => boolean);
   } = {},
 ): void {
   const base = git(repoRoot(), "rev-parse", "HEAD").trim();
@@ -327,7 +331,9 @@ function settleQueuedRuns(
       .prepare("SELECT status FROM runs WHERE id = ?")
       .get(row.runId) as { status: string } | undefined;
     if (!run || run.status !== "queued") continue;
-    if (opts.inFolder) {
+    const inFolder =
+      typeof opts.inFolder === "function" ? opts.inFolder(row.memberId) : opts.inFolder;
+    if (inFolder) {
       dbMod
         .db()
         .prepare(
@@ -376,7 +382,7 @@ async function drive(
     done?: boolean;
     costUSD?: number;
     branch?: (runId: string) => string;
-    inFolder?: boolean;
+    inFolder?: boolean | ((memberId: string) => boolean);
   } = {},
 ): Promise<void> {
   for (let step = 0; step < 40; step += 1) {
@@ -1802,6 +1808,169 @@ describe("a pass of a section that works in the folder throughout", () => {
 });
 
 /**
+ * A template that works in the folder, made on first use. Every template on a
+ * real install isolates, so a block that is to end a pass in the folder has to
+ * name one — or sit on guards in Settings that do not isolate, which would
+ * take the section's orchestrator with it.
+ */
+let flatTemplateId: string | null = null;
+async function flatTemplate(): Promise<string> {
+  if (flatTemplateId !== null) return flatTemplateId;
+  const templates = await import("./templates");
+  const settings = await import("./settings");
+  flatTemplateId = templates.createTemplate({
+    name: `In place ${Math.random().toString(36).slice(2)}`,
+    prompt: "Work in the folder.",
+    mountId: null,
+    folder: null,
+    isolate: false,
+    permissionMode: "acceptEdits",
+    agentId: null,
+    model: null,
+    budget: settings.chatGuards().budget,
+  }).id;
+  return flatTemplateId;
+}
+
+/**
+ * A landing section that ends in the folder: a deciding turn whose runs work
+ * in checkouts of their own, the merge block that lands them, and one run that
+ * works in the folder and ends the pass.
+ *
+ * What these pin is the premise the tail rule is safe on, which the rule itself
+ * cannot say: the run behind the merge is **created only once the merge member
+ * has settled**, so nothing lands into the folder while it edits it, and the
+ * next pass is created only once that run has too.
+ */
+describe("a pass of a section that lands, then works in the folder", () => {
+  const tailRun = (memberId: string) => /#t$/.test(memberId);
+
+  async function sweep() {
+    return {
+      nodes: [
+        node("o", { kind: "orchestrator", fanOut: 2, folder: "" }),
+        mergeNode("m"),
+        node("t", { templateId: await flatTemplate() }),
+      ],
+      edges: [
+        { from: "L", to: "o", edge: "repeats" },
+        { from: "o", to: "m", edge: "on-finish" },
+        { from: "m", to: "t", edge: "on-success" },
+      ],
+      body: ["o", "m", "t"],
+    };
+  }
+
+  /**
+   * Carry the instance to the end of the loop, deciding each pass's turn and
+   * settling every run — the tail's as one that worked in the folder — and
+   * reporting every moment that broke the order the rule rests on: the tail run
+   * existing while its merge was unsettled, or the next pass opening while the
+   * tail run had not finished.
+   */
+  async function driveSweep(instanceId: string): Promise<string[]> {
+    const early: string[] = [];
+    for (let step = 0; step < 80; step += 1) {
+      settleQueuedRuns(instanceId, { inFolder: tailRun });
+      workflows.advanceInstances();
+      // In the same turn of the event loop that claimed the turn, which is what
+      // makes the spawn `startBlockTurn` has already fired a no-op — see
+      // `decide`.
+      for (const pass of [1, 2, 3]) {
+        const turn = workflows
+          .blocksOf(instanceId)
+          .find((b) => b.nodeId === passMemberId("L", pass, "o"));
+        if (turn?.status === "thinking") {
+          decide(instanceId, passMemberId("L", pass, "o"), twoRuns, 0);
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      for (const pass of [1, 2, 3]) {
+        const merge = workflows
+          .blocksOf(instanceId)
+          .find((b) => b.nodeId === passMemberId("L", pass, "m"));
+        const tail = membersOf(instanceId).some(
+          (m) => m.memberId === passMemberId("L", pass, "t"),
+        );
+        if (merge && ["waiting", "thinking"].includes(merge.status) && tail) {
+          early.push(`pass ${pass}: the tail run exists while the merge is ${merge.status}`);
+        }
+      }
+      // The next pass is opened — its rows written — only once this one has
+      // settled, and the flat run is part of it.
+      for (const pass of [2, 3]) {
+        const opened = workflows
+          .blocksOf(instanceId)
+          .some((b) => b.nodeId.startsWith(passMemberId("L", pass, "")));
+        const before = membersOf(instanceId).find(
+          (m) => m.memberId === passMemberId("L", pass - 1, "t"),
+        );
+        const status = before
+          ? (
+              dbMod.db().prepare("SELECT status FROM runs WHERE id=?").get(before.runId) as {
+                status: string;
+              }
+            ).status
+          : null;
+        if (opened && status !== "completed") {
+          early.push(`pass ${pass} opened while pass ${pass - 1}'s flat run was ${status}`);
+        }
+      }
+      if (!["looping", "waiting"].includes(loopBlock(instanceId).status)) return early;
+    }
+    assert.fail("the loop never stopped");
+  }
+
+  it("takes two passes to the cap, the flat run ending each", async () => {
+    const instanceId = scene({ ...(await sweep()), maxPasses: 2 });
+    const early = await driveSweep(instanceId);
+    assert.deepEqual(early, [], "a block of the pass ran out of order");
+
+    const tails = membersOf(instanceId).filter((m) => tailRun(m.memberId));
+    assert.deepEqual(
+      tails.map((m) => m.memberId),
+      [passMemberId("L", 1, "t"), passMemberId("L", 2, "t")],
+      "one flat run a pass, and no third pass",
+    );
+    for (const pass of [1, 2]) {
+      assert.equal(blockRow(instanceId, passMemberId("L", pass, "m")).status, "emitted");
+    }
+    const block = loopBlock(instanceId);
+    assert.equal(block.status, "emitted");
+    assert.match(block.error ?? "", /limit of 2 pass\(es\)/);
+  });
+
+  it("creates the flat run only after the merge member has settled, working in the folder", async () => {
+    const instanceId = scene({ ...(await sweep()), maxPasses: 2 });
+    await driveSweep(instanceId);
+
+    for (const pass of [1, 2]) {
+      const merge = dbMod
+        .db()
+        .prepare(
+          "SELECT finished_at AS at FROM workflow_instance_blocks WHERE instance_id=? AND node_id=?",
+        )
+        .get(instanceId, passMemberId("L", pass, "m")) as { at: number | null };
+      const tail = membersOf(instanceId).find(
+        (m) => m.memberId === passMemberId("L", pass, "t"),
+      )!;
+      const run = dbMod
+        .db()
+        .prepare("SELECT created_at AS at, isolation FROM runs WHERE id=?")
+        .get(tail.runId) as { at: number; isolation: string | null };
+      assert.ok(merge.at !== null, `pass ${pass}'s merge never settled`);
+      assert.ok(
+        run.at >= merge.at,
+        `pass ${pass}'s flat run was created before its merge settled`,
+      );
+      assert.equal(run.isolation, "none", "the tail run was created to isolate");
+      // And it waits for no run: the merge block is what it is behind.
+      assert.deepEqual(depsOf(tail.runId), []);
+    }
+  });
+});
+
+/**
  * What a press of Run asks of the disk, for each kind of section.
  *
  * A landing section's run members each need a worktree, and a folder that
@@ -1830,7 +1999,11 @@ describe("a press of Run on a section, in a folder that is not a repository", ()
   });
 
   /** A saved workflow of `loop → a → rest…`, every block in `folder`. */
-  function saved(rest: Array<Record<string, unknown>>, folder: string) {
+  function saved(
+    rest: Array<Record<string, unknown>>,
+    folder: string,
+    first: Record<string, unknown> = {},
+  ) {
     const flow = (id: string, extra: Record<string, unknown> = {}) => ({
       id,
       name: `Block ${id}`,
@@ -1841,7 +2014,7 @@ describe("a press of Run on a section, in a folder that is not a repository", ()
     });
     const nodes = [
       { id: "L", name: "Loop", kind: "loop", maxPasses: 2 },
-      flow("a"),
+      flow("a", first),
       ...rest.map((r) => flow(r.id as string, r)),
     ];
     const ids = nodes.slice(1).map((n) => n.id as string);
@@ -1902,6 +2075,26 @@ describe("a press of Run on a section, in a folder that is not a repository", ()
       !started.ok ? started.reason : "",
       /“Block a” is repeated, and every pass has to land what it produced, which needs a checkout of its own/,
     );
+  });
+
+  it("does not ask the in-folder tail of a landing section for one", async () => {
+    // The head cuts branches and lands them; the run behind the merge works in
+    // the folder and cuts none, so a folder that cannot have a worktree is as
+    // good a place for it as any. The head here is an orchestrator, which the
+    // probe never asks, so the tail run is the only block of this section it
+    // could refuse.
+    await setIsolate(true);
+    holdTheSlot();
+    const workflow = saved(
+      [
+        { id: "m", name: "Land", kind: "merge", mergeStrategy: "merge", folder: "", mountId: "" },
+        { id: "t", templateId: await flatTemplate() },
+      ],
+      "plain",
+      { kind: "orchestrator", fanOut: 2 },
+    );
+    const started = workflows.startWorkflow(workflow.id, await orch.currentSnapshot());
+    assert.ok(started.ok, `refused: ${!started.ok && started.reason}`);
   });
 
   it("still refuses an in-folder section whose folder is not there", async () => {

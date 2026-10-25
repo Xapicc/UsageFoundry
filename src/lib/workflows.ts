@@ -4353,21 +4353,24 @@ export function startWorkflow(
   // every one of them would otherwise surface as a throw part-way through the
   // creating pass. Read-only, so asking early costs a few git processes.
   const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
-  // Every **run** member of a **landing** section, and nothing else about a
-  // loop. A pass commits and then lands what it committed, so each run member is
-  // on a branch for the same reason either end of a hand-over is. The loop block
-  // itself is not asked: it frames the section and names no folder at all, so
-  // resolving one for it would be resolving `""` against no mount. Its
-  // orchestrator and merge members are not asked either — neither works in a
-  // checkout, which is the same exemption `graphRefusal` gives them by name one
-  // file over. `graphRefusal` has already established that the run members'
-  // *guards* isolate; this is the other half, which only the disk can answer.
+  // Every **run** member of a **landing** section that cuts a branch, and
+  // nothing else about a loop. A pass commits and then lands what it committed,
+  // so each such run member is on a branch for the same reason either end of a
+  // hand-over is. The loop block itself is not asked: it frames the section and
+  // names no folder at all, so resolving one for it would be resolving `""`
+  // against no mount. Its orchestrator and merge members are not asked either —
+  // neither is a run this press creates. `graphRefusal` has already established
+  // that the guards of every run member before the tail isolate; this is the
+  // other half, which only the disk can answer.
   //
   // An in-folder section is not asked at all: none of its members cuts a branch,
   // so there is no worktree to build and a folder that cannot have one — a
   // subdirectory of a repository, a repository with no commits yet — is exactly
   // as good a place to work in as any other. `folderRefusal` above has already
   // established that the folder resolves, which is all such a section needs.
+  // The same goes for a run in a landing section's in-folder tail, after its
+  // last merge block: it cuts no branch either, which is the `isolate` test on
+  // the line below and not a separate list of tail members to keep in step.
   // Read off the plans rather than the template table, so what is asked is what
   // the member will actually run under.
   const inSomeBody = loopBodyOwners(graph);
@@ -4386,7 +4389,12 @@ export function startWorkflow(
     return lands;
   };
   const needBranch = new Set<WorkflowNode>(
-    graph.nodes.filter((n) => n.kind === "run" && inLandingSection(n.id)),
+    graph.nodes.filter(
+      (n) =>
+        n.kind === "run" &&
+        inLandingSection(n.id) &&
+        plans.get(n.id)?.isolate === true,
+    ),
   );
   for (const link of graph.edges.filter((e) => e.continueBranch)) {
     needBranch.add(nodeById.get(link.from)!);

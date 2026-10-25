@@ -556,8 +556,9 @@ limits below still apply on top of them.
 **Each pass lands its own work, or has nothing to land.** A section is one of
 two kinds, decided by its blocks. If any block works in a checkout of its own —
 a run or orchestrator block whose guards isolate, or a review block — the
-section **lands**: it ends in a merge block, that block lands what the pass
-produced, and the next pass starts from the landed branch. There is no ref
+section **lands**: it ends in a merge block (or, below, in a tail that works
+in the folder), that block lands what the pass produced, and the next pass
+starts from the landed branch. There is no ref
 handed from one pass to the next and no *Land* button waiting at the end of the
 loop: by the time a loop hands on, everything it did is already on the target.
 
@@ -572,6 +573,15 @@ pass's work is already in the folder, so the next pass sees it with nothing to
 land, and the section may end at any block. The canvas marks that exit **ends
 the pass** instead of *lands the pass*. A merge block in such a section has
 nothing to land and is refused with that reason.
+
+A landing section may also **end in the folder**. After its last merge block it
+can hold blocks that work directly in the folder — a run or orchestrator on a
+template that does not isolate, or a gate — and the last of them is then the
+exit and *ends the pass*; the merge before it *lands the branches*. This is the
+one place the two kinds meet, and it is safe because those blocks start only
+once every merge in front of them has finished landing, and the next pass
+starts only once they have finished too. Everything before the merge still has
+to isolate and still has to be handed to a merge.
 
 The next pass is created only once the previous one has settled, which means
 that between two passes there is briefly nothing running. That is intended: four
@@ -651,8 +661,9 @@ ends.
 
 **One way in and one way out.** The way in is the frame's **entry**, the block
 each pass starts at. The way out is its **exit**, the single block the section
-ends at. In a landing section it must be a merge block; in a section that works
-in the folder throughout it may be any block. Both are marked on the frame.
+ends at. In a landing section it must be a merge block, or the last block of
+its in-folder tail; in a section that works in the folder throughout it may be
+any block. Both are marked on the frame.
 Between those two ends the shape is free: the section may fork, and two branches
 that fork may meet again at the merge that lands them both.
 
@@ -663,7 +674,13 @@ Three things are refused, each naming the block to fix:
   the exit — link it on towards the block that lands.
 - A landing section whose **last block is not a merge block**. Add one at the
   end and link the last block to it, or give every block of the section guards
-  that work in the folder, so there is nothing to land.
+  that work in the folder, so there is nothing to land. If the last block
+  should work in the folder, keep it after every merge block and give it a
+  template that does not isolate. When it is on the default guards the
+  sentence says so, because those isolate whenever Settings do.
+- A **link from a merge block into that tail set to start either way**. A merge
+  that failed has still finished, and it can leave the folder part-way through
+  the merge; set the link to start only if the merge completes.
 - A **link across the boundary**. A block outside the frame cannot link to a
   block inside it: link it to the frame instead, and the loop hands on to it
   after the last pass. Otherwise "when does this block start" has two answers —
@@ -676,15 +693,20 @@ another is a number nobody can work out from the two they typed. Repeat one
 section, not a section that repeats. A deliver block is left out too, for a
 different reason: it publishes, and a section would publish once per pass.
 
-**A section is not mixed.** In a landing section every run block needs guards
-that isolate, because it has to leave a branch for the section's merge block to
-land. A run block whose guards work in the folder is refused there, naming the
-block that makes the section a landing one: either give it guards that isolate,
-or make every block of the section work in the folder. Landing a branch into a
-checkout that the same pass is also editing in place is not a state this tool
-supports, so it is refused rather than half handled. An orchestrator block
-spends nothing on disk and a merge block has no guards at all, so neither is
-asked.
+**A section is not mixed, except at its end.** In a landing section every run
+or orchestrator block needs guards that isolate, because it has to leave a
+branch for the section's merge block to land. One whose guards work in the
+folder is refused there, naming the block that makes the section a landing one
+and where that block's checkout comes from (its template, or the default guards
+in Settings). Three ways out: give it guards that isolate, make every block of
+the section work in the folder, or move it after the section's last merge block.
+Landing a branch into a checkout that the same pass is also editing in place is
+not a state this tool supports, so a block that works in the folder before a
+merge, beside a block that isolates, or followed by one is refused rather than
+half handled. A merge block has no guards, so it is never asked. The switch
+**Work in the folder chosen at Run** only picks *which* folder; whether a block
+gets a checkout of its own comes from its template, and the block's inspector
+says which it is.
 
 **Count the runs before you press Run.** A section multiplies, and an
 orchestrator block in one multiplies twice over — its fan-out cap is what it may

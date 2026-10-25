@@ -46,11 +46,10 @@ import {
   linksWithoutMember,
   resolveLayout,
   blockIsolates,
-  sectionExit,
-  sectionLands,
   sectionLink,
   sectionLinkStatement,
   sectionOf,
+  sectionShape,
   spotBeside,
   worksInChosenFolder,
   worstCaseMembers,
@@ -1962,10 +1961,17 @@ function BlockStatement({
     // server refuses — and named rather than assumed, because "each pass lands
     // its own work" is a promise about the operator's own checkout and may not
     // be made on a graph that has nowhere to land it.
-    const memberIds = body.map((member) => member.id);
-    const lands = sectionLands(memberIds, body, isolation);
-    const exitId = sectionExit(memberIds, body, links, isolation);
+    // A landing section may also end in blocks that work in the folder, after
+    // its last merge: then the exit is the last of those, and the merge before
+    // them lands the branches without ending the pass.
+    const { lands, exitId, exitLands, tailFedBy } = sectionShape(
+      body.map((member) => member.id),
+      body,
+      links,
+      isolation,
+    );
     const exit = body.find((member) => member.id === exitId);
+    const landedBy = body.filter((member) => tailFedBy.includes(member.id));
 
     return (
       <p className="mb-3.5 text-sm leading-normal text-ink-muted">
@@ -1997,13 +2003,25 @@ function BlockStatement({
           ? " — a deciding member's own turn and its fan-out are spent again on every pass"
           : ""}
         .{" "}
-        {exit && lands ? (
+        {exit && exitLands ? (
           <>
             Every pass lands its own work through{" "}
             <strong className="font-semibold text-ink">
               {blockLabel(exit)}
             </strong>
             , and the next pass starts from what landed.
+          </>
+        ) : exit && lands ? (
+          <>
+            Every pass lands its branches through{" "}
+            <strong className="font-semibold text-ink">
+              {landedBy.map(blockLabel).join(", ")}
+            </strong>
+            , then works in the folder itself and ends at{" "}
+            <strong className="font-semibold text-ink">
+              {blockLabel(exit)}
+            </strong>
+            , and the next pass starts from what it left.
           </>
         ) : exit ? (
           <>
@@ -2221,6 +2239,12 @@ function BlockPanel({
   const body = sectionOf(block.id, blocks, links)
     .map((id) => blocks.find((b) => b.id === id))
     .filter((b): b is BlockDraft => b !== undefined);
+  const shape = sectionShape(
+    body.map((member) => member.id),
+    body,
+    links,
+    isolation,
+  );
 
   const guards: ReactNode = missingTemplate ? (
     <strong className="font-semibold text-danger">
@@ -2420,21 +2444,13 @@ function BlockPanel({
                     of a pass reporting it, so marking one of them would name an
                     exit condition the loop does not use. */}
                 <span className="text-sm text-ink-faint">
-                  {member.id ===
-                  sectionExit(
-                    body.map((other) => other.id),
-                    body,
-                    links,
-                    isolation,
-                  )
-                    ? sectionLands(
-                        body.map((other) => other.id),
-                        body,
-                        isolation,
-                      )
+                  {member.id === shape.exitId
+                    ? shape.exitLands
                       ? "lands the pass"
                       : "ends the pass"
-                    : ""}
+                    : shape.tailFedBy.includes(member.id)
+                      ? "lands the branches"
+                      : ""}
                 </span>
               </ListRow>
             ))
@@ -2981,7 +2997,11 @@ function BlockPanel({
                     That template has been deleted, so Save will refuse this
                     graph
                   </span>
-                ) : undefined
+                ) : blockIsolates(block, isolation) ? (
+                  `${orchestrator ? "The runs it starts work" : "Works"} in a checkout of ${orchestrator ? "their" : "its"} own`
+                ) : (
+                  `${orchestrator ? "The runs it starts work" : "Works"} directly in the folder`
+                )
               }
             >
               <div className={ROW_CONTROL}>

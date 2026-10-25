@@ -102,6 +102,27 @@
 
 ## Not yet verified by hand
 
+- **A landing section that ends in the folder, in the built editor — not yet
+  seen.** The frame marks the merge in front of the tail *lands the branches*
+  and the tail's exit *ends the pass*, the loop's panel reads "Every pass lands
+  its branches through Merge, then works in the folder itself and ends at …",
+  and a block's inspector carries "Works in a checkout of its own" or "Works
+  directly in the folder" beside its guards picker. Open: that each reads right
+  at 390px and 1280px, that the line follows a template change on the drawn
+  block, and that a link drawn from the merge into the tail saves. The pure half
+  (the editor and the server agreeing on the tail) is checked in
+  `canvasGraph.test.ts`. To settle it: save "orchestrator → merge → run on an
+  in-place template" through `POST /api/workflows` on a standalone build over a
+  scratch `DATA_DIR` and open `/workflows/<id>/edit`.
+
+- **Nothing has run a landing section's tail under a real agent, and the failed
+  merge that leaves a folder mid-merge was read from `unwind`, not produced.**
+  The ordering the tail rests on is held against the real merge queue in
+  `loopMergeOwnership.test.ts`; a conflict that `merge --abort` cannot undo has
+  not been reproduced, which is why an `on-finish` link into the tail is refused
+  rather than allowed.
+
+
 - **The touched map has never been looked at on a real run.** Its 300-file fold
   has never fired on real data, and none of the hand checks is done: CPU idle
   and reduced motion, the node legend, labels, gestures, one-cycle, swept and

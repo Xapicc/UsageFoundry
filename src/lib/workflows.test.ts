@@ -3085,9 +3085,12 @@ describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
     );
     assert.match(
       refusal,
-      /“A” is repeated by “L” and its guards work directly in the folder, but “B” in the same section works in a checkout of its own/,
+      /“A” is repeated by “L” and its guards work directly in the folder, but “B” in the same section works in a checkout of its own, because its template “Isolated” isolates/,
     );
-    assert.match(refusal, /Give “A” guards that isolate, or make every block of the section work in the folder/);
+    assert.match(
+      refusal,
+      /Give “A” guards that isolate, make every block of the section work in the folder, or move it after the section's last merge block\./,
+    );
   });
 
   it("names an isolating orchestrator's runs as what makes a section land", () => {
@@ -3107,7 +3110,29 @@ describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
     );
     assert.match(
       refusal,
-      /but the runs “D” starts in the same section work in checkouts of their own/,
+      /but the runs “D” starts in the same section work in checkouts of their own, because its template “Isolated” isolates/,
+    );
+  });
+
+  it("says a block that names no template gets its checkout from the default guards", () => {
+    // The operator's own misreading: "Work in the folder chosen at Run" picks
+    // *which* folder, and a block that names no template isolates because the
+    // guards in Settings do. The sentence has to point at that, not at the
+    // switch they were looking at.
+    const refusal = error(
+      graph(
+        [
+          repeater("l"),
+          node("a", { templateId: "t-flat" }),
+          node("b", { templateId: "" }),
+          merger("m"),
+        ],
+        [repeats("l", "a"), edge("a", "b"), edge("b", "m")],
+      ),
+    );
+    assert.match(
+      refusal,
+      /“B” in the same section works in a checkout of its own, because it names no template, and the default guards in Settings isolate/,
     );
   });
 
@@ -3182,14 +3207,272 @@ describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
     });
   });
 
-  it("exempts an orchestrator member from that test, by name", () => {
-    // By name rather than by passing a test written about a checkout: an
-    // orchestrator spends nothing on disk, so "its guards work directly in the
-    // folder" would be a sentence about a folder it never works in. It names
-    // the flat template here, which is exactly what the run member above is
-    // refused for — and it sits behind a run block rather than in front of the
-    // merge, because a *merge's* own producers are a rule of their own.
-    const v = value(
+  describe("a landing section that ends in an in-folder tail", () => {
+    // The shape the in-folder rule was written for and first refused: runs in
+    // checkouts of their own, a merge block that lands them, and then blocks
+    // that work in the folder and end the pass. Safe because a block behind a
+    // merge is released only once the merge has settled — see `sectionTail` —
+    // so nothing lands into the folder while the tail edits it.
+    const flat = { templateId: "t-flat" };
+
+    /** The operator's own: orchestrator, merge, one run that ends the pass. */
+    const sweep = (
+      tail: Record<string, unknown> = flat,
+      loop: Record<string, unknown> = { maxPasses: 5 },
+      link: Record<string, unknown> = {},
+    ) =>
+      graph(
+        [repeater("l", loop), decider("o", { fanOut: 10 }), merger("m"), node("b", tail)],
+        [repeats("l", "o"), edge("o", "m"), edge("m", "b", link)],
+      );
+
+    it("saves a flat run that ends the pass after an orchestrator and its merge", () => {
+      const v = value(sweep());
+      assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["o", "m", "b"]);
+      const handed = v.graph.edges.find((e) => e.from === "m" && e.to === "b");
+      assert.equal(handed?.continueBranch, false, "a merge hands no branch on");
+    });
+
+    it("counts the pass as it always did: the fan-out, the deciding turn and one run", () => {
+      // 10 + 1 + 1 a pass, so five passes is exactly the cap and six is not.
+      assert.ok(normalizeWorkflowInput(sweep(flat, { maxPasses: 5 }), KNOWN).ok);
+      const refusal = error(sweep(flat, { maxPasses: 6 }));
+      assert.match(refusal, /Each pass is 12 run\(s\)/);
+      assert.match(refusal, /which is 72 runs/);
+    });
+
+    it("still refuses the same run on the default guards, and says where its checkout comes from", () => {
+      const refusal = error(sweep({ templateId: "" }));
+      assert.match(refusal, /ends at “B”, which is not a merge block/);
+      assert.match(
+        refusal,
+        /“B” works in a checkout of its own, because it names no template, and the default guards in Settings isolate/,
+      );
+      // And the way out it offers is the one that works here.
+      assert.match(refusal, /give “B” guards that work in the folder/);
+    });
+
+    it("names the template when that is where the checkout comes from", () => {
+      const refusal = error(sweep({ templateId: "t-iso" }));
+      assert.match(refusal, /because its template “Isolated” isolates/);
+    });
+
+    it("names the orchestrator's template when its runs are what isolate at the exit", () => {
+      const refusal = error(
+        graph(
+          [repeater("l"), decider("o"), merger("m"), decider("d")],
+          [repeats("l", "o"), edge("o", "m"), edge("m", "d")],
+        ),
+      );
+      assert.match(
+        refusal,
+        /the runs “D” starts work in checkouts of their own, because its template “Isolated” isolates/,
+      );
+    });
+
+    it("saves the default guards at the end when Settings work in the folder", () => {
+      const res = normalizeWorkflowInput(sweep({ templateId: "" }), {
+        ...KNOWN,
+        defaultIsolate: false,
+      });
+      assert.ok(res.ok, res.ok ? "" : res.error);
+    });
+
+    it("saves an orchestrator on a template that works in the folder, in the tail", () => {
+      const v = value(
+        graph(
+          [repeater("l"), decider("o"), merger("m"), decider("d", flat)],
+          [repeats("l", "o"), edge("o", "m"), edge("m", "d")],
+        ),
+      );
+      assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["o", "m", "d"]);
+    });
+
+    it("refuses an in-folder orchestrator in front of the merge", () => {
+      const refusal = error(
+        graph(
+          [repeater("l"), decider("d", flat), node("r"), merger("m")],
+          [repeats("l", "d"), edge("d", "r"), edge("r", "m")],
+        ),
+      );
+      assert.match(
+        refusal,
+        /“D” is repeated by “L” and its guards work directly in the folder, but “R” in the same section works in a checkout of its own/,
+      );
+      assert.match(refusal, /or move it after the section's last merge block/);
+    });
+
+    it("refuses a flat run in front of the merge, offering the tail as a way out", () => {
+      const refusal = error(
+        graph(
+          [repeater("l"), node("b", flat), decider("o"), merger("m")],
+          [repeats("l", "b"), edge("b", "o"), edge("o", "m")],
+        ),
+      );
+      assert.match(
+        refusal,
+        /“B” is repeated by “L” and its guards work directly in the folder, but the runs “O” starts in the same section work in checkouts of their own/,
+      );
+      assert.match(
+        refusal,
+        /Give “B” guards that isolate, make every block of the section work in the folder, or move it after the section's last merge block\./,
+      );
+    });
+
+    it("refuses a flat run forked beside the orchestrator", () => {
+      // A gate at the entry, so the two start together: the flat run is not
+      // behind the merge, whatever it is linked on to.
+      const refusal = error(
+        graph(
+          [
+            repeater("l"),
+            gater("g"),
+            decider("o"),
+            node("f", flat),
+            merger("m"),
+            node("t", flat),
+          ],
+          [
+            repeats("l", "g"),
+            edge("g", "o"),
+            edge("g", "f"),
+            edge("o", "m"),
+            edge("m", "t"),
+            edge("f", "t"),
+          ],
+        ),
+      );
+      assert.match(refusal, /“F” is repeated by “L” and its guards work directly in the folder/);
+      assert.match(refusal, /or move it after the section's last merge block/);
+    });
+
+    it("refuses a flat run followed by a run that works in a checkout of its own", () => {
+      // Behind the merge, and still not a tail: the run after it cuts a branch
+      // nothing lands, so the end of the section is not in-folder. Told to
+      // change a block, and not told to move one that is already there.
+      const refusal = error(
+        graph(
+          [repeater("l"), decider("o"), merger("m"), node("f", flat), node("r")],
+          [repeats("l", "o"), edge("o", "m"), edge("m", "f"), edge("f", "r")],
+        ),
+      );
+      assert.match(refusal, /“F” is repeated by “L” and its guards work directly in the folder/);
+      assert.match(
+        refusal,
+        /Give “F” guards that isolate, or make every block of the section work in the folder\./,
+      );
+      assert.doesNotMatch(refusal, /move it after/);
+    });
+
+    it("needs the merges in front of a block to be every merge of the section", () => {
+      // `t` is behind “M1” and not behind “M2”, so it is released while “M2” may
+      // still be landing into the folder it edits.
+      const refusal = error(
+        graph(
+          [
+            repeater("l"),
+            gater("g"),
+            decider("o1"),
+            decider("o2"),
+            merger("m1"),
+            merger("m2"),
+            node("t", flat),
+          ],
+          [
+            repeats("l", "g"),
+            edge("g", "o1"),
+            edge("g", "o2"),
+            edge("o1", "m1"),
+            edge("o2", "m2"),
+            edge("m1", "t"),
+          ],
+        ),
+      );
+      assert.match(refusal, /“T” is repeated by “L” and its guards work directly in the folder/);
+    });
+
+    it("saves a tail that forks and meets again, and refuses one that ends in two places", () => {
+      const forked = (rejoin: boolean) =>
+        graph(
+          [
+            repeater("l"),
+            decider("o"),
+            merger("m"),
+            node("t1", flat),
+            node("t2", flat),
+            node("t3", flat),
+          ],
+          [
+            repeats("l", "o"),
+            edge("o", "m"),
+            edge("m", "t1"),
+            edge("m", "t2"),
+            ...(rejoin ? [edge("t1", "t3"), edge("t2", "t3")] : []),
+          ],
+        );
+      const v = value(forked(true));
+      assert.deepEqual([...v.graph.nodes[0].bodyNodeIds].sort(), ["m", "o", "t1", "t2", "t3"]);
+      const refusal = error(
+        graph(
+          [repeater("l"), decider("o"), merger("m"), node("t1", flat), node("t2", flat)],
+          [repeats("l", "o"), edge("o", "m"), edge("m", "t1"), edge("m", "t2")],
+        ),
+      );
+      // Said without a branch nobody lands, because none of them cuts one.
+      assert.match(refusal, /ends in 2 places: “T1”, “T2”/);
+      assert.match(refusal, /where the pass ends/);
+      assert.doesNotMatch(refusal, /nothing ever lands/);
+    });
+
+    it("refuses an either-way link out of a merge into the tail, and says why", () => {
+      // A merge that failed still *finished*, so this link would release a block
+      // that edits the folder over whatever the failure left in it: a merge
+      // `unwind` could not take back, or the operator's own edits that the
+      // queue refused to touch.
+      const refusal = error(sweep(flat, { maxPasses: 5 }, { edge: "on-finish" }));
+      assert.match(refusal, /“B” is set to start once “M” finishes either way/);
+      assert.match(refusal, /can leave the folder part-way through the merge/);
+      assert.match(refusal, /Set that link to start only if “M” completes/);
+    });
+
+    it("leaves a link between two tail blocks to say either condition", () => {
+      // It is the merge's failure that can leave the folder unfit, and a tail
+      // block's own failure is the in-folder section's ordinary one.
+      const v = value(
+        graph(
+          [repeater("l"), decider("o"), merger("m"), node("t1", flat), node("t2", flat)],
+          [
+            repeats("l", "o"),
+            edge("o", "m"),
+            edge("m", "t1"),
+            edge("t1", "t2", { edge: "on-finish" }),
+          ],
+        ),
+      );
+      assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["o", "m", "t1", "t2"]);
+    });
+
+    it("still needs the branches in front of the tail to reach a merge", () => {
+      // The tail changes where a section may end, not what has to land: “R”
+      // cuts a branch and nothing hands it to the merge.
+      const refusal = error(
+        graph(
+          [repeater("l"), node("r"), decider("o"), merger("m"), node("b", flat)],
+          [repeats("l", "r"), edge("r", "o"), edge("o", "m"), edge("m", "b")],
+        ),
+      );
+      assert.match(refusal, /Nothing lands “R”'s branch/);
+    });
+  });
+
+  it("refuses an orchestrator member whose runs work in the folder, as a run member is", () => {
+    // It decides on its own turn and writes nothing, but the runs it emits take
+    // its guards and edit the folder in place while the same pass's merge lands
+    // into it — which is exactly what the run member above is refused for. It
+    // used to save, by name, and that exemption was the hole in the line. It
+    // sits behind a run block rather than in front of the merge, because a
+    // *merge's* own producers are a rule of their own.
+    const refusal = error(
       graph(
         [
           repeater("l"),
@@ -3207,8 +3490,11 @@ describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
         ],
       ),
     );
-    // Sorted, because the link that lands “A” puts “M” earlier in the walk.
-    assert.deepEqual([...v.graph.nodes[0].bodyNodeIds].sort(), ["a", "b", "d", "m"]);
+    assert.match(
+      refusal,
+      /“D” is repeated by “L” and its guards work directly in the folder, but “A” in the same section works in a checkout of its own/,
+    );
+    assert.match(refusal, /or move it after the section's last merge block/);
   });
 
   it("exempts a merge member from that test on a machine with no default", () => {
@@ -3439,20 +3725,22 @@ describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
     );
   });
 
-  it("still refuses a landing section ending at a run block, whatever the run is", () => {
-    // The in-folder kind must not have loosened the other: one member that cuts
-    // a branch makes the section one, and an exit that is not a merge block
-    // would leave that branch for nothing to land.
-    // The exit is an orchestrator on a template that works in the folder, which
-    // is a legal exit of an in-folder section — and here it sits behind a run
-    // that cuts a branch, so it is not one.
+  it("refuses an in-folder orchestrator that ends a landing section with no merge in front of it", () => {
+    // Nothing is behind a merge here, so there is no tail to end in: the
+    // orchestrator is the mixed block, and the sentence does not offer to move
+    // it behind a merge the section does not have.
     const refusal = error(
       graph(
         [repeater("l"), node("a"), decider("d", { templateId: "t-flat" })],
         [repeats("l", "a"), edge("a", "d")],
       ),
     );
-    assert.match(refusal, /ends at “D”, which is not a merge block/);
+    assert.match(refusal, /“D” is repeated by “L” and its guards work directly in the folder/);
+    assert.match(
+      refusal,
+      /Give “D” guards that isolate, or make every block of the section work in the folder\./,
+    );
+    assert.doesNotMatch(refusal, /move it after/);
   });
 
   it("refuses a loop whose worst case is more runs than anyone agreed to", () => {

@@ -579,6 +579,77 @@ export function sectionLands(
 }
 
 /**
+ * The **in-folder tail** of a landing section: what it may do after its last
+ * merge block, working in the folder where every block before that works in a
+ * checkout of its own.
+ *
+ * `afterMerges` is every member that comes after *every* merge block of the
+ * section — a strict descendant of each — which is what makes it safe: a block
+ * is released only once the merges in front of it have settled, and a merge
+ * block stays live until its queue has landed or failed (see `startMergeBlock`),
+ * so nothing lands into the folder while such a block edits it, and the next
+ * pass is created only once the whole pass has settled.
+ *
+ * `tail` is `afterMerges` when none of them hands on a branch, and empty when
+ * one does. Both answers are needed: a block that hands on a branch after the
+ * last merge has nothing to land it, so the section has no tail at all and the
+ * ordinary rules refuse it — but the blocks beside it that are in `afterMerges`
+ * are still told they come after the merge, not to move there.
+ *
+ * `within` is the section's own links. A section with no merge block has no
+ * tail. `canvasGraph.ts` keeps a copy of this — it may not import this file.
+ */
+export function sectionTail(
+  members: readonly WorkflowNode[],
+  within: readonly WorkflowEdge[],
+  isolates: (member: WorkflowNode) => boolean,
+): { afterMerges: ReadonlySet<string>; tail: ReadonlySet<string> } {
+  const merges = members.filter((member) => member.kind === "merge");
+  if (merges.length === 0) return { afterMerges: new Set(), tail: new Set() };
+
+  const descendants = (start: string): Set<string> => {
+    const seen = new Set<string>();
+    const queue = [start];
+    for (let id = queue.pop(); id !== undefined; id = queue.pop()) {
+      for (const e of within) {
+        if (e.from !== id || seen.has(e.to)) continue;
+        seen.add(e.to);
+        queue.push(e.to);
+      }
+    }
+    return seen;
+  };
+  const behind = merges.map((merge) => descendants(merge.id));
+  const afterMerges = new Set(
+    [...behind[0]].filter((id) => behind.every((set) => set.has(id))),
+  );
+  const handsOn = members.some(
+    (member) =>
+      afterMerges.has(member.id) && handsOnBranch(member.kind, isolates(member)),
+  );
+  return { afterMerges, tail: handsOn ? new Set() : afterMerges };
+}
+
+/**
+ * Where a block gets its checkout from, as the end of a sentence that says it
+ * has one. The operator who flips "Work in the folder chosen at Run" has not
+ * changed this — that picks which folder, and isolation comes from the
+ * template, or from the default guards when the block names none — so a
+ * refusal that says only "works in a checkout of its own" sends them to the
+ * wrong control.
+ */
+function isolationBecause(
+  templateId: string | null,
+  known: WorkflowKnowledge,
+): string {
+  if (templateId === null) {
+    return "it names no template, and the default guards in Settings isolate";
+  }
+  const name = known.templates.get(templateId)?.name ?? templateId;
+  return `its template “${name}” isolates`;
+}
+
+/**
  * Read a workflow off the wire, refusing anything that could not be run.
  *
  * Never throws, and every refusal names something the operator can change —
@@ -2490,6 +2561,15 @@ function loopBodyRefusal(
     const brancher = sectionMembers.find((m) =>
       handsOnBranch(m.kind, isolatedTemplate(m.templateId, known)),
     );
+    // The one mixed shape that is allowed: a landing section may end in blocks
+    // that work in the folder, after its last merge block. Read here and again
+    // below, because the member walk returns on the first block it refuses.
+    const sectionIds = new Set(bodyOf(loop));
+    const { afterMerges, tail } = sectionTail(
+      sectionMembers,
+      edges.filter((e) => sectionIds.has(e.from) && sectionIds.has(e.to)),
+      (m) => isolatedTemplate(m.templateId, known),
+    );
     for (const memberId of bodyOf(loop)) {
       const member = byId.get(memberId)!;
       // Two sections *can* still overlap: two loops with a `repeats` link into
@@ -2531,11 +2611,11 @@ function loopBodyRefusal(
         );
       }
 
-      // Guards that isolate, asked of a run member **only in a landing
-      // section**.
+      // Guards that isolate, asked of a run or orchestrator member **only in a
+      // landing section**, and not of what comes after its last merge block.
       //
-      // A section that has a member cutting a branch ends in a merge block that
-      // lands it into the operator's checkout. A run member of that section
+      // A section that has a member cutting a branch lands it into the
+      // operator's checkout through a merge block. A member of that section
       // whose guards work directly in the folder would be editing the checkout
       // in place in the same pass, with nothing recording which pass put the
       // work there, and a merge landing into a tree that is being written to is
@@ -2543,37 +2623,52 @@ function loopBodyRefusal(
       // member that works in a checkout isolates, or none does. A section in
       // which none does is not asked — it has no branch to land, which is what
       // `brancher` being undefined says — and the sentence here names the
-      // member that makes this one a landing section, because "give it guards
-      // that isolate" and "make the rest work in the folder" are both the
-      // operator's to choose between.
+      // member that makes this one a landing section, and where it gets its
+      // checkout from, because "give it guards that isolate" and "make the rest
+      // work in the folder" are both the operator's to choose between.
       //
-      // An orchestrator member is not asked in either kind: it spends nothing
-      // on disk — it decides, and the runs it emits carry its guards — and a
-      // merge block has no guards at all. Both are exempt **by name** rather
-      // than by passing a test written about a checkout, which would answer
-      // them with a sentence about a folder neither of them works in.
+      // **An orchestrator is asked as a run is.** It decides on its own turn and
+      // writes nothing, but the runs it emits take its guards and edit the
+      // folder in place while the same pass's merge lands into it — the case
+      // this used to exempt by name, and the exemption was the hole in the line.
+      // A merge has no guards at all, so it is the one kind not asked.
+      //
+      // **The exception is the tail**, `sectionTail`: blocks after *every* merge
+      // block of the section. A block is released only once the merges in front
+      // of it have settled, so nothing lands while it works, and the next pass
+      // starts only once the whole pass has. Which is why the operator is also
+      // told to *move* a block there, and not told to when it is already there.
       //
       // Refused here rather than at the first pass, where it would be a throw
       // in the middle of an instance that had already started.
       if (
         brancher &&
-        member.kind === "run" &&
-        !isolatedTemplate(member.templateId, known)
+        (member.kind === "run" || member.kind === "orchestrator") &&
+        !isolatedTemplate(member.templateId, known) &&
+        !tail.has(member.id)
       ) {
         // A review is never named here: it reviews only isolated work, so a run
         // or an orchestrator that hands it a branch comes before it in the
         // section's order and is the first one found.
+        const because = isolationBecause(brancher.templateId, known);
         const why =
           brancher.kind === "orchestrator"
-            ? `the runs “${brancher.name}” starts in the same section work in checkouts of their own`
-            : `“${brancher.name}” in the same section works in a checkout of its own`;
+            ? `the runs “${brancher.name}” starts in the same section work in checkouts of their own, because ${because}`
+            : `“${brancher.name}” in the same section works in a checkout of its own, because ${because}`;
+        // Moving it is only a way out where there is a merge to move it behind,
+        // and not one for a block that is already behind every merge — it is
+        // the block after it that makes the end of the section a landing one.
+        const canMove =
+          sectionMembers.some((m) => m.kind === "merge") &&
+          !afterMerges.has(member.id);
+        const ways = canMove
+          ? `Give “${member.name}” guards that isolate, make every block of the section work in the folder, or move it after the section's last merge block`
+          : `Give “${member.name}” guards that isolate, or make every block of the section work in the folder`;
         return (
           `“${member.name}” is repeated by “${loop.name}” and its guards work ` +
           `directly in the folder, but ${why}, and the end of every pass has ` +
           "to land what that produced. A pass cannot land a branch into the " +
-          `folder while “${member.name}” is also editing it in place. Give ` +
-          `“${member.name}” guards that isolate, or make every block of the ` +
-          "section work in the folder, so there is nothing to land."
+          `folder while “${member.name}” is also editing it in place. ${ways}.`
         );
       }
     }
@@ -2671,12 +2766,21 @@ function loopBodyRefusal(
     // section ends in two places" on its own is a shape complaint and the
     // reason it matters is a branch nobody lands.
     const within = edges.filter((e) => members.has(e.from) && members.has(e.to));
+    const { tail } = sectionTail(
+      [...members].map((id) => byId.get(id)!),
+      within,
+      (m) => isolatedTemplate(m.templateId, known),
+    );
     const sinks = [...members].filter(
       (id) => !within.some((e) => e.from === id),
     );
     if (sinks.length > 1) {
       const places = sinks.map((id) => `“${byId.get(id)!.name}”`).join(", ");
-      return lands
+      // A branch nobody lands is the cost only where a sink could have cut one:
+      // every sink in the in-folder tail works in the folder, so it is the
+      // other sentence that is true of it.
+      const strands = lands && !sinks.every((id) => tail.has(id));
+      return strands
         ? `The section “${loop.name}” repeats ends in ${sinks.length} places: ` +
             `${places}. A section has one way out, and what it ends at is ` +
             "what lands the pass — so link each of these on towards the block " +
@@ -2687,19 +2791,68 @@ function loopBodyRefusal(
             "block that does.";
     }
     const exit = byId.get(sinks[0])!;
-    // Only a landing section ends at a merge block. An in-folder section's
-    // exit is whatever its last block is, because the work of every pass is
-    // already in the folder the next one reads and a merge block there would
-    // have nothing to land — `graphRefusal`'s merge rule says so in its own
-    // words, ahead of this, when one is drawn.
-    if (lands && exit.kind !== "merge") {
+    // Only a landing section ends at a merge block, or in its in-folder tail. An
+    // in-folder section's exit is whatever its last block is, because the work
+    // of every pass is already in the folder the next one reads and a merge
+    // block there would have nothing to land — `graphRefusal`'s merge rule says
+    // so in its own words, ahead of this, when one is drawn. A landing
+    // section's exit may be the last block of the tail for the same reason: the
+    // merges in front of it have settled, so what it leaves is already where
+    // the next pass reads.
+    if (lands && exit.kind !== "merge" && !tail.has(exit.id)) {
+      const hasMerge = [...members].some((id) => byId.get(id)!.kind === "merge");
+      const cuts =
+        (exit.kind === "run" || exit.kind === "orchestrator") &&
+        isolatedTemplate(exit.templateId, known);
+      // Where the checkout comes from, because the operator who sees this on a
+      // block they have set to work in the folder is looking at the wrong
+      // switch: "Work in the folder chosen at Run" picks the folder, and the
+      // template decides the rest.
+      const cause = cuts
+        ? `, and ${
+            exit.kind === "orchestrator"
+              ? `the runs “${exit.name}” starts work in checkouts of their own`
+              : `“${exit.name}” works in a checkout of its own`
+          }, because ${isolationBecause(exit.templateId, known)}`
+        : "";
       return (
         `The section “${loop.name}” repeats ends at “${exit.name}”, which is ` +
-        "not a merge block. Every pass has to land what it produced, because " +
-        "the next one starts from the landed branch: add a merge block at the " +
-        `end of the section and link “${exit.name}” to it, or give every ` +
-        "block of the section guards that work in the folder, so there is " +
-        "nothing to land."
+        `not a merge block${cause}. Every pass has to land what it produced, ` +
+        "because the next one starts from the landed branch: add a merge block " +
+        `at the end of the section and link “${exit.name}” to it, or ${
+          hasMerge
+            ? `give “${exit.name}” guards that work in the folder: a block ` +
+              "after every merge block of the section may end the pass there."
+            : "give every block of the section guards that work in the folder, " +
+              "so there is nothing to land."
+        }`
+      );
+    }
+
+    // A merge block's way into the in-folder tail, and the one condition on it
+    // that is not the operator's to choose. A merge that failed still
+    // *finished*, so an `on-finish` link releases the block behind it — and a
+    // failed land can leave the folder mid-merge, or holding the work it was
+    // landing staged, when `unwind` cannot take it back, or leave an operator's
+    // own edits in it where the queue refused to touch them. A block that
+    // works in that folder would edit on top of it. `on-success` is released
+    // only by a merge that landed everything, which leaves the folder clean.
+    const unsafeLink = within.find(
+      (e) =>
+        e.edge === "on-finish" &&
+        tail.has(e.to) &&
+        byId.get(e.from)!.kind === "merge",
+    );
+    if (unsafeLink) {
+      const from = byId.get(unsafeLink.from)!;
+      const to = byId.get(unsafeLink.to)!;
+      return (
+        `“${to.name}” is set to start once “${from.name}” finishes either ` +
+        `way, inside the section “${loop.name}” repeats. A merge that failed ` +
+        "can leave the folder part-way through the merge, or with what it was " +
+        `landing staged, and “${to.name}” works directly in that folder. ` +
+        `Set that link to start only if “${from.name}” completes, so it runs ` +
+        "once everything has landed."
       );
     }
 

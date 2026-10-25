@@ -203,7 +203,10 @@ const SECTION = {
  * does with them: their work happens once per pass under the loop's
  * `emitted_by`, so the loop's ledger row is their record until a pass opens one.
  */
-function scene(opts: { maxPasses?: number; loopStatus?: string } = {}): string {
+function scene(
+  opts: { maxPasses?: number; loopStatus?: string; section?: typeof SECTION } = {},
+): string {
+  const section = opts.section ?? SECTION;
   const now = Date.now();
   const instanceId = `inst-${now}-${Math.random().toString(36).slice(2)}`;
   const loop = node("L", {
@@ -211,11 +214,11 @@ function scene(opts: { maxPasses?: number; loopStatus?: string } = {}): string {
     kind: "loop",
     folder: "",
     maxPasses: opts.maxPasses ?? 1,
-    bodyNodeIds: SECTION.body,
+    bodyNodeIds: section.body,
   });
   const graph = JSON.stringify({
-    nodes: [loop, ...SECTION.nodes],
-    edges: SECTION.edges.map((e) => ({ continueBranch: false, ...e })),
+    nodes: [loop, ...section.nodes],
+    edges: section.edges.map((e) => ({ continueBranch: false, ...e })),
   });
 
   const db = dbMod.db();
@@ -297,14 +300,27 @@ function commitOnBranch(branch: string, file: string): string {
   return base;
 }
 
-/** Settle every queued member as a completed run whose branch has a commit. */
-function settleQueuedRuns(instanceId: string): void {
+/**
+ * Settle every queued member as a completed run whose branch has a commit — or,
+ * for a member `inFolder` names, as one that worked in the folder and has none.
+ */
+function settleQueuedRuns(
+  instanceId: string,
+  inFolder: (memberId: string) => boolean = () => false,
+): void {
   for (const row of membersOf(instanceId)) {
     const run = dbMod
       .db()
       .prepare("SELECT status FROM runs WHERE id = ?")
       .get(row.runId) as { status: string } | undefined;
     if (!run || run.status !== "queued") continue;
+    if (inFolder(row.memberId)) {
+      dbMod
+        .db()
+        .prepare("UPDATE runs SET status='completed', iterations=1, finished_at=? WHERE id=?")
+        .run(Date.now(), row.runId);
+      continue;
+    }
     const branch = `uf/${row.runId}`;
     const base = commitOnBranch(branch, `${row.runId}.txt`);
     dbMod
@@ -589,5 +605,142 @@ describe("the exemption reaches the owning pass's merge block and no other", () 
     const person = await land.resolveConflicts(runId);
     assert.equal(person.ok, false);
     assert.match(person.ok ? "" : person.reason, HOLD);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* What a block behind the merge waits for                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A landing section that ends in the folder: a run in a checkout of its own, the
+ * merge block that lands it, and a run that works in the folder behind the merge.
+ *
+ * The tail rule saves this shape on one premise — nothing lands into the folder
+ * while the run behind the merge edits it — and the premise is that the merge
+ * block's ledger row stays live until its queue batch has landed or failed, so
+ * the run behind it is not released early. `startMergeBlock` is fire and forget
+ * and the queue polls every two seconds, so it is not obvious from the call
+ * site; it is asserted here, against the real queue and the operator's checkout.
+ */
+describe("a block behind a pass's merge block", () => {
+  const tailRun = (memberId: string) => /#t$/.test(memberId);
+  let tailSection: typeof SECTION;
+
+  before(async () => {
+    const templates = await import("./templates");
+    const settings = await import("./settings");
+    const flat = templates.createTemplate({
+      name: `In place ${Math.random().toString(36).slice(2)}`,
+      prompt: "Work in the folder.",
+      mountId: null,
+      folder: null,
+      isolate: false,
+      permissionMode: "acceptEdits",
+      agentId: null,
+      model: null,
+      budget: settings.chatGuards().budget,
+    });
+    tailSection = {
+      nodes: [node("a"), mergeNode("m"), node("t", { templateId: flat.id })],
+      edges: [
+        { from: "L", to: "a", edge: "repeats" },
+        { from: "a", to: "m", edge: "on-success" },
+        { from: "m", to: "t", edge: "on-success" },
+      ],
+      body: ["a", "m", "t"],
+    };
+  });
+
+  /** `drive`, watching the merge block and the run behind it at every step. */
+  async function driveWatching(instanceId: string) {
+    const seen = {
+      stepsMerging: 0,
+      earlyTail: 0,
+      landedWhenTailAppeared: null as boolean | null,
+      mergeWhenTailAppeared: null as string | null,
+    };
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      settleQueuedRuns(instanceId, tailRun);
+      workflows.advanceInstances();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const merge = workflows
+        .blocksOf(instanceId)
+        .find((b) => b.nodeId === passMemberId("L", 1, "m"));
+      const members = membersOf(instanceId);
+      const tail = members.find((m) => m.memberId === passMemberId("L", 1, "t"));
+      const head = members.find((m) => m.memberId === passMemberId("L", 1, "a"));
+      if (merge && ["waiting", "thinking"].includes(merge.status)) {
+        seen.stepsMerging += 1;
+        if (tail) seen.earlyTail += 1;
+      }
+      if (tail && seen.landedWhenTailAppeared === null) {
+        seen.mergeWhenTailAppeared = merge?.status ?? null;
+        seen.landedWhenTailAppeared = head ? isInMain(`uf/${head.runId}`) : false;
+      }
+      const live = workflows.blocksOf(instanceId).some((b) => b.status === "thinking");
+      const queued = members.some(
+        (m) =>
+          (
+            dbMod.db().prepare("SELECT status FROM runs WHERE id=?").get(m.runId) as
+              | { status: string }
+              | undefined
+          )?.status === "queued",
+      );
+      if (!live && !queued) return { seen, members };
+    }
+    assert.fail("the instance never stopped moving");
+  }
+
+  it("is not created until the branches have landed in the folder", async () => {
+    const instanceId = scene({ maxPasses: 1, section: tailSection });
+    const { seen, members } = await driveWatching(instanceId);
+
+    assert.ok(
+      seen.stepsMerging > 0,
+      "the merge was never seen in flight, so the ordering below proves nothing",
+    );
+    assert.equal(seen.earlyTail, 0, "the run behind the merge existed while it was landing");
+    assert.equal(seen.mergeWhenTailAppeared, "emitted");
+    assert.equal(
+      seen.landedWhenTailAppeared,
+      true,
+      "the run behind the merge was created before the branch reached main",
+    );
+    assert.ok(members.some((m) => m.memberId === passMemberId("L", 1, "t")));
+    assert.equal(blockRow(instanceId, passMemberId("L", 1, "m")).status, "emitted");
+  });
+
+  it("is never created when the merge failed, and the failed land leaves the operator's tree as it was", async () => {
+    // A dirty checkout is the operator's own edit, which the queue refuses to
+    // merge over. The block behind an on-success link is blocked with the loop
+    // stopped; the folder is exactly as the operator left it. (What the other
+    // failure leaves — a merge `unwind` cannot take back — is why the server
+    // refuses an on-finish link out of a merge into this block.)
+    const instanceId = scene({ maxPasses: 1, section: tailSection });
+    const dirty = path.join(repoRoot(), "uncommitted.txt");
+    fs.writeFileSync(dirty, "half a thought\n");
+    let status: string;
+    try {
+      const { members } = await driveWatching(instanceId);
+      assert.equal(
+        members.some((m) => m.memberId === passMemberId("L", 1, "t")),
+        false,
+        "the run behind a failed merge was created",
+      );
+      status = git(repoRoot(), "status", "--porcelain").trim();
+    } finally {
+      fs.rmSync(dirty, { force: true });
+    }
+
+    assert.equal(blockRow(instanceId, passMemberId("L", 1, "m")).status, "failed");
+    const tail = blockRow(instanceId, passMemberId("L", 1, "t"));
+    assert.equal(tail.status, "blocked");
+    assert.match(tail.error ?? "", /did not land everything it was given/);
+    assert.equal(status, "?? uncommitted.txt", "the failed land touched the operator's tree");
+    const loopRow = blockRow(instanceId, "L");
+    assert.equal(loopRow.status, "failed");
+    assert.match(loopRow.error ?? "", /did not land everything it produced/);
   });
 });

@@ -366,7 +366,8 @@ export function WorkflowCanvas({
             index,
             region.memberIds.length,
             id === region.exitId,
-            region.lands,
+            region.exitLands,
+            region.tailFedBy.includes(id),
           ),
         }),
       );
@@ -1187,7 +1188,7 @@ export function WorkflowCanvas({
                           : region.lands
                             ? ". No merge block to land a pass through"
                             : ". The pass ends in more than one place"
-                        : `, ${region.lands ? "landing through" : "ending at"} ${label(
+                        : `, ${region.exitLands ? "landing through" : "ending at"} ${label(
                             blocks.find((b) => b.id === region.exitId),
                           )}`
                     }. ${passCapLabel(owner)}, ${endingLabel(owner)}.${
@@ -1935,18 +1936,23 @@ function linkTone(link: LinkDraft, selection: CanvasSelection | null): LinkTone 
  * Ordinal for the last member of a section that ends anywhere else, which is a
  * graph the server refuses: the mark may not claim a landing that is not there.
  * A section that works in the folder throughout lands nothing, so its exit
- * "ends the pass" — the work is already where the next pass reads.
+ * "ends the pass" — the work is already where the next pass reads. So does the
+ * exit of a landing section's in-folder tail, and the merge in front of that
+ * tail is "lands the branches" rather than "lands the pass": it lands what the
+ * blocks before it cut, and the pass is not over until the tail has worked.
  */
 function sectionMark(
   index: number,
   size: number,
   isExit: boolean,
-  lands: boolean,
+  exitLands: boolean,
+  landsBranches: boolean,
 ): string {
   if (isExit) {
-    return index === 0 ? "the whole pass" : lands ? "lands the pass" : "ends the pass";
+    return index === 0 ? "the whole pass" : exitLands ? "lands the pass" : "ends the pass";
   }
   if (index === 0) return "starts a pass";
+  if (landsBranches) return "lands the branches";
   if (index === size - 1) return `last of ${size}`;
   return `${index + 1} of ${size}`;
 }
