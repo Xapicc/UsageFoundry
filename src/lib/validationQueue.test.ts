@@ -289,6 +289,38 @@ describe("a second complete_task while the first is being checked", () => {
     );
   });
 
+  it("are all closed when checks are switched off while they wait", async () => {
+    const runId = worktreeRun("running");
+    const first = heldTask(runId, "First task, then checks off");
+    const second = heldTask(runId, "Second task, closed with checks off");
+    const third = heldTask(runId, "Third task, closed with checks off");
+    assert.equal((await validation.completeTaskWithValidation(first.id, runId)).kind, "checking");
+    await until("the first check to start", () => childrenStarted() === 1);
+    assert.equal((await validation.completeTaskWithValidation(second.id, runId)).kind, "queued");
+    assert.equal((await validation.completeTaskWithValidation(third.id, runId)).kind, "queued");
+
+    settings.saveSettings({ validateTaskCompletion: false });
+    try {
+      fs.writeFileSync(control("answer"), "");
+      // Each close has to hand the turn on: the first queued claim closed and
+      // the drain stopped there, so the rest stayed claimed until a boot.
+      for (const task of [second, third]) {
+        await until(
+          `${task.title} to close`,
+          () => tasks.getTask(task.id)!.status === "done",
+        );
+      }
+    } finally {
+      settings.saveSettings({ validateTaskCompletion: true });
+    }
+
+    for (const task of [second, third]) {
+      assert.equal(tasks.getTask(task.id)!.completedByRunId, runId);
+    }
+    assert.equal(validation.validationInFlight(runId), false);
+    assert.equal(childrenStarted(), 1, "a queued claim was checked with checks switched off");
+  });
+
   it("is closed on the run's word when a restart leaves it queued", () => {
     const runId = worktreeRun("running");
     const task = heldTask(runId, "Queued across a restart");
@@ -390,5 +422,65 @@ describe("a queued claim the drain has taken, before its check row exists", () =
       logLines(runId).some((line) => /restarted before this task could be checked/.test(line)),
       logLines(runId).join("\n"),
     );
+  });
+});
+
+/**
+ * What the boundary waits for after a pick-up. A check asked for before the
+ * run's last pick-up is never acted on, so `validationInFlight` given that
+ * floor leaves it out — the queued and starting halves of it, which a check
+ * still reading does not reach, because only the reading one has a row with a
+ * start time of its own.
+ */
+describe("a check asked for before the run's last pick-up", () => {
+  it("is not waited for while it is queued, and is by a floor at or before its request", () => {
+    const runId = worktreeRun("running");
+    const task = heldTask(runId, "Queued before a pick-up");
+    const askedAt = Date.now();
+    database
+      .db()
+      .prepare("INSERT INTO validation_queue (run_id, task_id, asked_at) VALUES (?, ?, ?)")
+      .run(runId, task.id, askedAt);
+    try {
+      assert.equal(validation.validationInFlight(runId), true);
+      assert.equal(validation.validationInFlight(runId, askedAt), true);
+      assert.equal(validation.validationInFlight(runId, askedAt + 1), false);
+    } finally {
+      validation.closeQueuedValidations();
+    }
+  });
+
+  it("is not waited for while its diff is read, and is by a floor at or before its request", async () => {
+    const runId = worktreeRun("running");
+    const task = heldTask(runId, "Starting before a pick-up");
+    const realRunDiff = diffModule.runDiff;
+    let releaseDiff!: () => void;
+    const held = new Promise<void>((resolve) => (releaseDiff = resolve));
+    let reads = 0;
+    // As the restart cases above swap it: exports are writable under the
+    // CommonJS this suite compiles to.
+    const writable = diffModule as { runDiff: typeof realRunDiff };
+    writable.runDiff = async (id: string) => {
+      reads += 1;
+      await held;
+      return realRunDiff(id);
+    };
+    const askedAfter = Date.now();
+    let door: ReturnType<typeof validation.completeTaskWithValidation>;
+    try {
+      door = validation.completeTaskWithValidation(task.id, runId);
+      await until("the diff read to begin", () => reads === 1);
+      assert.equal(validation.validationInFlight(runId), true);
+      assert.equal(validation.validationInFlight(runId, askedAfter), true);
+      assert.equal(validation.validationInFlight(runId, Date.now() + 1_000), false);
+    } finally {
+      writable.runDiff = realRunDiff;
+      releaseDiff();
+      fs.writeFileSync(control("answer"), "");
+    }
+    assert.equal((await door).kind, "checking");
+    // Let the check settle, so its child is not counted in the next case.
+    await until("the check to settle", () => !validation.validationInFlight(runId));
+    assert.equal(tasks.getTask(task.id)!.status, "done");
   });
 });
