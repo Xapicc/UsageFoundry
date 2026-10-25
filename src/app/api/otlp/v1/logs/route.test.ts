@@ -301,4 +301,115 @@ describe("a record that would raise another run's figure", () => {
       settings.saveSettings({ installDailyCostLimitUSD: null });
     }
   });
+
+  it("holds a run with no cost limit to what the install and its workflow have left", async () => {
+    const budget = await import("../../../../../lib/budget");
+    const installBudget = await import("../../../../../lib/installBudget");
+    const settings = await import("../../../../../lib/settings");
+    const workflows = await import("../../../../../lib/workflows");
+    const { cycleBudgetUSD } = await import("../../../../../lib/cycleInvocation");
+    const db = dbMod.db();
+    const cycleStart = Date.now() - 1000;
+
+    // A run with no `maxRunCostUSD` is spawned with no limit of its own, so the
+    // cap on what its telemetry adds to another run's figure has to come from
+    // the limits that judge the other run. `startCycle` is `startRun`'s own
+    // three calls, in its order, against the same rows: the run row first, and
+    // any workflow membership before the headroom is read, because the instance
+    // is found by run id.
+    const insertRun = (runId: string) =>
+      db
+        .prepare(
+          `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, created_at, spent_usd)
+           VALUES (?, '/workspace', 'work', 'running', '{"maxIterations":5}', 5, ?, 0)`,
+        )
+        .run(runId, cycleStart);
+    const startCycle = (runId: string) => {
+      const install = installBudget.installBudgetReading();
+      assert.equal(install.verdict, null, "the install is under its limit, so the run is admitted");
+      const left =
+        budget.tighterHeadroom(install.headroom, workflows.instanceHeadroom(runId))?.leftUSD ?? null;
+      db.prepare("UPDATE runs SET active_started_at = ?, active_budget_usd = ? WHERE id = ?").run(
+        cycleStart,
+        cycleBudgetUSD(null, 0, left),
+        runId,
+      );
+    };
+    const stampedOn = (runId: string) =>
+      (db.prepare("SELECT active_budget_usd AS stamped FROM runs WHERE id = ?").get(runId) as {
+        stamped: number | null;
+      }).stamped;
+    const flood = async (runId: string, requestId: string, costUSD: number) => {
+      const res = await post(payload(record(requestId, { cost_usd: costUSD }, Date.now())), otlp.ingestTokenFor(runId));
+      assert.equal(res.status, 200);
+    };
+
+    // The install alone. Its limit leaves $8, whatever else the install holds.
+    const baseline = installBudget.installSpend().spentGuardUSD;
+    settings.saveSettings({ installDailyCostLimitUSD: baseline + 8 });
+    try {
+      insertRun("run-open-install");
+      startCycle("run-open-install");
+      assert.equal(
+        stampedOn("run-open-install"),
+        8,
+        "a run with no limit of its own is handed the install's headroom",
+      );
+
+      // Real spend under the cap counts in full: a cap that understated it would
+      // blind the install limit to money actually being spent.
+      await flood("run-open-install", "req_open_real", 1.25);
+      assert.equal(installBudget.installSpend().spentGuardUSD, baseline + 1.25);
+
+      await flood("run-open-install", "req_open_forged", 1e9);
+      assert.equal(
+        otlp.telemetrySpendSince("run-open-install", cycleStart).costUSD,
+        1e9 + 1.25,
+        "the forger's own live guard still reads what it posted",
+      );
+      // At most what the install had left when the cycle was spawned: the CLI
+      // would have ended a real cycle there, so no real spend is understated. A
+      // forger can still read the install as full for as long as its cycle runs,
+      // and that is what a cycle that really spent its budget reads as too; what
+      // it can no longer do is read as $1,000,000,000 past it.
+      assert.equal(installBudget.installSpend().spentGuardUSD, baseline + 8);
+    } finally {
+      settings.saveSettings({ installDailyCostLimitUSD: null });
+    }
+
+    // A workflow whose limit is the tighter one. The install's is far above it,
+    // and the instance has $4 left once the bystander's $1 is counted.
+    db.prepare(
+      "INSERT INTO workflows (id, name, graph, created_at, updated_at) VALUES ('wf-open', 'w-open', '{}', ?, ?)",
+    ).run(cycleStart, cycleStart);
+    db.prepare(
+      `INSERT INTO workflow_instances
+         (id, workflow_id, workflow_name, graph, created_at, status, instance_budget)
+       VALUES ('inst-open', 'wf-open', 'w', '{"nodes":[],"edges":[]}', ?, 'started',
+               '{"maxInstanceCostUSD":5}')`,
+    ).run(cycleStart);
+    const member = db.prepare(
+      "INSERT INTO workflow_instance_runs (instance_id, node_id, node_name, position, run_id)" +
+        " VALUES ('inst-open', ?, ?, ?, ?)",
+    );
+    insertRun("run-open-workflow");
+    insertRun("run-open-bystander");
+    db.prepare("UPDATE runs SET spent_usd = 1 WHERE id = 'run-open-bystander'").run();
+    member.run("n0", "Forger", 0, "run-open-workflow");
+    member.run("n1", "Bystander", 1, "run-open-bystander");
+
+    settings.saveSettings({ installDailyCostLimitUSD: baseline + 1000 });
+    try {
+      startCycle("run-open-workflow");
+      assert.equal(
+        stampedOn("run-open-workflow"),
+        4,
+        "the tighter of the two limits is the one handed over",
+      );
+      await flood("run-open-workflow", "req_open_workflow_forged", 1e9);
+      assert.equal(workflows.instanceSpend("inst-open").spentGuardUSD, 5);
+    } finally {
+      settings.saveSettings({ installDailyCostLimitUSD: null });
+    }
+  });
 });

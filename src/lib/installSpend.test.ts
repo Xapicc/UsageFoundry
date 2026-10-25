@@ -429,6 +429,36 @@ describe("what the install's spend limit is measured from", () => {
     settings.saveSettings({ installDailyCostLimitUSD: null });
   });
 
+  it("reads the headroom off the same figure the verdict compares, and only while it admits", () => {
+    clearAll();
+    addRun({ id: "spent", status: "completed", spent: 60, finishedAt: NOW - HOUR });
+
+    // No limit is no headroom — `null`, which a cycle reads as nothing to hand
+    // the child — and the shipped default must stay that.
+    settings.saveSettings({ installDailyCostLimitUSD: null });
+    assert.deepEqual(installBudget.installBudgetReading(NOW), { verdict: null, headroom: null });
+
+    settings.saveSettings({ installDailyCostLimitUSD: 100 });
+    const under = installBudget.installBudgetReading(NOW);
+    assert.equal(under.verdict, null);
+    assert.deepEqual(under.headroom, { scope: "install", limitUSD: 100, spentGuardUSD: 60, leftUSD: 40 });
+
+    // The guard figure, not the measured floor: a killed cycle's estimate is
+    // money the limit already counts against, so the child must not be handed it.
+    addRun({ id: "killed", status: "failed", spent: 0, est: 15, finishedAt: NOW - HOUR });
+    assert.equal(installBudget.installBudgetReading(NOW).headroom?.leftUSD, 25);
+
+    // At the limit the verdict refuses and there is no headroom to be wrong
+    // about: nothing is spawned behind a refusal. Never a zero beside an "allowed".
+    settings.saveSettings({ installDailyCostLimitUSD: 75 });
+    const at = installBudget.installBudgetReading(NOW);
+    assert.equal(at.verdict?.code, "install_cost");
+    assert.equal(at.headroom, null);
+    assert.equal(installBudget.installBudgetVerdict(NOW)?.code, "install_cost");
+
+    settings.saveSettings({ installDailyCostLimitUSD: null });
+  });
+
   it("refuses a new run at the one door every run in this app comes through", async () => {
     clearAll();
     addRun({ id: "spent", status: "completed", spent: 80, finishedAt: NOW - HOUR });

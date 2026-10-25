@@ -3646,6 +3646,52 @@ describe("buildArgs", () => {
     assert.equal(args[args.indexOf("--max-budget-usd") + 1], "0");
   });
 
+  /**
+   * A run with no limit of its own is bounded by what the install's and its
+   * workflow's dollar limits have left.
+   *
+   * Without it the cycle had no `--max-budget-usd`, the row's
+   * `active_budget_usd` was null and `inFlightCostForOthers` took its telemetry
+   * in full, so one forged `cost_usd` ended every other run on `install_cost`.
+   * The figure is the one the pre-cycle guards would end the run at, so it is
+   * not a guess that could blind them. Each case is one way to get the choice
+   * wrong without anything throwing.
+   */
+  it("carries the install's or workflow's headroom into a cycle with no limit of its own", () => {
+    const args = buildArgs({ ...base, isolated: true, spentGuardUSD: 12, headroomUSD: 7.5 });
+    // The headroom already is what is left, so what the run has spent is not
+    // taken off it a second time.
+    assert.equal(args[args.indexOf("--max-budget-usd") + 1], "7.5");
+  });
+
+  it("lets the run's own limit win over a headroom", () => {
+    const args = buildArgs({
+      ...base,
+      isolated: true,
+      maxRunCostUSD: 5,
+      spentGuardUSD: 1.25,
+      headroomUSD: 1,
+    });
+    assert.equal(args[args.indexOf("--max-budget-usd") + 1], "3.75");
+  });
+
+  it("hands an exhausted headroom over as a budget nothing can satisfy, never as no budget", () => {
+    // The pre-cycle guard ends a run at a limit that is reached, so no cycle is
+    // spawned for a headroom of 0. If one ever is, `null` would be the child's
+    // way out of every limit; and a negative would read as none to the CLI.
+    for (const headroomUSD of [0, -3]) {
+      const args = buildArgs({ ...base, isolated: true, headroomUSD });
+      assert.equal(args[args.indexOf("--max-budget-usd") + 1], "0", String(headroomUSD));
+    }
+  });
+
+  it("still attaches nothing when no limit applies", () => {
+    assert.equal(
+      buildArgs({ ...base, isolated: true, headroomUSD: null }).includes("--max-budget-usd"),
+      false,
+    );
+  });
+
   it("still passes the mode, the model and the session to resume", () => {
     const args = buildArgs({
       ...base,
