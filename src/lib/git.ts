@@ -229,11 +229,71 @@ function filterNeutralizers(configOutput: string): string[] {
  *
  * `config` is a read that runs nothing the repository chose, so it is never
  * itself a content subcommand and the enumeration never recurses. `--includes`
- * because a driver reached through an `include.path` would fire too. It exits
- * non-zero when no driver is defined, which is the common case and reads as an
- * empty list, so the status is not checked.
+ * because a driver reached through an `include.path` would fire too. It exits 1
+ * with nothing on stdout when no driver is defined, which is the common case;
+ * `readFilterProbe` is where every other ending is told apart from that one.
  */
 const FILTER_PROBE = ["config", "-z", "--includes", "--get-regexp", "^filter\\."];
+
+/** How a probe child ended, as `readFilterProbe` reads it. */
+interface ProbeEnding {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  stdout: string;
+  stderr: string;
+  /** The clock that killed it, if one did. */
+  timedOutAfterMs: number | null;
+}
+
+/**
+ * What a probe's ending means for the call that asked for it: the `-c` blanks
+ * to splice in, or the reason the call must not run.
+ *
+ * Only exit 1 with an empty stdout is "no filters", and only exit 0 is a list
+ * to blank. Everything else (killed by its clock, killed by a signal, never
+ * started, any other status, exit 1 with output) means this app does not know
+ * which drivers the repository names, and a call run on that guess runs them: a
+ * `filter.<x>.clean` a work cycle wrote to `.git/config` would execute in this
+ * server's git, which is what the blanking exists to prevent. So the call fails
+ * closed, before the child is spawned. It is not retried: a probe the clock
+ * killed on a slow checkout would most likely be killed again, so a retry would
+ * double the slow path and still have to fail in the end.
+ *
+ * One function for `git()` and `gitSync()` so the two cannot read a probe
+ * differently, and so a probe widened to more keys (`hook.*`) inherits the check
+ * rather than re-deriving it. The reason names the probe, how it ended and what
+ * git said, because the operator reading it sees only that a run's git call
+ * failed.
+ */
+function readFilterProbe(
+  probe: ProbeEnding,
+  cwd: string,
+  args: string[],
+): { ok: true; extra: string[] } | { ok: false; reason: string } {
+  if (probe.code === 0) return { ok: true, extra: filterNeutralizers(probe.stdout) };
+  if (probe.code === 1 && probe.stdout === "") return { ok: true, extra: [] };
+
+  let how: string;
+  if (probe.timedOutAfterMs !== null) {
+    how = `was killed after ${fmtDuration(probe.timedOutAfterMs)} without finishing`;
+  } else if (probe.signal) {
+    how = `was killed by ${probe.signal}`;
+  } else if (probe.code === null) {
+    how = "ended without an exit status";
+  } else {
+    how = `exited with status ${probe.code}${probe.stdout === "" ? "" : " and printed output"}`;
+  }
+  // One line, so a caller that keeps only the line of git's output that names
+  // the failure (`gitFailureLine`) keeps this whole sentence rather than the
+  // tail of it.
+  const said = probe.stderr ? `: ${probe.stderr.replace(/\s*\n\s*/g, " ")}` : "";
+  return {
+    ok: false,
+    reason:
+      `The filter probe failed in ${cwd}, so git ${args[0]} was not run: ` +
+      `git ${FILTER_PROBE.join(" ")} ${how}${said}`,
+  };
+}
 
 /**
  * The subcommands that convert content between the working tree and the object
@@ -296,17 +356,27 @@ export const GIT_SYNC_TIMEOUT_MS = 20_000;
  * below.
  */
 export function gitSync(cwd: string, args: string[]): GitResult {
-  const extra = CONTENT_SUBCOMMANDS.has(args[0])
-    ? filterNeutralizers(gitSync(cwd, FILTER_PROBE).stdout)
-    : [];
-  const res = spawnSync(GIT_BIN, gitArgs(args, extra), {
-    cwd,
-    env: gitEnv(),
-    ...childCredentials(),
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: GIT_SYNC_TIMEOUT_MS,
-  });
+  let extra: string[] = [];
+  if (CONTENT_SUBCOMMANDS.has(args[0])) {
+    const probe = spawnGitSync(cwd, FILTER_PROBE, []);
+    // `spawnSync` reports its own clock as an error with this code, and a child
+    // that could not start as one with its message, which is all there is to say.
+    const timedOut = (probe.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
+    const verdict = readFilterProbe(
+      {
+        code: probe.status,
+        signal: probe.signal,
+        stdout: probe.stdout ?? "",
+        stderr: (probe.stderr ?? "").trim() || probe.error?.message || "",
+        timedOutAfterMs: timedOut ? GIT_SYNC_TIMEOUT_MS : null,
+      },
+      cwd,
+      args,
+    );
+    if (!verdict.ok) return { ok: false, stdout: "", stderr: verdict.reason, code: null };
+    extra = verdict.extra;
+  }
+  const res = spawnGitSync(cwd, args, extra);
 
   return {
     ok: res.status === 0,
@@ -314,6 +384,17 @@ export function gitSync(cwd: string, args: string[]): GitResult {
     stderr: (res.stderr ?? "").trim(),
     code: res.status,
   };
+}
+
+function spawnGitSync(cwd: string, args: string[], extra: string[]) {
+  return spawnSync(GIT_BIN, gitArgs(args, extra), {
+    cwd,
+    env: gitEnv(),
+    ...childCredentials(),
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: GIT_SYNC_TIMEOUT_MS,
+  });
 }
 
 /**
@@ -357,6 +438,12 @@ export function gitSync(cwd: string, args: string[]): GitResult {
  * none of them has a `catch`, so a rejection propagated out of the merge
  * worker's loop and left the row it was landing stuck on `landing` for ever.
  * A child that could not be started is reported as the failed call it is.
+ *
+ * A content subcommand whose filter probe failed is reported the same way and
+ * was never spawned: `ok: false`, `code: null`, `timedOutAfterMs: null` and a
+ * `stderr` that names the probe and how it ended (see `readFilterProbe`). `code`
+ * is null and not the probe's status so that no caller reads a probe's exit 1
+ * as its own call's answer (`diff --quiet` uses 1 for "differs").
  */
 export async function git(
   cwd: string,
@@ -395,16 +482,55 @@ export async function git(
     input?: string;
   } = {},
 ): Promise<GitResult & { overflowed: boolean; timedOutAfterMs: number | null }> {
-  const { timeoutMs = 20_000, maxBytes = 0, trim = true } = opts;
+  let extra: string[] = [];
+  if (CONTENT_SUBCOMMANDS.has(args[0])) {
+    // The probe is a `config` read, never a content subcommand, so it is spawned
+    // directly and never recurses. It takes the clock the caller gave the call: a
+    // probe that fails now fails the call, so a call that has no clock (landing)
+    // must not have one on its probe either. `trim: false` keeps the `-z` record
+    // separators intact.
+    const probe = await spawnGit(cwd, FILTER_PROBE, [], {
+      env: opts.env,
+      timeoutMs: opts.timeoutMs,
+      trim: false,
+    });
+    const verdict = readFilterProbe(probe, cwd, args);
+    if (!verdict.ok) {
+      return {
+        ok: false,
+        stdout: "",
+        stderr: verdict.reason,
+        code: null,
+        overflowed: false,
+        timedOutAfterMs: null,
+      };
+    }
+    extra = verdict.extra;
+  }
 
-  // The probe is a `config` read, never a content subcommand, so this recurses
-  // exactly one level and never for a read call. `git()` never rejects, so the
-  // await cannot throw. `trim: false` keeps the `-z` record separators intact.
-  const extra = CONTENT_SUBCOMMANDS.has(args[0])
-    ? filterNeutralizers(
-        (await git(cwd, FILTER_PROBE, { env: opts.env, trim: false })).stdout,
-      )
-    : [];
+  // `signal` is the probe's to read; the public result has never carried it.
+  const { signal: _signal, ...result } = await spawnGit(cwd, args, extra, opts);
+  return result;
+}
+
+/**
+ * One git child, with the config in `extra` spliced in. `git()` is this plus the
+ * filter probe's verdict; the probe is spawned through here too, which is why it
+ * is a function of its own and reports the `signal` it was killed by.
+ */
+function spawnGit(
+  cwd: string,
+  args: string[],
+  extra: string[],
+  opts: {
+    timeoutMs?: number;
+    maxBytes?: number;
+    trim?: boolean;
+    env?: Record<string, string>;
+    input?: string;
+  },
+): Promise<GitResult & { overflowed: boolean; timedOutAfterMs: number | null; signal: NodeJS.Signals | null }> {
+  const { timeoutMs = 20_000, maxBytes = 0, trim = true } = opts;
 
   return new Promise((resolve) => {
     let stdout = "";
@@ -414,7 +540,7 @@ export async function git(
     let timer: ReturnType<typeof setTimeout> | null = null;
 
     let settled = false;
-    const finish = (code: number | null) => {
+    const finish = (code: number | null, signal: NodeJS.Signals | null = null) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
@@ -423,6 +549,7 @@ export async function git(
         stdout: trim ? stdout.trim() : stdout,
         stderr: stderr.trim(),
         code,
+        signal,
         overflowed,
         // A child that exited by itself in the instant the clock fired has a
         // code, and was not killed by it.
@@ -471,7 +598,7 @@ export async function git(
       timer?.unref?.();
 
       child.on("error", () => finish(null));
-      child.on("close", (code) => finish(code));
+      child.on("close", (code, signal) => finish(code, signal));
     } catch (err) {
       // The child never started, and the errno said so by throwing rather than
       // by the `error` event. `stderr` is where a caller already looks for why
