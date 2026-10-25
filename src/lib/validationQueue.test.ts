@@ -289,6 +289,38 @@ describe("a second complete_task while the first is being checked", () => {
     );
   });
 
+  it("are all closed when checks are switched off while they wait", async () => {
+    const runId = worktreeRun("running");
+    const first = heldTask(runId, "First task, then checks off");
+    const second = heldTask(runId, "Second task, closed with checks off");
+    const third = heldTask(runId, "Third task, closed with checks off");
+    assert.equal((await validation.completeTaskWithValidation(first.id, runId)).kind, "checking");
+    await until("the first check to start", () => childrenStarted() === 1);
+    assert.equal((await validation.completeTaskWithValidation(second.id, runId)).kind, "queued");
+    assert.equal((await validation.completeTaskWithValidation(third.id, runId)).kind, "queued");
+
+    settings.saveSettings({ validateTaskCompletion: false });
+    try {
+      fs.writeFileSync(control("answer"), "");
+      // Each close has to hand the turn on: the first queued claim closed and
+      // the drain stopped there, so the rest stayed claimed until a boot.
+      for (const task of [second, third]) {
+        await until(
+          `${task.title} to close`,
+          () => tasks.getTask(task.id)!.status === "done",
+        );
+      }
+    } finally {
+      settings.saveSettings({ validateTaskCompletion: true });
+    }
+
+    for (const task of [second, third]) {
+      assert.equal(tasks.getTask(task.id)!.completedByRunId, runId);
+    }
+    assert.equal(validation.validationInFlight(runId), false);
+    assert.equal(childrenStarted(), 1, "a queued claim was checked with checks switched off");
+  });
+
   it("is closed on the run's word when a restart leaves it queued", () => {
     const runId = worktreeRun("running");
     const task = heldTask(runId, "Queued across a restart");

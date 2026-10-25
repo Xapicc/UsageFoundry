@@ -838,6 +838,10 @@ async function startQueuedCheck(taskId: string, runId: string): Promise<void> {
   if (!settings.validateTaskCompletion || skip !== null || !run) {
     outcome = closeNow(taskId, runId, skip ?? (run ? "completion checks were switched off" : null));
     dequeueCheck(runId, taskId);
+    // No check was started, so there is no settle to hand the turn on, and the
+    // door never drains with checks off: the claims behind this one would stay
+    // claimed by this run until a boot closed them.
+    setImmediate(() => void drainValidationQueue(runId));
   } else {
     outcome = await startCheck(task, run);
   }
