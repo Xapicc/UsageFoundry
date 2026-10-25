@@ -86,3 +86,40 @@ test("an unpriced prune is a coverage gap and not a ceiling", () => {
   assert.match(html, /money over 2 of 4/);
   assert.doesNotMatch(html, /at most/);
 });
+
+test("a run nothing could price leads with unknown, never +$0.00", () => {
+  // A prune on a model with no price here is in `prunes` and in neither half of
+  // the money, so every dollar field is 0 on the wire. The tokens are still a
+  // measurement and stay beside the dash.
+  const html = render({
+    prunes: 4,
+    pricedPrunes: 0,
+    cacheSavedUSD: 0,
+    invalidationUSD: 0,
+    netUSD: 0,
+  });
+  assert.doesNotMatch(html, /\$0\.00/);
+  assert.match(html, />—</);
+  assert.match(html, /40\.0k tokens removed over 4 prunes/);
+  assert.match(html, /money over 0 of 4/);
+});
+
+test("an unpriced run with an unmeasured fork says at least once, not twice", () => {
+  const html = render({
+    prunes: 4,
+    pricedPrunes: 0,
+    unmeasuredPrunes: 1,
+    cacheSavedUSD: 0,
+    invalidationUSD: 0,
+    netUSD: 0,
+  });
+  assert.doesNotMatch(html, /\$0\.00/);
+  assert.match(html, /at least 40\.0k tokens removed over 4 prunes/);
+  assert.doesNotMatch(html, /at least &middot;|at least ·/);
+});
+
+test("a priced run's headline is unchanged by the unpriced case", () => {
+  const html = render({ prunes: 4, pricedPrunes: 1, netUSD: 1.2 });
+  assert.match(html, /\+\$1\.20/);
+  assert.doesNotMatch(html, />—</);
+});
