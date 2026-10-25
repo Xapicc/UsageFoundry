@@ -28,6 +28,7 @@ import {
   worksInChosenFolder,
   type BlockDraft,
   type Box,
+  type IsolationKnowledge,
   type LinkDraft,
   type Point,
 } from "@/lib/canvasGraph";
@@ -247,6 +248,7 @@ export function WorkflowCanvas({
   onRemoveBlock,
   onRepeat,
   onFrameMember,
+  isolation,
 }: {
   blocks: readonly BlockDraft[];
   links: readonly LinkDraft[];
@@ -277,6 +279,12 @@ export function WorkflowCanvas({
    * carry it out are `linksWithMember`/`linksWithoutMember` in the editor.
    */
   onFrameMember: (loopId: string, blockId: string) => void;
+  /**
+   * Which blocks work in a checkout of their own, from what the editor already
+   * holds. It decides whether a frame's last block "lands" a pass or "ends" it;
+   * absent reads every block as isolating, the reading before it existed.
+   */
+  isolation?: IsolationKnowledge;
 }) {
   const sheetRef = useRef<HTMLDivElement>(null);
   const handledByPointer = useRef(false);
@@ -338,8 +346,8 @@ export function WorkflowCanvas({
    * keep up with the hand, since the frame tracks the box being dragged.
    */
   const regions = useMemo(
-    () => bodyRegions(blocks, links, positions),
-    [blocks, links, positions],
+    () => bodyRegions(blocks, links, positions, isolation),
+    [blocks, links, positions, isolation],
   );
   const frameOrigin = regions.find((r) => r.loopId === frameFrom);
   const framing = frameSource !== undefined && frameOrigin !== undefined;
@@ -358,6 +366,7 @@ export function WorkflowCanvas({
             index,
             region.memberIds.length,
             id === region.exitId,
+            region.lands,
           ),
         }),
       );
@@ -1175,8 +1184,10 @@ export function WorkflowCanvas({
                       region.exitId === null
                         ? region.memberIds.length === 0
                           ? ""
-                          : ". No merge block to land a pass through"
-                        : `, landing through ${label(
+                          : region.lands
+                            ? ". No merge block to land a pass through"
+                            : ". The pass ends in more than one place"
+                        : `, ${region.lands ? "landing through" : "ending at"} ${label(
                             blocks.find((b) => b.id === region.exitId),
                           )}`
                     }. ${passCapLabel(owner)}, ${endingLabel(owner)}.${
@@ -1923,9 +1934,18 @@ function linkTone(link: LinkDraft, selection: CanvasSelection | null): LinkTone 
  * — the merge block a pass's work becomes visible to the next pass through.
  * Ordinal for the last member of a section that ends anywhere else, which is a
  * graph the server refuses: the mark may not claim a landing that is not there.
+ * A section that works in the folder throughout lands nothing, so its exit
+ * "ends the pass" — the work is already where the next pass reads.
  */
-function sectionMark(index: number, size: number, isExit: boolean): string {
-  if (isExit) return index === 0 ? "the whole pass" : "lands the pass";
+function sectionMark(
+  index: number,
+  size: number,
+  isExit: boolean,
+  lands: boolean,
+): string {
+  if (isExit) {
+    return index === 0 ? "the whole pass" : lands ? "lands the pass" : "ends the pass";
+  }
   if (index === 0) return "starts a pass";
   if (index === size - 1) return `last of ${size}`;
   return `${index + 1} of ${size}`;

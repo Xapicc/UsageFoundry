@@ -42,9 +42,12 @@ import {
   linksOfGraph,
   linksWithKind,
   linksWithMember,
+  linksWithTemplate,
   linksWithoutMember,
   resolveLayout,
+  blockIsolates,
   sectionExit,
+  sectionLands,
   sectionLink,
   sectionLinkStatement,
   sectionOf,
@@ -53,6 +56,7 @@ import {
   worstCaseMembers,
   worstCaseRuns,
   type BlockDraft,
+  type IsolationKnowledge,
   type LinkDraft,
   type Point,
   type ThresholdDraft,
@@ -500,6 +504,11 @@ export function WorkflowEditor({
     weekly: boolean;
   } | null>(null);
   const [templates, setTemplates] = useState<RunTemplateDTO[]>([]);
+  // The guards in Settings, which a block that names no template runs under.
+  // True until the read below answers: a section is taken to land its work
+  // until it is known not to, which is what every surface said before a section
+  // could work in the folder.
+  const [defaultIsolate, setDefaultIsolate] = useState(true);
   const [mounts, setMounts] = useState<WorkspaceMountDTO[]>([]);
   const [folders, setFolders] = useState<WorkspaceFolderDTO[]>([]);
   // The saved registry and the definitions on disk this app did not write, off
@@ -654,6 +663,7 @@ export function WorkflowEditor({
       const res = await jsonRequest<{ settings?: SettingsDTO }>("/api/settings");
       const s = res.ok ? res.data.settings : undefined;
       if (!live || !s) return;
+      setDefaultIsolate(s.chatDefaultGuards.isolate);
       setCeilings({
         session:
           s.planUsageFromApi ||
@@ -678,6 +688,16 @@ export function WorkflowEditor({
   const templateName = useCallback(
     (id: string) => templates.find((t) => t.id === id)?.name ?? null,
     [templates],
+  );
+
+  // Which blocks work in a checkout of their own, from the two things this page
+  // already read: the templates and the guards in Settings. No fetch of its own.
+  const isolation = useMemo<IsolationKnowledge>(
+    () => ({
+      defaultIsolate,
+      templates: new Map(templates.map((t) => [t.id, t.isolate])),
+    }),
+    [defaultIsolate, templates],
   );
 
   const foldersFor = useCallback(
@@ -740,8 +760,14 @@ export function WorkflowEditor({
       if (kind !== undefined) {
         setLinks((prev) => linksWithKind(id, kind, blocks, prev));
       }
+      // The other field that decides it: a template whose guards work in the
+      // folder leaves a block with no branch to carry — see `linksWithTemplate`.
+      if (patch.templateId !== undefined) {
+        const after = blocks.map((b) => (b.id === id ? { ...b, ...patch } : b));
+        setLinks((prev) => linksWithTemplate(id, after, prev, isolation));
+      }
     },
-    [blocks],
+    [blocks, isolation],
   );
 
   const removeBlock = useCallback((id: string) => {
@@ -821,8 +847,8 @@ export function WorkflowEditor({
       setLinks((prev) => {
         const inside = sectionOf(loopId, blocks, prev).includes(blockId);
         const next = inside
-          ? linksWithoutMember(loopId, blockId, blocks, prev)
-          : linksWithMember(loopId, blockId, blocks, prev);
+          ? linksWithoutMember(loopId, blockId, blocks, prev, isolation)
+          : linksWithMember(loopId, blockId, blocks, prev, isolation);
         return next ?? prev;
       });
       // The block that moved, not the frame: what an operator checks next is
@@ -830,7 +856,7 @@ export function WorkflowEditor({
       // is a panel that has just grown back its own guards.
       setSelection({ kind: "block", id: blockId });
     },
-    [blocks],
+    [blocks, isolation],
   );
 
   const connect = useCallback(
@@ -861,13 +887,13 @@ export function WorkflowEditor({
           : [
               ...prev,
               inSection
-                ? sectionLink(from, to, prev, blocks)
+                ? sectionLink(from, to, prev, blocks, isolation)
                 : { from, to, edge: "" as const, continueBranch: false },
             ],
       );
       setSelection({ kind: "link", from, to });
     },
-    [blocks, links],
+    [blocks, links, isolation],
   );
 
   const updateLink = useCallback(
@@ -1166,6 +1192,17 @@ export function WorkflowEditor({
     [blocks],
   );
 
+  // Whether either end of the selected link is a block whose guards work in the
+  // folder, which changes what the panel may say about a branch.
+  const worksInFolder = (id: string) => {
+    const block = blocks.find((b) => b.id === id);
+    return (
+      block !== undefined &&
+      (block.kind === "run" || block.kind === "orchestrator") &&
+      !blockIsolates(block, isolation)
+    );
+  };
+
   return (
     <>
       {/* No heading here: the page that mounts this carries its own <h1>, the
@@ -1206,6 +1243,7 @@ export function WorkflowEditor({
             onRemoveBlock={removeBlock}
             onRepeat={repeatSection}
             onFrameMember={frameMember}
+            isolation={isolation}
           />
 
           {/* The server's own sentence, asked while the graph is being drawn.
@@ -1270,6 +1308,7 @@ export function WorkflowEditor({
                 links={links}
                 templates={templates}
                 templateName={templateName}
+                isolation={isolation}
                 agents={agents}
                 agentsLoaded={agentsLoaded}
                 ambientLine={ambientLine}
@@ -1293,6 +1332,9 @@ export function WorkflowEditor({
                 fromKind={kindOf(selectedLink.from)}
                 toKind={kindOf(selectedLink.to)}
                 insideSection={sections.get(selectedLink.from)}
+                inFolder={
+                  worksInFolder(selectedLink.from) || worksInFolder(selectedLink.to)
+                }
                 carriedFrom={
                   selectedCarrier === undefined
                     ? undefined
@@ -1648,6 +1690,7 @@ function BlockStatement({
   block,
   body,
   links,
+  isolation,
   guards,
   where,
   asAgent,
@@ -1663,6 +1706,8 @@ function BlockStatement({
   body: readonly BlockDraft[];
   /** The graph's links, which are what say where a pass lands its work. */
   links: readonly LinkDraft[];
+  /** Whether the section lands anything is read off which blocks isolate. */
+  isolation: IsolationKnowledge;
   guards: ReactNode;
   where: ReactNode;
   /**
@@ -1910,16 +1955,16 @@ function BlockStatement({
       worstCaseMembers(body),
     );
     const fansOut = body.some((member) => member.kind === "orchestrator");
-    // The merge block the section lands through, which is what makes a pass
-    // visible to the next one. Null where the section does not end at exactly
-    // one — a graph the server refuses — and named rather than assumed, because
-    // "each pass lands its own work" is a promise about the operator's own
-    // checkout and may not be made on a graph that has nowhere to land it.
-    const exitId = sectionExit(
-      body.map((member) => member.id),
-      body,
-      links,
-    );
+    // Where the pass ends. For a section that lands, the merge block that makes
+    // a pass visible to the next one; for one that works in the folder
+    // throughout, its last block, since the work is already where the next pass
+    // reads. Null where the section does not end at exactly one — a graph the
+    // server refuses — and named rather than assumed, because "each pass lands
+    // its own work" is a promise about the operator's own checkout and may not
+    // be made on a graph that has nowhere to land it.
+    const memberIds = body.map((member) => member.id);
+    const lands = sectionLands(memberIds, body, isolation);
+    const exitId = sectionExit(memberIds, body, links, isolation);
     const exit = body.find((member) => member.id === exitId);
 
     return (
@@ -1952,7 +1997,7 @@ function BlockStatement({
           ? " — a deciding member's own turn and its fan-out are spent again on every pass"
           : ""}
         .{" "}
-        {exit ? (
+        {exit && lands ? (
           <>
             Every pass lands its own work through{" "}
             <strong className="font-semibold text-ink">
@@ -1960,10 +2005,23 @@ function BlockStatement({
             </strong>
             , and the next pass starts from what landed.
           </>
-        ) : (
+        ) : exit ? (
+          <>
+            Every pass works in the folder itself and ends at{" "}
+            <strong className="font-semibold text-ink">
+              {blockLabel(exit)}
+            </strong>
+            , and the next pass starts from what it left.
+          </>
+        ) : lands ? (
           <span className="text-danger">
             No merge block ends the section, so a pass has nowhere to land its
             work and the next one could not see it.
+          </span>
+        ) : (
+          <span className="text-danger">
+            The section ends in more than one place, so a pass has no single
+            end.
           </span>
         )}{" "}
         It stops when every run of a pass reports the work complete, when a pass
@@ -1987,6 +2045,7 @@ function BlockPanel({
   links,
   templates,
   templateName,
+  isolation,
   agents,
   agentsLoaded,
   ambientLine,
@@ -2005,6 +2064,8 @@ function BlockPanel({
   links: readonly LinkDraft[];
   templates: RunTemplateDTO[];
   templateName: (id: string) => string | null;
+  /** Which blocks work in a checkout of their own, off the page's own reads. */
+  isolation: IsolationKnowledge;
   agents: AgentDTO[];
   agentsLoaded: boolean;
   ambientLine: string | null;
@@ -2215,6 +2276,7 @@ function BlockPanel({
         block={block}
         body={body}
         links={links}
+        isolation={isolation}
         guards={guards}
         where={where}
         asAgent={asAgent}
@@ -2363,8 +2425,15 @@ function BlockPanel({
                     body.map((other) => other.id),
                     body,
                     links,
+                    isolation,
                   )
-                    ? "lands the pass"
+                    ? sectionLands(
+                        body.map((other) => other.id),
+                        body,
+                        isolation,
+                      )
+                      ? "lands the pass"
+                      : "ends the pass"
                     : ""}
                 </span>
               </ListRow>
@@ -3143,6 +3212,7 @@ function LinkPanel({
   fromKind,
   toKind,
   insideSection,
+  inFolder,
   carriedFrom,
   onChange,
   onRemove,
@@ -3154,6 +3224,8 @@ function LinkPanel({
   toKind: WorkflowNodeKind;
   /** The loop that repeats both ends of this link, or undefined. */
   insideSection: string | undefined;
+  /** Either end works in the folder, so no branch passes between them. */
+  inFolder: boolean;
   /**
    * The block whose branch the target carries on through another link, or
    * undefined: a run holds one ref, so a fan-in hands only one branch on.
@@ -3173,6 +3245,7 @@ function LinkPanel({
       fromKind,
       toKind,
       carriedFrom,
+      inFolder,
     });
     return (
       <>

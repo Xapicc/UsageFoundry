@@ -762,6 +762,11 @@ export interface BodyRegion {
    */
   entryId: string | null;
   exitId: string | null;
+  /**
+   * Whether the section hands on a branch for its exit to land. False for the
+   * in-folder kind, whose exit is where a pass *ends* and may be any block.
+   */
+  lands: boolean;
   x: number;
   y: number;
   width: number;
@@ -769,19 +774,75 @@ export interface BodyRegion {
 }
 
 /**
- * The merge block a pass lands through, or null where there is not exactly one.
+ * What the editor knows about which blocks work in a checkout of their own,
+ * from the two things already on its page: the templates list and the guards in
+ * Settings. Optional wherever it is taken, and absent means "assume they do",
+ * which is the reading every surface had before an in-folder section existed.
+ */
+export interface IsolationKnowledge {
+  /** The guards in Settings, for a block that names no template. */
+  defaultIsolate: boolean;
+  /** Template id to whether its guards isolate. */
+  templates: ReadonlyMap<string, boolean>;
+}
+
+type IsolationBlock = { id: string; kind: WorkflowNodeKind; templateId?: string };
+
+/**
+ * Whether a run or orchestrator block works in a checkout of its own. The
+ * client's copy of `isolatedTemplate`, for `sectionOf`'s reason: this file is
+ * reached from a `"use client"` file and may not import `workflowGraph.ts`.
+ * `""` is no template, which is the guards in Settings.
+ */
+export function blockIsolates(
+  block: { templateId?: string },
+  known: IsolationKnowledge | undefined,
+): boolean {
+  if (!known) return true;
+  return !block.templateId
+    ? known.defaultIsolate
+    : (known.templates.get(block.templateId) ?? false);
+}
+
+/**
+ * Whether a section is a **landing** one — some member cuts or hands on a
+ * branch — rather than one that works in the folder throughout. The client's
+ * copy of `sectionLands`, with the same kind table: a review always, a run and
+ * an orchestrator when their guards isolate.
+ */
+export function sectionLands(
+  memberIds: readonly string[],
+  blocks: readonly IsolationBlock[],
+  known: IsolationKnowledge | undefined,
+): boolean {
+  return memberIds.some((id) => {
+    const block = blocks.find((b) => b.id === id);
+    if (!block) return false;
+    if (block.kind === "review") return true;
+    return (
+      (block.kind === "run" || block.kind === "orchestrator") &&
+      blockIsolates(block, known)
+    );
+  });
+}
+
+/**
+ * The block a pass ends at, or null where there is not exactly one.
  *
  * The client's reading of the rule `graphRefusal` enforces — a section is one
- * way in and one way out, and the way out must be a merge block, because that
- * is what makes a pass's work visible to the next one. Read rather than
- * asserted: this surface draws graphs the server has not judged yet, so a
- * section with two sinks or a sink that lands nothing has **no** exit to mark,
- * and the frame says so rather than picking one.
+ * way in and one way out. For a landing section the way out must be a merge
+ * block, because that is what makes a pass's work visible to the next one; for
+ * an in-folder section it may be any block, because the work is already in the
+ * folder. Read rather than asserted: this surface draws graphs the server has
+ * not judged yet, so a section with two sinks, or a landing one whose sink
+ * lands nothing, has **no** exit to mark and the frame says so rather than
+ * picking one.
  */
 export function sectionExit(
   memberIds: readonly string[],
-  blocks: readonly { id: string; kind: WorkflowNodeKind }[],
+  blocks: readonly IsolationBlock[],
   links: readonly LinkDraft[],
+  known?: IsolationKnowledge,
 ): string | null {
   const inside = new Set(memberIds);
   const sinks = memberIds.filter(
@@ -791,6 +852,7 @@ export function sectionExit(
       ),
   );
   if (sinks.length !== 1) return null;
+  if (!sectionLands(memberIds, blocks, known)) return sinks[0];
   return blocks.find((b) => b.id === sinks[0])?.kind === "merge"
     ? sinks[0]
     : null;
@@ -816,9 +878,10 @@ export function sectionExit(
  * same way round and React sees stable keys.
  */
 export function bodyRegions(
-  blocks: readonly { id: string; kind: WorkflowNodeKind }[],
+  blocks: readonly IsolationBlock[],
   links: readonly LinkDraft[],
   positions: ReadonlyMap<string, Point>,
+  known?: IsolationKnowledge,
 ): BodyRegion[] {
   const regions: BodyRegion[] = [];
   for (const block of blocks) {
@@ -849,7 +912,8 @@ export function bodyRegions(
       loopId: block.id,
       memberIds,
       entryId: memberIds[0] ?? null,
-      exitId: sectionExit(memberIds, blocks, links),
+      exitId: sectionExit(memberIds, blocks, links, known),
+      lands: sectionLands(memberIds, blocks, known),
       x,
       y,
       width: right + BODY_PAD - x,
@@ -908,7 +972,8 @@ export function blockLabel(
  * way, so the first way *in* carries one and each later one hands nothing on,
  * which is what two halves meeting again at one run means.
  *
- * **Only a run block has a branch at either end.** The other three are refused
+ * **Only a run block that works in a checkout of its own has a branch at
+ * either end.** The other three, and a run whose guards work in the folder, are refused
  * by name — an orchestrator decides and spends nothing on disk, a merge block
  * writes into somebody else's checkout and cuts none, and a loop holds no ref
  * at all — so a link that reaches one carries no branch however few there are
@@ -922,11 +987,18 @@ export function sectionLink(
   from: string,
   to: string,
   links: readonly LinkDraft[],
-  blocks: readonly { id: string; kind: WorkflowNodeKind }[] = [],
+  blocks: readonly IsolationBlock[] = [],
+  known?: IsolationKnowledge,
 ): LinkDraft {
-  const runs = (id: string) =>
-    blocks.length === 0 ||
-    blocks.find((b) => b.id === id)?.kind === "run";
+  // A run that works in the folder has no branch either, so in a section that
+  // works in the folder throughout no link carries one — the server refuses a
+  // hand-over at a block with no checkout, and a panel with no switch could
+  // not take it off.
+  const runs = (id: string) => {
+    if (blocks.length === 0) return true;
+    const block = blocks.find((b) => b.id === id);
+    return block?.kind === "run" && blockIsolates(block, known);
+  };
   return {
     from,
     to,
@@ -976,6 +1048,39 @@ export function linksWithKind(
 }
 
 /**
+ * The links once a block's template has changed, `linksWithKind`'s rule for the
+ * other field that decides whether a block holds a branch: a block whose guards
+ * now work in the folder stops carrying one on every link of a section it is
+ * in, because the panel offers no switch there to take it off and the server
+ * refuses a hand-over at a block with no checkout.
+ *
+ * `blocks` is the list **after** the change, since the answer is read off the
+ * new template. Outside a section the branch is left as it was, for
+ * `linksWithKind`'s reason.
+ */
+export function linksWithTemplate(
+  blockId: string,
+  blocks: readonly IsolationBlock[],
+  links: readonly LinkDraft[],
+  known: IsolationKnowledge | undefined,
+): LinkDraft[] {
+  const block = blocks.find((b) => b.id === blockId);
+  if (!block || blockIsolates(block, known)) return [...links];
+  const members = new Set(
+    blocks
+      .filter((b) => b.kind === "loop")
+      .flatMap((b) => sectionOf(b.id, blocks, links)),
+  );
+  return links.map((l) =>
+    l.continueBranch &&
+    (l.from === blockId || l.to === blockId) &&
+    members.has(l.from)
+      ? { ...l, continueBranch: false }
+      : l,
+  );
+}
+
+/**
  * How a link panel's first sentence ends for the condition drawn, or null while
  * the link has none. Read inside a sentence, so its own words rather than
  * `EDGE_OPTION_LABEL`'s, and one table for a link inside a section and outside
@@ -1004,6 +1109,8 @@ export interface SectionLinkEnds {
   toKind: WorkflowNodeKind;
   /** The block whose branch the target carries through another link, if any. */
   carriedFrom: string | undefined;
+  /** Either end is a run or orchestrator whose guards work in the folder. */
+  inFolder?: boolean;
 }
 
 /**
@@ -1051,6 +1158,7 @@ function sectionLinkBranch(
   ends: SectionLinkEnds,
 ): string {
   const { from, to, fromKind, toKind, carriedFrom } = ends;
+  if (ends.inFolder) return "No branch is handed over: the work stays in the folder.";
   if (toKind === "merge") {
     if (fromKind === "run") return `${to} lands ${from}'s branch.`;
     if (fromKind === "orchestrator") {
@@ -1188,8 +1296,9 @@ export function resolveRepeat(
 export function linksWithMember(
   loopId: string,
   blockId: string,
-  blocks: readonly { id: string; kind: WorkflowNodeKind }[],
+  blocks: readonly IsolationBlock[],
   links: readonly LinkDraft[],
+  known?: IsolationKnowledge,
 ): LinkDraft[] | null {
   const block = blocks.find((b) => b.id === blockId);
   if (!block || block.kind === "loop" || blockId === loopId) return null;
@@ -1204,19 +1313,26 @@ export function linksWithMember(
   }
 
   const entryId = members[0];
-  const exitId = sectionExit(members, blocks, links);
+  // A merge exit only: an in-folder section's sink is an ordinary last block,
+  // and a new one goes after it like any other link of a chain.
+  const sink = sectionExit(members, blocks, links, known);
+  const exitId =
+    sink !== null && blocks.find((b) => b.id === sink)?.kind === "merge" ? sink : null;
   if (exitId !== null && block.kind !== "merge") {
     if (exitId === entryId) {
       return [
         ...links.filter((l) => !(l.from === loopId && l.edge === "repeats")),
         { from: loopId, to: blockId, edge: "repeats", continueBranch: false },
-        sectionLink(blockId, exitId, links, blocks),
+        sectionLink(blockId, exitId, links, blocks, known),
       ];
     }
-    const withEntry = [...links, sectionLink(entryId, blockId, links, blocks)];
-    return [...withEntry, sectionLink(blockId, exitId, withEntry, blocks)];
+    const withEntry = [...links, sectionLink(entryId, blockId, links, blocks, known)];
+    return [...withEntry, sectionLink(blockId, exitId, withEntry, blocks, known)];
   }
-  return [...links, sectionLink(members[members.length - 1], blockId, links, blocks)];
+  return [
+    ...links,
+    sectionLink(members[members.length - 1], blockId, links, blocks, known),
+  ];
 }
 
 /**
@@ -1240,8 +1356,9 @@ export function linksWithMember(
 export function linksWithoutMember(
   loopId: string,
   memberId: string,
-  blocks: readonly { id: string; kind: WorkflowNodeKind }[],
+  blocks: readonly IsolationBlock[],
   links: readonly LinkDraft[],
+  known?: IsolationKnowledge,
 ): LinkDraft[] | null {
   const members = sectionOf(loopId, blocks, links);
   if (!members.includes(memberId)) return null;
@@ -1273,7 +1390,9 @@ export function linksWithoutMember(
         ...next,
         { from: loopId, to: first, edge: "repeats", continueBranch: false },
       ];
-      for (const other of rest) next = [...next, sectionLink(first, other, next, blocks)];
+      for (const other of rest) {
+        next = [...next, sectionLink(first, other, next, blocks, known)];
+      }
     }
     return next;
   }
@@ -1281,7 +1400,7 @@ export function linksWithoutMember(
   for (const from of predecessors) {
     for (const to of successors) {
       if (next.some((l) => l.from === from && l.to === to)) continue;
-      next = [...next, sectionLink(from, to, next, blocks)];
+      next = [...next, sectionLink(from, to, next, blocks, known)];
     }
   }
   return next;
