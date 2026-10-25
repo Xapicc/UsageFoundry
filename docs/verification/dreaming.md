@@ -4,6 +4,23 @@
 
 ## Verified
 
+- **The pane shows a night waiting to land, 2026-10-25**, standalone build at
+  `dbd4774e`, served over a scratch `DATA_DIR` and a scratch vault that is a git
+  repository, one night started with `startDreamingWriter` and read in Chromium
+  at 390px and 1280px in both skins: no console error and no sideways scroll in
+  any of the sixteen views (two states, two tabs). With the run ended and its branch untried, the Nights
+  tab drew `waiting to land` neutral beside the run's own badge, dated "As of
+  07:59 PM", and the Written tab put the same sentence and an `Open run` link
+  above `Nothing has been written into the vault yet`. After the operator's
+  uncommitted file made the queue refuse, both drew it warn-toned with the
+  queue row's own message (status `skipped`, the checkout has uncommitted
+  changes) and `Land or purge`, and `/api/dreaming` carried
+  `settling: false` with the row's `status` and `message`. Caveat: the boot sweep
+  stopped the seeded `queued` run the moment the server started, so the first
+  state is a stopped run with an untried branch and not a live one; the live-run,
+  in-queue and landed-unrecorded reasons were read only through the DTO cases in
+  `dreamingLanding.test.ts`, not rendered.
+
 - **A Dreaming night in a vault that can be isolated puts its notes in the vault
   before its signatures are claimed, 2026-10-24**, at `5c4b5570`, by
   `dreamingLanding.test.ts` against a real repository at a mount root that

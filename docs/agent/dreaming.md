@@ -65,6 +65,8 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - The pane does not poll.
 - Both lists on the pane say when they are cut.
 - The orchestrator reads both halves through `list_recurring_failures`, and the rules above follow it there.
+- A night whose notes are on a branch is "waiting to land" on the pane until the branch is in the vault.
+- A reason that moves by itself is drawn as of the read, and is never drawn as where the night ended.
 - The pane is the ninth row, directly under Knowledge, and `Pane.shortcut` is optional because of where that leaves the digits.
 
 ## [Steering agents to consult the vault](dreaming/vault-skill-steering.md)
