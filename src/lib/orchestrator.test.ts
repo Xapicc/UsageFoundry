@@ -82,6 +82,7 @@ const {
   frozenRunModel,
   codexPromptPreamble,
   childEnv,
+  cycleEnv,
   clampRunOffset,
   compactionNotice,
   currentSnapshot,
@@ -188,6 +189,8 @@ const { gitEnv } = require("./git") as typeof import("./git");
 const { cycleOutputs } = require("./cycles") as typeof import("./cycles");
 const { localCycleEnv } =
   require("./localProvider") as typeof import("./localProvider");
+const { cycleEnvPins, PINNED_CYCLE_ENV } =
+  require("./cycleInvocation") as typeof import("./cycleInvocation");
 
 const clash = (a: string, b: string) => overlaps(conflictKey(a), conflictKey(b));
 
@@ -3832,6 +3835,7 @@ describe("the cycle adapter", () => {
     vaultSkill: { pluginDir: "/data/skills/vault", vaultPath: "/vault" },
     readGuardDir: "/data/skills/read-guard",
     fileCostNotice: "Reading src/lib/orchestrator.ts costs 133k tokens.",
+    envPins: { ANTHROPIC_BASE_URL: "http://127.0.0.1:8789" },
   };
 
   /** Every flag, in the order the CLI receives them, repeats included. */
@@ -3863,6 +3867,8 @@ describe("the cycle adapter", () => {
       "--add-dir",
       "--resume",
       "--max-budget-usd",
+      // The pins, on a stock install with no write set as on one with.
+      "--settings",
       "--",
     ]);
     // And the prompt after the separator, last: see `promptArgs`.
@@ -3919,6 +3925,119 @@ describe("the cycle adapter", () => {
     // run in flight would change what the rest of that cycle's output means.
     assert.equal(selectCycleAdapter("claude"), adapter);
     assert.equal(Object.isFrozen(adapter), true);
+  });
+});
+
+/**
+ * A work cycle's `--settings` pins where its API requests go, over the
+ * checkout's own `.claude/settings.json`.
+ *
+ * Every way this is wrong is silent and costs the operator's credential. A pin
+ * left out of the overlay is a variable the project file alone decides, and
+ * measured on 2.1.310 that sent the key or the OAuth bearer to whatever host
+ * the file named. A second `--settings` drops the first without a word, so the
+ * pins and the write set share one. And a pin read off the wrong environment
+ * sends a local cycle to Anthropic.
+ */
+describe("cycleEnvPins — the endpoint a checkout's settings cannot move", () => {
+  const roots = ["/w/repo", "/w/repo/.git"];
+  const base = {
+    prompt: "do the thing",
+    model: null,
+    permissionMode: "acceptEdits" as const,
+    resumeSessionId: null,
+    isolated: true,
+    maxRunCostUSD: null,
+    spentGuardUSD: 0,
+    headroomUSD: null,
+  };
+  const overlayOf = (args: string[]) => {
+    assert.equal(args.filter((a) => a === "--settings").length, 1, "one --settings, or one half is dropped");
+    // Last before the separator, the place the write set has always had.
+    assert.equal(args.indexOf("--settings"), args.indexOf("--") - 2);
+    return JSON.parse(args[args.indexOf("--settings") + 1]) as {
+      env?: Record<string, string>;
+      sandbox?: { filesystem: { allowWrite: string[] } };
+    };
+  };
+
+  it("pins every listed variable, to \"\" where the environment has none", () => {
+    const pins = cycleEnvPins({ ANTHROPIC_BASE_URL: "http://127.0.0.1:8789", HTTPS_PROXY: "http://corp:3128" });
+    assert.deepEqual(Object.keys(pins), [...PINNED_CYCLE_ENV]);
+    assert.equal(pins.ANTHROPIC_BASE_URL, "http://127.0.0.1:8789");
+    assert.equal(pins.HTTPS_PROXY, "http://corp:3128");
+    // Left out rather than emptied, the project's value would be the only one.
+    assert.equal(pins.HTTP_PROXY, "");
+    assert.equal(pins.NODE_TLS_REJECT_UNAUTHORIZED, "");
+  });
+
+  it("names each variable measured to move the credential", () => {
+    for (const key of [
+      "ANTHROPIC_BASE_URL",
+      "HTTPS_PROXY",
+      "HTTP_PROXY",
+      "http_proxy",
+      "ALL_PROXY",
+      "NODE_TLS_REJECT_UNAUTHORIZED",
+      "NODE_EXTRA_CA_CERTS",
+      "CLAUDE_CODE_USE_VERTEX",
+      "CLAUDE_CODE_USE_BEDROCK",
+      "CLAUDE_CODE_USE_FOUNDRY",
+    ]) {
+      assert.equal((PINNED_CYCLE_ENV as readonly string[]).includes(key), true, `${key} is not pinned`);
+    }
+  });
+
+  it("never puts a credential on the argv", () => {
+    // `/proc/<pid>/cmdline` is readable by every process in the container.
+    const pins = cycleEnvPins({
+      ANTHROPIC_API_KEY: "sk-ant-secret",
+      ANTHROPIC_AUTH_TOKEN: "bearer-secret",
+      CLAUDE_CODE_OAUTH_TOKEN: "oauth-secret",
+      OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Bearer ingest-secret",
+    });
+    assert.doesNotMatch(JSON.stringify(pins), /secret/);
+  });
+
+  it("shares one --settings with the write set, and stands alone without one", () => {
+    const pins = cycleEnvPins({ ANTHROPIC_BASE_URL: "http://127.0.0.1:8789" });
+    const both = overlayOf(buildArgs({ ...base, envPins: pins, writableRoots: roots }));
+    assert.deepEqual(both.env, pins);
+    assert.deepEqual(both.sandbox?.filesystem.allowWrite, roots);
+
+    // A stock install, which has no managed sandbox and is every install by
+    // default: the pins alone, and still no write set naming a sandbox that is
+    // not on.
+    const stock = overlayOf(buildArgs({ ...base, envPins: pins, writableRoots: null }));
+    assert.deepEqual(stock, { env: pins });
+
+    assert.equal(buildArgs({ ...base, writableRoots: null }).includes("--settings"), false);
+  });
+
+  it("is never handed to Codex, which reads no .claude/settings.json", () => {
+    const args = buildCodexArgs({ ...base, workDir: "/w/repo", envPins: cycleEnvPins({}) });
+    assert.equal(args.includes("--settings"), false);
+  });
+
+  it("pins the environment the cycle is spawned with, a local server included", () => {
+    const previous = process.env.HTTPS_PROXY;
+    process.env.HTTPS_PROXY = "http://corp:3128";
+    try {
+      assert.equal(cycleEnvPins(cycleEnv({}, null)).HTTPS_PROXY, "http://corp:3128");
+    } finally {
+      if (previous === undefined) delete process.env.HTTPS_PROXY;
+      else process.env.HTTPS_PROXY = previous;
+    }
+
+    const signIn = {
+      baseUrl: "http://192.168.1.5:1234",
+      token: null,
+      model: "qwen",
+      contextTokens: null,
+      signedInAt: 0,
+    };
+    const local = cycleEnvPins(cycleEnv({}, { signIn, model: "qwen" }));
+    assert.equal(local.ANTHROPIC_BASE_URL, "http://192.168.1.5:1234");
   });
 });
 

@@ -1205,6 +1205,86 @@ export function cycleBudgetIsHeadroom(
   return Math.max(0, headroomUSD) < Math.max(0, maxRunCostUSD - spentGuardUSD);
 }
 
+/**
+ * The variables that decide where a cycle's API requests, and the credential
+ * on them, are sent.
+ *
+ * A work cycle loads its checkout's `.claude/settings.json` and
+ * `settings.local.json`, and their `env` is applied over the environment this
+ * app spawned it with. Measured on 2.1.310 against loopback stubs: a project
+ * `ANTHROPIC_BASE_URL` took every `/v1/messages` with the environment's
+ * `x-api-key`, or the `Authorization: Bearer` of an OAuth login; a project
+ * `HTTP_PROXY`, `http_proxy` or `ALL_PROXY` received winnow-shaped `http://`
+ * requests whole, key included; `NODE_TLS_REJECT_UNAUTHORIZED=0` or a
+ * `NODE_EXTRA_CA_CERTS` naming a CA committed beside it let a project
+ * `HTTPS_PROXY` decrypt the default `https://api.anthropic.com` traffic; and
+ * `CLAUDE_CODE_USE_VERTEX` sent the key to the project's Vertex URL. Whatever
+ * host answers also writes the usage the CLI reports, so the same file fills
+ * the install's spend meters. The repository is content an agent's `Bash`
+ * can write for the next cycle, and a clone can ship.
+ *
+ * `--settings` outranks both project scopes, so `cycleEnvPins` puts each of
+ * these back to the value the cycle was spawned with. Pinning rather than
+ * dropping project settings (`--setting-sources`) keeps the rest of a
+ * repository's settings working, and agent discovery unchanged (`agents.ts`).
+ *
+ * Not here, on purpose: the credentials themselves. A project
+ * `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` is the project's own key sent
+ * to the pinned host, which takes nothing of the operator's, and a pin would
+ * put the operator's key on an argv every process can read. Not here either,
+ * because measured as not honoured from a project file: `OTEL_*` (the exporter
+ * kept the environment's endpoint and token), `SSL_CERT_FILE` and
+ * `CLAUDE_CODE_API_BASE_URL`. `docs/agent/security/cycle-settings-env.md` has
+ * what is still open.
+ */
+export const PINNED_CYCLE_ENV = [
+  "ANTHROPIC_BASE_URL",
+  // Not honoured from a project file on 2.1.310, and pinned anyway: it names
+  // where a request goes, and "" was measured to change nothing.
+  "ANTHROPIC_UNIX_SOCKET",
+  // The provider switches rather than each provider's own endpoint keys: with
+  // the switch off, a project's Vertex or Bedrock URL is never read. An install
+  // whose server environment turns a provider on keeps that provider's
+  // endpoint keys open to a project file.
+  "CLAUDE_CODE_USE_BEDROCK",
+  "CLAUDE_CODE_USE_VERTEX",
+  "CLAUDE_CODE_USE_FOUNDRY",
+  "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+  "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
+  "CLAUDE_CODE_USE_MANTLE",
+  "CLAUDE_CODE_USE_GATEWAY",
+  "HTTPS_PROXY",
+  "https_proxy",
+  "HTTP_PROXY",
+  "http_proxy",
+  "ALL_PROXY",
+  "all_proxy",
+  "NO_PROXY",
+  "no_proxy",
+  "NODE_TLS_REJECT_UNAUTHORIZED",
+  "NODE_EXTRA_CA_CERTS",
+] as const;
+
+/**
+ * `PINNED_CYCLE_ENV` as the `env` of a cycle's `--settings`, read off the
+ * environment the cycle is spawned with.
+ *
+ * A variable the environment does not set is pinned to `""`, never left out:
+ * left out, the project's value is the only one and wins. `""` reads as unset
+ * to the CLI — with `ANTHROPIC_BASE_URL: ""` over a project URL, every
+ * connection went to `api.anthropic.com:443` — and to the node, python, curl
+ * and git a cycle's `Bash` starts, which inherit it.
+ *
+ * Every value lands on the argv, readable through `/proc/<pid>/cmdline`. That
+ * is why no credential is on the list; a proxy URL with a password in it is
+ * already in every cycle's environment, which every agent can print.
+ */
+export function cycleEnvPins(
+  env: Readonly<Record<string, string | undefined>>,
+): Record<string, string> {
+  return Object.fromEntries(PINNED_CYCLE_ENV.map((key) => [key, env[key] ?? ""]));
+}
+
 export function buildArgs(opts: {
   prompt: string;
   model: string | null;
@@ -1394,7 +1474,8 @@ export function buildArgs(opts: {
    * *not* the same as an empty list, which would be a confinement that permits
    * no writes at all. `sandboxWritableRoots` in `orchestrator.ts` owns which
    * readings produce which, and its doc carries why an install without a
-   * sandbox must keep an argv byte-identical to the one it had before.
+   * sandbox must get no write set. Such an install's `--settings` carries
+   * `envPins` alone.
    *
    * It arrives here rather than being appended to the finished argv by the run
    * loop, which is where it used to be, because the flag that carries it is not
@@ -1410,6 +1491,14 @@ export function buildArgs(opts: {
    * because Codex's own is always on.
    */
   writableRoots?: readonly string[] | null;
+  /**
+   * `cycleEnvPins` of the environment this cycle is spawned with, which
+   * `buildArgs` puts in the same `--settings` as the write set. Ignored by
+   * `buildCodexArgs`: `codex exec` reads no `.claude/settings.json`. Null or
+   * absent emits no pins, which is the argv from before they existed and is
+   * what a cycle whose checkout can redirect its credential gets.
+   */
+  envPins?: Readonly<Record<string, string>> | null;
   /**
    * Where the CLI should write this cycle's last message, for a CLI that offers
    * it. Ignored by `buildArgs`; `buildCodexArgs` turns it into
@@ -1635,13 +1724,16 @@ export function buildArgs(opts: {
   // The last flag, and that position is asserted rather than incidental: this
   // used to be appended by the run loop after `buildArgs` returned, so an
   // install with a managed sandbox has an argv on record whose flags end in
-  // these two entries and a stock install has one that never contained them.
-  if (opts.writableRoots && opts.writableRoots.length > 0) {
-    args.push(
-      "--settings",
-      JSON.stringify({ sandbox: { filesystem: { allowWrite: opts.writableRoots } } }),
-    );
-  }
+  // these two entries. One flag for both halves, because the CLI keeps only the
+  // last `--settings` it is given, so a second would drop the pins or the write
+  // set without a word.
+  const overlay = {
+    ...(opts.envPins ? { env: opts.envPins } : {}),
+    ...(opts.writableRoots && opts.writableRoots.length > 0
+      ? { sandbox: { filesystem: { allowWrite: opts.writableRoots } } }
+      : {}),
+  };
+  if (Object.keys(overlay).length > 0) args.push("--settings", JSON.stringify(overlay));
   args.push(...promptArgs(opts.prompt));
   return args;
 }
