@@ -193,6 +193,19 @@
   failed one case, and one that dropped the runs-first ordering of failures
   failed one case.
 
+- **A Codex run's banked tokens on the run page, runs list and live tile,
+  standalone build, 2026-10-25, branch `uf/usagefoundry-721638d11c0b-13-2187a73b`.**
+  Four Codex rows inserted into a scratch `DATA_DIR` under a running server:
+  34,000 reported with 30,000 in `spent_tokens_est` (failed, one finished,
+  one running) and 34,000 with none. Opened in Chromium at 1280 and 390px. The
+  banked run's page said "64.0k tokens, 30.0k of them counted from the session
+  log" with "Codex reported 34.0k" under it and "64.0k tokens over its work
+  cycles" in the agent sentence; the other said "34.0k tokens, as Codex
+  reported them". The list drew 64.0k with "includes 30.0k from session log"
+  and 34.0k bare, and the tile 64.0k and 34.0k likewise. No console error, no
+  sideways scroll, and `npm run smoke-pages` was 100/100 on the standalone
+  bundle. Caveat: seeded rows, not a cycle killed for real.
+
 ## Not yet verified by hand
 
 - **The instant Sonnet 5.5's cache read price fell is a choice, not a reading.**
