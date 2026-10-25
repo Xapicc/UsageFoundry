@@ -174,6 +174,13 @@ export interface ReviewRow {
   /** What was judged, so the opinion outlives the checkout and the branch. */
   base_sha: string | null;
   head_sha: string | null;
+  /**
+   * When a validation was asked for, where `created_at` is when its child
+   * spawned. Null for a row with no request time of its own (a review, a
+   * resolution, a validation from before the column), which every comparison
+   * against a segment floor reads as `created_at`, never as zero.
+   */
+  asked_at: number | null;
 }
 
 /**
@@ -227,14 +234,18 @@ export function getAssist(id: string): ReviewRow | null {
 }
 
 /**
- * Whether one of this kind is running — with `since`, one begun at or after it,
- * which is how a boundary leaves out a check from before the run's last
+ * Whether one of this kind is running. With `since`, one asked for at or after
+ * it, which is how a boundary leaves out a check from before the run's last
  * pick-up. Null counts every one.
+ *
+ * Asked for rather than spawned: a claim that waited behind another check
+ * spawns after the pick-up it was asked before, and `asked_at` is the only
+ * column that says so. A row without one is read by `created_at`.
  */
 export function assistRunning(runId: string, kind: AssistKind, since: number | null = null): boolean {
   const row = db()
     .prepare(
-      "SELECT COUNT(*) AS n FROM run_reviews WHERE run_id = ? AND kind = ? AND status = 'running' AND created_at >= ?",
+      "SELECT COUNT(*) AS n FROM run_reviews WHERE run_id = ? AND kind = ? AND status = 'running' AND COALESCE(asked_at, created_at) >= ?",
     )
     .get(runId, kind, since ?? 0) as { n: number };
   return row.n > 0;
@@ -528,6 +539,12 @@ export interface AssistRequest {
   /** The two commits it read, recorded so the verdict stays re-checkable. */
   baseSha?: string | null;
   headSha?: string | null;
+  /**
+   * When a validation was asked for, recorded on the row as `asked_at`. Only a
+   * validation can have waited between the asking and the spawn, so only its
+   * caller passes one; absent, the row has none and reads as `created_at`.
+   */
+  askedAt?: number | null;
 }
 
 /**
@@ -577,8 +594,8 @@ export function startAssist(req: AssistRequest): ReviewOutcome {
     .prepare(
       `INSERT INTO run_reviews
          (id, run_id, kind, created_at, status, model, diff_files, diff_shown,
-          truncated, resolved_paths, task_id, base_sha, head_sha)
-       VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?)`,
+          truncated, resolved_paths, task_id, base_sha, head_sha, asked_at)
+       VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -597,6 +614,7 @@ export function startAssist(req: AssistRequest): ReviewOutcome {
       // judged, which is the one claim these columns exist to support.
       req.baseSha ?? null,
       req.headSha ?? null,
+      req.askedAt ?? null,
     );
 
   emitRunEvent({
