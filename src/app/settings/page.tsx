@@ -2523,14 +2523,24 @@ function EnvRow({ label, children }: { label: string; children: ReactNode }) {
     // narrower than the 6px between rows, so a stacked pair still reads as one.
     <div className="flex max-md:flex-col gap-2 max-md:gap-0.5">
       <dt className="w-24 max-md:w-auto shrink-0 text-ink-faint">{label}</dt>
-      {/* `break-all` and not `break-words`: these values are operator paths, and
-          a path is one unbreakable token. `overflow-wrap: break-word` lets a
-          box break such a token only once it already has a width — it does not
-          change the *min-content* contribution, so the grid column above still
-          sized itself to the whole string and the pair measured 433px in a
-          358px `dl`. Measured against a `DATA_DIR` under `/private/var/…`; the
-          container's own `/data` is short enough to have hidden it. */}
-      <dd className="min-w-0 break-all text-ink-muted">{children}</dd>
+      {/* `overflow-wrap: anywhere` and neither `break-all` nor `break-words`.
+          These values are operator paths, and a path is one unbreakable token,
+          so the cell has to be able to break inside one. `break-word` does not
+          do it where it counts: it lets a box break such a token only once it
+          already has a width, and leaves the *min-content* contribution at the
+          whole string, so the grid column above still sized itself to the path
+          and the pair measured 433px in a 358px `dl` (against a `DATA_DIR`
+          under `/private/var/…`; the container's own `/data` is short enough
+          to have hidden it). `break-all` fixed that and broke the other half
+          of the cell: the status prose that shares it ("a sandbox that cannot
+          start stops the CLI") wrapped at whatever character fit, mid-word,
+          because it breaks every line at the last character that fits.
+          `anywhere` counts in min-content like `break-all` does, but a break
+          inside a token is taken only when the token cannot fit a line of its
+          own; `word-break: normal` hands prose its word boundaries back. */}
+      <dd className="min-w-0 text-ink-muted [word-break:normal] [overflow-wrap:anywhere]">
+        {children}
+      </dd>
     </div>
   );
 }
@@ -5278,7 +5288,7 @@ export default function SettingsPage() {
             <ul className="list-disc space-y-1.5 pl-4">
               {plugins.problems.map(({ message, enabledPath }) => (
                 <li key={message}>
-                  {/* `anywhere` rather than the `dd` above's `break-all`: a
+                  {/* `anywhere` rather than `break-all`: a
                       message is prose around a path, and `break-all` splits
                       the prose mid-word too. `anywhere` still counts the
                       path's break points in the min-content width, which is

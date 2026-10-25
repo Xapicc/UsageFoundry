@@ -169,6 +169,35 @@
   `TaskEditor` were not opened, only their dialog's computed `word-break` read.
   One Chromium, one font stack.
 
+- **`EnvRow`'s value cell wraps prose at spaces and still holds a long path
+  inside its column, 2026-10-25** (`npm run build` at `94ec70ff` with and
+  without the change, standalone bundle against a scratch `DATA_DIR`,
+  `CLAUDE_HOME` and workspace root each a 70-character hyphen-free directory
+  name, a `CLAUDE_BIN` and a `CODEX_BIN` that cannot spawn, `/api/local-provider`
+  intercepted so the Local model row drew signed in; Chromium 151.0.7922.34 via
+  Playwright 1.62.1, skin in `localStorage` before first paint; `/settings`
+  read with the sign-in token set and with it blank). Mid-word was counted per
+  character: a line break between two letters or digits in a word of 24
+  characters or fewer outside a `mono` span, read off each character's range
+  rect, so a break after a hyphen or slash is not counted. Before: the `<dd>`
+  read `word-break: break-all` and `overflow-wrap: normal`, and all 8 readings
+  (both skins, 390 and 1280, token on and off) had a prose word broken, 25 in
+  all, across the Admin key, GitHub token, Sandbox, Sign-in, Claude account and
+  Codex account rows ("sandbox", "CLI", "stays", "spawn"). After:
+  `word-break: normal` and `overflow-wrap: anywhere`, 0 prose words broken in
+  all 8. The `dl` is 358px at 390 and its `scrollWidth` equals its
+  `clientWidth` in every reading, the document's the same, no `<dd>` is wider
+  than its row and none scrolls, both before and after (748px at 1280 default,
+  624px ascii). What still breaks inside a token after the change is a token
+  longer than its line: the two paths, the 75-character mount label, and the
+  Local model row's `window`, which is the row's own `mono break-all` span and
+  was left as it was. `npm run smoke-pages`: 100/100 page loads clean on the
+  standalone bundle, run on the changed tree only. Caveats: the Claude and Codex
+  rows were read in their "unreadable" state and Local model signed in by
+  intercept, so the signed-in and signed-out lines of the two account rows, the
+  GitHub token's "configured" line and the failed-sign-ins row were not drawn;
+  the sheets are `Sheet`'s and were not re-read. One Chromium, one font stack.
+
 ## Not yet verified by hand
 
 - **The shared layer's 390px pass (2026-09-10) was never on a real phone or
