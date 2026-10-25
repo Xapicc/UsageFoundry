@@ -100,20 +100,35 @@
   on a drawn block and a switch of the settings default were not exercised in the
   browser, and no section has been run end to end by a real agent.
 
+- **A landing section that ends in the folder, drawn in the built editor
+  2026-10-25 (branch `uf/usagefoundry-721638d11c0b-32`, standalone build over a
+  scratch `DATA_DIR`, Chromium at 2200×1000 and 390×900, bearer auth).** The
+  operator's shape — an orchestrator (fan-out 10, a template that isolates), a
+  merge block, and a run on a template that does not — saved through
+  `POST /api/workflows` (200). The frame marked the entry *starts a pass · up to
+  10*, the merge *lands the branches · merge* and the run *ends the pass*; the
+  loop's panel read "Every pass lands its branches through Merge branches, then
+  works in the folder itself and ends at Bughunt new code" and priced it "up to
+  60 runs" (5 passes of 12); its member list marked the merge *lands the
+  branches* and the run *ends the pass*; the run's inspector said "Works
+  directly in the folder" under Guards and the orchestrator's "The runs it
+  starts work in a checkout of their own"; at 390px the list marked the same
+  two; no console error. The same graph over the real routes: the run on the
+  default guards was refused 400 naming "it names no template, and the default
+  guards in Settings isolate", on a template that isolates "its template
+  “Isolated” isolates", and the merge-to-run link set to *either way* was
+  refused 400 with the folder-mid-merge sentence. Seeded over HTTP, not drawn by
+  hand.
+
 ## Not yet verified by hand
 
-- **A landing section that ends in the folder, in the built editor — not yet
-  seen.** The frame marks the merge in front of the tail *lands the branches*
-  and the tail's exit *ends the pass*, the loop's panel reads "Every pass lands
-  its branches through Merge, then works in the folder itself and ends at …",
-  and a block's inspector carries "Works in a checkout of its own" or "Works
-  directly in the folder" beside its guards picker. Open: that each reads right
-  at 390px and 1280px, that the line follows a template change on the drawn
-  block, and that a link drawn from the merge into the tail saves. The pure half
-  (the editor and the server agreeing on the tail) is checked in
-  `canvasGraph.test.ts`. To settle it: save "orchestrator → merge → run on an
-  in-place template" through `POST /api/workflows` on a standalone build over a
-  scratch `DATA_DIR` and open `/workflows/<id>/edit`.
+- **The tail's editor gestures are untried by hand.** Open: that drawing a link
+  from the merge into a tail block, a template change on a drawn block (the
+  inspector's "Works in …" line should follow it) and a change of the settings
+  default all behave, and that the line reads right in the 390px inspector. The
+  pure half is checked against the server's normalizer in `canvasGraph.test.ts`.
+  To settle it: open the saved tail workflow in `/workflows/<id>/edit` and do
+  each.
 
 - **Nothing has run a landing section's tail under a real agent, and the failed
   merge that leaves a folder mid-merge was read from `unwind`, not produced.**
