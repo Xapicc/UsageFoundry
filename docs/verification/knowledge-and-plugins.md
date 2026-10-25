@@ -113,6 +113,14 @@
   Caveat: notes that existed were searched with today's text, and the sample
   includes every known-positive run, so one run in six is an upper bound.
 
+- **The gate with the query writer told the vault's topics from its tags,
+  2026-10-25.** Same 151 runs and graders as above, the titles cut to three as
+  shipped: notes named for 21 runs; every pick graded, 21 of 34 useful, 12
+  background, 1 irrelevant, no invented path; 10 of 14 known-positive runs got
+  a note, 3 of 3 known-empty got none. About $0.0023 a run, the description
+  adding ~230 tokens to each query call. Caveat: one run each, so the
+  difference from the hand-written description is within noise.
+
 - **The gate's flags and model on the pinned 2.1.280, 2026-10-25.** `--tools ""`,
   `--json-schema`, `--setting-sources ""`, `--strict-mcp-config` and
   `--disable-slash-commands` are accepted and `structured_output` is returned;
