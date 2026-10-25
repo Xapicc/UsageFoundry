@@ -708,6 +708,8 @@ half handled. A merge block has no guards, so it is never asked. The switch
 gets a checkout of its own comes from its template, and the block's inspector
 says which it is.
 
+**A tail has to leave the folder clean.** Nothing commits what a block that works in the folder edits. When a landing section ends in such a tail, the loop looks at the folder before it opens the next pass: if the tail left uncommitted changes — an edit, or a file git has not seen — it stops, naming the tail and the first files, before any run of that pass exists. Otherwise that pass's branches would be cut without that work and its merge would be refused over it. Have the tail commit what it changes, or discard it, and then *Carry on* from the instance page. A tail that leaves the folder clean is not asked anything.
+
 **Count the runs before you press Run.** A section multiplies, and an
 orchestrator block in one multiplies twice over — its fan-out cap is what it may
 start *each time it is reached*, and a section reaches it once a pass. So one

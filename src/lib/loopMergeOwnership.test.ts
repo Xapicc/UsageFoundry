@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { after, before, beforeEach, describe, it } from "node:test";
+import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 
 import { passMemberId } from "./passIds";
 
@@ -307,6 +307,8 @@ function commitOnBranch(branch: string, file: string): string {
 function settleQueuedRuns(
   instanceId: string,
   inFolder: (memberId: string) => boolean = () => false,
+  /** What an in-folder member's agent did to the folder before it finished. */
+  leave: () => void = () => {},
 ): void {
   for (const row of membersOf(instanceId)) {
     const run = dbMod
@@ -315,6 +317,7 @@ function settleQueuedRuns(
       .get(row.runId) as { status: string } | undefined;
     if (!run || run.status !== "queued") continue;
     if (inFolder(row.memberId)) {
+      leave();
       dbMod
         .db()
         .prepare("UPDATE runs SET status='completed', iterations=1, finished_at=? WHERE id=?")
@@ -653,7 +656,7 @@ describe("a block behind a pass's merge block", () => {
   });
 
   /** `drive`, watching the merge block and the run behind it at every step. */
-  async function driveWatching(instanceId: string) {
+  async function driveWatching(instanceId: string, leave?: () => void) {
     const seen = {
       stepsMerging: 0,
       earlyTail: 0,
@@ -662,7 +665,7 @@ describe("a block behind a pass's merge block", () => {
     };
     const deadline = Date.now() + 60_000;
     while (Date.now() < deadline) {
-      settleQueuedRuns(instanceId, tailRun);
+      settleQueuedRuns(instanceId, tailRun, leave);
       workflows.advanceInstances();
       await new Promise((resolve) => setTimeout(resolve, 50));
       const merge = workflows
@@ -742,5 +745,101 @@ describe("a block behind a pass's merge block", () => {
     const loopRow = blockRow(instanceId, "L");
     assert.equal(loopRow.status, "failed");
     assert.match(loopRow.error ?? "", /did not land everything it produced/);
+  });
+
+  // A case that fails part-way leaves what its tail wrote in the operator's
+  // tree, and the next case would then be refused a merge for it.
+  afterEach(() => {
+    git(repoRoot(), "reset", "--hard", "-q");
+    git(repoRoot(), "clean", "-fdq");
+  });
+
+  /**
+   * What the tail leaves behind, for a loop that takes a second pass.
+   *
+   * Nothing commits an in-folder run's work, so an edit or a new file the tail's
+   * agent did not commit is still in the operator's tree when the next pass
+   * would open. Its isolated runs branch from the last commit and never see it,
+   * and its merge is refused over it — after the runs were created and billed.
+   * The loop stops before the pass exists instead.
+   */
+  const leavings: Array<[string, () => void, RegExp]> = [
+    [
+      "an edit to a tracked file",
+      () => fs.appendFileSync(path.join(repoRoot(), "a.txt"), "tail was here\n"),
+      /M a\.txt/,
+    ],
+    [
+      "a file git has not seen",
+      () => fs.writeFileSync(path.join(repoRoot(), "tail-note.txt"), "tail was here\n"),
+      /\?\? tail-note\.txt/,
+    ],
+  ];
+
+  for (const [what, leave, shown] of leavings) {
+    it(`does not open pass 2 over ${what} the tail left, and carries on once it is committed`, async () => {
+      const instanceId = scene({ maxPasses: 2, section: tailSection });
+      let left = false;
+      const { members } = await driveWatching(instanceId, () => {
+        if (left) return;
+        left = true;
+        leave();
+      });
+
+      const passTwo = (id: string) => id.startsWith(passMemberId("L", 2, ""));
+      assert.deepEqual(
+        members.map((m) => m.memberId).filter(passTwo),
+        [],
+        "pass 2 was billed over a folder its merge would be refused",
+      );
+      assert.deepEqual(
+        workflows.blocksOf(instanceId).map((b) => b.nodeId).filter(passTwo),
+        [],
+        "pass 2 was opened over a folder its merge would be refused",
+      );
+      const loopRow = blockRow(instanceId, "L");
+      assert.equal(loopRow.status, "failed");
+      assert.match(loopRow.error ?? "", /Pass 2 of “Chip away” was not started/);
+      assert.match(loopRow.error ?? "", /“T”/, "the sentence does not name the tail");
+      assert.match(loopRow.error ?? "", shown);
+      assert.match(loopRow.error ?? "", /commit what it changes/);
+
+      // Offered, with the same sentence, while the folder is still dirty.
+      const offered = workflows
+        .pickUpsOf(workflows.getInstance(instanceId)!)
+        .filter((p) => p.kind === "loop");
+      assert.equal(offered.length, 1);
+      assert.match(offered[0].kind === "loop" ? (offered[0].refusal ?? "") : "", /was not started/);
+      const refused = workflows.resumeLoop(instanceId, "L");
+      assert.equal(refused.ok, false, "the press carried a loop on over a dirty folder");
+      assert.equal(blockRow(instanceId, "L").status, "failed", "a refusal wrote nothing");
+
+      git(repoRoot(), "add", "-A");
+      git(repoRoot(), "commit", "-q", "-m", "what the tail left");
+
+      const back = workflows
+        .pickUpsOf(workflows.getInstance(instanceId)!)
+        .filter((p) => p.kind === "loop");
+      assert.equal(back[0].kind === "loop" ? back[0].refusal : "?", null);
+      assert.deepEqual(workflows.resumeLoop(instanceId, "L"), { ok: true });
+      const second = await driveWatching(instanceId, () => {});
+      assert.ok(
+        second.members.some((m) => passTwo(m.memberId)),
+        "pass 2 never opened once the folder was clean",
+      );
+      assert.equal(blockRow(instanceId, passMemberId("L", 2, "m")).status, "emitted");
+      assert.match(blockRow(instanceId, "L").error ?? "", /limit of 2 pass\(es\)/);
+    });
+  }
+
+  it("takes pass 2 as before when the tail left the folder clean", async () => {
+    const instanceId = scene({ maxPasses: 2, section: tailSection });
+    const { members } = await driveWatching(instanceId);
+
+    assert.ok(members.some((m) => m.memberId === passMemberId("L", 2, "t")));
+    assert.equal(blockRow(instanceId, passMemberId("L", 2, "m")).status, "emitted");
+    const loopRow = blockRow(instanceId, "L");
+    assert.equal(loopRow.status, "emitted", loopRow.error ?? "");
+    assert.match(loopRow.error ?? "", /limit of 2 pass\(es\)/);
   });
 });

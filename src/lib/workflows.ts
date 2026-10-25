@@ -133,6 +133,7 @@ import { getTemplate, listTemplates, type RunTemplate } from "./templates";
 import { WORKSPACE_MOUNTS, mountById } from "./config";
 import { dataDirRefusal } from "./serverLock";
 import { notStringRefusal } from "./http";
+import { gitSync } from "./git";
 import {
   passMemberId,
   passMemberIn,
@@ -277,6 +278,7 @@ import {
   normalizeWorkflowInput,
   resolveBoardFolder,
   sectionLands,
+  sectionTail,
   sharedFolderRefusal,
   withChosenFolder,
   workingFolders,
@@ -5777,11 +5779,97 @@ const NO_PASS_CAP =
   "a loop without a cap.";
 
 /**
+ * Whether a pass finished whole: every member settled and completed, so what
+ * decides the next one is the read between the two and not the pass.
+ */
+function passWhole(pass: LoopPass | undefined): pass is LoopPass {
+  return (
+    pass !== undefined &&
+    pass.members.length > 0 &&
+    passSettled(pass) &&
+    pass.members.every(memberCompleted)
+  );
+}
+
+/**
+ * Why the pass after `settled` may not open because its in-folder tail left the
+ * folder uncommitted, or null when there is no tail or it left the folder clean.
+ *
+ * A landing section's tail edits the operator's checkout in place, and nothing
+ * commits an in-folder run's work (`docs/agent/isolation-and-landing/` — the
+ * only commits are the operator's, `commitPending` and a landing's own). So what
+ * the tail leaves is still in the tree when the next pass starts, and that
+ * costs twice: the pass's isolated runs branch from the last commit and never
+ * see it, and its merge is refused over it at `planItem` — after the runs were
+ * created and billed. Refused here, before either, and **not** by committing on
+ * the tail's behalf: that would put commits on the operator's own branch that
+ * nobody asked for, which no other door of this app does.
+ *
+ * Read with the queue's own rule, `git status --porcelain` non-empty or
+ * unreadable, so an untracked file counts and an ignored one does not. The
+ * folder is the one the tail's run recorded rather than one resolved from the
+ * node, because that is where it actually worked.
+ *
+ * Synchronous for `advanceLoop`'s reason, and the one place a pass boundary
+ * spawns git: once per pass, only for a section that has a tail.
+ */
+function tailLeftDirt(
+  loop: WorkflowNode,
+  section: LoopSection,
+  settled: LoopPass,
+): string | null {
+  // Structural: which blocks come after every merge does not depend on what any
+  // of them isolates, so the answer is the same however the guards stand now.
+  const { tail } = sectionTail(section.nodes, section.graph.edges, () => false);
+  if (tail.size === 0) return null;
+
+  const names = new Set<string>();
+  const folders = new Set<string>();
+  for (const member of settled.members) {
+    if (!tail.has(member.nodeId) || !member.run) continue;
+    const row = db()
+      .prepare("SELECT folder FROM runs WHERE id = ?")
+      .get(member.run.id) as { folder: string } | undefined;
+    if (!row) continue;
+    names.add(`“${section.nodes.find((n) => n.id === member.nodeId)?.name ?? member.name}”`);
+    folders.add(row.folder);
+  }
+
+  const next = settled.pass + 1;
+  const works = [...names].join(", ");
+  for (const folder of folders) {
+    const status = gitSync(folder, ["status", "--porcelain"]);
+    if (!status.ok) {
+      return (
+        `Pass ${next} of “${loop.name}” was not started: the folder ${works} ` +
+        `worked in could not be read (${status.stderr || "git status failed"}), ` +
+        "so what it left there is not known and the pass's merge could be " +
+        "refused over it."
+      );
+    }
+    if (status.stdout === "") continue;
+    const lines = status.stdout.split("\n");
+    const shown = lines.slice(0, 3).join(", ");
+    const more = lines.length > 3 ? ` and ${lines.length - 3} more` : "";
+    return (
+      `Pass ${next} of “${loop.name}” was not started: the folder ${works} ` +
+      `worked in has uncommitted changes (${shown}${more}). Nothing commits ` +
+      `what a block that works in the folder edits, so pass ${next}'s runs ` +
+      "would branch from the last commit without it and its merge would be " +
+      `refused over it. Have ${works} commit what it changes, or discard it ` +
+      "before it ends, then carry the loop on."
+    );
+  }
+  return null;
+}
+
+/**
  * Why pass `pass` of a loop cannot be carried on, or null when it can. Pass 0 is
  * a loop that failed before it had one.
  *
- * Pure over the instance as read, so a pick-up asks it before writing anything
- * and refuses with the sentence rather than half-reopening. A loop still
+ * Pure over the instance as read — bar one `git status` of the folder a tail
+ * worked in — so a pick-up asks it before writing anything and refuses with the
+ * sentence rather than half-reopening. A loop still
  * `looping` is always fine: the pass is live, and reviving its members is the
  * whole of what there is to do.
  */
@@ -5794,7 +5882,8 @@ function loopPassRefusal(
     (b) => b.nodeId === loopNodeId && b.kind === "loop",
   );
   if (!loop) return "That loop is not part of this workflow run.";
-  const latest = loopPasses(instance.id, loopNodeId).at(-1)?.pass ?? 0;
+  const latestRow = loopPasses(instance.id, loopNodeId).at(-1);
+  const latest = latestRow?.pass ?? 0;
   if (pass !== latest) {
     return (
       `Pass ${pass} of “${loop.nodeName}” is not its latest — pass ${latest} ` +
@@ -5831,6 +5920,13 @@ function loopPassRefusal(
     if (typeof node.maxPasses !== "number") return NO_PASS_CAP;
     const board = loopBoardCount(node);
     if (!board.ok) return `Its tasks could not be counted: ${board.error}`;
+    // The other read `advanceLoop` makes between two passes, and asked only of a
+    // pass that settled whole: a pass with a blocked member never reached its
+    // tail, so what is in the folder is not the tail's to answer for.
+    if (passWhole(latestRow)) {
+      const dirt = tailLeftDirt(node, loopSection(instance.graph, node), latestRow);
+      if (dirt) return dirt;
+    }
   }
   return null;
 }
@@ -7430,6 +7526,14 @@ function advanceLoop(
       // rows rather than a count somebody has to keep: a pass whose entry run
       // has been created and whose merge block does not exist yet would
       // otherwise read as settled.
+      // Before anything of the pass exists, so a refusal bills nothing: this
+      // pass's runs would branch from a commit that lacks what the tail left,
+      // and its merge would be refused over it.
+      const dirt = latest ? tailLeftDirt(node, section, latest) : null;
+      if (dirt) {
+        settleLoop(instanceId, nodeId, "failed", dirt);
+        return;
+      }
       openPass(instanceId, node, section, decision.pass);
       // Pass 1's entry starts after whatever released the loop; nothing is
       // carried between passes at all — see `stepPass`. Tested on the number

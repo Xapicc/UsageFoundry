@@ -88,6 +88,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - Mixed is refused rather than half supported, and that is the line and not an omission.
 - A landing section may end in an in-folder tail.
 - Why the tail is safe, and what that rests on.
+- The tail must leave the folder clean, and the loop refuses a pass over what it left rather than committing for it.
 - A link from a merge into the tail may not be `on-finish`, and the sentence says why.
 - A merge block drawn at the end of an in-folder section is answered by `graphRefusal`'s merge rule, and a second refusal for it in `loopBodyRefusal` would be wrong.
 - Nothing in a pass assumes the exit is a merge block, and the loop holds no claim on a folder.
