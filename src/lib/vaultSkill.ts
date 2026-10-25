@@ -212,9 +212,12 @@ export function renderVaultSkill(v: VaultSkillContext): string {
    itself fails, say so in your answer, fall back to the grep below, and state
    that what you are relaying is unranked.
 
-2. **Believe the abstention.** No confident match usually means the vault does
-   not cover the question, and saying so is a correct answer. Do not paper over
-   it with general knowledge.`
+2. **Believe the abstention, and not its converse.** No confident match
+   usually means the vault does not cover the question, and saying so is a
+   correct answer. Do not paper over it with general knowledge. A match means
+   much less: a large vault answers nearly every query with something, so read
+   each hit's one-line summary against the question and open only a note that
+   is about it — or none.`
     : `1. **This vault ships no ranked search**, so searching it is grep and grep is
    unranked. Say that whenever you relay a result: a hit is evidence that a
    phrase occurs in a note, not evidence that the note is about the question.

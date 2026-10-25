@@ -287,6 +287,11 @@ export function nextPrompt(o: {
    * before this one.
    */
   priorReads: string | null;
+  /**
+   * `vaultPointerNotice`'s block, for a run in the vault pointer's arm with a
+   * note to name, or null. Session-less only, for `priorReads`' reason.
+   */
+  vaultPointer: string | null;
   continuation: string;
   donePushback: string;
   /**
@@ -343,6 +348,11 @@ export function nextPrompt(o: {
       // from where you stopped" before it has been told the work is not its own.
       o.continuedFrom ? continuedWorkNotice(o.continuedFrom, o.continuedWork) : null,
       o.priorCycles > 0 ? priorWorkNotice(o.priorCycles, o.worktreeBranch) : null,
+      // Ahead of the prior-read pointer rather than after it, although it is the
+      // block more about the task: that one is an experiment in flight whose
+      // treatment is "directly ahead of the task", and moving it would change
+      // the arm halfway through the comparison.
+      o.vaultPointer,
       // Last of the orientation and directly ahead of the task, the slot the
       // proposal measured from: the notices above are about this branch and
       // this run's own work, and this one is about the repository's.

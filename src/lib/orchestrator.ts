@@ -102,6 +102,7 @@ import {
 import {
   recordRunTasks,
   recordTaskClaimAsked,
+  tasksLinkedToRun,
   unaskedTaskClaims,
   updateTask,
 } from "./tasks";
@@ -247,6 +248,7 @@ import {
   type IterationResult,
 } from "./cycleInvocation";
 import { priorReadsFor } from "./priorReads";
+import { resolveVaultPointer, vaultPointerNotice, type VaultPointer } from "./vaultPointer";
 
 /**
  * Runs Claude Code headlessly against a folder, iteration by iteration, and
@@ -11257,6 +11259,63 @@ export function claimTasksForRun(id: string): void {
   }
 }
 
+/**
+ * The vault pointer for a run about to open a conversation, or null for a run
+ * it does not consider — which is then in neither arm.
+ *
+ * Not considered, `priorReadsFor`'s list with one addition:
+ *
+ *   - **A Codex or local-model run**, for that function's reason: the arms are
+ *     Claude Code's, and the vault skill a pick is read through is too.
+ *   - **Dreaming's writer**, whose task is the vault itself.
+ *   - **A run with the vault skill off or unavailable.** The skill's switch is
+ *     the operator's answer to whether unattended agents are told a vault
+ *     exists, and naming its notes in a prompt is telling them. A vault with no
+ *     ranked search is skipped too: the pointer exists because search alone
+ *     names the wrong notes, and grep would name more of them.
+ *   - **A shutdown in progress**, which would otherwise be held open by a
+ *     classifier for a run that is about to be parked.
+ *
+ * Says what it decided on the run's own log in every outcome, as the holdout
+ * arm of the prior-read pointer does: a run that was shown nothing and one that
+ * was never asked read identically otherwise.
+ */
+async function vaultPointerFor(
+  id: string,
+  run: RunRow,
+): Promise<(VaultPointer & { vaultRoot: string }) | null> {
+  if (run.provider === "codex" || run.provider === "local") return null;
+  if (run.origin_ref?.startsWith("dreaming:")) return null;
+  if (isShuttingDown()) return null;
+  const skill = prepareVaultSkill();
+  if (skill.kind !== "ready" || skill.searchScript === null) return null;
+
+  const pointer = await resolveVaultPointer({
+    runId: id,
+    task: run.prompt,
+    taskTitles: tasksLinkedToRun(id).flatMap((t) => (t.title ? [t.title] : [])),
+    vaultRoot: skill.vaultPath,
+    searchScript: skill.searchScript,
+  });
+  const cost = `$${pointer.costUsd.toFixed(4)}`;
+  const named = pointer.picks.map((p) => `“${p.title}”`).join(", ");
+  if (pointer.failure !== null) {
+    log(id, `No vault pointer for this run: ${pointer.failure}. It starts without one (${cost} spent asking).`, {
+      vaultPointer: { arm: pointer.arm, failure: pointer.failure },
+    });
+  } else if (pointer.picks.length === 0) {
+    log(id, `No note in the vault bears on this task, so the opening prompt names none (${cost}).`);
+  } else if (pointer.arm === "pointer") {
+    log(id, `The opening prompt names ${pointer.picks.length} vault ${pointer.picks.length === 1 ? "note" : "notes"} for this task: ${named} (${cost}).`);
+  } else {
+    log(
+      id,
+      `This run is in the vault pointer's holdout, so the opening prompt does not name the ${pointer.picks.length} ${pointer.picks.length === 1 ? "note" : "notes"} that bear on its task: ${named} (${cost}).`,
+    );
+  }
+  return { ...pointer, vaultRoot: skill.vaultPath };
+}
+
 function claimTaskForRun(id: string, link: RunTaskDTO): void {
   if (link.status === null) {
     log(id, `A task this run was started for has been deleted (${link.id}).`);
@@ -11803,6 +11862,17 @@ export async function startRun(id: string): Promise<void> {
       provider: run.provider,
       originRef: run.origin_ref,
     });
+
+    // The vault notes that bear on this run's task, and which arm of their
+    // holdout it is in. Once per segment and only for a segment that opens a
+    // conversation, because the block is orientation for a fresh one and a
+    // resumed conversation already holds it; a fresh start later in the segment
+    // is sent the same picks, since the task they were picked for has not
+    // changed. Before the loop rather than beside `nextPrompt`, so that a Stop
+    // pressed while the gate is answering is read by the loop's first check
+    // and no cycle is spawned behind it.
+    const vaultPointer = sessionId === null ? await vaultPointerFor(id, run) : null;
+
     if (github.scope === "repository") {
       log(id, `GitHub credential scoped to ${github.key}`, { githubScope: github.key });
     } else if (github.scope === "none" && github.key !== null) {
@@ -12287,6 +12357,10 @@ export async function startRun(id: string): Promise<void> {
           priorReads?.arm === "pointer" && priorReads.paths.length > 0
             ? priorReadsNotice(priorReads.paths)
             : null,
+        vaultPointer:
+          vaultPointer?.arm === "pointer" && vaultPointer.picks.length > 0
+            ? vaultPointerNotice(vaultPointer.picks, vaultPointer.vaultRoot)
+            : null,
         continuation: settings.continuationPrompt,
         donePushback: settings.donePushbackPrompt,
         // Consumed here and cleared below, exactly as `followUp` is: a verdict
@@ -12333,6 +12407,19 @@ export async function startRun(id: string): Promise<void> {
           // prompt it shaped.
           ...(sessionId === null && priorReads
             ? { priorReads: { arm: priorReads.arm, paths: priorReads.paths.length } }
+            : {}),
+          // The vault pointer's record, on the same cycles and for the same
+          // reason. `paths` rather than a count, because whether a run then
+          // opened a named note is the first thing a read-back asks, and the
+          // tool events it is matched against carry paths.
+          ...(sessionId === null && vaultPointer
+            ? {
+                vaultPointer: {
+                  arm: vaultPointer.arm,
+                  paths: vaultPointer.picks.map((p) => p.path),
+                  costUsd: vaultPointer.costUsd,
+                },
+              }
             : {}),
         },
       });

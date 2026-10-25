@@ -2,7 +2,7 @@
 
 [← testing index](../testing.md)
 
-Read before adding or editing tests of `knowledge.ts`, `vaultSkill.ts`, `knowledgeGraph.ts`, `forceLayout.ts` and `canvasView.ts`.
+Read before adding or editing tests of `knowledge.ts`, `vaultSkill.ts`, `vaultPointer.ts`, `knowledgeGraph.ts`, `forceLayout.ts` and `canvasView.ts`.
 
 `knowledge.test.ts` is the vault reader, and it earns its place on the `parsePlanUsage` grounds one step further out: it parses a *format*, and the format belongs to another program that nothing here can ask.
 
@@ -45,6 +45,8 @@ The rest is the contract with the *reader*: that the resolved absolute path is i
 `findSearchScript`'s three cases pin the order and the absence, the absence being the one that matters: a script named but not there opens every cycle with a command that fails.
 
 Deliberately not tested is `writeVaultSkill`, whose claims are about ownership and mode on an install this suite does not run on — `privsep.test.ts` is where that reasoning lives, and it is on `verification.md`'s not-yet-verified list rather than pretended at here.
+
+`vaultPointer.test.ts` is what stands between a model's answer and a run's prompt, and it earns its place because every way of getting that wrong puts a plausible line in front of an agent and reports nothing. `readJudgeVerdict`'s cases are the ones the judge was seen to produce: a path it invented (the backtest's 443bf8bc named a note that was never offered), the same note twice, a section that is not a heading of that note (and one that is, with its `#` marks dropped, as the judge always wrote them), and more picks than the schema allowed — each pinned as dropped rather than trusted, since a pick naming a note the agent cannot open is worse than no pick. `readSearchHits` throws rather than answering empty on output that is not the search's JSON, because "the vault had nothing" is the wrong line to log for a script that broke. `mergeCandidates` pins best rank across queries, the rule that put the backtest's one recovered miss (879ea8c5's proposal note, found by the gate's own query and by no task title) in front of the judge. `noteShape` is the containment rule at its one read of the vault, with a symlink out and a `../` path refused. And the holdout case asserts the two experiments' arms actually differ over 400 ids: sharing a preimage would put the same runs in the same arm of both, which nothing later could separate. Deliberately not tested is `resolveVaultPointer`, which needs a `claude` and a vault; the backtest in `docs/verification/knowledge-and-plugins.md` is its measurement.
 
 `knowledgeGraph.test.ts` and `forceLayout.test.ts` are the graph view, and they earn their place on `knowledge.test.ts`'s grounds one layer up: every decision either file makes is invisible from the picture it produces, because a wrong graph is still a graph.
 

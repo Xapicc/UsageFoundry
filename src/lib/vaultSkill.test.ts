@@ -113,6 +113,9 @@ test("uses the vault's ranked search when it has one", () => {
     "the ranked search must be named as a runnable, quoted command",
   );
   assert.match(text, /Believe the abstention/);
+  // A hit is not coverage: the vault answered 493 of 530 task titles with a
+  // "confident" match in October, and a reading of 147 found 5 worth opening.
+  assert.match(text, /A match means\s+much less/);
 });
 
 test("says it is unranked when the vault has no search script", () => {

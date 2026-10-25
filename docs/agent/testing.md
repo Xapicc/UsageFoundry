@@ -443,6 +443,7 @@ Units that are about no test file in the tree:
 | `forceLayout.test.ts` |  |
 | `knowledge.test.ts` |  |
 | `knowledgeGraph.test.ts` | [harnesses] |
+| `vaultPointer.test.ts` |  |
 | `vaultSkill.test.ts` |  |
 
 ## [Dreaming](testing/dreaming.md)

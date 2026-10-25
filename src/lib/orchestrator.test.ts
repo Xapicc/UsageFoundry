@@ -1203,6 +1203,7 @@ describe("prompt for the next work cycle", () => {
     } | null,
     continuedWork: "READ-FIRST",
     priorReads: null as string | null,
+    vaultPointer: null as string | null,
     continuation: "CONTINUE",
     donePushback: "PUSHBACK",
     validation: null as string | null,
@@ -1419,6 +1420,19 @@ describe("prompt for the next work cycle", () => {
     assert.match(block, /\n {4}src\/lib\/orchestrator\.ts \(12 runs\)\n {4}CLAUDE\.md \(1 run\)$/);
     // The resumed conversation already holds it from the turn that opened it.
     assert.equal(nextPrompt({ ...base, priorReads: block }), wall("CONTINUE"));
+  });
+
+  it("names vault notes ahead of the prior-read block, and only in a new conversation", () => {
+    // Ahead of it rather than after: the prior-read block's slot is the
+    // treatment of an experiment in flight, and "directly ahead of the task"
+    // has to stay true for it.
+    const reads = priorReadsNotice([{ path: "src/lib/orchestrator.ts", runs: 12 }]);
+    const notes = "VAULT-NOTES";
+    const opened = nextPrompt({ ...base, sessionId: null, priorReads: reads, vaultPointer: notes });
+    assert.ok(opened.endsWith(wall(`${notes}\n\n${reads}\n\nTASK`)));
+    // Without the prior-read block it is the one directly ahead of the task.
+    assert.ok(nextPrompt({ ...base, sessionId: null, vaultPointer: notes }).endsWith(wall(`${notes}\n\nTASK`)));
+    assert.equal(nextPrompt({ ...base, vaultPointer: notes }), wall("CONTINUE"));
   });
 
   it("says nothing about a continued branch once the session exists", () => {
@@ -5079,6 +5093,7 @@ describe("the previous cycle's stopped background tasks, read back from the log"
         continuedFrom: null,
         continuedWork: "READ-FIRST",
         priorReads: null,
+        vaultPointer: null,
         continuation: "CONTINUE",
         donePushback: "PUSHBACK",
         validation: null,

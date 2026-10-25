@@ -97,6 +97,29 @@
   10ms throughout, and `pendingCount` 246 to 0 in 3.5 minutes, settling on 27
   orphans and 1 broken link. Caveat: HTTP only; nothing was rendered.
 
+- **How often runs consulted the vault, 2026-09-25 to 10-25, from transcripts.**
+  592 runs had `usagefoundry:knowledge-vault` in their skill list; 6 invoked
+  it, all on 09-26 and 09-27, and one of those cited what it found. 12 prompts
+  named a note and 9 of those runs opened it. Caveat: transcripts are kept 30
+  days, so nothing before 09-25 was visible.
+
+- **The vault pointer's gate, backtested on 151 of those runs, 2026-10-25.**
+  Haiku 5.5 on CLI 2.1.310 (the host's, not the pin), candidates restricted to
+  notes whose `created` precedes each run; picks graded by two independent
+  readers with the task and the note in front of them. Strict prompt: notes
+  named for 25 runs, 19 picks useful, 14 background, 1 irrelevant, 8 ungraded,
+  no invented path; 11 of 14 runs known to need a note got one, 3 of 3 known to
+  have none got nothing. About $0.002 and 3.2s (median judge call) a run.
+  Caveat: notes that existed were searched with today's text, and the sample
+  includes every known-positive run, so one run in six is an upper bound.
+
+- **The gate's flags and model on the pinned 2.1.280, 2026-10-25.** `--tools ""`,
+  `--json-schema`, `--setting-sources ""`, `--strict-mcp-config` and
+  `--disable-slash-commands` are accepted and `structured_output` is returned;
+  `claude-haiku-5-5` runs (`modelUsage` names it) but the CLI warns
+  `unrecognized_model` and reports $0.0018 for a call 2.1.310 reported at
+  $0.0001, which is why `gateCost` prices tokens itself.
+
 ## Not yet verified by hand
 
 - **The pending figures have never rendered.** Settings' *Still downloading*
@@ -167,3 +190,10 @@
   child produced and a real firing has not; none has been looked for. One billed
   run settles it: switch `readGuard` on, have a cycle read one file twice, and
   confirm the second read is refused and its row and line are there.
+
+- **The vault pointer has not run in the container.** Unverified there: that
+  the agent uid can run `python3` on the vault's search and `claude` in
+  `/run/uf-skills/uf-vault-gate`, that the gate's transcripts land in the
+  metering path, and that a run's `iteration` event carries `vaultPointer`.
+  Settled by one run with the vault skill on: its log line, its event and the
+  first prompt in its *Prompt* fold.
