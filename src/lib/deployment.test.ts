@@ -2099,6 +2099,98 @@ describe("the sandbox ships off, and its switch reaches the container", () => {
 });
 
 /**
+ * The managed policy, *run* rather than read, in both of the shapes it ships in.
+ *
+ * Inside a run's Bash sandbox `socket(AF_UNIX, …)` fails with EPERM before any
+ * path is involved, so a Go test that listens on a Unix socket dies on
+ * `listen unix …: socket: operation not permitted` — 110 results across ten
+ * days, mostly one repository's. The decision to allow it is one key,
+ * `sandbox.network.allowAllUnixSockets`, and the shape that makes it easy to
+ * lose is the one that has no `allowedDomains`: the `network` object used to
+ * exist only when a domain was named, so a key added to that object alone
+ * silently reached the fleets that name domains and not the ones that do not.
+ * Nothing else notices — the policy parses either way and the boot line reports
+ * a sandbox that is on.
+ *
+ * The block is executed with `chown` and `chmod` recorded away, against a
+ * scratch directory standing in for `/etc/claude-code`, and what it wrote is
+ * parsed with `JSON.parse` — a policy the CLI cannot parse has its whole
+ * sandbox block ignored, which takes `failIfUnavailable` with it. Whether the
+ * CLI then lifts the seccomp filter is what `docs/verification/` leaves to a
+ * running container.
+ */
+describe("the managed sandbox policy allows Unix sockets in both of its shapes", () => {
+  const entrypoint = fs.readFileSync(path.join(root, "docker-entrypoint.sh"), "utf8");
+
+  /** The `MANAGED_SETTINGS_DIR` assignment through the `fi` closing the sandbox `if`. */
+  function policyBlock(): string {
+    const start = entrypoint.search(/^MANAGED_SETTINGS_DIR=/m);
+    assert.notEqual(start, -1, "docker-entrypoint.sh no longer names a managed settings directory");
+    const end = entrypoint.slice(start).search(/^fi$/m);
+    assert.notEqual(end, -1, "the sandbox policy block has no closing `fi` at column 0");
+    return entrypoint.slice(start, start + end + "fi".length);
+  }
+
+  /** The keys these cases read; the policy carries more. */
+  interface WrittenPolicy {
+    sandbox: {
+      enabled?: boolean;
+      allowUnsandboxedCommands?: boolean;
+      enableWeakerNestedSandbox?: boolean;
+      network?: Record<string, unknown>;
+      filesystem?: { denyRead?: unknown };
+    };
+  }
+
+  /** One boot of that block, and the parsed policy it left behind. */
+  function writtenPolicy(allowedDomains: string | undefined): WrittenPolicy {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "uf-managed-policy-"));
+    const block = policyBlock().replace(
+      /^MANAGED_SETTINGS_DIR=\S+$/m,
+      `MANAGED_SETTINGS_DIR='${dir}'`,
+    );
+    const stubs = ["chown() { :; }", "chmod() { :; }"].join("\n");
+    const env: NodeJS.ProcessEnv = { ...process.env, UF_SANDBOX: "1" };
+    delete env.UF_SANDBOX_ALLOWED_DOMAINS;
+    if (allowedDomains !== undefined) env.UF_SANDBOX_ALLOWED_DOMAINS = allowedDomains;
+    const result = spawnSync("sh", ["-c", `${stubs}\n${block}`], { encoding: "utf8", env });
+    assert.equal(result.status, 0, result.stderr);
+    const file = path.join(dir, "managed-settings.json");
+    assert.ok(fs.existsSync(file), `the block wrote no policy at ${file}: ${result.stderr}`);
+    // JSON.parse throwing is the assertion that the file parses; the cast only
+    // names the keys read below.
+    return JSON.parse(fs.readFileSync(file, "utf8")) as WrittenPolicy;
+  }
+
+  it("carries the key beside a named allowlist, and keeps the list pinned to this file", () => {
+    const { sandbox } = writtenPolicy("api.anthropic.com|github.com");
+    assert.deepEqual(sandbox.network, {
+      allowedDomains: ["api.anthropic.com", "github.com"],
+      allowManagedDomainsOnly: true,
+      allowAllUnixSockets: true,
+    });
+  });
+
+  it("carries the key with no allowlist, and still names no domain", () => {
+    // `allowedDomains` absent is "egress left alone"; an empty array would be
+    // a fleet that cannot reach the API it bills against. Adding the key must
+    // not turn the first into the second.
+    const { sandbox } = writtenPolicy(undefined);
+    assert.deepEqual(sandbox.network, { allowAllUnixSockets: true });
+  });
+
+  it("leaves the rest of the policy as it was in both shapes", () => {
+    for (const domains of [undefined, "api.anthropic.com"]) {
+      const { sandbox } = writtenPolicy(domains);
+      assert.equal(sandbox.enabled, true);
+      assert.equal(sandbox.allowUnsandboxedCommands, false);
+      assert.equal(sandbox.enableWeakerNestedSandbox, true);
+      assert.ok(Array.isArray(sandbox.filesystem?.denyRead), "the read deny is gone");
+    }
+  });
+});
+
+/**
  * `UF_LOCK_CLAUDE_HOME`'s two file-mode invariants, both of which fail silently.
  *
  * The lock gives `$CLAUDE_HOME_DIR` to root so a run cannot rewrite the

@@ -299,6 +299,51 @@ measurement. Turning it on is an experiment you are
 running rather than a control you are enabling. `docs/verification.md` carries
 every step that would settle it.
 
+**A sandboxed command can open Unix sockets, on purpose.** The managed policy
+carries `sandbox.network.allowAllUnixSockets: true`, with or without a domain
+list. Without it the CLI fails `socket(AF_UNIX, …)` with `EPERM` before any path
+is involved, and anything that listens on a Unix socket dies in its first line:
+110 Go test results over ten days, mostly one repository's, read `listen unix …:
+socket: operation not permitted`. On Linux there is no per-path rule — the CLI's
+`allowUnixSockets` is macOS-only, because a seccomp filter cannot read a path —
+so the key lifts the block for **every Unix socket a sandboxed command can reach
+by path**, and the CLI's own schema adds that it unblocks `AF_VSOCK` too.
+
+It is acceptable here because the block guards services outside the sandbox and
+this container has none worth reaching. Measured on the host on 2026-10-25 and
+re-checked from inside the container: no `/var/run/docker.sock`,
+`/run/docker.sock` or `/run/containerd/containerd.sock`, no mount with `sock` in
+its path, no `docker` CLI, no `/dev/vsock`, and the only sockets on the
+filesystem were the sandbox runtime's own egress bridges
+(`/tmp/claude-http-*.sock`, `/tmp/srt-mux-*.sock`). A bridge leads to the
+filtering proxy, which enforces the domain allowlist itself and, in the runtime
+read for this, also checks a per-session token that only that session's commands
+are handed — so dialling a bridge reaches the same allowlist rather than a way
+round it. No session opens a peer inbox either: every `claude` this app spawns
+carries `CLAUDE_CODE_HARBOR_KITE=0`, and no `cc-socks` socket exists. And the
+key was never a boundary a run could not move: `~/.claude/settings.json` is an
+honored source for sandbox settings and the agents own it (below), so a run
+could already have set it for itself unless `UF_LOCK_CLAUDE_HOME=1`.
+
+That is an argument from what the container holds today, and it stops holding
+the moment that changes:
+
+- **A socket put into the container.** A bind-mounted `docker.sock` is root on
+  the host, and with this key a sandboxed command can open it. Do not mount one
+  into a container that runs with `UF_SANDBOX=1`.
+- **An interactive `claude` run inside the container** without
+  `CLAUDE_CODE_HARBOR_KITE=0` opens a peer inbox under `/tmp/cc-socks/`, which a
+  sandboxed command can now write to.
+- **The egress allowlist's "no route around"** rests on there being no other
+  socket that leaves the container's network namespace, where before it also
+  rested on the filter this skips. Read out of the runtime, not run.
+
+The CLI also refuses its "device tools" on a sandbox that allows Unix sockets;
+it already did on `enableWeakerNestedSandbox`, and nothing in this app uses
+them. Read out of CLI 2.1.310 and sandbox-runtime 0.0.71, **not run**: the
+sandbox that wrote this refuses `AF_UNIX`, so that a sandboxed `bind` now
+succeeds is unmeasured until a rebuilt image runs it.
+
 **And one more surface, which is a policy file rather than a path.**
 `~/.claude/settings.json` is one of the sources Claude Code merges a sandbox
 policy from — the managed file above, `--settings` on the command line, and

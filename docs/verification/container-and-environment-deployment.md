@@ -211,3 +211,18 @@
 
 - **The `VACUUM` command in `README.md`**, never executed; check it names one
   `usagefoundry-data` volume and leaves the database file's ownership alone.
+
+- **That the image builds with Playwright 1.63.0 and a run finds its Chromium
+  1243** (board task `87df4938`). Read out of `playwright-core@1.63.0` against
+  1.62.1, not run: `.links`, the Debian 12 package lists and `install-deps` are
+  unchanged, and on arm64 the build moved to Chrome for Testing
+  (`chromium_headless_shell-1243/chrome-headless-shell-linux-arm64/`). The
+  ~640 MB / ~340 MB / 1.9 GB figures above are 1.62.1's and are not re-measured.
+  After the rebuild:
+  ```bash
+  docker compose up --build -d
+  docker compose exec usagefoundry ls /opt/playwright/browsers   # chromium-1243, chromium_headless_shell-1243, ffmpeg-*, .links
+  docker compose exec -u "$uid:$gid" usagefoundry playwright --version   # Version 1.63.0
+  # in auto upload, inside a run:
+  npx vitest run src/lib/browser src/lib/adapters/fansly.test.ts   # launches Chromium; was 50 failures
+  ```

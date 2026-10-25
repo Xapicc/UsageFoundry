@@ -464,6 +464,14 @@ RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CLI_VERSION}" && npm cach
 # a unix socket, and the seccomp filter is the whole of what stops a sandboxed
 # command dialling that socket directly. Absent, the allowlist is advice.
 #
+# That is the reasoning for a policy that leaves the filter on. The one this
+# image writes sets `network.allowAllUnixSockets` (docker-entrypoint.sh), which
+# makes the CLI skip the filter and its warning whether or not the applier is
+# here — so with the sandbox on, the applier below is installed but unused, and
+# what keeps the allowlist from being a way round is that the bridge sockets lead
+# to the proxy that enforces it and that nothing else in the container leaves
+# it. docs/security.md has the measurement and what would break it.
+#
 # Pinned on the same argument as the CLI above and as a second half of it. That
 # pin protects a contract read off one build rather than a specification, and
 # this adds the sandbox settings schema to what it covers: a renamed key leaves
@@ -493,10 +501,12 @@ RUN npm install -g "@anthropic-ai/sandbox-runtime@${SANDBOX_RUNTIME_VERSION}" \
 #
 # This is the most expensive line in the file and the number is worth writing
 # down: ~640 MB Chromium, ~340 MB for the headless shell that comes with it, and
-# ~250 MB of X, mesa and font packages, against a 1.9 GB image. `--only-shell`
-# would drop the first of those, but the shell is reachable only through
-# `--channel=chromium-headless-shell`, so every screenshot command an agent
-# writes from memory would fail — a saving paid for in failed tool calls.
+# ~250 MB of X, mesa and font packages, against a 1.9 GB image (all measured at
+# 1.62.1; the 1.63.0 arm64 builds are a different artifact and are not
+# re-measured). `--only-shell` would drop the first of those, but the shell is
+# reachable only through `--channel=chromium-headless-shell`, so every screenshot
+# command an agent writes from memory would fail — a saving paid for in failed
+# tool calls.
 # Firefox and WebKit are deliberately absent: a second and third engine answers
 # a rendering-*difference* question, and what is wanted here is "does it look
 # right at all". Both are one `playwright install` away for a run that needs them.
@@ -511,6 +521,23 @@ RUN npm install -g "@anthropic-ai/sandbox-runtime@${SANDBOX_RUNTIME_VERSION}" \
 # Playwright's output. What the pin buys is that the browser build (`chromium-…`)
 # is a function of this version, so an unpinned rebuild silently changes which
 # engine every screenshot in the fleet was taken with.
+#
+# That function is also why 1.63.0 and not the 1.62.1 this image carried before:
+# a repository's own Playwright looks for the build *its* version names, and the
+# one directory this image installs is a single build. auto upload pins 1.63.0,
+# which looks for `chromium_headless_shell-1243/` where 1.62.1 had installed 1234,
+# so 50 of its 660 tests died launching a browser that was right there under
+# another name. A repository on an older pin installs its own build beside this
+# one (the directory is `node`-writable for that, below).
+#
+# Read out of playwright-core 1.63.0 against 1.62.1, not run: `install()` still
+# writes `.links/<sha1>` under the browsers path, and its Debian 12 package lists
+# and `install-deps` are unchanged, so the `chmod`, the two `chown`s and the
+# entrypoint's `.links` block below are unaffected. What moved is arm64 only — the
+# build is now Chrome for Testing (`chrome-linux-arm64/chrome`,
+# `chrome-headless-shell-linux-arm64/…`) from the `builds/cft` path on
+# cdn.playwright.dev, where 1.62.1 had Playwright's own non-CfT build
+# (`chrome-linux/headless_shell`). x64 paths did not move.
 #
 # `/opt/playwright/browsers` rather than the default `$HOME/.cache/ms-playwright`,
 # and that is not cosmetic: `/home/node` is chowned recursively further down, and
@@ -541,7 +568,7 @@ RUN npm install -g "@anthropic-ai/sandbox-runtime@${SANDBOX_RUNTIME_VERSION}" \
 # on — but Playwright defaults `chromiumSandbox` to false, so the CLI and an
 # ordinary `launch()` both work unchanged. A script that asks for it explicitly
 # is the one thing that will not.
-ARG PLAYWRIGHT_VERSION=1.62.1
+ARG PLAYWRIGHT_VERSION=1.63.0
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright/browsers
 RUN set -eux; \
     PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \

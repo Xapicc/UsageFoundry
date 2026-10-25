@@ -552,17 +552,29 @@ if [ "${UF_SANDBOX:-}" = "1" ]; then
            "start stops the CLI rather than running unconfined." >&2 ;;
   esac
 
-  # Omitted entirely when no domain was named, rather than shipped empty: an
-  # empty allowlist is a fleet that cannot reach the API it bills against, and
-  # a domain list this project guessed at would fail inside a tool call the run
-  # loop does not read. Named, it also pins the list to *this* file —
-  # `~/.claude/settings.json` is an honored source for sandbox settings and is
-  # writable by the agents, so without allowManagedDomainsOnly a run widens its
-  # own allowlist and the next session starts against it.
-  network_block=""
+  # `allowedDomains` is omitted entirely when no domain was named, rather than
+  # shipped empty: an empty allowlist is a fleet that cannot reach the API it
+  # bills against, and a domain list this project guessed at would fail inside
+  # a tool call the run loop does not read. Named, it also pins the list to
+  # *this* file — `~/.claude/settings.json` is an honored source for sandbox
+  # settings and is writable by the agents, so without allowManagedDomainsOnly a
+  # run widens its own allowlist and the next session starts against it.
+  #
+  # `allowAllUnixSockets` is in both shapes, which is why the block is never
+  # empty. Without it the CLI applies a seccomp filter that fails
+  # `socket(AF_UNIX, …)` with EPERM before any path is involved, and 110 Go test
+  # results across ten days (mostly Dockrac's) died on `listen unix …: socket:
+  # operation not permitted`. The key is all-or-nothing on Linux — the CLI's own
+  # schema says `allowUnixSockets` is ignored there because seccomp cannot read
+  # a path — so this lifts the block for every socket a command can reach by
+  # path. What that costs, and why it is acceptable, is in docs/security.md. It
+  # also leaves the egress allowlist alone: that is enforced by the proxy the
+  # bridge sockets lead to, not by the filter this skips.
   domains="$(sandbox_domain_array "${UF_SANDBOX_ALLOWED_DOMAINS:-}")"
   if [ -n "$domains" ]; then
-    network_block="    \"network\": { \"allowedDomains\": [$domains], \"allowManagedDomainsOnly\": true },"
+    network_block="    \"network\": { \"allowedDomains\": [$domains], \"allowManagedDomainsOnly\": true, \"allowAllUnixSockets\": true },"
+  else
+    network_block="    \"network\": { \"allowAllUnixSockets\": true },"
   fi
 
   # Built beside the destination and moved onto it only once it parses. Two
