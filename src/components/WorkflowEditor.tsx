@@ -1964,7 +1964,7 @@ function BlockStatement({
     // A landing section may also end in blocks that work in the folder, after
     // its last merge: then the exit is the last of those, and the merge before
     // them lands the branches without ending the pass.
-    const { lands, exitId, exitLands, tailFedBy } = sectionShape(
+    const { lands, ends, exitId, exitLands, tailFedBy } = sectionShape(
       body.map((member) => member.id),
       body,
       links,
@@ -2031,7 +2031,7 @@ function BlockStatement({
             </strong>
             , and the next pass starts from what it left.
           </>
-        ) : lands ? (
+        ) : lands && ends.length < 2 ? (
           <span className="text-danger">
             No merge block ends the section, so a pass has nowhere to land its
             work and the next one could not see it.
