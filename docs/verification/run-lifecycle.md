@@ -182,6 +182,28 @@
   (re-measured: no `init`, no `result` text). Caveat: a stub accepts any message
   list, and the cut was at a line boundary rather than by a kill.
 
+- **A cycle the API refuses with a transient error has already written its
+  prompt to the session transcript, so the retry needs no `handBack`**
+  (2026-10-25, `claude` 2.1.310). Against a loopback stub API, with a fake key
+  and a scratch `CLAUDE_CONFIG_DIR` and `HOME` under `$TMPDIR`: a session
+  created while the stub answered normally, then `claude -p --output-format
+  stream-json --verbose --resume <id> -- <distinctive prompt>` while it refused
+  every request. Eight runs, one per refusal: 529 (twice, and once at the
+  default retry count), 503, 500 (default count), 429, a destroyed socket, and
+  a fresh `--session-id` cycle refused on its first request. Each exited 1 with
+  a `result` of `success`, `is_error: true`, `num_turns: 1`, `terminal_reason:
+  api_error` after one `system:api_retry` event, or ten at the default count
+  (182 s and 184 s for 529 and 500). In all eight the session `.jsonl` held the
+  prompt as a user turn and ended on a synthetic `assistant` line flagged
+  `isApiErrorMessage` (the file grew by 10 KB with one retry, 27 KB with ten).
+  In the seven that went on, the next `--resume` against a stub that answered
+  normally sent a request body containing the prompt. The `system:init` event
+  names the session before the refusal, which is what `adoptSession` reads, so
+  the retry resumes the same file. Caveat: the stub's body is `Overloaded` for
+  every status, `CLAUDE_CODE_MAX_RETRIES=1` stood in for the default in six of
+  the eight, and the refusal came on the first request after a clean session,
+  not after tool use.
+
 ## Not yet verified by hand
 
 - **No real `reopenRestartClosed` refusal has reached the restart notice.**
