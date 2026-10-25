@@ -314,3 +314,16 @@ nothing about it.
   `overflow-wrap: anywhere` on the `<dd>`, the pair `Sheet` already states. The
   Local model row's `mono break-all` span has the same shape over a URL and
   prose ("· 32,768-token window · token set") and is left as it was.
+- **2026-10-25, board task `da4ccc33`, class D, arguably B.** The signed-in
+  line of the Local model row on `/settings` was one `mono break-all` span
+  holding a URL and prose, so at 390px it read "qwen2.5-coder · http://127.0.0.1:11434/v1
+  · 32,768-token win" / "dow · token set", in both skins. The span's own
+  `break-all` outranked the `word-break: normal` and `overflow-wrap: anywhere`
+  that `208ee53d` gave `EnvRow`'s `<dd>`, which it would otherwise have
+  inherited, so that fix reached every row but this one. Arguably B because
+  `break-all` on a span is in the markup; D because `break-all` is right on the
+  two URL-only `<p>`s in the same file and wrong here, and which it is turns on
+  what the span holds, which only an engine shows as words broken. Found by
+  reading the row after `208ee53d` left it; fixed by stating the pair on the
+  span instead of `break-all`. The two URL-only `break-all` paragraphs are left
+  as they were.
