@@ -60,6 +60,48 @@
   give no longer holds, and `claude-opus-4-7[1m]` is still offered. Both are a
   decision for a change of their own.
 
+- **The 2.1.310 CLI still runs `--model claude-opus-4-7[1m]`, measured against a
+  stub API, 2026-10-25.** The real `claude -p --model <id> --output-format json`
+  against a loopback Node server answering `POST /v1/messages` as SSE, with a
+  fake `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL` on the loopback and a scratch
+  `HOME`; no credential was read and nothing was billed. For
+  `claude-opus-4-7[1m]` the exit is 0, nothing reaches stderr, and the request
+  body names `claude-opus-4-7`, with the suffix stripped and
+  `context-1m-2025-08-07` added to `anthropic-beta`. The same id without the
+  suffix sends the same model and no `context-1m` beta, and the reported
+  `total_cost_usd` is the same $0.00003 either way (one input and one output
+  token at $5/$25). `claude-sonnet-5-5[1m]` and `claude-haiku-5-5[1m]` behave
+  the same, and so does `claude-opus-4-5[1m]`, which no list names, so the CLI
+  reads `[1m]` as a suffix on any id and its list of nine is what its own picker
+  offers rather than what it accepts. Its model registry still marks
+  `claude-opus-4-7` `supports_1m_suffix` with a native 1M window. Caveat: the
+  stub never answered a real API, so whether the API accepts the beta header on
+  Opus 4.7 is unmeasured (it is a native-1M model, so the header is redundant),
+  and the app's own spawn was not driven; the item under *Not yet verified*
+  about the spawned argv is unchanged. Same arm64 package as above.
+
+- **The catalogue's seeds follow the 2.1.310 pin, 2026-10-25.** Re-grep of the
+  installed `claude.exe` (`claude --version` 2.1.310): 12 `sonnet-5-5`, 10
+  `haiku-5-5`, and nine `claude-…[1m]` ids, the 2.1.280 nine with
+  `claude-sonnet-5-5[1m]` in and `claude-opus-4-7[1m]` out (the short aliases
+  are five now, `opus`, `opusplan`, `fable`, `sonnet` and
+  `sonnet-4-5-20250929`, where 2.1.280 had seven). `claude-sonnet-5-5`,
+  `claude-sonnet-5-5[1m]` and `claude-haiku-5-5` are now seeded on, and
+  `claude-opus-4-7[1m]` is dropped from `ONE_MEGA_VARIANTS` and the seed rather
+  than seeded off. Measured on the built module: 36 entries, 20 on (18 before),
+  nine `[1m]` rows of which eight are on. No `[1m]` row for Haiku 5.5. Dropping
+  costs no transcript anything, because the table is read only by
+  `seedCatalogue`: `pricing.ts` prices `claude-opus-4-7[1m]` and
+  `claude-opus-4-7` on the same $5/$25 row, and no label is looked up from the
+  catalogue for a transcript. What an existing install sees: one that stores a
+  list keeps the row as its operator left it, moved behind the seeded ids and
+  now with a Remove button, and nothing refuses it; one that follows the seed
+  stops listing it, so a template, agent or default naming it is refused at the
+  run door as "not on this install's list" until it is typed back under Settings
+  → Models, which is the one case where the drop costs anything. No migration
+  edits a saved list. Caveat: the second half is read off `modelRefusal` and
+  `mergeSeededModels` on the built module and is not driven through a boot.
+
 - **The sandbox's config-directory binds re-read on 2.1.310, 2026-10-25: one
   name added.** `sandboxMountPoints.test.ts` threw at `y1t`, a third sidecar
   call in the `remote-settings.json` loop, written as `e+cY` with a default
