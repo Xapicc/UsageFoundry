@@ -49,6 +49,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Workflows and schedules | [workflows-and-schedules-folders.md](verification/workflows-and-schedules-folders.md) — one workflow against several saved folders, and two presses of it at once |
 | Concurrency and ownership | [concurrency-and-ownership.md](verification/concurrency-and-ownership.md) |
 | Isolation and landing | [isolation-and-landing.md](verification/isolation-and-landing.md) |
+| Isolation and landing | [isolation-and-landing-slot-context.md](verification/isolation-and-landing-slot-context.md): which `CLAUDE.md` and memory files a run in a slot loads from the directories above it |
 | Git and review | [git-and-review.md](verification/git-and-review.md) |
 | Git and review | [git-and-review-command-keys.md](verification/git-and-review-command-keys.md): which git configuration keys run a command, for the run's git-directory check |
 | Agents, templates and models | [agents-templates-and-models.md](verification/agents-templates-and-models.md) |
