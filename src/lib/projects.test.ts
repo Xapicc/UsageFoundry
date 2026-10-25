@@ -210,6 +210,26 @@ describe("planPush", () => {
     assert.equal(redactUrl("git@github.com:acme/widgets.git"), "git@github.com:acme/widgets.git");
   });
 
+  it("removes the whole userinfo of a URL whose password holds an unencoded @", () => {
+    // git and curl read the userinfo up to the last `@` before the first `/`, `?`
+    // or `#`, so stopping at the first one printed `ss@` of this password.
+    assert.equal(
+      redactUrl("https://user:p@ss@gitlab.example/o/r.git"),
+      "https://gitlab.example/o/r.git",
+    );
+    const url = "https://user:p@ss@gitlab.example/o/r.git";
+    const plan = planPush(facts({ upstream: { ...facts().upstream!, pushUrls: [url] } }), shown);
+    assert.doesNotMatch((plan as { reason: string }).reason, /p@ss|ss@/);
+    // An `@` after the authority belongs to the path, the query or the fragment.
+    for (const untouched of [
+      "https://elsewhere.example/@github.com/o/r",
+      "https://elsewhere.example/o/r?next=a@b",
+      "https://elsewhere.example/o/r#a@b",
+    ]) {
+      assert.equal(redactUrl(untouched), untouched);
+    }
+  });
+
   it("refuses a run's branch, which leaves by Deliver", () => {
     const run = { branch: "uf/widgets-1-abcdef12", runBranch: { runId: "abcdef1234567890" } };
     const plan = planPush(facts(run), { ...shown, branch: run.branch });

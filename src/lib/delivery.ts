@@ -81,9 +81,14 @@ export function parseRemote(url: string): Remote | null {
  * write; the browser has no use for the part before the `@`. Here rather than
  * in `projects.ts` because `planDelivery` below names a refused URL too and
  * `projects.ts` imports this module, not the other way round.
+ *
+ * The userinfo runs to the LAST `@` of the authority, which ends at the first
+ * `/`, `?` or `#`: git and curl read `https://user:p@ss@host/` that way, so a
+ * class that stopped at the first `@` printed the tail of the password. It
+ * still cannot cross a `/`, so an `@` in a path is left alone.
  */
 export function redactUrl(url: string): string {
-  return url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^@/?#]*@/i, "$1");
+  return url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/?#]*@/i, "$1");
 }
 
 export type DeliveryPlan =
