@@ -4,9 +4,11 @@ import {
   evaluateInstallBudget,
   installBudgetIsOff,
   normalizeInstallBudget,
+  spendHeadroom,
   type BudgetVerdict,
   type InstallBudgetPolicy,
   type InstallProgress,
+  type SpendHeadroom,
 } from "./budget";
 import { inFlightCostForOthers } from "./otlp";
 import { readCodexCycle } from "./codexRollout";
@@ -231,10 +233,33 @@ export function installBudget(): InstallBudgetPolicy {
 export function installBudgetVerdict(
   now = Date.now(),
 ): (BudgetVerdict & { allowed: false }) | null {
+  return installBudgetReading(now).verdict;
+}
+
+/**
+ * The verdict and, when it admits, what the limit has left — off **one**
+ * reading of `installSpend`.
+ *
+ * One reading is what makes the pair consistent: a headroom taken from a second
+ * `installSpend` could be zero or negative beside a verdict that had just said
+ * yes. `headroom` is therefore `null` both when the limit is off and when the
+ * verdict refuses, and in the second case nothing is spawned, so nothing needs
+ * a number. It is what a work cycle with no `maxRunCostUSD` is handed as
+ * `--max-budget-usd` (`cycleBudgetUSD`).
+ */
+export function installBudgetReading(now = Date.now()): {
+  verdict: (BudgetVerdict & { allowed: false }) | null;
+  headroom: SpendHeadroom | null;
+} {
   const policy = installBudget();
-  if (installBudgetIsOff(policy)) return null;
-  const verdict = evaluateInstallBudget(policy, installSpend(now));
-  return verdict.allowed ? null : verdict;
+  if (installBudgetIsOff(policy)) return { verdict: null, headroom: null };
+  const progress = installSpend(now);
+  const verdict = evaluateInstallBudget(policy, progress);
+  if (!verdict.allowed) return { verdict, headroom: null };
+  return {
+    verdict: null,
+    headroom: spendHeadroom("install", policy.maxInstallCostUSD, progress.spentGuardUSD),
+  };
 }
 
 /** The same, as the sentence a door with an error channel shows. */

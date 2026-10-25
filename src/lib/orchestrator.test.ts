@@ -2817,6 +2817,7 @@ describe("buildArgs", () => {
     maxRunCostUSD: null,
     maxRunCostFactor: null,
     spentGuardUSD: 0,
+    headroomUSD: null,
   };
 
   /**
@@ -3733,6 +3734,7 @@ describe("the cycle adapter", () => {
     isolated: true,
     maxRunCostUSD: 20,
     spentGuardUSD: 5,
+    headroomUSD: null,
     agent: {
       name: "reviewer",
       description: "reads diffs",
@@ -3867,6 +3869,7 @@ describe("buildCodexArgs", () => {
     resumeSessionId: null,
     maxRunCostUSD: null,
     spentGuardUSD: 0,
+    headroomUSD: null,
     // Deliberately unread by this builder and set anyway, because that is the
     // fact worth pinning: isolation is a Claude-side git grant, and Codex is
     // given the same run's checkout through `-C` and the sandbox instead.
@@ -5230,6 +5233,7 @@ describe("injectionFates", () => {
     maxRunCostUSD: null,
     maxRunCostFactor: null,
     spentGuardUSD: 0,
+    headroomUSD: null,
   };
 
   const fatesOf = (argv: string[]) =>
