@@ -6136,6 +6136,24 @@ export function resumeLoop(instanceId: string, loopNodeId: string): PickUpOutcom
   }
   const refusal = loopPassRefusal(instance, loopNodeId, pass);
   if (refusal) return { ok: false, status: 409, error: refusal };
+  // The rule `pickUpsOf` offers a loop by, asked of the press too: a loop the
+  // page offers nothing for would otherwise be answered ok here, released, and
+  // failed again on the same sentence — API only, but the same defect a pick-up
+  // exists to remove.
+  if (!passWouldProceed(instance, loopNodeId, pass)) {
+    return {
+      ok: false,
+      status: 409,
+      error:
+        pass === 0
+          ? `“${loop.nodeName}” repeats no section, so releasing it again would ` +
+            "fail it on the same sentence. Start the workflow again from its " +
+            "saved graph."
+          : `Pass ${pass} of “${loop.nodeName}” would stop on the same sentence ` +
+            "again, so there is nothing to carry on from until what stopped it " +
+            "has cleared.",
+    };
+  }
 
   db().transaction(() => {
     reopenLoopPass(instance, loopNodeId, pass);

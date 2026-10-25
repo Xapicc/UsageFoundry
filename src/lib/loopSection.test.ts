@@ -2227,6 +2227,31 @@ describe("a loop that failed before its first pass", () => {
     assert.match(loopBlock(instanceId).error ?? "", /repeats no section/);
     assert.deepEqual(loopPickUp(instanceId), []);
   });
+
+  it("is refused the press too, which would otherwise be answered ok and fail again", async () => {
+    const instanceId = scene({
+      nodes: [node("after")],
+      edges: [{ from: "L", to: "after", edge: "on-success" }],
+      body: [],
+      ownBlocks: [{ id: "after", kind: "run" }],
+    });
+    await drive(instanceId);
+    workflows.advanceInstances();
+    assert.deepEqual(loopPickUp(instanceId), [], "the page offers nothing for this loop");
+
+    const refused = workflows.resumeLoop(instanceId, "L");
+    assert.equal(refused.ok, false, "the press was answered ok by a loop the page offers nothing for");
+    assert.equal(refused.ok === false ? refused.status : null, 409);
+    assert.match(refused.ok === false ? refused.error : "", /repeats no section/);
+    assert.equal(loopBlock(instanceId).status, "failed");
+    assert.equal(blockRow(instanceId, "after").status, "blocked", "a refusal wrote nothing");
+    const notes = workflows.blocksOf(instanceId).find((b) => b.nodeId === "L")!.notes;
+    assert.deepEqual(
+      notes.filter((n) => /Picked up/.test(n)),
+      [],
+      "a refused press left a note saying it had carried the loop on",
+    );
+  });
 });
 
 describe("a loop that settles at its own release", () => {
