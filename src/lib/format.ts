@@ -849,12 +849,30 @@ export function guardBadge(
  */
 export type StoredFolderState = "none" | "listed" | "unread" | "absent";
 
+/**
+ * How the task editor's folder select spells a mount's own root.
+ *
+ * `""` is taken by "pick a folder", and `resolveTaskFolder` refuses a mount with
+ * no folder beside it as half a pair, so the root needs a spelling that is not
+ * empty and that `resolveWorkspaceFolder` already resolves to the mount and
+ * nothing above it: `path.resolve(root, ".")` is the root, and `".."` is still
+ * refused by both containment checks. It is the spelling `resolveBoardFolder`
+ * hands the same resolver for a loop's board condition. The scan behind
+ * `/api/folders` lists a mount's children and never the root, so the picker
+ * offers this one itself rather than the scan growing an entry other readers
+ * of it would have to know to skip.
+ */
+export const MOUNT_ROOT_FOLDER = ".";
+
 export function storedFolderState(
   mountId: string,
   folder: string,
   folders: ReadonlyArray<{ mountId: string; path: string }> | null,
 ): StoredFolderState {
   if (mountId === "" || folder === "") return "none";
+  // Offered by the picker whatever the scan holds, so it is neither a scan not
+  // yet read nor a folder the scan has lost.
+  if (folder === MOUNT_ROOT_FOLDER) return "listed";
   if (folders === null) return "unread";
   return folders.some((f) => f.mountId === mountId && f.path === folder)
     ? "listed"
@@ -871,7 +889,12 @@ export interface TaskProjectDraft {
 export function taskProjectDraft(
   task: Pick<TaskDTO, "mountId" | "relPath">,
 ): TaskProjectDraft {
-  return { mountId: task.mountId ?? "", folder: task.relPath ?? "" };
+  const mountId = task.mountId ?? "";
+  // A task filed on a mount root has `""` for its path within the mount, which
+  // the folder select draws as "pick a folder". Only with a mount: a task whose
+  // mount has since been removed carries its absolute path here, with no mount.
+  const folder = mountId && task.relPath === "" ? MOUNT_ROOT_FOLDER : (task.relPath ?? "");
+  return { mountId, folder };
 }
 
 /**

@@ -76,6 +76,7 @@ const {
   rejectedWorkReopen,
   readTaskLinks,
   recordRunTasks,
+  resolveTaskFolder,
   runLinksForTasks,
   taskDTO,
   taskIdShapeRefusal,
@@ -95,7 +96,8 @@ const { releaseTask, MAX_RELEASE_REASON } =
   require("./taskRelease") as typeof import("./taskRelease");
 const { listTaskComments } = require("./taskComments") as typeof import("./taskComments");
 const { claimTasksForRun } = require("./orchestrator") as typeof import("./orchestrator");
-const { taskProjectDraft, taskProjectPayload } = require("./format") as typeof import("./format");
+const { MOUNT_ROOT_FOLDER, taskProjectDraft, taskProjectPayload } =
+  require("./format") as typeof import("./format");
 
 /**
  * A `runs` row with nothing on it but the columns the insert refuses to be
@@ -801,6 +803,47 @@ test("a retitle saves on a task whose folder has gone, and keeps the stored pair
   fs.mkdirSync(path.join(ws, "moved-to"));
   const moved = editorSave(task, { folder: "moved-to" });
   assert.equal(moved.ok && moved.task.folder, path.join(ws, "moved-to"));
+});
+
+test("the editor's spelling of the mount root resolves to the root and nothing above it", () => {
+  // The form drew a mount-root task's folder as "pick a folder" because its
+  // path within the mount is "", and a select cannot be both. The spelling it
+  // now uses has to be one the door proves as exactly the root: the seed of a
+  // task already there, the root picked on purpose, and a filing on it.
+  const onRoot = file({ mountId: MOUNT, folder: ws });
+  const seeded = taskProjectDraft(taskDTO(onRoot));
+  const resolved = resolveTaskFolder(seeded.mountId, seeded.folder);
+  assert.deepEqual(resolved, { ok: true, mountId: MOUNT, folder: ws });
+
+  const inRepo = file({ mountId: MOUNT, folder: "RepoOne" });
+  const moved = editorSave(inRepo, { folder: MOUNT_ROOT_FOLDER });
+  assert.equal(moved.ok, true, !moved.ok ? moved.error : "");
+  assert.equal(getTask(inRepo.id)?.folder, ws);
+  assert.equal(taskDTO(getTask(inRepo.id)!).relPath, "");
+
+  const filed = normalizeTaskInput(
+    { title: "t", body: "b", mountId: MOUNT, folder: MOUNT_ROOT_FOLDER },
+    CREATION,
+  );
+  assert.equal(filed.ok && filed.value.folder, ws);
+
+  // The controls, which are what keeps "." from being a way out: both checks
+  // still hold. `./escape` is the symlink the second one exists for, and `..`
+  // spellings and absolute ones are the first's.
+  const refused: Array<[string, string, RegExp]> = [
+    [MOUNT, "..", /outside/i],
+    [MOUNT, "./..", /outside/i],
+    [MOUNT, ".//../outside", /outside/i],
+    [MOUNT, "/", /outside/i],
+    [MOUNT, path.dirname(ws), /outside/i],
+    [MOUNT, "./escape", /outside/i],
+    ["not-a-mount", MOUNT_ROOT_FOLDER, /No such workspace mount/i],
+  ];
+  for (const [mountId, folder, expected] of refused) {
+    const res = resolveTaskFolder(mountId, folder);
+    assert.equal(res.ok, false, `${mountId}:${folder} should be refused`);
+    assert.match(!res.ok ? res.error : "", expected);
+  }
 });
 
 test("a missing task is told apart from a refused one", () => {

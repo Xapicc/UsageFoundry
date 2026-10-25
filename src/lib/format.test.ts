@@ -24,7 +24,9 @@ import {
   resolveLiveModel,
   runPageNotes,
   storedFolderState,
+  taskProjectDraft,
   taskProjectPayload,
+  MOUNT_ROOT_FOLDER,
 } from "./format";
 import type {
   TaskCommentDTO,
@@ -293,6 +295,48 @@ test("a task with no project has nothing to keep, read or not", () => {
     // folder is cleared whenever the mount moves — and is nothing to warn of.
     assert.equal(storedFolderState("m1", "", scan), "none");
   }
+});
+
+test("a task on the mount root is drawn as a folder the picker offers, with nothing to warn of", () => {
+  // The scan lists a mount's children and never the root, so read as any other
+  // stored folder this was `unread` until the scan answered and `absent` after
+  // it, with the warning that the project had gone, on a project that is fine.
+  for (const scan of [null, [], SCAN]) {
+    assert.equal(storedFolderState("m1", MOUNT_ROOT_FOLDER, scan), "listed");
+  }
+  // The control: with no mount there is no root to be on, as for any folder.
+  assert.equal(storedFolderState("", MOUNT_ROOT_FOLDER, SCAN), "none");
+});
+
+test("the editor seeds a mount-root task with the root, never the pick-a-folder blank", () => {
+  // `relPath` is `path.relative(root, root)`, which is "", the select's own
+  // "pick a folder", so the project read as half a pair.
+  const root = taskProjectDraft({ mountId: "m1", relPath: "" });
+  assert.deepEqual(root, { mountId: "m1", folder: MOUNT_ROOT_FOLDER });
+  assert.notEqual(root.folder, "");
+  // The same draft is not a change, so a retitle still leaves the project out.
+  assert.deepEqual(taskProjectPayload(root, root), {});
+  // The root, once picked, travels as a pair like any other folder.
+  assert.deepEqual(taskProjectPayload(root, null), {
+    mountId: "m1",
+    folder: MOUNT_ROOT_FOLDER,
+  });
+
+  // The controls: a folder under the mount, a task with no project, and a task
+  // whose mount has gone (an absolute path in `relPath` and no mount) seed as
+  // they did.
+  assert.deepEqual(taskProjectDraft({ mountId: "m1", relPath: "app" }), {
+    mountId: "m1",
+    folder: "app",
+  });
+  assert.deepEqual(taskProjectDraft({ mountId: null, relPath: null }), {
+    mountId: "",
+    folder: "",
+  });
+  assert.deepEqual(taskProjectDraft({ mountId: null, relPath: "/gone/app" }), {
+    mountId: "",
+    folder: "/gone/app",
+  });
 });
 
 // The edit's two cases go through `updateTask` in `tasks.test.ts`; these are the
