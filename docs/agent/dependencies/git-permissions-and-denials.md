@@ -1,0 +1,9 @@
+# What an isolated run may do with git, and what is reported when it is refused
+
+[← dependencies index](../dependencies.md)
+
+Read before editing `buildArgs`'s `--allowedTools`, `permissionDenials()` or the isolation preamble in `src/lib/orchestrator.ts`.
+
+**An isolated run is granted the two git commands it is ordered to use.** `acceptEdits` — the default the run form and `chatDefaultGuards` both start from — auto-approves file edits and read-only shell, and holds mutating git for a human: `git add` and `git commit` each come back `This command requires approval`, and a `-p` child has nobody to give it. So the isolation preamble told the agent to commit as it went and the permission mode made that impossible. Measured, not reasoned: four runs finished `completed`, on their own branches, each having tried to commit and been refused, with the whole change left uncommitted in a worktree that `landState` then read as a branch with nothing on it. `buildArgs` therefore passes `--allowedTools Bash(git add:*) Bash(git commit:*)` for `isolation === "worktree"` only — additive, so everything else still follows the mode, and verified against the real CLI along with the fact that `--allowedTools` does not restrict what it does not name. Not `bypassPermissions`, which would also hand the run the network and `rm`; and not for a run in the operator's own checkout, which is told nothing about committing.
+
+**A refused tool call is reported, because the alternative is a run that looks like it chose not to.** The `result` event carries `permission_denials` (confirmed on the wire for `stream-json`, not only for the `--output-format json` that `chat.ts` reads), and `permissionDenials()` groups it by tool *and command* — every entry's `tool_name` is the bare `Bash`, so "Bash ×7" would say nothing. This is the line that turns the failure above from a transcript-archaeology exercise into a log entry.
