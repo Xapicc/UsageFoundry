@@ -491,6 +491,12 @@ describe("scheduleRefusal", () => {
   const graph = (...kinds: Array<WorkflowNode["kind"]>) => ({
     nodes: kinds.map((kind, i) => ({ id: `n${i}`, name: `Block ${i}`, kind }) as WorkflowNode),
   });
+  const runs = (...providers: Array<WorkflowNode["provider"]>) => ({
+    nodes: providers.map(
+      (provider, i) =>
+        ({ id: `n${i}`, name: `Block ${i}`, kind: "run", provider }) as WorkflowNode,
+    ),
+  });
 
   it("refuses a workflow that bounds a press of Run with nothing", () => {
     const reason = scheduleRefusal({ name: "Nightly", instanceBudget: off, graph: graph("run") });
@@ -517,12 +523,6 @@ describe("scheduleRefusal", () => {
     // with nothing bounding those blocks. Any such block, not only a graph of
     // nothing else: the Claude blocks can stay under the limit while the Codex
     // one spends.
-    const runs = (...providers: Array<WorkflowNode["provider"]>) => ({
-      nodes: providers.map(
-        (provider, i) =>
-          ({ id: `n${i}`, name: `Block ${i}`, kind: "run", provider }) as WorkflowNode,
-      ),
-    });
     const dollars = { ...off, maxInstanceCostUSD: 20 };
 
     const allCodex = scheduleRefusal({
@@ -551,20 +551,51 @@ describe("scheduleRefusal", () => {
       null,
     );
 
-    // Unchanged: a dollar limit over blocks that report it, and a window guard
-    // beside the dollar limit, which is the rule's other way of bounding a
-    // press. What that guard reads for a Codex block is recorded as open in
-    // docs/agent/workflows-and-schedules/schedules.md.
+    // Unchanged: a dollar limit over blocks that report it.
     assert.equal(
       scheduleRefusal({ name: "Claude", instanceBudget: dollars, graph: runs(null, "claude") }),
       null,
     );
+  });
+
+  it("does not take a window guard as the bound of blocks that report no cost", () => {
+    // The fractions read the Claude account's windows, which a Codex run does
+    // not add to and a local run is not in, so a schedule admitted on one
+    // presses Run every window with nothing bounding those blocks. Decided in
+    // docs/agent/workflows-and-schedules/schedules.md (board task bf494de3).
+    const weekly = { ...off, maxWeeklyFraction: 0.5 };
+
+    const allCodex = scheduleRefusal({
+      name: "nightly codex sweep",
+      instanceBudget: weekly,
+      graph: runs("codex", "codex"),
+    });
+    assert.notEqual(allCodex, null, "a window guard does not bound an all-Codex workflow");
+    assert.match(allCodex ?? "", /nightly codex sweep/);
+    assert.match(allCodex ?? "", /Block 0/);
+    assert.match(allCodex ?? "", /adds nothing to a Claude usage window/);
+
+    // One such block is enough, and it is the one named: the Claude blocks can
+    // stay under the fraction while the Codex one spends.
+    const mixed = scheduleRefusal({
+      name: "Mixed",
+      instanceBudget: { ...off, maxSessionFraction: 0.5 },
+      graph: runs("claude", null, "codex"),
+    });
+    assert.match(mixed ?? "", /Block 2/);
+
+    // Beside a dollar limit it is the same answer, said for both limits. That
+    // pair is what this rule used to admit.
+    const both = scheduleRefusal({
+      name: "Guarded",
+      instanceBudget: { ...weekly, maxInstanceCostUSD: 20 },
+      graph: runs("codex"),
+    });
+    assert.match(both ?? "", /what it spends and by how much of Claude's usage windows/);
+
+    // Unchanged: the same guard over blocks that are measured.
     assert.equal(
-      scheduleRefusal({
-        name: "Guarded",
-        instanceBudget: { ...dollars, maxWeeklyFraction: 0.5 },
-        graph: runs("codex"),
-      }),
+      scheduleRefusal({ name: "Claude", instanceBudget: weekly, graph: runs(null, "claude") }),
       null,
     );
   });

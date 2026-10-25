@@ -562,17 +562,21 @@ export function decideSchedule(ctx: ScheduleContext): ScheduleDecision {
  * `startWorkflow`'s door — which is why this asks `instanceBudgetIsOff` rather
  * than asking for a cost limit by name.
  *
- * **A spending limit is not that bound over a block whose runs report no
- * cost.** Codex and the local model report tokens and no money, so
- * `sumMemberSpend` leaves their runs out of the figure the limit compares and a
- * dollar limit over them reads $0 for ever. Any such block, because the blocks
- * that do report can stay under the limit while that one spends. The run
- * form's answer to `maxRunCostUSD` on a Codex run is a warning, since a person
- * is there to read it; here nobody is, which is this function's whole reason.
- * A window guard still satisfies the rule, as before — what that guard reads
- * for a Codex block is left open in
- * `docs/agent/workflows-and-schedules/schedules.md`, and so is whether an
- * instance-level token limit should exist.
+ * **None of the three is that bound over a block whose runs report no cost.**
+ * Codex and the local model report tokens and no money, so `sumMemberSpend`
+ * leaves their runs out of the figure a dollar limit compares and that limit
+ * reads $0 for ever. The two fractions read the Claude account's windows
+ * (`currentSnapshot`), which a Codex run does not add to and a local run is not
+ * in, so they bound the schedule's repetition only through whatever else spends
+ * Claude usage. Any such block, because the blocks that do report can stay under
+ * a limit while that one spends. The run form's answer to `maxRunCostUSD` on a
+ * Codex run is a warning, since a person is there to read it; here nobody is,
+ * which is this function's whole reason. A window guard used to satisfy the
+ * rule for such a graph, which admitted exactly the case the sentence below
+ * declines to recommend it for. The way to make that workflow schedulable again
+ * is an instance-level limit that reads those members' own usage, which does not
+ * exist and is recorded as open in
+ * `docs/agent/workflows-and-schedules/schedules.md`.
  *
  * **A workflow with a deliver block is refused too**, and that one is not about
  * money. A deliver block pushes branches to a remote and opens pull requests,
@@ -601,15 +605,26 @@ export function scheduleRefusal(workflow: {
       "or a window guard under “Limits for the whole workflow” first."
     );
   }
-  const { maxSessionFraction, maxWeeklyFraction } = workflow.instanceBudget;
   const blind = blocksReportingNoCost(workflow.graph.nodes)[0];
-  if (blind && maxSessionFraction === null && maxWeeklyFraction === null) {
+  if (blind) {
+    const { maxInstanceCostUSD, maxSessionFraction, maxWeeklyFraction } =
+      workflow.instanceBudget;
+    const windowed = maxSessionFraction !== null || maxWeeklyFraction !== null;
+    const limits =
+      maxInstanceCostUSD === null
+        ? "only by how much of Claude's usage windows it may use"
+        : windowed
+          ? "by what it spends and by how much of Claude's usage windows it may use"
+          : "only by what it spends";
+    const readings = windowed
+      ? "reports no cost and adds nothing to a Claude usage window"
+      : "reports no cost";
     return (
-      `“${workflow.name}” limits a whole press of Run only by what it spends, ` +
-      `but ${reportsNoCostClause(blind)}, which reports no cost — so that limit ` +
-      "never counts what it spends, and a schedule presses Run with nobody " +
-      `there to see what it cost. Run “${blind.name}” on Claude, or press Run ` +
-      "yourself."
+      `“${workflow.name}” limits a whole press of Run ${limits}, ` +
+      `but ${reportsNoCostClause(blind)}, which ${readings} — so ` +
+      `${windowed ? "nothing set there counts" : "that limit never counts"} ` +
+      "what it spends, and a schedule presses Run with nobody there to see " +
+      `what it cost. Run “${blind.name}” on Claude, or press Run yourself.`
     );
   }
   const deliver = workflow.graph.nodes.find((n) => n.kind === "deliver");
