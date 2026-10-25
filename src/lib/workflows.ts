@@ -9352,7 +9352,7 @@ const reviewDoors = ((globalThis as unknown as {
 
 /**
  * Run `fn`, one block's passage through its review door, with none of the
- * block's other branches in theirs at the same time — `withRepoAdmin`'s queue,
+ * block's other branches in theirs at the same time: `withRepoAdmin`'s queue,
  * keyed on the block.
  *
  * Because the door is a check and not a claim (`assistRefusal` says why), and
@@ -9368,8 +9368,8 @@ const reviewDoors = ((globalThis as unknown as {
  * What this does not do is make the door a claim against anything outside the
  * block: a chat turn or another block can still take the slot while the diff
  * is read, which is why `startReview`'s `busy` is still waited out. And it costs
- * the block its parallel preparation — the diff, the window scan and the
- * checkout lookup, one branch after another — which is milliseconds against a
+ * the block its parallel preparation (the diff, the window scan and the
+ * checkout lookup, one branch after another), which is milliseconds against a
  * review's minutes.
  *
  * Resolves and rejects as `fn` does. The tail settles either way, so a branch
