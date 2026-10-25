@@ -10,6 +10,7 @@ import type {
   WorkspaceMountDTO,
 } from "@/lib/apiTypes";
 import {
+  MOUNT_ROOT_FOLDER,
   pollFailureMessage,
   storedFolderState,
   taskProjectDraft,
@@ -177,6 +178,11 @@ export function TaskEditor({
     task?.mountId && !mounts.some((m) => m.id === task.mountId)
       ? { id: task.mountId, label: task.mountLabel ?? task.mountId }
       : null;
+  // The mount's own root, which the scan never lists. Named as the new-run
+  // form names the same place, so the two pickers offer the same thing.
+  const rootMountLabel =
+    mounts.find((m) => m.id === draft.mountId)?.label ??
+    (storedMount?.id === draft.mountId ? storedMount.label : null);
 
   async function save() {
     if (saving) return;
@@ -341,6 +347,11 @@ export function TaskEditor({
               onChange={(e) => setDraft({ ...draft, folder: e.target.value })}
             >
               <option value="">— pick a folder —</option>
+              <option value={MOUNT_ROOT_FOLDER}>
+                {rootMountLabel
+                  ? `${rootMountLabel} (the whole workspace)`
+                  : "The whole workspace"}
+              </option>
               {/* A stored folder the scan does not offer stays selectable, or
                   the select would silently resolve to the first option and an
                   unrelated save would move the task to it. */}
