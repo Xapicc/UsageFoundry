@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { GIT_BIN, WORKSPACE_MOUNTS } from "./config";
+import { fmtDuration } from "./format";
 import { childCredentials } from "./privsep";
 import { agentEnvironment } from "./stacks";
 import { WORKTREE_STORE_DIR } from "./worktreeStoreDir";
@@ -334,7 +335,8 @@ export function gitSync(cwd: string, args: string[]): GitResult {
  *
  * `timeoutMs: 0` runs with **no clock at all**, and it exists for the landing
  * path. A timeout here is a `SIGKILL`, which arrives at the caller as
- * `ok: false` and is indistinguishable from git having refused — so a merge on
+ * `ok: false` and, unless the caller reads `timedOutAfterMs`, is
+ * indistinguishable from git having refused — so a merge on
  * a large repository was rolled back and reported as "git refused the merge"
  * for the sole reason that it took longer than a number nobody measured. There
  * is no length of time after which merging somebody's work becomes the wrong
@@ -392,7 +394,7 @@ export async function git(
      */
     input?: string;
   } = {},
-): Promise<GitResult & { overflowed: boolean }> {
+): Promise<GitResult & { overflowed: boolean; timedOutAfterMs: number | null }> {
   const { timeoutMs = 20_000, maxBytes = 0, trim = true } = opts;
 
   // The probe is a `config` read, never a content subcommand, so this recurses
@@ -408,6 +410,7 @@ export async function git(
     let stdout = "";
     let stderr = "";
     let overflowed = false;
+    let killedByClock = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
 
     let settled = false;
@@ -421,6 +424,9 @@ export async function git(
         stderr: stderr.trim(),
         code,
         overflowed,
+        // A child that exited by itself in the instant the clock fired has a
+        // code, and was not killed by it.
+        timedOutAfterMs: killedByClock && code === null ? timeoutMs : null,
       });
     };
 
@@ -455,7 +461,13 @@ export async function git(
       child.stderr.on("data", (c: string) => (stderr += c));
 
       // Zero is "no clock", not "kill immediately" — see the note above.
-      timer = timeoutMs > 0 ? setTimeout(() => child.kill("SIGKILL"), timeoutMs) : null;
+      timer =
+        timeoutMs > 0
+          ? setTimeout(() => {
+              killedByClock = true;
+              child.kill("SIGKILL");
+            }, timeoutMs)
+          : null;
       timer?.unref?.();
 
       child.on("error", () => finish(null));
@@ -469,6 +481,35 @@ export async function git(
       finish(null);
     }
   });
+}
+
+/**
+ * Why a failed `git()` call failed, in words an operator can act on.
+ *
+ * A call the clock killed is `ok: false`, `code: null` and an empty `stderr` —
+ * the same shape as a git that could not be started — so a message built from
+ * `stderr` alone ends in a colon with nothing after it. `timedOutAfterMs` is
+ * what tells a kill by the clock from every other way a call ends without a
+ * status, and the sentence names the call and the checkout it ran in, because
+ * the operator reading it has only the run's reason to go on and the fix
+ * (usually a checkout whose files are slow to read) is to the checkout.
+ *
+ * A refusal is git's own `stderr`, unaltered, so that what git said reaches
+ * the operator in git's words.
+ */
+export function gitFailureReason(
+  res: { stderr: string; code: number | null; timedOutAfterMs: number | null },
+  cwd: string,
+  args: string[],
+): string {
+  const call = `git ${args.join(" ")} in ${cwd}`;
+  if (res.timedOutAfterMs !== null) {
+    return `${call} was killed after ${fmtDuration(res.timedOutAfterMs)} without finishing`;
+  }
+  if (res.stderr) return res.stderr;
+  return res.code === null
+    ? `${call} ended without an exit status and printed nothing`
+    : `${call} exited with status ${res.code} and printed nothing`;
 }
 
 /**
