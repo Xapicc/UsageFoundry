@@ -35,6 +35,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Run lifecycle | [run-lifecycle.md](verification/run-lifecycle.md) |
 | Run lifecycle | [run-lifecycle-background-work.md](verification/run-lifecycle-background-work.md) — a work cycle's wait for background tasks, and what stopping one tells the next cycle |
 | Run lifecycle | [run-lifecycle-live-activity.md](verification/run-lifecycle-live-activity.md) — what a running cycle is inside: the open-call strip and the `/runs/live` sub-agent roster |
+| Run lifecycle | [run-lifecycle-resume-and-transcripts.md](verification/run-lifecycle-resume-and-transcripts.md) — what a resume finds in the session transcript: the 30-day sweep, a transcript gone, one truncated mid-turn, and a cycle the API refused |
 | Run lifecycle | [run-lifecycle-hooks-and-endings.md](verification/run-lifecycle-hooks-and-endings.md) — what a cycle reports about its hooks, the prompt fold on a cycle's row, the prior-read pointer and its holdout, and `runs.ending_code` |
 | Context control | [context-control-pruning.md](verification/context-control-pruning.md) — pruning, compaction and the context ceiling |
 | Context control | [context-control-intake-filter.md](verification/context-control-intake-filter.md) — the intake filter and its ledger |
@@ -73,4 +74,4 @@ measurement under *Verified* and cut the item down to what is still open.
 | Interface | [interface-narrow-viewports.md](verification/interface-narrow-viewports.md) — pages at 390px, layout sweeps and smoke-pages |
 | Interface | [interface-canvases.md](verification/interface-canvases.md) — the graph canvases, touched map and replay |
 | Interface | [interface-pages-and-api.md](verification/interface-pages-and-api.md) — pages, panels and API payloads |
-| Interface | [interface-run-pages.md](verification/interface-run-pages.md) — the runs list's Fleet card and the run page's Agent work |
+| Interface | [interface-run-pages.md](verification/interface-run-pages.md) — the runs list and its Fleet card, the run inspector, granted cycles and `/runs/live` |
