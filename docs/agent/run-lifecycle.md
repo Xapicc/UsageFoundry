@@ -105,6 +105,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - A run's first prompt names the vault notes that bear on its task, on half of all runs, and for most runs there are none.
 - The vault's search proposes and a model decides, because search alone names the wrong notes.
 - The judge's prompt is the strict one, and it was chosen by measurement.
+- The query writer is told what the vault holds by the vault's own tags, and by nothing else.
 - What reaches the run is a pointer, never a note.
 - Its slot is ahead of the prior-read pointer, on the session-less branch only.
 - It is resolved once per segment, before the loop, and only for a segment that opens a conversation.

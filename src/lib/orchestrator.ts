@@ -175,7 +175,7 @@ import {
   localCycleEnv,
   type LocalSignIn,
 } from "./localProvider";
-import { prepareVaultSkill } from "./vaultSkill";
+import { prepareVaultSkill, SEARCH_SCRIPT_CANDIDATES } from "./vaultSkill";
 import {
   noteLiveTick,
   noteLiveTickFailure,
@@ -11271,8 +11271,9 @@ export function claimTasksForRun(id: string): void {
  *   - **A run with the vault skill off or unavailable.** The skill's switch is
  *     the operator's answer to whether unattended agents are told a vault
  *     exists, and naming its notes in a prompt is telling them. A vault with no
- *     ranked search is skipped too: the pointer exists because search alone
- *     names the wrong notes, and grep would name more of them.
+ *     ranked search is skipped too, and says so on the run's log: the pointer
+ *     exists because search alone names the wrong notes, and grep would name
+ *     more of them.
  *   - **A shutdown in progress**, which would otherwise be held open by a
  *     classifier for a run that is about to be parked.
  *
@@ -11288,7 +11289,19 @@ async function vaultPointerFor(
   if (run.origin_ref?.startsWith("dreaming:")) return null;
   if (isShuttingDown()) return null;
   const skill = prepareVaultSkill();
-  if (skill.kind !== "ready" || skill.searchScript === null) return null;
+  if (skill.kind !== "ready") return null;
+  if (skill.searchScript === null) {
+    // The one skip that is a property of the vault rather than of the run or of
+    // a switch, so it is said: otherwise a vault without the script reads,
+    // from every run on it, exactly like a vault where nothing ever applied.
+    log(
+      id,
+      `No vault pointer for this run: the vault at ${skill.vaultPath} has no ranked search ` +
+        `(${SEARCH_SCRIPT_CANDIDATES.join(" or ")}), and without one the pointer would name ` +
+        `whatever shares a word with the task. The vault skill is still offered.`,
+    );
+    return null;
+  }
 
   const pointer = await resolveVaultPointer({
     runId: id,

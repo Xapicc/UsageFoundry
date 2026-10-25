@@ -9,10 +9,12 @@ import {
   MAX_PICKS,
   mergeCandidates,
   noteShape,
+  querySystem,
   readJudgeVerdict,
   readSearchHits,
   vaultPointerHoldout,
   vaultPointerNotice,
+  vaultTopics,
   VAULT_POINTER_EXPERIMENT,
   type VaultCandidate,
 } from "./vaultPointer";
@@ -197,5 +199,58 @@ describe("noteShape", () => {
       fs.rmSync(root, { recursive: true, force: true });
       fs.rmSync(outside, { recursive: true, force: true });
     }
+  });
+});
+
+describe("vaultTopics", () => {
+  it("reads subjects through a topic/ namespace and ignores the form tags beside it", () => {
+    const topics = vaultTopics([
+      ["topic/ai/agents", "type/concept", "status/growing"],
+      ["topic/ai/agents", "topic/ai/serving", "type/source"],
+      ["#topic/vcs/git", "type/concept"],
+    ]);
+    assert.deepEqual(topics, [
+      { area: "ai", notes: 2, subtopics: ["agents", "serving"] },
+      { area: "vcs", notes: 1, subtopics: ["git"] },
+    ]);
+  });
+
+  it("counts a note once per area and subtopic, however many tags put it there", () => {
+    const [ai] = vaultTopics([["topic/ai/agents/memory", "topic/ai/agents", "topic/ai"]]);
+    assert.deepEqual(ai, { area: "ai", notes: 1, subtopics: ["agents"] });
+  });
+
+  it("reads every tag when the vault has no topic/ namespace", () => {
+    assert.deepEqual(
+      vaultTopics([["rust", "cli"], ["rust"], []]).map((t) => [t.area, t.notes]),
+      [
+        ["rust", 2],
+        ["cli", 1],
+      ],
+    );
+  });
+
+  it("lists areas whole, so one large area cannot crowd the rest out", () => {
+    const notes = [
+      ...Array.from({ length: 50 }, (_, i) => [`topic/ai/sub${i}`]),
+      ["topic/vcs/git"],
+    ];
+    const topics = vaultTopics(notes, { areas: 16, subtopics: 5 });
+    assert.deepEqual(
+      topics.map((t) => t.area),
+      ["ai", "vcs"],
+    );
+    assert.equal(topics[0].subtopics.length, 5);
+  });
+});
+
+describe("querySystem", () => {
+  it("describes the vault by its own topics, and by nothing when it has none", () => {
+    const described = querySystem([{ area: "ai", notes: 1085, subtopics: ["agents", "serving"] }]);
+    assert.match(described, /^You write search queries for a personal knowledge vault\. By its own tags it covers, largest area first, with each area's main subtopics: ai \(1,085 notes: agents, serving\)\.\n/);
+    const bare = querySystem([]);
+    assert.match(bare, /^You write search queries for a personal knowledge vault\.\n\nGiven a coding agent's task/);
+    // No operator's subjects baked in: a vault about cooking is not told it holds LLM notes.
+    assert.doesNotMatch(bare, /LLM|macOS|virtualisation/);
   });
 });
