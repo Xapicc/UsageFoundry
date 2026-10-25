@@ -64,10 +64,23 @@ toggle's reason: the page re-reads after every press, and a project another door
 set meanwhile is not the operator's to revert by retitling. The door is
 unchanged, so a pair the operator *did* pick is still proved and refused if it
 does not resolve. The helper is in `src/lib` because nothing here can test a
-component; `tasks.test.ts` sends the editor's own body through `updateTask`. A
-mount-root task's folder select still draws "— pick a folder —", because the
-scan offers a mount's children and never the root; the save no longer acts on
-that drawing.
+component; `tasks.test.ts` sends the editor's own body through `updateTask`.
+
+**The mount root has its own spelling, `MOUNT_ROOT_FOLDER` (`"."`), and the
+picker offers it rather than the scan listing it.** A mount-root task's path
+within the mount is `""`, which the folder select spends on its pick-a-folder
+placeholder, so the page drew a project that had a mount and a placeholder and read as half a
+pair. `taskProjectDraft` now seeds `"."` for a task that has a mount and an empty
+path, `storedFolderState` answers `listed` for it whatever the scan holds (the
+option is the picker's own, so it is neither an unread scan nor a folder the scan
+lost), and the select carries a "<mount> (the whole workspace)" option, naming the
+place as the new-run form does. `.` is not a new door: `resolveTaskFolder`
+already proves it as exactly the mount root through `resolveWorkspaceFolder`, and
+`resolveBoardFolder` hands it the same resolver for a loop's board condition, so
+`..`, `./..`, an absolute path and a symlink out of the mount are refused as they
+were. `scanWorkspace` is unchanged on purpose: the chat's folder listing and the
+board's MCP tools read it, and a root entry in it would have to be skipped by
+every reader that walks children.
 
 **The thread is drawn on the task's own page, and it does not poll either.**
 `TaskThread` in `src/components/TaskThread.tsx` — lifted out of the page when the

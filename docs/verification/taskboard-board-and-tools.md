@@ -115,6 +115,21 @@
   form sent and stored it, and a retitle after that sent no pair. No console
   error. Caveat: 390px, the ascii skin and an absent mount were not rendered.
 
+- **A mount root is drawn, picked and filed as a folder, in a browser,
+  2026-10-25**, standalone build at `e78308b5`, scratch `DATA_DIR` and mount
+  holding `RepoOne` and a symlink out of the mount, Chromium at 1280. A task on
+  the mount root opened with the Folder select on "Scratch (the whole
+  workspace)" (value `.`), no placeholder and no scan warning, and a retitle
+  kept its mount and an empty `relPath`. A task in `RepoOne` was moved to the
+  root by picking that option and saving (`relPath` `""`), and read back as the
+  root after a reload. On `tasks/new`, choosing the mount offered the root
+  beside `RepoOne`, and filing on it stored the root. `POST /api/tasks` with
+  folder `..`, `./..`, `/` and `./escape` answered 400 naming the mount, the
+  last as "resolves outside". No console error; `npm run smoke-pages` 100 of
+  100. Caveat: 390px, the ascii skin and a mount that is not available were
+  not rendered, and the stored-mount-removed branch of `taskProjectDraft` is
+  pinned in `format.test.ts` only.
+
 ## Not yet verified by hand
 
 - **No model has called the board tools over stdio**; that needs a billed run.
