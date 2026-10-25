@@ -1504,6 +1504,22 @@ function assertLandedThenFailed(instanceId: string, reason: RegExp): void {
   );
 }
 
+/** What an instance blob written before `maxPasses` existed reads back as. */
+function dropPassCap(instanceId: string): void {
+  const db = dbMod.db();
+  const row = db
+    .prepare("SELECT graph FROM workflow_instances WHERE id=?")
+    .get(instanceId) as { graph: string };
+  const graph = JSON.parse(row.graph) as { nodes: NodeBlob[] };
+  const loop = graph.nodes.find((n) => n.id === "L");
+  assert.ok(loop);
+  delete loop.maxPasses;
+  db.prepare("UPDATE workflow_instances SET graph=? WHERE id=?").run(
+    JSON.stringify(graph),
+    instanceId,
+  );
+}
+
 describe("a loop that cannot decide while a pass is working", () => {
   it("carries the pass to its landing when the board can no longer be counted", async () => {
     const { boardDir, stopWhenTasks } = openBoard();
@@ -1517,22 +1533,8 @@ describe("a loop that cannot decide while a pass is working", () => {
   });
 
   it("carries the pass to its landing when the instance's graph has no pass cap", async () => {
-    // What an instance blob written before `maxPasses` existed reads back as.
     const instanceId = scene(WITH_SUCCESSOR);
-    await breakMidPass(instanceId, () => {
-      const db = dbMod.db();
-      const row = db
-        .prepare("SELECT graph FROM workflow_instances WHERE id=?")
-        .get(instanceId) as { graph: string };
-      const graph = JSON.parse(row.graph) as { nodes: NodeBlob[] };
-      const loop = graph.nodes.find((n) => n.id === "L");
-      assert.ok(loop);
-      delete loop.maxPasses;
-      db.prepare("UPDATE workflow_instances SET graph=? WHERE id=?").run(
-        JSON.stringify(graph),
-        instanceId,
-      );
-    });
+    await breakMidPass(instanceId, () => dropPassCap(instanceId));
 
     await drive(instanceId);
     assertLandedThenFailed(instanceId, /has no pass cap/);
@@ -1680,5 +1682,162 @@ describe("a loop failed on a board that could not be counted, with its pass sett
       membersOf(instanceId).some((m) => m.memberId === "after"),
       "the block behind the loop was never released",
     );
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* A loop failed before it had a pass, and one with no cap to count by */
+/* ------------------------------------------------------------------ */
+
+describe("a loop that failed before its first pass", () => {
+  // A block in front of the loop, so pass 1's entry has something to start
+  // after, and an `on-success` block behind it for the failure to write off.
+  const withPredecessor = {
+    nodes: [node("before"), node("a"), mergeNode("m"), node("after")],
+    edges: [
+      { from: "before", to: "L", edge: "on-success", continueBranch: true },
+      { from: "L", to: "a", edge: "repeats" },
+      { from: "a", to: "m", edge: "on-success" },
+      { from: "L", to: "after", edge: "on-success" },
+    ],
+    body: ["a", "m"],
+    ownBlocks: [
+      { id: "before", kind: "run" },
+      { id: "after", kind: "run" },
+    ],
+  };
+
+  const loopPickUp = (instanceId: string) =>
+    workflows.pickUpsOf(workflows.getInstance(instanceId)!).filter((p) => p.kind === "loop");
+
+  /** The folder is gone before the loop is released, so no pass is ever opened. */
+  async function failedOnBoard(): Promise<{ instanceId: string; boardDir: string }> {
+    const { boardDir, stopWhenTasks } = openBoard();
+    const instanceId = scene({ ...withPredecessor, stopWhenTasks });
+    fs.rmSync(boardDir, { recursive: true });
+    await drive(instanceId);
+    // A loop that fails at its release is written off behind by the next advance,
+    // which in a running app is any terminal run anywhere.
+    workflows.advanceInstances();
+
+    const loop = loopBlock(instanceId);
+    assert.equal(loop.status, "failed");
+    assert.match(loop.error ?? "", /could not be counted/);
+    assert.equal(
+      membersOf(instanceId).some((m) => m.memberId === passMemberId("L", 1, "a")),
+      false,
+      "a pass was opened on a board that could not be counted",
+    );
+    assert.equal(blockRow(instanceId, "after").status, "blocked");
+    assert.equal(workflows.getInstance(instanceId)!.status, "blocked");
+    return { instanceId, boardDir };
+  }
+
+  it("offers the loop with the board's sentence while the folder is gone, and none once it is back", async () => {
+    const { instanceId, boardDir } = await failedOnBoard();
+
+    const gone = loopPickUp(instanceId);
+    assert.equal(gone.length, 1, "nothing on the page to press for a loop with no pass");
+    assert.match(gone[0].kind === "loop" ? (gone[0].refusal ?? "") : "", /could not be counted/);
+    const refused = workflows.resumeLoop(instanceId, "L");
+    assert.equal(refused.ok, false, "the door took a loop whose board still cannot be counted");
+    assert.equal(loopBlock(instanceId).status, "failed", "a refusal wrote nothing");
+    assert.equal(blockRow(instanceId, "after").status, "blocked", "a refusal wrote nothing");
+
+    fs.mkdirSync(boardDir, { recursive: true });
+    const back = loopPickUp(instanceId);
+    assert.equal(back.length, 1);
+    assert.equal(back[0].kind === "loop" ? back[0].refusal : "?", null);
+  });
+
+  it("starts pass 1 behind what released the loop, and puts the block behind it back", async () => {
+    const { instanceId, boardDir } = await failedOnBoard();
+    fs.mkdirSync(boardDir, { recursive: true });
+
+    assert.deepEqual(workflows.resumeLoop(instanceId, "L"), { ok: true });
+    assert.equal(loopBlock(instanceId).status, "looping", loopBlock(instanceId).error ?? "");
+    assert.equal(blockRow(instanceId, "after").status, "waiting", "the written-off block was not put back");
+    const entry = membersOf(instanceId).find((m) => m.memberId === passMemberId("L", 1, "a"));
+    assert.ok(entry, "pass 1's entry was never started");
+
+    // Carried by the loop's release, which is why the loop goes back to
+    // `waiting` rather than to `looping`: put straight to `looping`, pass 1's
+    // entry would start after nothing, on a fresh branch off the base.
+    const before = membersOf(instanceId).find((m) => m.memberId === "before");
+    assert.ok(before, "the block in front of the loop has no run");
+    assert.deepEqual(
+      depsOf(entry.runId).map((d) => [d.dependsOn, d.edge, d.continueBranch]),
+      [[before.runId, "on-success", 1]],
+    );
+  });
+
+  it("ends on the board rung when the board is clear by then, billing no pass", async () => {
+    const { instanceId, boardDir } = await failedOnBoard();
+    fs.mkdirSync(boardDir, { recursive: true });
+    dbMod.db().prepare("UPDATE tasks SET status='done'").run();
+
+    // Nothing advances it again here, as nothing would in a quiet app: the press
+    // alone has to release the block behind the loop.
+    assert.deepEqual(workflows.resumeLoop(instanceId, "L"), { ok: true });
+    const loop = loopBlock(instanceId);
+    assert.equal(loop.status, "emitted", loop.error ?? "");
+    assert.match(loop.error ?? "", /had at most 0 open task\(s\) left/);
+    assert.equal(
+      membersOf(instanceId).some((m) => m.memberId === passMemberId("L", 1, "a")),
+      false,
+      "a pass was billed on a board that was already clear",
+    );
+    assert.ok(
+      membersOf(instanceId).some((m) => m.memberId === "after"),
+      "the block behind the loop was never released",
+    );
+  });
+
+  it("is not offered when the loop repeats no section, which would fail the same way again", async () => {
+    // A graph saved when a loop held a task of its own and repeated that.
+    const instanceId = scene({
+      nodes: [node("after")],
+      edges: [{ from: "L", to: "after", edge: "on-success" }],
+      body: [],
+      ownBlocks: [{ id: "after", kind: "run" }],
+    });
+    await drive(instanceId);
+
+    assert.equal(loopBlock(instanceId).status, "failed");
+    assert.match(loopBlock(instanceId).error ?? "", /repeats no section/);
+    assert.deepEqual(loopPickUp(instanceId), []);
+  });
+});
+
+describe("a loop failed on a missing pass cap, with its pass settled whole", () => {
+  /** Pass 1 landed, and the loop then failed on a graph that carries no cap. */
+  async function failedOnCap(): Promise<string> {
+    const instanceId = scene({
+      ...WITH_SUCCESSOR,
+      edges: [
+        ...WITH_SUCCESSOR.edges.filter((e) => e.to !== "after"),
+        { from: "L", to: "after", edge: "on-success" },
+      ],
+    });
+    await breakMidPass(instanceId, () => dropPassCap(instanceId));
+    await drive(instanceId);
+    assertLandedThenFailed(instanceId, /has no pass cap/);
+    assert.equal(blockRow(instanceId, "after").status, "blocked");
+    return instanceId;
+  }
+
+  it("offers the loop with the missing cap as its refusal, and the press writes nothing", async () => {
+    const instanceId = await failedOnCap();
+
+    const offered = workflows
+      .pickUpsOf(workflows.getInstance(instanceId)!)
+      .filter((p) => p.kind === "loop");
+    assert.equal(offered.length, 1);
+    assert.match(offered[0].kind === "loop" ? (offered[0].refusal ?? "") : "", /has no pass cap/);
+
+    const refused = workflows.resumeLoop(instanceId, "L");
+    assert.equal(refused.ok, false, "the press was answered ok by a loop that cannot take a pass");
+    assert.equal(loopBlock(instanceId).status, "failed", "a refusal wrote nothing");
+    assert.equal(blockRow(instanceId, "after").status, "blocked", "a refusal wrote nothing");
   });
 });

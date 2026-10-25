@@ -475,6 +475,10 @@ const PICK_UP_SHEET: Record<
   },
 };
 
+/** The loop sheet's body for a loop that failed before it had a pass. */
+const LOOP_BEFORE_FIRST_PASS_BODY =
+  "Its tasks are counted again, and it takes its first pass if its limits allow, with agents starting unattended.";
+
 /**
  * What is holding this workflow run up, and the way past each obstacle.
  *
@@ -580,7 +584,9 @@ function PickUpCard({
                 label={<span className="font-medium text-ink">{p.nodeName}</span>}
                 description={
                   p.refusal ??
-                  `Stopped at pass ${p.pass}, and what stopped it has since cleared`
+                  (p.pass === 0
+                    ? "Failed before its first pass, and what stopped it has since cleared"
+                    : `Stopped at pass ${p.pass}, and what stopped it has since cleared`)
                 }
               >
                 {p.refusal === null && (
@@ -643,7 +649,11 @@ function PickUpCard({
         busy={busy}
         onConfirm={confirm}
       >
-        {pending ? PICK_UP_SHEET[pending.kind].body : null}
+        {pending
+          ? pending.kind === "loop" && pending.pass === 0
+            ? LOOP_BEFORE_FIRST_PASS_BODY
+            : PICK_UP_SHEET[pending.kind].body
+          : null}
       </Sheet>
     </>
   );
