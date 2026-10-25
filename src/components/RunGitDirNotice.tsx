@@ -35,7 +35,9 @@ const RUNS_WHEN: Record<GitDirCommandClassDTO, string> = {
   remote: "runs on fetch, pull, push, clone or submodule update",
   signing: "runs when a commit or tag is signed, or a signature is shown",
   interactive:
-    "runs when git pages output, opens an editor, starts a tool, adds a trailer or sends mail",
+    "runs when git pages output, opens an editor, starts a tool, adds a trailer, writes an archive or sends mail",
+  gc:
+    "runs when git gc weighs unreachable objects, which commit, merge and fetch can start on their own",
   alias: "runs when you type that alias, and outranks your own of the same name",
   include: "pulls another file's settings into this repository's",
 };

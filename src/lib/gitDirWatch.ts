@@ -182,11 +182,12 @@ function isExtUrl(value: string | null): boolean {
  *
  * Section and variable compare case-insensitively and the subsection exactly,
  * as git does; the subsection is everything between the first and last dot,
- * because a driver or URL name may itself contain dots. Four keys run a
- * command only for some values — a remote URL or `insteadOf` base of the
- * `ext::` transport, a submodule `update` starting with `!`, and a
- * `sendemail.smtpServer` that is an absolute path — and the rest are on the
- * list whatever they hold.
+ * because a driver or URL name may itself contain dots. Some keys run a
+ * command only for some values: an `ext::` URL wherever git takes a URL (a
+ * remote's or a submodule's, an `insteadOf` base, or one a branch's `remote`
+ * or `pushRemote` or `remote.pushDefault` holds in place of a remote's name),
+ * a submodule `update` starting with `!`, and a `sendemail.smtpServer` that is
+ * an absolute path. The rest are on the list whatever they hold.
  */
 export function commandClassOf(key: string, value: string | null): CommandClass | null {
   const first = key.indexOf(".");
@@ -218,9 +219,15 @@ export function commandClassOf(key: string, value: string | null): CommandClass 
     case "credential":
       return variable === "helper" ? "remote" : null;
     case "remote":
-      if (subsection === null) return null;
+      if (subsection === null) return variable === "pushdefault" && isExtUrl(value) ? "remote" : null;
       if (["uploadpack", "receivepack", "vcs"].includes(variable)) return "remote";
       return (variable === "url" || variable === "pushurl") && isExtUrl(value) ? "remote" : null;
+    case "branch":
+      return subsection !== null &&
+        (variable === "remote" || variable === "pushremote") &&
+        isExtUrl(value)
+        ? "remote"
+        : null;
     case "url":
       return subsection !== null &&
         isExtUrl(subsection) &&
@@ -231,9 +238,14 @@ export function commandClassOf(key: string, value: string | null): CommandClass 
       // Not a command itself: it is what lets an `ext::` URL be one.
       return variable === "allow" ? "remote" : null;
     case "submodule":
+      if (subsection !== null && variable === "url") return isExtUrl(value) ? "remote" : null;
       return subsection !== null && variable === "update" && value?.trimStart().startsWith("!")
         ? "remote"
         : null;
+    case "svn":
+      // git svn reads it as `svn.authorsProg` alone, and runs it in a shell
+      // for each author its authors file does not name.
+      return subsection === null && variable === "authorsprog" ? "remote" : null;
     case "gpg":
       if (variable === "program") return "signing";
       return subsection === "ssh" && variable === "defaultkeycommand" ? "signing" : null;
@@ -252,6 +264,8 @@ export function commandClassOf(key: string, value: string | null): CommandClass 
       return subsection !== null && (variable === "cmd" || variable === "path")
         ? "interactive"
         : null;
+    case "guitool":
+      return subsection !== null && variable === "cmd" ? "interactive" : null;
     case "trailer":
       return subsection !== null && (variable === "cmd" || variable === "command")
         ? "interactive"
@@ -259,6 +273,19 @@ export function commandClassOf(key: string, value: string | null): CommandClass 
     case "sendemail":
       if (["tocmd", "cccmd", "headercmd", "sendmailcmd"].includes(variable)) return "interactive";
       return variable === "smtpserver" && value?.trimStart().startsWith("/") ? "interactive" : null;
+    case "imap":
+      return subsection === null && variable === "tunnel" ? "interactive" : null;
+    case "instaweb":
+      // Not only the server: git instaweb looks for it in `gitwebDir`, which
+      // git-config(1) leaves out, and runs that directory's gitweb.cgi, and
+      // Apache loads its modules from `modulePath`.
+      return subsection === null && ["httpd", "gitwebdir", "modulepath"].includes(variable)
+        ? "interactive"
+        : null;
+    case "tar":
+      return subsection !== null && variable === "command" ? "interactive" : null;
+    case "gc":
+      return subsection === null && variable === "recentobjectshook" ? "gc" : null;
     case "hook":
       // Every variable, not just `command` and `event`: all a named hook's
       // section holds is what runs and when, and this app writes none of it.

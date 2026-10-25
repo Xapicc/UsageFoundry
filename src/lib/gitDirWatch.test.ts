@@ -201,9 +201,21 @@ describe("one case per class of key that runs a command", () => {
         ["protocol.allow", "always"],
         ["protocol.ext.allow", "always"],
         ["submodule.lib.update", "!sh -c evil"],
+        // Each of these may hold a URL in place of a remote's name.
+        ["submodule.lib.url", "ext::sh -c evil"],
+        ["branch.main.remote", "ext::sh -c evil"],
+        ["branch.main.pushremote", "ext::sh -c evil"],
+        ["remote.pushdefault", "ext::sh -c evil"],
+        ["svn.authorsprog", "/tmp/evil"],
       ],
       "remote",
     );
+    assert.equal(commandClassOf("submodule.lib.url", "https://github.com/example/lib.git"), null);
+    assert.equal(commandClassOf("remote.pushdefault", "origin"), null);
+  });
+
+  it("gc.recentObjectsHook, which runs when git gc or repack weighs unreachable objects", () => {
+    assertEachFound([["gc.recentobjectshook", "sh -c evil"]], "gc");
   });
 
   it("what signs or checks a signature", () => {
@@ -240,6 +252,14 @@ describe("one case per class of key that runs a command", () => {
         ["sendemail.tocmd", "sh -c evil"],
         ["sendemail.work.sendmailcmd", "sh -c evil"],
         ["sendemail.smtpserver", "/tmp/evil"],
+        ["guitool.x.cmd", "sh -c evil"],
+        ["instaweb.httpd", "/tmp/evil/lighttpd -f"],
+        // git instaweb looks for the server and runs gitweb.cgi from here,
+        ["instaweb.gitwebdir", "/tmp/evil"],
+        // and Apache loads its modules from here.
+        ["instaweb.modulepath", "/tmp/evil"],
+        ["imap.tunnel", "sh -c evil"],
+        ["tar.tar.gz.command", "sh -c evil"],
       ],
       "interactive",
     );
@@ -247,6 +267,7 @@ describe("one case per class of key that runs a command", () => {
     // or what is installed; a mail server's host name runs nothing.
     assert.equal(commandClassOf("diff.tool", "vimdiff"), null);
     assert.equal(commandClassOf("merge.tool", "vimdiff"), null);
+    assert.equal(commandClassOf("instaweb.browser", "firefox"), null);
     assert.equal(commandClassOf("sendemail.smtpserver", "smtp.example.com"), null);
   });
 

@@ -49,6 +49,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Concurrency and ownership | [concurrency-and-ownership.md](verification/concurrency-and-ownership.md) |
 | Isolation and landing | [isolation-and-landing.md](verification/isolation-and-landing.md) |
 | Git and review | [git-and-review.md](verification/git-and-review.md) |
+| Git and review | [git-and-review-command-keys.md](verification/git-and-review-command-keys.md): which git configuration keys run a command, for the run's git-directory check |
 | Agents, templates and models | [agents-templates-and-models.md](verification/agents-templates-and-models.md) |
 | Other providers | [other-providers.md](verification/other-providers.md) — Codex, and the local provider |
 | Other providers | [codex-account-and-models.md](verification/codex-account-and-models.md) — Codex's usage windows and model list, read through `codex app-server` |

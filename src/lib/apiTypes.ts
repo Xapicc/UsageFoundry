@@ -1744,6 +1744,7 @@ export type GitDirCommandClassDTO =
   | "remote"
   | "signing"
   | "interactive"
+  | "gc"
   | "alias"
   | "include";
 
