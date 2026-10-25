@@ -464,6 +464,14 @@ RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CLI_VERSION}" && npm cach
 # a unix socket, and the seccomp filter is the whole of what stops a sandboxed
 # command dialling that socket directly. Absent, the allowlist is advice.
 #
+# That is the reasoning for a policy that leaves the filter on. The one this
+# image writes sets `network.allowAllUnixSockets` (docker-entrypoint.sh), which
+# makes the CLI skip the filter and its warning whether or not the applier is
+# here — so with the sandbox on, the applier below is installed but unused, and
+# what keeps the allowlist from being a way round is that the bridge sockets lead
+# to the proxy that enforces it and that nothing else in the container leaves
+# it. docs/security.md has the measurement and what would break it.
+#
 # Pinned on the same argument as the CLI above and as a second half of it. That
 # pin protects a contract read off one build rather than a specification, and
 # this adds the sandbox settings schema to what it covers: a renamed key leaves
