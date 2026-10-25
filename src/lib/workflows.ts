@@ -5286,10 +5286,11 @@ export function enforceInstanceBudget(
  *
  * Read by `startRun` straight after `enforceInstanceBudget` passed, from the
  * same `instanceSpend`, so a limit already reached has halted the instance
- * before this is asked and what comes back is positive. It is what a member with
- * no `maxRunCostUSD` is handed as `--max-budget-usd` (`cycleBudgetUSD`), so that
- * its cycle's own telemetry cannot add more than that to the figure the
- * instance judges every other member by. A workflow limited by window fractions
+ * before this is asked and what comes back is positive. A member is handed it as
+ * `--max-budget-usd` wherever it is smaller than what the member's own
+ * `maxRunCostUSD` has left (`cycleBudgetUSD`), so that its cycle's own
+ * telemetry cannot add more than that to the figure the instance judges every
+ * other member by. A workflow limited by window fractions
  * alone answers `null`: a fraction is not a number of dollars a child can be
  * handed, and the fractions are enforced between cycles as before.
  *

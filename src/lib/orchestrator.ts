@@ -239,6 +239,7 @@ import {
   clipReason,
   buildArgs,
   buildCodexArgs,
+  cycleBudgetIsHeadroom,
   cycleBudgetUSD,
   cycleDidNoWork,
   cycleEnding,
@@ -12143,24 +12144,24 @@ export async function startRun(id: string): Promise<void> {
         );
       }
 
-      // What bounds this cycle when the run has no limit of its own: the tighter
-      // of what the install's and the workflow's dollar limits have left, read
-      // here off the figures the two checks above just passed, so a limit
-      // already reached has ended the run before this and what is read is
-      // positive. A run with a limit is bounded by it (`cycleBudgetUSD`), and
-      // neither a Codex cycle nor a local one is handed a `--max-budget-usd` at
-      // all. The reason it exists is the telemetry reading other runs are judged
-      // by: a cycle with no budget was taken in full, and its ingest token is in
-      // its own environment (`docs/agent/metering/run-spend-readings.md`).
+      // What the install's and the workflow's dollar limits leave this cycle, the
+      // tighter of the two, read here off the figures the two checks above just
+      // passed, so a limit already reached has ended the run before this and
+      // what is read is positive. Read whether or not the run has a limit of its
+      // own: the cycle is handed the smaller of the two (`cycleBudgetUSD`), and a
+      // run's own limit larger than this headroom capped its telemetry above
+      // it. Neither a Codex cycle nor a local one is handed a `--max-budget-usd`
+      // at all. The reason it exists is the telemetry reading other runs are
+      // judged by: a cycle is taken in it at most at its budget, and its ingest
+      // token is in its own environment
+      // (`docs/agent/metering/run-spend-readings.md`).
       //
       // Read once for the pass, here and not at the spawn, so the argv and the
       // row stamped below are one figure. It is stale by the awaits between,
       // and what other runs spend meanwhile is the overshoot a guard read once
       // at the door has always left.
       const cycleHeadroom =
-        policy.maxRunCostUSD === null &&
-        run.provider !== "codex" &&
-        run.provider !== "local"
+        run.provider !== "codex" && run.provider !== "local"
           ? tighterHeadroom(installReading.headroom, instanceHeadroom(id))
           : null;
 
@@ -13259,22 +13260,30 @@ export async function startRun(id: string): Promise<void> {
       // already ends a run with, and the cycle stays charged to `iterations`
       // because it happened.
       if (res.subtype === "error_max_budget_usd") {
-        stopReason =
-          policy.maxRunCostUSD !== null
+        // Which limit the cycle was handed, asked the way `buildArgs` decided
+        // it: a run with $95 of its own limit left under an install with $5 left
+        // was stopped at the install's, and naming its own would send the
+        // operator to raise a limit that did not bind.
+        const cutAtHeadroom =
+          cycleHeadroom !== null &&
+          cycleBudgetIsHeadroom(policy.maxRunCostUSD, spentGuardBeforeCycle, cycleHeadroom.leftUSD)
+            ? cycleHeadroom
+            : null;
+        stopReason = cutAtHeadroom
+          ? `This work cycle was given the $${cutAtHeadroom.leftUSD.toFixed(
+              2,
+            )} left of ${
+              cutAtHeadroom.scope === "install"
+                ? "the install's rolling spending limit"
+                : "this workflow's spending limit"
+            } of $${cutAtHeadroom.limitUSD.toFixed(2)}, and Claude Code stopped it there.`
+          : policy.maxRunCostUSD !== null
             ? `This work cycle was given what was left of this run's $${policy.maxRunCostUSD.toFixed(
                 2,
               )} spending limit after the $${spentGuardBeforeCycle.toFixed(
                 2,
               )} already spent, and Claude Code stopped it there.`
-            : cycleHeadroom
-              ? `This work cycle was given the $${cycleHeadroom.leftUSD.toFixed(
-                  2,
-                )} left of ${
-                  cycleHeadroom.scope === "install"
-                    ? "the install's rolling spending limit"
-                    : "this workflow's spending limit"
-                } of $${cycleHeadroom.limitUSD.toFixed(2)}, and Claude Code stopped it there.`
-              : "Claude Code stopped this work cycle at a spending limit of its own.";
+            : "Claude Code stopped this work cycle at a spending limit of its own.";
         // Into the log as well as onto the row. Every other way a run ends puts
         // a sentence in the stream — a refusal emits `error`, a tripped guard
         // emits `budget` — and a run that simply changed status with the reason
@@ -13284,19 +13293,18 @@ export async function startRun(id: string): Promise<void> {
         // by the CLI rather than decided here.
         log(id, stopReason);
         finalStatus = "stopped";
-        // The run's own spending limit when it has one — the CLI only enforced
-        // what this app handed it — and otherwise the install's or the
-        // workflow's, when that is what it was handed: the cycle ended where the
-        // pre-cycle guard would have ended the run, so it records that ending.
+        // Whichever limit it was handed, since the CLI only enforced what this
+        // app gave it: the install's or the workflow's when that was the smaller,
+        // where the cycle ended where the pre-cycle guard would have ended the
+        // run and so records that ending, and otherwise the run's own.
         // `cli_budget` is left for a limit nobody here set.
-        endingCode =
-          policy.maxRunCostUSD !== null
+        endingCode = cutAtHeadroom
+          ? cutAtHeadroom.scope === "install"
+            ? "guard:install_cost"
+            : "workflow_guard"
+          : policy.maxRunCostUSD !== null
             ? "guard:run_cost"
-            : cycleHeadroom
-              ? cycleHeadroom.scope === "install"
-                ? "guard:install_cost"
-                : "workflow_guard"
-              : "cli_budget";
+            : "cli_budget";
         break;
       }
 
