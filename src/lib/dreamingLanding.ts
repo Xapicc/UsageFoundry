@@ -6,7 +6,7 @@ import {
   type PendingLanding,
 } from "./dreamingLedger";
 import { commitPending, landState } from "./land";
-import { enqueue, isQueueActive, latestQueueRowFor } from "./mergeQueue";
+import { enqueue, isQueueActive, latestQueueRowFor, type QueueRow } from "./mergeQueue";
 import { TERMINAL_STATUSES, getRun, type RunRow } from "./orchestrator";
 import { getSettings } from "./settings";
 
@@ -46,6 +46,21 @@ export interface SettleReport {
 }
 
 const state = globalThis as unknown as { __ufDreamingSettling?: boolean };
+
+/**
+ * The reasons a night is not landed, said once for both readers: the settle pass
+ * returns them and the Dreaming pane shows them, and two spellings of one reason
+ * is a pane that says something the pass never did.
+ */
+const WHY = {
+  runLive: "its run is still going",
+  inQueue: "its branch is in the merge queue",
+  refused: "its last land was refused, and the next night tries again",
+  stopped: "the night was stopped, so its branch is left for you to land or purge",
+  landed: "its branch has landed, and the next pass records it",
+  untried: "its run has ended and its branch has not been tried yet",
+  notQueued: "its last try did not queue the branch",
+} as const;
 
 /**
  * Walk every pending night once and move each as far as it can go.
@@ -91,7 +106,7 @@ async function settleOne(p: PendingLanding, revisit: boolean, now: number): Prom
     return { kind: "dropped", why: "its run has been deleted" };
   }
   if (!TERMINAL_STATUSES.includes(run.status)) {
-    return { kind: "waiting", why: "its run is still going" };
+    return { kind: "waiting", why: WHY.runLive };
   }
 
   // Somebody else's land counts: an operator who pressed Land on the run page
@@ -101,7 +116,7 @@ async function settleOne(p: PendingLanding, revisit: boolean, now: number): Prom
   const queued = latestQueueRowFor(run.id);
   if (queued) {
     if (isQueueActive(queued.status)) {
-      return { kind: "waiting", why: "its branch is in the merge queue" };
+      return { kind: "waiting", why: WHY.inQueue };
     }
     if (queued.status === "landed" || queued.status === "already-landed") {
       return claim(p, now);
@@ -109,7 +124,7 @@ async function settleOne(p: PendingLanding, revisit: boolean, now: number): Prom
   }
 
   if (p.attemptedAt !== null && !revisit) {
-    return { kind: "waiting", why: "its last land was refused, and the next night tries again" };
+    return { kind: "waiting", why: WHY.refused };
   }
   return attempt(p, run, now);
 }
@@ -141,7 +156,7 @@ async function attempt(p: PendingLanding, run: RunRow, now: number): Promise<Set
   // branch is left for the operator (landed by hand, which claims it, or
   // purged, which lets it go) and is not landed on their behalf.
   if (run.status === "stopped" && (leftover || (!onTarget && read.ahead !== 0))) {
-    return { kind: "waiting", why: "the night was stopped, so its branch is left for you to land or purge" };
+    return { kind: "waiting", why: WHY.stopped };
   }
 
   if (leftover) {
@@ -182,4 +197,77 @@ async function attempt(p: PendingLanding, run: RunRow, now: number): Promise<Set
 
 function claim(p: PendingLanding, now: number): Settled {
   return { kind: "claimed", claimed: claimPendingLanding(p.runId, now) };
+}
+
+/** A night whose notes are on a branch that is not in the vault, for the pane. */
+export interface LandingWait {
+  night: string;
+  runId: string;
+  /** How many signatures the night selected, which is an upper bound on its notes. */
+  selected: number;
+  why: string;
+  /**
+   * Whether the reason moves by itself within minutes: the run is live, the
+   * branch is in the queue, or it has landed and is not yet claimed. The pane
+   * reads once and does not poll, so these are claims about a moment that has
+   * passed and are drawn as such; a reason that is not settling stays until the
+   * operator lands or purges the branch, or the next night tries again.
+   */
+  settling: boolean;
+  /**
+   * How the newest queue row ended without landing, with its own message. Never
+   * an active status, for the reason `runEnding` is null while its run is live:
+   * `landing` read now is `landed` a moment later.
+   */
+  queueEnding: { status: "failed" | "skipped" | "cancelled"; message: string | null } | null;
+}
+
+/**
+ * What `settleOne` would find, read without doing anything.
+ *
+ * Not the settle pass's own return values: those are discarded when the pass
+ * ends, and the reasons that come from inside `attempt` (the branch is mid-merge,
+ * the leftovers could not be committed, git could not count) need git and an
+ * attempt, which a page load must not make. The pane gets what the rows say, in
+ * the order `settleOne` reads them, and `WHY.notQueued` for an attempt that left
+ * no queue row and was not a stop. Null when the run is gone, because the next
+ * settle lets that night go and nothing is waiting on it.
+ */
+export function describeWaiting(
+  p: PendingLanding,
+  run: Pick<RunRow, "status" | "landed_at"> | null,
+  queued: Pick<QueueRow, "status" | "message"> | null,
+): LandingWait | null {
+  if (!run) return null;
+  const wait = (why: string, settling: boolean, queueEnding: LandingWait["queueEnding"] = null) => ({
+    night: p.night,
+    runId: p.runId,
+    selected: p.selected.length,
+    why,
+    settling,
+    queueEnding,
+  });
+
+  if (!TERMINAL_STATUSES.includes(run.status)) return wait(WHY.runLive, true);
+  if (run.landed_at !== null) return wait(WHY.landed, true);
+  if (queued) {
+    const status = queued.status;
+    if (isQueueActive(status)) return wait(WHY.inQueue, true);
+    if (status === "landed" || status === "already-landed") return wait(WHY.landed, true);
+  }
+  if (p.attemptedAt === null) return wait(WHY.untried, true);
+  if (queued) {
+    // Everything that is neither active nor landed has been returned above.
+    const status = queued.status as "failed" | "skipped" | "cancelled";
+    return wait(WHY.refused, false, { status, message: queued.message });
+  }
+  return wait(run.status === "stopped" ? WHY.stopped : WHY.notQueued, false);
+}
+
+/** Every night that has not landed yet, oldest first. */
+export function awaitingLandings(): LandingWait[] {
+  return pendingLandings().flatMap((p) => {
+    const wait = describeWaiting(p, getRun(p.runId), latestQueueRowFor(p.runId));
+    return wait ? [wait] : [];
+  });
 }
