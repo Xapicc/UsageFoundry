@@ -2664,31 +2664,6 @@ export function gitFailureLine(stderr: string): string {
 /** How many dirty paths a refusal names before it counts the rest. */
 const DIRT_NAMED = 3;
 
-/**
- * The tracked paths a `git status --porcelain` reading says are modified.
- *
- * The distinction is what decides whether a resolution may run in the run's own
- * checkout, and only tracked work can be damaged by one. An untracked file
- * cannot reach the merge commit: the resolution stages the conflicted paths by
- * name and commits the index, so it is carried through untouched — and where
- * the merge would actually clobber one, git refuses by name and that refusal is
- * already reported. A tracked modification is the run's own uncommitted work,
- * and a staged one would be folded into the merge commit by `commit --no-edit`.
- * Slots collect untracked files from outside this app — a sandbox's read-only
- * shell-init shims, an editor directory — so treating the two alike made
- * resolution permanently impossible for the run that got some.
- *
- * The input is `--porcelain` without `--ignored`, whose only untracked marker
- * is `??`. Exported for its test. Nothing outside this file calls it.
- */
-export function trackedDirt(porcelain: string): string[] {
-  return porcelain
-    .split("\n")
-    .filter((line) => line.trim() !== "" && !line.startsWith("??"))
-    .map((line) => line.slice(3).split(" -> ").pop()!.trim())
-    .filter((p) => p !== "");
-}
-
 /** Where the resolution happens: never the operator's checkout. */
 interface ResolveCheckout {
   path: string;
@@ -2732,8 +2707,11 @@ export async function resolveCheckout(
         "Nothing was started.",
       );
       if (underCheck) throw new Error(underCheck);
+      // `-z` and `trim: false` for `parseStatusZ`'s reason: trimmed, an unstaged
+      // first record loses the space that is part of its status and its path
+      // loses a character, in the sentence the operator acts on.
       const [status, merging] = await Promise.all([
-        git(own, ["status", "--porcelain"], NO_CLOCK),
+        git(own, ["status", "--porcelain", "-z"], { ...NO_CLOCK, trim: false }),
         mergeHeadIn(own),
       ]);
       if (!status.ok || merging === null) {
@@ -2742,11 +2720,12 @@ export async function resolveCheckout(
             `${gitFailureLine(status.stderr) || "unknown error"}`,
         );
       }
+      const files = parseStatusZ(status.stdout);
       // Its own sentence rather than the dirt below, which tells the operator to
       // commit: committing this is exactly how a resolution's markers reach the
       // branch, and then the target. `resolveConflicts` holds its claim here, so
       // no resolution of this run is live, and this is one that was cut off.
-      if (merging || status.stdout.split("\n").some((line) => isUnmerged(line.slice(0, 2)))) {
+      if (merging || files.some((file) => isUnmerged(file.code))) {
         throw new Error(
           `${branch} is checked out in ${path.basename(own)}, which is in the middle of a ` +
             "merge. That is what a conflict resolution leaves when it is cut off before it " +
@@ -2754,7 +2733,18 @@ export async function resolveCheckout(
             "checkout, then resolve again.",
         );
       }
-      const dirt = trackedDirt(status.stdout);
+      // Tracked work only, and the distinction decides whether a resolution may
+      // run in the run's own checkout. An untracked file cannot reach the merge
+      // commit: the resolution stages the conflicted paths by name and commits
+      // the index, so it is carried through untouched, and where the merge would
+      // clobber one git refuses by name and that refusal is already reported. A
+      // tracked modification is the run's own uncommitted work, and a staged one
+      // would be folded into the merge commit by `commit --no-edit`. Slots
+      // collect untracked files from outside this app — a sandbox's read-only
+      // shell-init shims, an editor directory — so treating the two alike made
+      // resolution permanently impossible for the run that got some. The input
+      // has no `--ignored`, so `??` is the only untracked marker.
+      const dirt = files.filter((file) => file.code !== "??").map((file) => file.path);
       if (dirt.length > 0) {
         const rest = dirt.length - DIRT_NAMED;
         throw new Error(

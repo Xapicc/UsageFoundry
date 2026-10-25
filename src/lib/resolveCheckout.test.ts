@@ -181,6 +181,60 @@ describe("the checkout a resolution is given", () => {
     // operator's own is not something this can tell.
     assert.ok(fixtureGit(slot, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]));
   });
+
+  it("names the whole path of an unstaged change that is the first status record", async () => {
+    // `git()` trims stdout, and `--porcelain` opens an unstaged record with the
+    // space that means "unstaged", so the sentence named `hared.txt`. Git lists
+    // by path, so `shared.txt` is the first record and the staged `staged.txt`
+    // after it is the control: a staged `M ` record keeps its first character.
+    const dirty = makeRepo("unstaged-first", ["uf/unstaged"]);
+    const slot = path.join(ws, ".uf-worktrees", "unstaged-first-slot");
+    fixtureGit(dirty, ["worktree", "add", "-q", slot, "uf/unstaged"]);
+    fs.writeFileSync(path.join(slot, "shared.txt"), "one\n");
+    fs.writeFileSync(path.join(slot, "staged.txt"), "two\n");
+    fixtureGit(slot, ["add", "-A"]);
+    fixtureGit(slot, ["commit", "-q", "-m", "two files"]);
+    fs.writeFileSync(path.join(slot, "shared.txt"), "edited, not staged\n");
+    fs.writeFileSync(path.join(slot, "staged.txt"), "edited and staged\n");
+    fixtureGit(slot, ["add", "staged.txt"]);
+    // Sorts between the two and must not be named: untracked work cannot reach
+    // the resolution's merge commit.
+    fs.writeFileSync(path.join(slot, "scratch.txt"), "untracked\n");
+
+    const run = createRun({
+      folder: "unstaged-first",
+      prompt: "resolve a branch with uncommitted work",
+      budget: { maxIterations: 1 },
+      origin: "form",
+    });
+
+    await assert.rejects(
+      resolveCheckout(dirty, { ...run, worktree_path: slot }, "uf/unstaged"),
+      (err: Error) => {
+        assert.match(err.message, /has uncommitted changes to shared\.txt, staged\.txt\./);
+        return true;
+      },
+    );
+  });
+
+  it("reuses a slot whose only pending work is untracked", async () => {
+    // The case that made a resolution impossible for a run: a sandbox's shell-init
+    // shims left in the slot. Nothing tracked is modified, so nothing is refused.
+    const untracked = makeRepo("untracked-only", ["uf/untracked"]);
+    const slot = path.join(ws, ".uf-worktrees", "untracked-only-slot");
+    fixtureGit(untracked, ["worktree", "add", "-q", slot, "uf/untracked"]);
+    fs.writeFileSync(path.join(slot, ".zshrc"), "");
+    const run = createRun({
+      folder: "untracked-only",
+      prompt: "resolve a branch whose slot holds an untracked file",
+      budget: { maxIterations: 1 },
+      origin: "form",
+    });
+
+    const checkout = await resolveCheckout(untracked, { ...run, worktree_path: slot }, "uf/untracked");
+
+    assert.deepEqual(checkout, { path: slot, temporary: false });
+  });
 });
 
 /**
