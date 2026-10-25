@@ -1294,6 +1294,17 @@ function migrate(db: Database.Database) {
   addColumn(db, "run_reviews", "base_sha", "TEXT");
   addColumn(db, "run_reviews", "head_sha", "TEXT");
 
+  // When a validation was *asked for*, as against `created_at`, which is when
+  // its child spawned. A claim queued behind another check is asked for in one
+  // segment and may spawn in a later one, after a needs-review ending and a
+  // pick-up, and the segment floor (`runs.reopened_at`) has to be read against
+  // the request or that claim is waited for and acted on as though the pick-up
+  // had made it. Nullable rather than defaulted: a row written before this
+  // column, and every review and resolution, has no request time, and readers
+  // take `COALESCE(asked_at, created_at)` so those keep the comparison they
+  // always made.
+  addColumn(db, "run_reviews", "asked_at", "INTEGER");
+
   // A run's `complete_task` claims waiting for that run's check in flight to
   // settle, oldest first. A run is checked one task at a time, and a second
   // claim used to be closed unchecked; queued instead, it is checked when the

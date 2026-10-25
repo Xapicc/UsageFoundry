@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 // rewrites the path alias at runtime.
 import type { DreamingDTO } from "../../../lib/apiTypes";
 import { scanDreaming } from "../../../lib/dreaming";
+import { awaitingLandings } from "../../../lib/dreamingLanding";
 import {
   NIGHT_LIMIT,
   NOTE_LIMIT,
@@ -90,6 +91,7 @@ export async function GET() {
       // and Dreaming's own one-at-a-time guard both ask it of that constant.
       runEnding: runStatus && TERMINAL_STATUSES.includes(runStatus) ? runStatus : null,
     })),
+    awaitingLanding: awaitingLandings(),
     noteLimit: NOTE_LIMIT,
     notesTruncated: counts.notes > NOTE_LIMIT,
     nightLimit: NIGHT_LIMIT,

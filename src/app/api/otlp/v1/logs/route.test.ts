@@ -414,4 +414,50 @@ describe("a record that would raise another run's figure", () => {
       settings.saveSettings({ installDailyCostLimitUSD: null });
     }
   });
+
+  it("holds a run whose own limit is larger than the install's headroom to that headroom", async () => {
+    const budget = await import("../../../../../lib/budget");
+    const installBudget = await import("../../../../../lib/installBudget");
+    const settings = await import("../../../../../lib/settings");
+    const workflows = await import("../../../../../lib/workflows");
+    const { cycleBudgetUSD } = await import("../../../../../lib/cycleInvocation");
+    const db = dbMod.db();
+    const cycleStart = Date.now() - 1000;
+
+    // `startRun`'s calls, as in the case above, for a run at a $100 limit. Its
+    // own limit used to win outright, so the cycle was stamped 100 and a forged
+    // record read as $100 in the install figure: $95 past a limit with $5 left.
+    db.prepare(
+      `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, created_at, spent_usd)
+       VALUES ('run-limited-forger', '/workspace', 'work', 'running',
+               '{"maxIterations":5,"maxRunCostUSD":100}', 5, ?, 0)`,
+    ).run(cycleStart);
+    const baseline = installBudget.installSpend().spentGuardUSD;
+    settings.saveSettings({ installDailyCostLimitUSD: baseline + 5 });
+    try {
+      const install = installBudget.installBudgetReading();
+      assert.equal(install.verdict, null, "the install is under its limit, so the run is admitted");
+      const left =
+        budget.tighterHeadroom(install.headroom, workflows.instanceHeadroom("run-limited-forger"))
+          ?.leftUSD ?? null;
+      db.prepare("UPDATE runs SET active_started_at = ?, active_budget_usd = ? WHERE id = ?").run(
+        cycleStart,
+        cycleBudgetUSD(100, 0, left),
+        "run-limited-forger",
+      );
+
+      const res = await post(
+        payload(record("req_limited_forged", { cost_usd: 1e9 }, Date.now())),
+        otlp.ingestTokenFor("run-limited-forger"),
+      );
+      assert.equal(res.status, 200);
+      assert.equal(
+        installBudget.installSpend().spentGuardUSD,
+        baseline + 5,
+        "another run's install figure took the forging cycle past the headroom it was handed",
+      );
+    } finally {
+      settings.saveSettings({ installDailyCostLimitUSD: null });
+    }
+  });
 });

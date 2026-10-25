@@ -117,8 +117,13 @@ function makeRepo(name: string, dirty: number): void {
 }
 
 /**
- * What `probeIsolation` costs, which this change does not touch: `rev-parse
- * --show-toplevel`, `--is-bare-repository`, `HEAD` and `--abbrev-ref HEAD`.
+ * What `probeIsolation` costs here: `rev-parse --show-toplevel`,
+ * `--is-bare-repository`, `HEAD` and `--abbrev-ref HEAD`.
+ *
+ * Still four for a repository nested in a mount root that is not a repository,
+ * as `ws` is. Asking whether the mount root is one is a `stat` for its `.git`,
+ * so only a mount root that is a repository pays for git's own answer, and the
+ * "stops asking" case below pins that this layout does not.
  */
 const PROBE_ISOLATION_SPAWNS = 4;
 

@@ -396,7 +396,7 @@ describe("a run with no spending limit of its own, under the install's or its wo
     }
   });
 
-  it("hands none when no limit applies, and lets the run's own limit win when it has one", async () => {
+  it("hands none when no limit applies, and the run's own limit when that is the smaller", async () => {
     saveSettings({ freshStartContextTokens: null });
     await runToEnd([{ spend: 1, window: SMALL }], { maxIterations: 1 });
     assert.deepEqual(spawns.map((s) => [s.ceiling, s.stamped]), [[null, null]]);
@@ -472,6 +472,51 @@ describe("a run with no spending limit of its own, under the install's or its wo
       // is for a limit nobody here set, and this one is the operator's.
       assert.equal(row.ending_code, "guard:install_cost");
       assert.match(row.stop_reason ?? "", /\$20\.00 left of the install's rolling spending limit of \$\d+\.\d\d/);
+    } finally {
+      saveSettings({ installDailyCostLimitUSD: null });
+    }
+  });
+});
+
+describe("a run with a spending limit of its own larger than the install's headroom", () => {
+  // Its own limit used to win outright, so the cycle was handed $100 under an
+  // install with $5 left, and its telemetry was capped at $100 in the figure
+  // every other run's door reads: one forged `cost_usd` filled the install as
+  // surely as an uncapped cycle's did. Driven through the loop because the
+  // defect was in which inputs `startRun` read: it took no headroom at all for
+  // a run with a limit.
+  const heldBefore = () => installSpend().spentGuardUSD;
+
+  it("hands the headroom to argv and row alike, and ends a stop there on the install's limit", async () => {
+    saveSettings({ freshStartContextTokens: null });
+    saveSettings({ installDailyCostLimitUSD: heldBefore() + 5 });
+    try {
+      const row = await runToEnd(
+        [{ spend: 5, window: SMALL, subtype: "error_max_budget_usd" }],
+        { maxIterations: 3, maxRunCostUSD: 100 },
+      );
+      assert.deepEqual(spawns.map((s) => [s.ceiling, s.stamped]), [["5", 5]]);
+      assert.equal(row.status, "stopped");
+      // The run still had $100 of its own; naming that limit would send the
+      // operator to raise one that did not bind.
+      assert.equal(row.ending_code, "guard:install_cost");
+      assert.match(row.stop_reason ?? "", /\$5\.00 left of the install's rolling spending limit of \$\d+\.\d\d/);
+    } finally {
+      saveSettings({ installDailyCostLimitUSD: null });
+    }
+  });
+
+  it("still ends a stop at the run's own limit on that limit when it is the smaller", async () => {
+    saveSettings({ freshStartContextTokens: null });
+    saveSettings({ installDailyCostLimitUSD: heldBefore() + 20 });
+    try {
+      const row = await runToEnd(
+        [{ spend: 3, window: SMALL, subtype: "error_max_budget_usd" }],
+        { maxIterations: 3, maxRunCostUSD: 3 },
+      );
+      assert.deepEqual(spawns.map((s) => [s.ceiling, s.stamped]), [["3", 3]]);
+      assert.equal(row.ending_code, "guard:run_cost");
+      assert.match(row.stop_reason ?? "", /this run's \$3\.00 spending limit/);
     } finally {
       saveSettings({ installDailyCostLimitUSD: null });
     }

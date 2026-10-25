@@ -5309,10 +5309,11 @@ export function enforceInstanceBudget(
  *
  * Read by `startRun` straight after `enforceInstanceBudget` passed, from the
  * same `instanceSpend`, so a limit already reached has halted the instance
- * before this is asked and what comes back is positive. It is what a member with
- * no `maxRunCostUSD` is handed as `--max-budget-usd` (`cycleBudgetUSD`), so that
- * its cycle's own telemetry cannot add more than that to the figure the
- * instance judges every other member by. A workflow limited by window fractions
+ * before this is asked and what comes back is positive. A member is handed it as
+ * `--max-budget-usd` wherever it is smaller than what the member's own
+ * `maxRunCostUSD` has left (`cycleBudgetUSD`), so that its cycle's own
+ * telemetry cannot add more than that to the figure the instance judges every
+ * other member by. A workflow limited by window fractions
  * alone answers `null`: a fraction is not a number of dollars a child can be
  * handed, and the fractions are enforced between cycles as before.
  *
@@ -5757,7 +5758,19 @@ function startedBehind(instance: WorkflowInstance, nodeId: string): string | nul
 }
 
 /**
- * Why pass `pass` of a loop cannot be carried on, or null when it can.
+ * What a loop whose graph carries no `maxPasses` is failed with, and refused
+ * with. One sentence in both places because `loopPassRefusal` exists to say, ahead
+ * of the press, what `advanceLoop` would say after it.
+ */
+const NO_PASS_CAP =
+  "This loop has no pass cap in the copy of the workflow this run was " +
+  "started from, so nothing says how many passes it may take. Start " +
+  "the workflow again: Run copies its saved graph afresh, and refuses " +
+  "a loop without a cap.";
+
+/**
+ * Why pass `pass` of a loop cannot be carried on, or null when it can. Pass 0 is
+ * a loop that failed before it had one.
  *
  * Pure over the instance as read, so a pick-up asks it before writing anything
  * and refuses with the sentence rather than half-reopening. A loop still
@@ -5804,6 +5817,10 @@ function loopPassRefusal(
   // is billed rather than after.
   const node = instance.graph.nodes.find((n) => n.id === loopNodeId);
   if (node?.kind === "loop") {
+    // Ahead of the board, `advanceLoop`'s own order. The press would otherwise
+    // answer `{ ok: true }` and the next advance would fail the loop on this same
+    // sentence, the one failure here that cannot be fixed from the page.
+    if (typeof node.maxPasses !== "number") return NO_PASS_CAP;
     const board = loopBoardCount(node);
     if (!board.ok) return `Its tasks could not be counted: ${board.error}`;
   }
@@ -5812,8 +5829,9 @@ function loopPassRefusal(
 
 /**
  * Reopen pass `pass` of a loop: its blocked members back to `waiting`, a
- * stopped loop back to `looping`, and whatever its stop wrote off behind it
- * back to `waiting` too. Writes only — the caller has asked `loopPassRefusal`,
+ * stopped loop back to `looping` (to `waiting` for pass 0, a loop that failed
+ * before it had a pass), and whatever its stop wrote off behind it back to
+ * `waiting` too. Writes only: the caller has asked `loopPassRefusal`,
  * holds the transaction and advances afterwards.
  *
  * The next advance decides everything again on what is true now, exactly as
@@ -5835,12 +5853,17 @@ function reopenLoopPass(
         " WHERE instance_id=? AND status='blocked' AND substr(node_id, 1, ?) = ?",
     )
     .run(instance.id, prefix.length, prefix).changes;
+  // A loop that failed before its first pass goes back to `waiting`, not
+  // `looping`: the scheduler releasing it again is what gives pass 1's entry what
+  // the loop was released behind (the predecessor runs and whether their branch
+  // continues), and `advanceLoop` is handed that by the release alone. Put
+  // straight to `looping` the entry would start after nothing, on a fresh branch.
   const loop = db()
     .prepare(
-      "UPDATE workflow_instance_blocks SET status='looping', error=NULL, finished_at=NULL," +
+      "UPDATE workflow_instance_blocks SET status=?, error=NULL, finished_at=NULL," +
         " restart_closed=0 WHERE instance_id=? AND node_id=? AND status='failed'",
     )
-    .run(instance.id, loopNodeId);
+    .run(pass === 0 ? "waiting" : "looping", instance.id, loopNodeId);
   if (loop.changes > 0) {
     revived += loop.changes + reviveGraphDependents(instance, [loopNodeId]);
   }
@@ -5888,6 +5911,10 @@ export type PickUp =
        * on its own page before resuming a run could reopen a pass — or, with
        * nothing blocked at all, a pass that settled whole under a loop that
        * failed on reading its board.
+       *
+       * Or a loop that failed before it had a pass at all, on reading its board
+       * or on a graph with no cap: `pass` is 0, and the press releases the loop
+       * again.
        */
       kind: "loop";
       nodeId: string;
@@ -5930,8 +5957,10 @@ export function pickUpsOf(instance: WorkflowInstance): PickUp[] {
   const stoppedPasses = new Map<string, number>();
   for (const loop of instance.blocks) {
     if (loop.kind !== "loop" || loop.status !== "failed") continue;
-    const last = loopPasses(instance.id, loop.nodeId).at(-1)?.pass;
-    if (last !== undefined) stoppedPasses.set(loop.nodeId, last);
+    // 0 for a loop that failed before its first pass, on reading its board or
+    // on a graph with no cap. No member carries pass 0, so the member filters
+    // above and below never match it and only the loop's own pick-up does.
+    stoppedPasses.set(loop.nodeId, loopPasses(instance.id, loop.nodeId).at(-1)?.pass ?? 0);
   }
   const holdsUp = (memberId: string, graphNodeId: string): boolean => {
     const pass = passMemberIn(instance.graph, memberId);
@@ -6035,7 +6064,8 @@ export function pickUpsOf(instance: WorkflowInstance): PickUp[] {
  * was therefore not the pass but the read `advanceLoop` makes between two of
  * them — a board whose folder would not resolve. Reopening that one writes no
  * member; it puts the loop back to `looping` so the next advance reads the
- * board again, and `loopPassRefusal` says whether that can happen yet.
+ * board again, and `loopPassRefusal` says whether that can happen yet. A loop
+ * that failed before pass 1 is the same shape one step earlier.
  */
 function passWouldProceed(
   instance: WorkflowInstance,
@@ -6044,6 +6074,12 @@ function passWouldProceed(
 ): boolean {
   const node = instance.graph.nodes.find((n) => n.id === loopNodeId);
   if (!node || node.kind !== "loop") return false;
+  // Before a first pass there is nothing to dry-run. What fails a loop that has
+  // no pass is the read `advanceLoop` makes ahead of the first one (the board, or
+  // the cap), and `loopPassRefusal` says whether that can succeed yet. A loop that
+  // repeats no section is the other way to fail here, and it would fail again
+  // with nothing to fix from the page.
+  if (pass === 0) return loopSection(instance.graph, node).nodes.length > 0;
   const row = loopPasses(instance.id, loopNodeId).find((p) => p.pass === pass);
   const blocked = (row?.members ?? []).filter((m) => m.block?.status === "blocked");
   if (blocked.length === 0) {
@@ -6081,8 +6117,9 @@ export function resumeLoop(instanceId: string, loopNodeId: string): PickUpOutcom
   if (!loop) {
     return { ok: false, status: 404, error: "That loop is not part of this workflow run." };
   }
-  const pass = loopPasses(instanceId, loopNodeId).at(-1)?.pass;
-  if (pass === undefined || loop.status !== "failed") {
+  // 0 when it failed before its first pass, `pickUpsOf`'s own reading.
+  const pass = loopPasses(instanceId, loopNodeId).at(-1)?.pass ?? 0;
+  if (loop.status !== "failed") {
     return {
       ok: false,
       status: 409,
@@ -6094,10 +6131,20 @@ export function resumeLoop(instanceId: string, loopNodeId: string): PickUpOutcom
 
   db().transaction(() => {
     reopenLoopPass(instance, loopNodeId, pass);
-    noteBlock(instanceId, loopNodeId, `Picked up at pass ${pass}: carried on.`);
+    noteBlock(
+      instanceId,
+      loopNodeId,
+      pass === 0
+        ? "Picked up before its first pass: released again."
+        : `Picked up at pass ${pass}: carried on.`,
+    );
   })();
 
   advanceInstances();
+  // A loop reopened before its first pass is released by the scheduler, and a
+  // loop that settles at its release (the board is clear by now) leaves what is
+  // behind it for the next advance, which nothing in a quiet app would make.
+  if (pass === 0) advanceInstances();
   return { ok: true };
 }
 
@@ -7246,15 +7293,7 @@ function advanceLoop(
     // still in the graph, and an operator told it is not goes looking for a
     // deletion that never happened.
     if (typeof node.maxPasses !== "number") {
-      settleLoop(
-        instanceId,
-        nodeId,
-        "failed",
-        "This loop has no pass cap in the copy of the workflow this run was " +
-          "started from, so nothing says how many passes it may take. Start " +
-          "the workflow again: Run copies its saved graph afresh, and refuses " +
-          "a loop without a cap.",
-      );
+      settleLoop(instanceId, nodeId, "failed", NO_PASS_CAP);
       return;
     }
 
@@ -9449,10 +9488,10 @@ async function reviewSettled(reviewId: string): Promise<ReturnType<typeof getAss
 }
 
 /**
- * The tail of each review block's door queue, keyed by `turnKey`.
+ * The tail of each workflow instance's review door queue, keyed by instance id.
  *
  * On `globalThis` for `blockTurns`' reason: two of these after a dev hot
- * reload would be two queues that do not see each other, and one block's
+ * reload would be two queues that do not see each other, and one instance's
  * branches would pass the door side by side again.
  */
 const reviewDoors = ((globalThis as unknown as {
@@ -9460,9 +9499,9 @@ const reviewDoors = ((globalThis as unknown as {
 }).__ufReviewDoors ??= new Map<string, Promise<void>>());
 
 /**
- * Run `fn`, one block's passage through its review door, with none of the
- * block's other branches in theirs at the same time: `withRepoAdmin`'s queue,
- * keyed on the block.
+ * Run `fn`, one branch's passage through its review door, with none of the
+ * instance's other branches, of this block or of another, in theirs at the same
+ * time: `withRepoAdmin`'s queue, keyed on the instance.
  *
  * Because the door is a check and not a claim (`assistRefusal` says why), and
  * a block hands every branch to it at once and wakes the queued ones on the
@@ -9474,19 +9513,27 @@ const reviewDoors = ((globalThis as unknown as {
  * row is written synchronously before `startReview` returns, so the next
  * sibling's check counts it and its guard read banks whatever has ended.
  *
+ * Keyed on the instance and not the block because the limit is the instance's:
+ * two review blocks side by side in one graph, each with its own queue, passed
+ * the slot and the guard in the same tick exactly as two siblings of one block
+ * did. Nothing inside `fn` waits on another review passing a door, and `fn`
+ * never comes back through here, so no passage can be waiting on a queue it
+ * sits in.
+ *
  * What this does not do is make the door a claim against anything outside the
- * block: a chat turn or another block can still take the slot while the diff
- * is read, which is why `startReview`'s `busy` is still waited out. And it costs
- * the block its parallel preparation (the diff, the window scan and the
- * checkout lookup, one branch after another), which is milliseconds against a
- * review's minutes.
+ * instance: a chat turn or another workflow can still take the slot while the
+ * diff is read, which is why `startReview`'s `busy` is still waited out. Nor
+ * does it reach a fix run's cycle-boundary guard, which reads the same figure
+ * without passing here. And it costs the instance its parallel preparation (the
+ * diff, the window scan and the checkout lookup, one branch after another across
+ * all its review blocks), which is milliseconds against a review's minutes.
  *
  * Resolves and rejects as `fn` does. The tail settles either way, so a branch
  * whose passage threw or was refused hands the door on rather than wedging
  * every sibling behind it.
  */
-function atReviewDoor<T>(instanceId: string, blockId: string, fn: () => Promise<T>): Promise<T> {
-  const key = turnKey(instanceId, blockId);
+function atReviewDoor<T>(instanceId: string, fn: () => Promise<T>): Promise<T> {
+  const key = instanceId;
   const prior = reviewDoors.get(key) ?? Promise.resolve();
   const passing = prior.then(fn);
   const tail = passing.then(
@@ -9524,9 +9571,9 @@ async function driveReviewItem(
     if (!current || current.status === "approved" || current.status === "set-aside") return;
     if (!open()) return;
 
-    // One branch of this block at a time, from the queue check to the row
+    // One branch of this instance at a time, from the queue check to the row
     // `startAssist` writes, which is what fills the slot: `atReviewDoor` says why.
-    const started = await atReviewDoor(instanceId, blockId, async () => {
+    const started = await atReviewDoor(instanceId, async () => {
       // The wait for the door is an await, and a halt can land in it.
       if (!open()) return "stop" as const;
       // Waited for rather than refused: a full assist queue is a shortage that
@@ -9560,9 +9607,9 @@ async function driveReviewItem(
       // A halt while the review was being prepared: `stillWanted` refused it
       // before anything was spawned, and it is no verdict on the branch.
       if (!open()) return;
-      // The check above is a claim among this block's branches and nothing
-      // else: a chat turn or another block can take the slot while the diff is
-      // read. So `startReview`'s own door can still find the
+      // The check above is a claim among this instance's branches and nothing
+      // else: a chat turn or another workflow's block can take the slot while
+      // the diff is read. So `startReview`'s own door can still find the
       // queue full, and that is the same shortage, waited out the same way. Only
       // the budget is `busy` — a spent window or install limit is an answer, and
       // a halt or a shutdown ends this wait at the top of the loop. The hold is

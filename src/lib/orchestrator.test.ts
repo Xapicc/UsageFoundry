@@ -3687,15 +3687,31 @@ describe("buildArgs", () => {
     assert.equal(args[args.indexOf("--max-budget-usd") + 1], "7.5");
   });
 
-  it("lets the run's own limit win over a headroom", () => {
-    const args = buildArgs({
-      ...base,
-      isolated: true,
-      maxRunCostUSD: 5,
-      spentGuardUSD: 1.25,
-      headroomUSD: 1,
-    });
-    assert.equal(args[args.indexOf("--max-budget-usd") + 1], "3.75");
+  /**
+   * A run with a limit of its own is handed the headroom too, whenever it is
+   * the smaller.
+   *
+   * Its own limit used to win outright, so a run at a $100 limit under an
+   * install with $5 left was spawned with 100, stamped 100, and one forged
+   * `cost_usd` read as $100 in every other run's install figure: past the
+   * limit, refusing every door. The stop has to name the same limit the argv
+   * was given, so `cycleBudgetIsHeadroom` is asked here beside it.
+   */
+  it("hands a run with a limit of its own the smaller of what that and the headroom leave", () => {
+    const { cycleBudgetIsHeadroom } =
+      require("./cycleInvocation") as typeof import("./cycleInvocation");
+    const handed = (maxRunCostUSD: number, spentGuardUSD: number, headroomUSD: number) => {
+      const args = buildArgs({ ...base, isolated: true, maxRunCostUSD, spentGuardUSD, headroomUSD });
+      return [
+        args[args.indexOf("--max-budget-usd") + 1],
+        cycleBudgetIsHeadroom(maxRunCostUSD, spentGuardUSD, headroomUSD),
+      ];
+    };
+    assert.deepEqual(handed(100, 0, 5), ["5", true], "the install's headroom is the smaller");
+    assert.deepEqual(handed(5, 1.25, 1), ["1", true], "what is spent comes off the run's limit only");
+    assert.deepEqual(handed(5, 1.25, 10), ["3.75", false], "the run's own remainder is the smaller");
+    // A tie goes to the run's own limit, which the pre-cycle guard asks first.
+    assert.deepEqual(handed(5, 1, 4), ["4", false]);
   });
 
   it("hands an exhausted headroom over as a budget nothing can satisfy, never as no budget", () => {

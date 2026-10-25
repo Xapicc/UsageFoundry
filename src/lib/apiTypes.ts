@@ -3195,7 +3195,10 @@ export type WorkflowPickUpDTO =
       retryRefusal: string | null;
     }
   | {
-      /** A stopped loop whose latest pass would now go through. */
+      /**
+       * A stopped loop whose latest pass would now go through, or `pass` 0: a
+       * loop that failed before it had a pass, which carrying on releases again.
+       */
       kind: "loop";
       nodeId: string;
       nodeName: string;
@@ -5401,6 +5404,35 @@ export interface DreamingNightDTO {
 }
 
 /**
+ * A night whose notes are on a branch that is not in the vault yet.
+ *
+ * Its own list rather than a field on `DreamingNightDTO`: the ledger has no rows
+ * for it (the signatures are held until the branch lands), so the notes tab has
+ * nothing to hang it on, and a night cut from the nights list must still show.
+ * Mirrors `LandingWait` in `dreamingLanding.ts`.
+ */
+export interface DreamingLandingDTO {
+  night: string;
+  /** The run page, where Land and Purge are. */
+  runId: string;
+  /** Signatures selected, so an upper bound on the notes on the branch. */
+  selected: number;
+  /** In `settleDreamingLandings`' words, lower-case and without a full stop. */
+  why: string;
+  /**
+   * `true` when the reason moves by itself within minutes (run live, in the
+   * merge queue, landed and not yet recorded). Read once, so it is drawn as true
+   * when the pane loaded and never as where the night ended.
+   */
+  settling: boolean;
+  /**
+   * How the newest merge queue row ended without landing. Null for an active row
+   * or none, because an active status is stale the moment it is read.
+   */
+  queueEnding: { status: "failed" | "skipped" | "cancelled"; message: string | null } | null;
+}
+
+/**
  * What `/dreaming` reads.
  *
  * `writerConfigured` and `refusal` are separate from `enabled` on purpose: the
@@ -5445,6 +5477,8 @@ export interface DreamingDTO {
 
   notes: DreamingNoteDTO[];
   nights: DreamingNightDTO[];
+  /** Oldest first; empty when every night's notes are in the vault. */
+  awaitingLanding: DreamingLandingDTO[];
   /**
    * Whether either list above was cut, and to what.
    *

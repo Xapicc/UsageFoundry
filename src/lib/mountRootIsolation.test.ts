@@ -19,6 +19,11 @@ import { after, describe, it } from "node:test";
  * for the operator's branch; and the run's file history counts another run's
  * slot as its own tree.
  *
+ * The store is just as much inside a mount-root repository when the run is on a
+ * repository *nested* below it, and there the failure is the same silent one
+ * seen from the other side: the outer repository's `git status` lists every
+ * slot, and Land of an outer-repository run is refused as dirty.
+ *
  * Its own file because it needs mounts that are repositories, which
  * `orchestrator.test.ts`'s fixed layout is not, and a global git config of its
  * own. `DATA_DIR`, `CLAUDE_HOME` and `GIT_CONFIG_GLOBAL` are set before anything
@@ -31,6 +36,15 @@ const vault = path.join(tmp, "vault");
 const plain = path.join(tmp, "plain");
 const globalOnly = path.join(tmp, "global");
 const notes = path.join(tmp, "notes");
+// A mount root that is a repository with a repository nested below it, once with
+// and once without a rule for the store.
+const outer = path.join(tmp, "outer");
+const covered = path.join(tmp, "covered");
+// A mount root that is not a repository, inside one that is, and a mount root
+// whose `.git` git cannot use.
+const aboveRepo = path.join(tmp, "above");
+const aboveMount = path.join(aboveRepo, "mount");
+const broken = path.join(tmp, "broken");
 for (const dir of [vault, plain, globalOnly, notes, path.join(tmp, "claude", "projects")]) {
   fs.mkdirSync(dir, { recursive: true });
 }
@@ -50,7 +64,9 @@ for (const key of Object.keys(process.env)) {
   if (key.startsWith("GIT_CONFIG_") && key !== "GIT_CONFIG_GLOBAL") delete process.env[key];
 }
 
-process.env.WORKSPACE_ROOTS = `Vault=${vault}|Plain=${plain}|Global=${globalOnly}|Notes=${notes}`;
+process.env.WORKSPACE_ROOTS =
+  `Vault=${vault}|Plain=${plain}|Global=${globalOnly}|Notes=${notes}|Outer=${outer}` +
+  `|Covered=${covered}|Above=${aboveMount}|Broken=${broken}`;
 process.env.DATA_DIR = path.join(tmp, "data");
 process.env.CLAUDE_HOME = path.join(tmp, "claude");
 // Pinned rather than left to fall back to the ambient one: `planUsage` looks for
@@ -98,6 +114,28 @@ function makeRepo(dir: string, gitignore: string | null): void {
 makeRepo(vault, `${WORKTREE_STORE_DIR}/\n`);
 makeRepo(plain, null);
 makeRepo(globalOnly, null);
+
+// The outer repository is committed before the nested one exists, so the nested
+// one is a plain untracked directory to it and not a gitlink in its history.
+for (const [root, gitignore] of [
+  [outer, null],
+  [covered, `${WORKTREE_STORE_DIR}/\n`],
+  [aboveRepo, null],
+] as const) {
+  fs.mkdirSync(root, { recursive: true });
+  makeRepo(root, gitignore);
+}
+fs.mkdirSync(aboveMount, { recursive: true });
+// What a checkout made on the host leaves under a container mount: a `.git` file
+// naming a gitdir that is not there, which is a repository to the operator and
+// not to git here.
+fs.mkdirSync(broken, { recursive: true });
+fs.writeFileSync(path.join(broken, ".git"), `gitdir: ${path.join(tmp, "no-such-gitdir")}\n`);
+for (const root of [outer, covered, aboveMount, broken]) {
+  const nested = path.join(root, "app");
+  fs.mkdirSync(nested, { recursive: true });
+  makeRepo(nested, null);
+}
 
 const store = path.join(vault, WORKTREE_STORE_DIR);
 
@@ -152,6 +190,37 @@ describe("a repository at the mount root", () => {
       `${WORKTREE_STORE_DIR}/`,
     );
     assert.equal(probeIsolation(globalOnly).mode, "none");
+  });
+});
+
+describe("a repository nested below a mount root that is itself a repository", () => {
+  it("is refused when the outer repository does not ignore the store, and the reason names its .gitignore", () => {
+    const plan = probeIsolation(path.join(outer, "app"));
+    assert.equal(plan.mode, "none");
+    assert.equal(plan.repository, path.join(outer, "app"));
+    assert.ok(plan.reason?.includes(path.join(outer, ".gitignore")), plan.reason);
+    assert.ok(plan.reason?.includes(`"${WORKTREE_STORE_DIR}/"`), plan.reason);
+  });
+
+  it("is isolated when the outer repository ignores it", () => {
+    const plan = probeIsolation(path.join(covered, "app"));
+    assert.equal(plan.mode, "worktree");
+    assert.equal(plan.repoRoot, path.join(covered, "app"));
+  });
+
+  it("is not asked about a repository above the mount root", () => {
+    // The control: git run from the mount root does find a repository, the one
+    // above it, and that repository does not ignore the store. A lookup that
+    // asked git rather than the mount root itself would refuse here.
+    assert.equal(fixtureGit(aboveMount, ["rev-parse", "--show-toplevel"]), aboveRepo);
+    assert.equal(probeIsolation(path.join(aboveMount, "app")).mode, "worktree");
+  });
+
+  it("is not refused over a mount root whose .git git cannot use", () => {
+    // The refusal's remedy is a line in a `.gitignore` that git here cannot read
+    // either way, so refusing would be a refusal nothing the operator does here
+    // clears.
+    assert.equal(probeIsolation(path.join(broken, "app")).mode, "worktree");
   });
 });
 
@@ -227,7 +296,16 @@ describe("the folder listing of a mount whose root is a repository", () => {
     assert.ok(fs.readdirSync(store).length > 0, "the store holds slots for this to be about");
     const { mounts, folders } = await scanWorkspace();
     const isGitRepo = Object.fromEntries(mounts.map((m) => [m.id, m.isGitRepo]));
-    assert.deepEqual(isGitRepo, { vault: true, plain: true, global: true, notes: false });
+    assert.deepEqual(isGitRepo, {
+      vault: true,
+      plain: true,
+      global: true,
+      notes: false,
+      outer: true,
+      covered: true,
+      above: false,
+      broken: true,
+    });
     assert.deepEqual(
       folders.filter((f) => f.path.split(path.sep).includes(WORKTREE_STORE_DIR)),
       [],
