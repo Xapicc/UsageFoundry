@@ -194,24 +194,26 @@ export function codexHomeNameUnsafeBecause(
  * `CODEX_HOME` or with the name `CODEX_HOME` is reached by — or null when only
  * this server can change any of them.
  *
- * Outermost first, and before anything is made inside: while the agents can
- * rename `CODEX_HOME` or entries in it, nothing found in `rules/` stays what it
- * was found to be. Once the outer ones hold they cannot touch root's `rules/`,
- * so the check and the write after it see the same directory. Refused rather
+ * `CODEX_HOME` and its name first, and before anything is made inside: while
+ * the agents can rename `CODEX_HOME` or entries in it, nothing found in
+ * `rules/` stays what it was found to be. Once both hold they cannot touch
+ * root's `rules/`, so the check and the write after it see the same directory.
+ * The directory before its name only so that each refusal has a case of its
+ * own in the suite, which cannot make a parent another uid's. Refused rather
  * than repaired, because a repair at cycle time races a cycle that is still
  * running; the entrypoint repairs at boot, before there is one. The name's
  * refusal carries its own remedy, since a restart does not mount a volume.
  */
 function tamperedBecause(dir: string, owner: number): string | null {
-  const swappable = codexHomeNameUnsafeBecause(
-    CODEX_HOME,
-    fs.lstatSync(CODEX_HOME),
-    fs.lstatSync(path.dirname(CODEX_HOME)),
-    owner,
-  );
-  if (swappable) return swappable;
   let reason = untrustedBecause(CODEX_HOME, owner, true);
   if (!reason) {
+    const swappable = codexHomeNameUnsafeBecause(
+      CODEX_HOME,
+      fs.lstatSync(CODEX_HOME),
+      fs.lstatSync(path.dirname(CODEX_HOME)),
+      owner,
+    );
+    if (swappable) return swappable;
     makeDirectory(dir);
     reason = untrustedBecause(dir, owner, false);
   }

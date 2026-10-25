@@ -223,7 +223,14 @@ describe("prepareCodexRules when the cycle runs under another uid", () => {
     // uid at 0755, which no mode check alone would have caught.
     homeWithMode(0o755);
     const reason = refused(home(), self + 1);
-    assert.match(reason, new RegExp(`uid ${self}\\b`));
+    // The directory's own owner, not its parent's: the fixture's parent is not
+    // uid `self + 1`'s either, so the name check would refuse this too and
+    // hide a missing owner check behind its own reason.
+    assert.equal(
+      reason.includes(`${home()} is owned by uid ${self},`),
+      true,
+      `refused for something other than CODEX_HOME's owner: ${reason}`,
+    );
   });
 
   it("refuses a rules/ that is a link to a directory an agent owns, and writes nothing through it", () => {
