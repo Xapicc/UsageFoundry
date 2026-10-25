@@ -141,18 +141,75 @@ function untrustedBecause(
   return null;
 }
 
+/** The three fields of an `lstat` that decide whether a name can be swapped. */
+export type NameStat = Pick<fs.Stats, "dev" | "uid" | "mode">;
+
 /**
- * Make `rules/` if it is missing, and say what is wrong with it or with
- * `CODEX_HOME` — or null when only this server can change either.
+ * Why a work cycle could put a directory of its own at `home`'s name, or null.
  *
- * The parent first, and before anything is made in it: while the agents can
- * rename entries in `CODEX_HOME`, nothing found in `rules/` stays what it was
- * found to be. Once the parent holds they cannot touch root's `rules/`, so the
- * check and the write after it see the same directory. Refused rather than
- * repaired, because a repair at cycle time races a cycle that is still running;
- * the entrypoint repairs at boot, before there is one.
+ * Checking `CODEX_HOME` and `rules/` closes both directories and not the name
+ * they are reached by: a rename is a write to the directory holding the name,
+ * and on the stock image that is `/home/node`, the agents' own. So the name
+ * holds only if `rename` cannot take it, for one of two reasons. Either `home`
+ * is a mount point — its device differs from its parent's — which `rename` and
+ * `rmdir` refuse with `EBUSY` from the namespace it is mounted in; that is the
+ * `usagefoundry-codex` volume compose mounts there. Or the parent is the
+ * server's and has no write bit for group or others. Any group, not only the
+ * agents': `privsep.ts` says a child keeps the server's supplementary groups,
+ * so a group-writable parent is not provably out of a cycle's reach from here.
+ * Sticky does not rescue the parent the way it rescues `CODEX_HOME`, because
+ * nothing here needs the agents to create entries beside it.
+ *
+ * Fails closed on an install that runs a uid split without the volume and
+ * leaves `CODEX_HOME` under the agents' home, and the refusal names both fixes.
+ * Pure over two `lstat` results so each side is testable without root or a
+ * mount.
+ *
+ * @param owner the server's uid, as `rulesOwner()` answers it.
+ */
+export function codexHomeNameUnsafeBecause(
+  home: string,
+  homeStat: NameStat,
+  parentStat: NameStat,
+  owner: number,
+): string | null {
+  if (homeStat.dev !== parentStat.dev) return null;
+  const mode = parentStat.mode & 0o7777;
+  if (parentStat.uid === owner && (mode & 0o022) === 0) return null;
+  const parent = path.dirname(home);
+  const parentIs =
+    parentStat.uid !== owner
+      ? `owned by uid ${parentStat.uid}, not by this server's uid ${owner}`
+      : `mode ${mode.toString(8).padStart(4, "0")}, writable by group or others`;
+  return (
+    `${home} is not a mount point and ${parent} is ${parentIs}, so a work cycle could ` +
+    `rename ${home} and put a directory of its own at that name. Mount the ` +
+    `usagefoundry-codex volume at CODEX_HOME, as docker-compose.yml does at /home/node/.codex, ` +
+    `or point CODEX_HOME at a directory whose parent only root can write.`
+  );
+}
+
+/**
+ * Make `rules/` if it is missing, and say what is wrong with it, with
+ * `CODEX_HOME` or with the name `CODEX_HOME` is reached by — or null when only
+ * this server can change any of them.
+ *
+ * Outermost first, and before anything is made inside: while the agents can
+ * rename `CODEX_HOME` or entries in it, nothing found in `rules/` stays what it
+ * was found to be. Once the outer ones hold they cannot touch root's `rules/`,
+ * so the check and the write after it see the same directory. Refused rather
+ * than repaired, because a repair at cycle time races a cycle that is still
+ * running; the entrypoint repairs at boot, before there is one. The name's
+ * refusal carries its own remedy, since a restart does not mount a volume.
  */
 function tamperedBecause(dir: string, owner: number): string | null {
+  const swappable = codexHomeNameUnsafeBecause(
+    CODEX_HOME,
+    fs.lstatSync(CODEX_HOME),
+    fs.lstatSync(path.dirname(CODEX_HOME)),
+    owner,
+  );
+  if (swappable) return swappable;
   let reason = untrustedBecause(CODEX_HOME, owner, true);
   if (!reason) {
     makeDirectory(dir);
@@ -189,15 +246,17 @@ function makeDirectory(dir: string): void {
  * holding it, since a rename needs write on the parent only: a cycle could move
  * `rules/` aside and leave a link into its own tree, which this used to follow
  * and answer `ready` with the denial somewhere the agent can edit. So both
- * directories are checked, and the refusal names the one that is wrong.
+ * directories are checked, and the name `CODEX_HOME` is reached by, and the
+ * refusal names the one that is wrong.
  *
  * The caller must **refuse the cycle** on `unavailable` rather than log it and
  * carry on. That is the one place this differs from the read guard, which
  * degrades to a cycle that re-reads files: this degrades to a cycle that can
  * kill the supervisor, and the Claude equivalent is not optional either.
  *
- * @param owner the uid both directories must belong to, or null to check
- *   nothing; `rulesOwner()` says which, and the tests pass their own.
+ * @param owner the uid both directories, and `CODEX_HOME`'s parent unless it
+ *   is a mount point, must belong to, or null to check nothing; `rulesOwner()`
+ *   says which, and the tests pass their own.
  */
 export function prepareCodexRules(
   owner: number | null = rulesOwner(),
