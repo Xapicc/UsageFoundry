@@ -605,3 +605,169 @@ describe("a check asked for before the run's last pick-up", () => {
     }
   });
 });
+
+/**
+ * A claim repeated by the pick-up's own cycle.
+ *
+ * `INSERT OR IGNORE` kept the first `asked_at` of a claim that was still queued,
+ * and a check already reading kept its row's, so a run whose cycle ended
+ * `needs-review` and was picked up, and whose pick-up called `complete_task`
+ * again for the same task, had that second claim read by the floor as a request
+ * from before the pick-up: not waited for at its boundary, and its
+ * `not-finished` thrown away with the task still claimed and no pushback. The
+ * repeat is the pick-up's own act, so it is asked again at the pick-up's time.
+ */
+describe("a claim repeated after the run's last pick-up", () => {
+  const notFinished = () =>
+    fs.writeFileSync(
+      control("verdict"),
+      JSON.stringify({ verdict: "not-finished", reason: "the tests were never written", evidence: [] }),
+    );
+
+  /** A clock tick after the first claims, so the pick-up cannot share their millisecond. */
+  async function pickUp(runId: string): Promise<number> {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const pickedUpAt = Date.now();
+    database.db().prepare("UPDATE runs SET reopened_at = ? WHERE id = ?").run(pickedUpAt, runId);
+    return pickedUpAt;
+  }
+
+  const queuedAskedAt = (runId: string, taskId: string) =>
+    (
+      database
+        .db()
+        .prepare("SELECT asked_at FROM validation_queue WHERE run_id = ? AND task_id = ?")
+        .get(runId, taskId) as { asked_at: number } | undefined
+    )?.asked_at;
+
+  it("is waited for and acted on when it was still queued from before the pick-up", async () => {
+    settings.saveSettings({ validateTaskCompletion: true, maxValidationCycles: 2 });
+    const runId = worktreeRun("running");
+    const first = heldTask(runId, "First, reading at the pick-up");
+    const second = heldTask(runId, "Second, queued before the pick-up");
+    const since = Date.now();
+    notFinished();
+
+    assert.equal((await validation.completeTaskWithValidation(first.id, runId)).kind, "checking");
+    await until("the first check to start", () => childrenStarted() === 1);
+    assert.equal((await validation.completeTaskWithValidation(second.id, runId)).kind, "queued");
+    const pickedUpAt = await pickUp(runId);
+
+    const again = await validation.completeTaskWithValidation(second.id, runId);
+    assert.ok(again.kind === "queued", JSON.stringify(again));
+    assert.equal(again.ahead, 1, "a repeat is still one check behind the first, not queued twice");
+    const askedAt = queuedAskedAt(runId, second.id);
+    assert.ok(
+      askedAt !== undefined && askedAt >= pickedUpAt,
+      `the repeat kept its old request time: asked_at ${askedAt}, pick-up ${pickedUpAt}`,
+    );
+    assert.equal(validation.validationInFlight(runId, pickedUpAt), true);
+
+    fs.writeFileSync(control("answer"), "");
+    await settled(runId);
+
+    // Both answered `not-finished`. The first was asked for before the pick-up
+    // and is left out; the second was asked for again by it, so it is the one
+    // that sends the run back.
+    const met = await validation.validationAtBoundary(runId, since, () => false);
+    assert.ok(met !== null, "the pick-up's own claim was dropped without a pushback");
+    assert.match(met.pushback, /Second, queued before the pick-up/);
+    assert.doesNotMatch(met.pushback, /First, reading at the pick-up/);
+  });
+
+  it("is waited for and acted on when its check was already reading at the pick-up", async () => {
+    settings.saveSettings({ validateTaskCompletion: true, maxValidationCycles: 2 });
+    const runId = worktreeRun("running");
+    const task = heldTask(runId, "Reading across the pick-up");
+    const since = Date.now();
+    notFinished();
+
+    const door = await validation.completeTaskWithValidation(task.id, runId);
+    assert.ok(door.kind === "checking" && door.reviewId !== null, JSON.stringify(door));
+    await until("the check to start", () => childrenStarted() === 1);
+    const pickedUpAt = await pickUp(runId);
+
+    const again = await validation.completeTaskWithValidation(task.id, runId);
+    assert.ok(again.kind === "checking", JSON.stringify(again));
+    assert.equal(again.reviewId, door.reviewId, "a repeat is answered with the reading in flight");
+    assert.equal(childrenStarted(), 1);
+    const row = checksOf(runId)[0]!;
+    assert.ok(
+      row.asked_at !== null && row.asked_at >= pickedUpAt,
+      `the repeat left the row's request time: asked_at ${row.asked_at}, pick-up ${pickedUpAt}`,
+    );
+    assert.equal(validation.validationInFlight(runId, pickedUpAt), true);
+
+    fs.writeFileSync(control("answer"), "");
+    await until("the check to settle", () => !validation.validationInFlight(runId));
+    const met = await validation.validationAtBoundary(runId, since, () => false);
+    assert.ok(met !== null, "the pick-up's own claim was dropped without a pushback");
+    assert.match(met.pushback, /Reading across the pick-up/);
+  });
+
+  it("is asked again at the pick-up when its diff is still being read", async () => {
+    const runId = worktreeRun("running");
+    const task = heldTask(runId, "Starting across the pick-up");
+    const realRunDiff = diffModule.runDiff;
+    let releaseDiff!: () => void;
+    const held = new Promise<void>((resolve) => (releaseDiff = resolve));
+    let reads = 0;
+    // As the cases above swap it: exports are writable under the CommonJS this
+    // suite compiles to.
+    const writable = diffModule as { runDiff: typeof realRunDiff };
+    writable.runDiff = async (id: string) => {
+      reads += 1;
+      await held;
+      return realRunDiff(id);
+    };
+    let door: ReturnType<typeof validation.completeTaskWithValidation>;
+    let pickedUpAt: number;
+    try {
+      door = validation.completeTaskWithValidation(task.id, runId);
+      await until("the diff read to begin", () => reads === 1);
+      pickedUpAt = await pickUp(runId);
+      assert.equal(validation.validationInFlight(runId, pickedUpAt), false, "premise: asked before the pick-up");
+
+      const again = await validation.completeTaskWithValidation(task.id, runId);
+      assert.ok(again.kind === "checking" && again.reviewId === null, JSON.stringify(again));
+      assert.equal(validation.validationInFlight(runId, pickedUpAt), true);
+    } finally {
+      writable.runDiff = realRunDiff;
+      releaseDiff();
+      fs.writeFileSync(control("answer"), "");
+    }
+    assert.equal((await door).kind, "checking");
+    await until("the check to settle", () => !validation.validationInFlight(runId));
+    const row = checksOf(runId)[0]!;
+    assert.ok(
+      row.asked_at !== null && row.asked_at >= pickedUpAt,
+      `the row was written with the first request time: asked_at ${row.asked_at}, pick-up ${pickedUpAt}`,
+    );
+  });
+
+  it("keeps its place in the queue when the pick-up was before it was first asked", async () => {
+    const runId = worktreeRun("running");
+    const first = heldTask(runId, "First, reading");
+    const second = heldTask(runId, "Second, queued");
+    const third = heldTask(runId, "Third, queued");
+    const pickedUpAt = await pickUp(runId);
+
+    assert.equal((await validation.completeTaskWithValidation(first.id, runId)).kind, "checking");
+    await until("the first check to start", () => childrenStarted() === 1);
+    await validation.completeTaskWithValidation(second.id, runId);
+    await validation.completeTaskWithValidation(third.id, runId);
+    const before = queuedAskedAt(runId, second.id);
+    assert.ok(before !== undefined && before >= pickedUpAt, "premise: asked for in this segment");
+
+    // A repeat in the same segment moves nothing, or every one would send the
+    // claim to the back behind a task asked for after it.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const again = await validation.completeTaskWithValidation(second.id, runId);
+    assert.ok(again.kind === "queued", JSON.stringify(again));
+    assert.equal(again.ahead, 1);
+    assert.equal(queuedAskedAt(runId, second.id), before);
+
+    fs.writeFileSync(control("answer"), "");
+    await until("the checks to settle", () => !validation.validationInFlight(runId));
+  });
+});

@@ -575,9 +575,11 @@ export async function completeTaskWithValidation(
   // its turn is the queue's insert below, which ignores a repeat.
   const live = task ? runningValidation(runId) : null;
   if (task && live && live.task_id === task.id) {
+    askAgainAfterPickUp(runId, live.id);
     return { kind: "checking", task, reviewId: live.id };
   }
   if (task && startingChecks.get(runId) === task.id) {
+    askAgainAfterPickUp(runId, null);
     return { kind: "checking", task, reviewId: null };
   }
 
@@ -703,8 +705,9 @@ async function startCheck(
       headSha: diff.head,
       // The row's `created_at` is the spawn, which a claim that waited behind
       // another check reaches after the pick-up it was asked before; the
-      // segment floor reads this one.
-      askedAt,
+      // segment floor reads this one. Read here rather than taken from the
+      // parameter, which a repeat of this claim during the diff read has moved.
+      askedAt: startingAskedAt.get(runId) ?? askedAt,
       // The one spender in this app that only ever starts itself, so it must
       // not be able to run away: nothing presses anything here.
       maxBudgetUSD: settings.validationBudgetUSD,
@@ -741,6 +744,39 @@ async function startCheck(
     dequeueCheck(runId, task.id);
     if (!spawned) setImmediate(() => void drainValidationQueue(runId));
   }
+}
+
+/**
+ * A claim repeated after the run's last pick-up, for a check that is starting
+ * or reading: `reviewId` names the row, null the `startingChecks` entry before
+ * its row exists.
+ *
+ * The repeat is the pick-up's own cycle saying it is done, and every floor
+ * comparison reads the check's request time. Left at the first claim's time it
+ * is a request from before the pick-up: not waited for at the pick-up's
+ * boundary and its `not-finished` not acted on, so the task stays claimed with
+ * no pushback — the failure the floor exists to avoid, reached the strict way
+ * by a repeated claim rather than a late spawn. Moved only from below the
+ * floor, so a repeat inside one segment changes nothing.
+ *
+ * What the reading judged is the branch as it was when its diff was read, which
+ * may predate work the pick-up has done since. A stale `not-finished` buys at
+ * most the one grant `maxValidationCycles` allows and the agent answers it with
+ * the next `complete_task`; a dropped one leaves the task claimed by a run that
+ * ends `completed`, and nothing says so.
+ */
+function askAgainAfterPickUp(runId: string, reviewId: string | null): void {
+  const floor = getRun(runId)?.reopened_at ?? null;
+  if (floor === null) return;
+  const now = Date.now();
+  if (reviewId === null) {
+    const askedAt = startingAskedAt.get(runId);
+    if (askedAt !== undefined && askedAt < floor) startingAskedAt.set(runId, now);
+    return;
+  }
+  db()
+    .prepare("UPDATE run_reviews SET asked_at = ? WHERE id = ? AND COALESCE(asked_at, created_at) < ?")
+    .run(now, reviewId, floor);
 }
 
 /* ------------------------------------------------------------------ */
@@ -782,14 +818,29 @@ function dequeueCheck(runId: string, taskId: string): void {
  * Put a claim in the run's queue, and say how many checks are ahead of it.
  *
  * A repeat of a claim already waiting is ignored rather than queued twice,
- * which is the same-claim rule above for a claim that has no row yet.
+ * which is the same-claim rule above for a claim that has no row yet — except
+ * that one asked for before the run's last pick-up is asked again by it, below.
  */
 function queueCheck(runId: string, task: Task): number {
+  const now = Date.now();
   const inserted = db()
     .prepare(
       "INSERT OR IGNORE INTO validation_queue (run_id, task_id, asked_at) VALUES (?, ?, ?)",
     )
-    .run(runId, task.id, Date.now());
+    .run(runId, task.id, now);
+  if (inserted.changes === 0) {
+    const floor = getRun(runId)?.reopened_at ?? null;
+    if (floor !== null) {
+      // Only below the floor, so a repeat inside one segment keeps its place
+      // and the `ahead` it was told; and no second log line, since the first
+      // already said the claim is waiting.
+      db()
+        .prepare(
+          "UPDATE validation_queue SET asked_at = ? WHERE run_id = ? AND task_id = ? AND asked_at < ?",
+        )
+        .run(now, runId, task.id, floor);
+    }
+  }
   const queued = queuedChecks(runId);
   const inFlight = runningValidation(runId) !== null || startingChecks.has(runId) ? 1 : 0;
   const ahead = inFlight + queued.indexOf(task.id);
