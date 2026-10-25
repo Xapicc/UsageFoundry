@@ -9393,6 +9393,60 @@ async function reviewSettled(reviewId: string): Promise<ReturnType<typeof getAss
   return review;
 }
 
+/**
+ * The tail of each review block's door queue, keyed by `turnKey`.
+ *
+ * On `globalThis` for `blockTurns`' reason: two of these after a dev hot
+ * reload would be two queues that do not see each other, and one block's
+ * branches would pass the door side by side again.
+ */
+const reviewDoors = ((globalThis as unknown as {
+  __ufReviewDoors?: Map<string, Promise<void>>;
+}).__ufReviewDoors ??= new Map<string, Promise<void>>());
+
+/**
+ * Run `fn`, one block's passage through its review door, with none of the
+ * block's other branches in theirs at the same time: `withRepoAdmin`'s queue,
+ * keyed on the block.
+ *
+ * Because the door is a check and not a claim (`assistRefusal` says why), and
+ * a block hands every branch to it at once and wakes the queued ones on the
+ * same poll. Siblings that asked in the same tick each passed one free slot,
+ * and each passed the instance guard at the same banked figure, before any of
+ * them had written the row that fills the slot and later reaches the figure:
+ * measured 2026-10-17, one slot started two to four billed reviews, and under a
+ * workflow's dollar limit that is money spent past what the operator set. The
+ * row is written synchronously before `startReview` returns, so the next
+ * sibling's check counts it and its guard read banks whatever has ended.
+ *
+ * What this does not do is make the door a claim against anything outside the
+ * block: a chat turn or another block can still take the slot while the diff
+ * is read, which is why `startReview`'s `busy` is still waited out. And it costs
+ * the block its parallel preparation (the diff, the window scan and the
+ * checkout lookup, one branch after another), which is milliseconds against a
+ * review's minutes.
+ *
+ * Resolves and rejects as `fn` does. The tail settles either way, so a branch
+ * whose passage threw or was refused hands the door on rather than wedging
+ * every sibling behind it.
+ */
+function atReviewDoor<T>(instanceId: string, blockId: string, fn: () => Promise<T>): Promise<T> {
+  const key = turnKey(instanceId, blockId);
+  const prior = reviewDoors.get(key) ?? Promise.resolve();
+  const passing = prior.then(fn);
+  const tail = passing.then(
+    () => undefined,
+    () => undefined,
+  );
+  reviewDoors.set(key, tail);
+  void tail.then(() => {
+    // Only the last waiter clears the entry, `withRepoAdmin`'s rule: a later
+    // caller chaining onto a resolved promise would pass beside the one in flight.
+    if (reviewDoors.get(key) === tail) reviewDoors.delete(key);
+  });
+  return passing;
+}
+
 /** One branch, from its first review to approved or set aside. */
 async function driveReviewItem(
   instance: WorkflowInstance,
@@ -9415,37 +9469,45 @@ async function driveReviewItem(
     if (!current || current.status === "approved" || current.status === "set-aside") return;
     if (!open()) return;
 
-    // Waited for rather than refused: a full assist queue is a shortage that
-    // clears in minutes, and a branch set aside over it would be judged by the
-    // queue rather than by a review. The hold is waited out the same way, for a
-    // review this block had not started when it was pressed — a reviewer is new
-    // spending — and the poll is what notices the lift.
-    if (assistBudgetFull() || newWorkPaused()) {
+    // One branch of this block at a time, from the queue check to the row
+    // `startAssist` writes, which is what fills the slot: `atReviewDoor` says why.
+    const started = await atReviewDoor(instanceId, blockId, async () => {
+      // The wait for the door is an await, and a halt can land in it.
+      if (!open()) return "stop" as const;
+      // Waited for rather than refused: a full assist queue is a shortage that
+      // clears in minutes, and a branch set aside over it would be judged by the
+      // queue rather than by a review. The hold is waited out the same way, for a
+      // review this block had not started when it was pressed — a reviewer is new
+      // spending — and the poll is what notices the lift.
+      if (assistBudgetFull() || newWorkPaused()) return "wait" as const;
+      // The workflow's limit before every review, not only at the block's start:
+      // a branch that waited in the queue, or comes back from a fix round, starts
+      // after earlier reviews have put their cost on the block's row, and asked
+      // once a block of N branches overshot by every review still queued when the
+      // limit was crossed. Skipped with no limit, which needs no snapshot read.
+      if (!instanceBudgetIsOff(instance.instanceBudget)) {
+        const guard = enforceInstanceBudgetForBlock(instanceId, await currentSnapshot());
+        if (guard?.kind === "halted" || !open()) return "stop" as const;
+      }
+      return startReview(current.run_id, {
+        requireVerdict: true,
+        requireFrontier: true,
+        stillWanted: open,
+        refuseWhileHeld: true,
+      });
+    });
+    if (started === "stop") return;
+    if (started === "wait") {
       await pause();
       continue;
     }
-    // The workflow's limit before every review, not only at the block's start:
-    // a branch that waited in the queue, or comes back from a fix round, starts
-    // after earlier reviews have put their cost on the block's row, and asked
-    // once a block of N branches overshot by every review still queued when the
-    // limit was crossed. Skipped with no limit, which needs no snapshot read.
-    if (!instanceBudgetIsOff(instance.instanceBudget)) {
-      const guard = enforceInstanceBudgetForBlock(instanceId, await currentSnapshot());
-      if (guard?.kind === "halted" || !open()) return;
-    }
-    const started = await startReview(current.run_id, {
-      requireVerdict: true,
-      requireFrontier: true,
-      stillWanted: open,
-      refuseWhileHeld: true,
-    });
     if (!started.ok) {
       // A halt while the review was being prepared: `stillWanted` refused it
       // before anything was spawned, and it is no verdict on the branch.
       if (!open()) return;
-      // The check above is not a claim: this block's other branches passed it
-      // in the same tick, and a chat turn or another block can take the slot
-      // while the diff is read. So `startReview`'s own door can still find the
+      // The check above is a claim among this block's branches and nothing
+      // else: a chat turn or another block can take the slot while the diff is
+      // read. So `startReview`'s own door can still find the
       // queue full, and that is the same shortage, waited out the same way. Only
       // the budget is `busy` — a spent window or install limit is an answer, and
       // a halt or a shutdown ends this wait at the top of the loop. The hold is

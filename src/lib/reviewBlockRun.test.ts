@@ -735,6 +735,46 @@ describe("a review block and its workflow's limit", () => {
     assert.equal(stored.cause, "guard");
   });
 
+  it("hands its door on to the next branch when one branch's passage through it throws", async () => {
+    // The first branch's guard read throws inside the door, and its branch is
+    // set aside by `startReviewBlock`'s catch. The second is queued behind it at
+    // the door: left waiting on a passage that never settled cleanly, the block
+    // never ends, and nothing says why.
+    reviewScene("inst-door-throw", {
+      budget: { maxInstanceCostUSD: 1 },
+      runs: [
+        { id: "door-throws", prompt: "Do it. APPROVE-ME", branch: "uf/repo-good" },
+        { id: "door-after", prompt: "Do it. APPROVE-ME", branch: "uf/repo-good" },
+      ],
+    });
+    let thrown = false;
+    duringSnapshot = () => {
+      // The block's own read at its start comes before any item is seeded.
+      if (thrown || workflows.reviewItemsOf("inst-door-throw", "r").length === 0) return false;
+      thrown = true;
+      throw new Error("the window could not be read");
+    };
+    try {
+      await settledWithin(
+        workflows.startReviewBlock("inst-door-throw", "r", ["door-throws", "door-after"]),
+        30_000,
+        "startReviewBlock",
+      );
+    } finally {
+      duringSnapshot = null;
+    }
+
+    assert.deepEqual(
+      workflows.reviewItemsOf("inst-door-throw", "r").map((i) => [i.origin_run_id, i.status]),
+      [
+        ["door-throws", "set-aside"],
+        ["door-after", "approved"],
+      ],
+    );
+    assert.equal(reviewsOf("door-throws").length, 0);
+    assert.equal(reviewsOf("door-after").length, 1);
+  });
+
   it("counts a review that has ended before its own branch's poll has noticed", async () => {
     // What `driveReviewItem` leaves for up to `MERGE_POLL_MS`: the review's row
     // is `completed`, so its assist slot is free, and the poll that banks it
