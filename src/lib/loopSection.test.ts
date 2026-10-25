@@ -1595,3 +1595,90 @@ describe("a pass that ended the loop, with a board that can no longer be counted
     assertEndedOn(instanceId, /reached its limit of 1 pass\(es\)/);
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* A loop failed on a board it could not count, once the folder is back */
+/* ------------------------------------------------------------------ */
+
+describe("a loop failed on a board that could not be counted, with its pass settled whole", () => {
+  // `on-success`, so the loop failing writes the block behind it off — and
+  // every member of the pass completed, so nothing is blocked for the older
+  // pick-up rule to offer.
+  const withSuccessor = {
+    ...WITH_SUCCESSOR,
+    edges: [
+      ...WITH_SUCCESSOR.edges.filter((e) => e.to !== "after"),
+      { from: "L", to: "after", edge: "on-success" },
+    ],
+  };
+
+  /** Pass 1 landed, the board went, and the loop failed on reading it. */
+  async function failedOnBoard(): Promise<{ instanceId: string; boardDir: string }> {
+    const { boardDir, stopWhenTasks } = openBoard();
+    const instanceId = scene({ ...withSuccessor, stopWhenTasks });
+    await breakMidPass(instanceId, () => fs.rmSync(boardDir, { recursive: true }));
+    await drive(instanceId);
+    assertLandedThenFailed(instanceId, /could not be counted/);
+    assert.equal(blockRow(instanceId, "after").status, "blocked");
+    assert.equal(workflows.getInstance(instanceId)!.status, "blocked");
+    return { instanceId, boardDir };
+  }
+
+  const loopPickUp = (instanceId: string) =>
+    workflows.pickUpsOf(workflows.getInstance(instanceId)!).filter((p) => p.kind === "loop");
+
+  it("offers the loop with the board's sentence while the folder is gone, and none once it is back", async () => {
+    const { instanceId, boardDir } = await failedOnBoard();
+
+    const gone = loopPickUp(instanceId);
+    assert.equal(gone.length, 1, "nothing on the page to press for a loop the board failed");
+    assert.match(gone[0].kind === "loop" ? (gone[0].refusal ?? "") : "", /could not be counted/);
+    const refused = workflows.resumeLoop(instanceId, "L");
+    assert.equal(refused.ok, false, "the door took a loop whose board still cannot be counted");
+    assert.equal(loopBlock(instanceId).status, "failed", "a refusal wrote nothing");
+
+    fs.mkdirSync(boardDir, { recursive: true });
+    const back = loopPickUp(instanceId);
+    assert.equal(back.length, 1);
+    assert.equal(back[0].kind === "loop" ? back[0].refusal : "?", null);
+  });
+
+  it("reads the board again when pressed, and takes pass 2 while it is not clear", async () => {
+    const { instanceId, boardDir } = await failedOnBoard();
+    fs.mkdirSync(boardDir, { recursive: true });
+
+    assert.deepEqual(workflows.resumeLoop(instanceId, "L"), { ok: true });
+    assert.equal(loopBlock(instanceId).status, "looping", loopBlock(instanceId).error ?? "");
+    assert.equal(blockRow(instanceId, "after").status, "waiting", "the written-off block was not put back");
+    assert.equal(
+      blockRow(instanceId, passMemberId("L", 2, "m")).status,
+      "waiting",
+      "pass 2 was never opened",
+    );
+    assert.ok(
+      membersOf(instanceId).some((m) => m.memberId === passMemberId("L", 2, "a")),
+      "pass 2's entry was never started",
+    );
+  });
+
+  it("ends on the board rung when the board is clear by then, and releases the block behind it", async () => {
+    const { instanceId, boardDir } = await failedOnBoard();
+    fs.mkdirSync(boardDir, { recursive: true });
+    dbMod.db().prepare("UPDATE tasks SET status='done'").run();
+
+    assert.deepEqual(workflows.resumeLoop(instanceId, "L"), { ok: true });
+    await drive(instanceId);
+    const loop = loopBlock(instanceId);
+    assert.equal(loop.status, "emitted", loop.error ?? "");
+    assert.match(loop.error ?? "", /had at most 0 open task\(s\) left/);
+    assert.equal(
+      membersOf(instanceId).some((m) => m.memberId === passMemberId("L", 2, "a")),
+      false,
+      "a pass was billed on a board that was already clear",
+    );
+    assert.ok(
+      membersOf(instanceId).some((m) => m.memberId === "after"),
+      "the block behind the loop was never released",
+    );
+  });
+});

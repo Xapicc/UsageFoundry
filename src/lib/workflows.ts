@@ -5801,7 +5801,9 @@ export type PickUp =
       /**
        * A stopped loop whose latest pass would now go through: what blocked
        * its members has since cleared — most often a run resumed and completed
-       * on its own page before resuming a run could reopen a pass.
+       * on its own page before resuming a run could reopen a pass — or, with
+       * nothing blocked at all, a pass that settled whole under a loop that
+       * failed on reading its board.
        */
       kind: "loop";
       nodeId: string;
@@ -5944,7 +5946,12 @@ export function pickUpsOf(instance: WorkflowInstance): PickUp[] {
  *
  * The scheduler itself, dry: `planInstanceStep` over the section with every
  * blocked member of the pass put back to `waiting`, which is exactly what
- * `reopenLoopPass` writes. A pass with nothing blocked is not a stuck pass.
+ * `reopenLoopPass` writes. A pass with nothing blocked is a stuck pass only in
+ * one shape: it settled whole, every member completed, and what failed the loop
+ * was therefore not the pass but the read `advanceLoop` makes between two of
+ * them — a board whose folder would not resolve. Reopening that one writes no
+ * member; it puts the loop back to `looping` so the next advance reads the
+ * board again, and `loopPassRefusal` says whether that can happen yet.
  */
 function passWouldProceed(
   instance: WorkflowInstance,
@@ -5955,7 +5962,15 @@ function passWouldProceed(
   if (!node || node.kind !== "loop") return false;
   const row = loopPasses(instance.id, loopNodeId).find((p) => p.pass === pass);
   const blocked = (row?.members ?? []).filter((m) => m.block?.status === "blocked");
-  if (blocked.length === 0) return false;
+  if (blocked.length === 0) {
+    // An empty pass is `planLoopPass`'s own stop, and it would stop again.
+    return (
+      row !== undefined &&
+      row.members.length > 0 &&
+      passSettled(row) &&
+      row.members.every(memberCompleted)
+    );
+  }
 
   const state = passState(row);
   for (const member of blocked) {
