@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { githubTokenFor, type GithubTokenScope } from "./config";
 import { db } from "./db";
-import { parseRemote, type Remote } from "./delivery";
+import { parseRemote, redactUrl, type Remote } from "./delivery";
 import { git } from "./git";
 import { jsonKind } from "./http";
 import {
@@ -517,17 +517,6 @@ const short = (sha: string) => sha.slice(0, 8);
 
 /** A remote's branch as a person names it: `main` for `refs/heads/main`. */
 const branchName = (ref: string) => ref.replace(/^refs\/heads\//, "");
-
-/**
- * A URL with any credentials in it removed, for a sentence or the page.
- *
- * `git remote get-url` returns a URL exactly as configured, and
- * `https://x-access-token:<token>@github.com/…` is a configuration people
- * write; the browser has no use for the part before the `@`.
- */
-export function redactUrl(url: string): string {
-  return url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^@/?#]*@/i, "$1");
-}
 
 /**
  * The GitHub repository these URLs name, or the first that is not one.

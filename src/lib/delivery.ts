@@ -73,6 +73,19 @@ export function parseRemote(url: string): Remote | null {
   return { owner, repo };
 }
 
+/**
+ * A URL with any credentials in it removed, for a sentence or the page.
+ *
+ * `git remote get-url` returns a URL exactly as configured, and
+ * `https://x-access-token:<token>@github.com/…` is a configuration people
+ * write; the browser has no use for the part before the `@`. Here rather than
+ * in `projects.ts` because `planDelivery` below names a refused URL too and
+ * `projects.ts` imports this module, not the other way round.
+ */
+export function redactUrl(url: string): string {
+  return url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^@/?#]*@/i, "$1");
+}
+
 export type DeliveryPlan =
   | { ok: true; remote: Remote; head: string; base: string }
   | { ok: false; reason: string };
@@ -141,7 +154,7 @@ export function planDelivery(o: {
     return {
       ok: false,
       reason:
-        `\`${url || "origin"}\` is not a GitHub remote, and GitHub is ` +
+        `\`${url ? redactUrl(url) : "origin"}\` is not a GitHub remote, and GitHub is ` +
         `the only forge this knows how to open a pull request on. The branch ` +
         `can still be pushed by hand.`,
     };

@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import { redactUrl } from "./delivery";
 import {
   MAX_PROJECTS,
   parseBranchStatus,
   planFetch,
   planPush,
   readPushFields,
-  redactUrl,
   selectBranchReads,
   selectProjectPage,
   type CheckoutFacts,

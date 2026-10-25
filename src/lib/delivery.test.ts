@@ -115,6 +115,20 @@ describe("planDelivery refuses before anything leaves the machine", () => {
     assert.match(plan.ok === false ? plan.reason : "", /not a GitHub remote/);
   });
 
+  it("names a refused push URL without the credentials written into it", () => {
+    // The sentence reaches the Land card and the Deliver route's body, and the
+    // URL is whatever `get-url --push` returned: a `pushurl` a work cycle wrote
+    // can carry a token, and printing it would hand that token to the page.
+    const plan = planDelivery({
+      ...ok,
+      pushUrls: ["https://user:secret@gitlab.example/o/r.git"],
+    });
+    assert.equal(plan.ok, false);
+    const reason = plan.ok === false ? plan.reason : "";
+    assert.doesNotMatch(reason, /secret|user:/);
+    assert.match(reason, /`https:\/\/gitlab\.example\/o\/r\.git` is not a GitHub remote/);
+  });
+
   it("refuses a push URL still spelled SSH after the rewrites, and a remote with none", () => {
     // `githubEnv` rewrites both SSH spellings to https, so one still standing
     // was put there by a `pushInsteadOf`, and git would run the repository's

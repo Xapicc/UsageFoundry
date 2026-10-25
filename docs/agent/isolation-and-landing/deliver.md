@@ -85,7 +85,9 @@ one.** `deliveryState` answers the card from `planDelivery` and
 `unsettledBranchRefusal`, the two the press asks, so the button and the endpoint
 cannot disagree about whether delivery is possible or about why it is not. Its
 reasons are standing conditions of the install (no credential for this
-repository, a remote that is not GitHub, a branch that is already the target)
+repository, a remote that is not GitHub — named by its push URL through
+`redactUrl`, since the sentence reaches the card and the route's body and a
+`pushurl` can carry a token — a branch that is already the target)
 or a branch something can still commit to, never something only a press would
 find out. What it does *not* pre-empt is the verify gate and the push, which are
 about the branch now. Opened once per pull request, and replaced afterwards by
