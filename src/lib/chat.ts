@@ -3626,7 +3626,11 @@ function runTurn(chat: ChatRow, prompt: string): void {
       // so `turn_seq` here is the turn this child was spawned under and not
       // whatever the row has since become.
       if (spawned && turns.get(chat.id) === spawned) turns.delete(chat.id);
-      finishTurn(chat.id, chat.turn_seq, result);
+      finishTurn(
+        chat.id,
+        chat.turn_seq,
+        withChatLimitStop(result, settings.chatTurnBudgetUSD),
+      );
     },
   });
 }
@@ -3885,6 +3889,32 @@ export function turnResultOf(
   }
 
   return { status: "idle", text, costUSD, tokens, sessionId, denials };
+}
+
+/**
+ * A chat turn the CLI stopped at the `--max-budget-usd` it was handed, with a
+ * sentence naming the limit in place of `The chat failed (error_max_budget_usd).`
+ *
+ * Applied where the figure is known — `runTurn` passes
+ * `settings.chatTurnBudgetUSD`, which `turnResultOf` never sees — and worded
+ * after `withSpendingLimitStop` in `workflows.ts`, which does the same for a
+ * deciding block's turn. `subtype` is the only machine-readable place the CLI
+ * says so: the turn also exits non-zero with `is_error` set, so by `status` it
+ * is any other failure. Replaces `error` whatever it held, because the one
+ * string is what the row, the thread note and `failedTurnEnding`'s match all
+ * read, and a second wording beside it would draw the ending twice.
+ */
+export function withChatLimitStop(
+  result: TurnResult,
+  limitUSD: number | null,
+): TurnResult {
+  if (result.subtype !== "error_max_budget_usd") return result;
+  const stop =
+    limitUSD === null
+      ? "Claude Code stopped this turn at a spending limit of its own."
+      : `This turn was given the $${limitUSD.toFixed(2)} Orchestrator chat limit, ` +
+        "and Claude Code stopped it there.";
+  return { ...result, error: stop };
 }
 
 /**
