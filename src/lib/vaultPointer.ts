@@ -480,10 +480,12 @@ async function askGate(
 /**
  * What one gate call cost, priced from its tokens by this app's own table.
  *
- * Not the CLI's `total_cost_usd`: the pinned 2.1.280 does not know
- * `claude-haiku-5-5`, warns `unrecognized_model`, runs it anyway and prices it
+ * Not the CLI's `total_cost_usd`, which is only as right as the pinned build's
+ * own price table: 2.1.280, the pin until 2026-10-25, did not know
+ * `claude-haiku-5-5`, warned `unrecognized_model`, ran it anyway and priced it
  * at a fallback rate — measured at $0.0018 for a two-word reply that 2.1.310
- * priced at $0.0001. The CLI's figure is kept only for a result with no usage
+ * priced at $0.0001. Pricing the tokens here keeps the figure right across the
+ * next bump too. The CLI's figure is kept only for a result with no usage
  * block, where it errs high, which is the direction a cost record may err in.
  */
 export function gateCost(result: Record<string, unknown>): number {
