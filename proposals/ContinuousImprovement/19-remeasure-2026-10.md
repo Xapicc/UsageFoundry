@@ -110,3 +110,62 @@ way.
 Record the output as a new dated section below this one. Do not edit the table
 above: it says what was known on 2026-10-17, and a reader comparing the holdout
 against the measurement it was gated on needs both.
+
+## Measured on the install, 2026-10-25
+
+Board task `09dcf3e1`. Run on the host at 23:35 CET against the live
+container (`usagefoundry` on OrbStack, image built 2026-10-25 22:11 UTC), from
+main at `94ec70ff`, with the command board task `09dcf3e1` gives:
+`docker exec -i -w /app usagefoundry node --input-type=module - /data/usagefoundry.db < proposals/ContinuousImprovement/scripts/remeasure.mjs`.
+It exited 0 and printed:
+
+```
+database          /data/usagefoundry.db, opened read-only
+run_events        161112 rows, 2026-09-25 22:11 → 2026-10-25 22:35 UTC
+otlp_requests     2026-09-25 22:11 → 2026-10-25 22:35 UTC
+runs              1780 rows, 652 with a Read event
+
+1 repeat reads    6585 of 13508 = 48.7%   (2026-08: 73.2%, 4,284 of 5,856)
+2 then edited     2327 = 35.3% of repeats   (2026-08: 50.6%)
+  addressable     4258 of 13508 = 31.5%   (2026-08: 36.1%)
+  main thread     3927 of 8563 repeat, 23.5% addressable
+
+  per repository  reads / repeats / repeat-edited / repeat-not-edited
+    /workspace/UsageFoundry  7296 / 4637 / 1574 / 3063
+    /workspace/Dockrac  5050 / 1748 / 669 / 1079
+    (no repo)  746 / 155 / 76 / 79
+    /workspace2  169 / 8 / 3 / 5
+    /workspace/auto upload  145 / 19 / 5 / 14
+    /workspace/STERU  81 / 18 / 0 / 18
+    /workspace/LocalModelOffload  16 / 0 / 0 / 0
+    /workspace/FoundryCode  5 / 0 / 0 / 0
+
+3 top-20 ×0.9     30.2% of 4039 opening reads over 602 runs   (2026-08: 45.0%)
+  raw frequency   30.6%   (2026-08: 42.3%)
+  distinct runs   30.1%   (2026-08: 39.2%)
+  top-40          ×0.9 35.1%, raw 37.4%, distinct 37.0%   (2026-08: 59.0 / 53.9 / 51.6%)
+  main thread     ×0.9 top-20 27.7%   (2026-08 re-run: 46.5%)
+
+4 OTLP before 1st edit, all repositories: $1699.32 of $4337.43 = 39.2% over 598 runs, median run 37.8%; sdk only 36.3%; 72 runs never edited
+  /workspace/UsageFoundry: $851.20 of $2244.22 = 37.9% over 331 runs, median run 38.9%   (2026-08, UsageFoundry: 20.9%, median 24.4%, 177 runs)
+
+gate              addressable 31.5% (needs ≥ 15%), ×0.9 top-20 30.2% (needs ≥ 25%): PASSES
+query time        runs 26 ms, tool events 460 ms, repeat reading 16 ms, coverage top-20 699 ms, otlp 64 ms
+```
+
+**The gate passes on the install's own figures:** addressable 31.5% ≥ 15%, and
+×0.9 top-20 coverage 30.2% ≥ 25%. So `b748ac0d` stays. The margin on coverage
+is 5.2 points, against 20 on the 2026-08 figures.
+
+**Against 2026-08, every figure is lower:** repeat reads 48.7% (73.2%),
+addressable 31.5% (36.1%), ×0.9 top-20 30.2% (45.0%), top-40 35.1% (59.0%).
+The window is 30 days and eight repositories here, against eleven days on one
+key then, so the drop may be the window as much as the work. This run does not
+tell the two apart. The pointer is on main behind its holdout, so part of
+the window may already have been read with it.
+
+**The dashboard agrees with the script.** `GET /api/repo-reading` in the same
+minute gave UsageFoundry 7,296 reads, 4,637 repeats, 1,574 repeat-edited and
+3,063 repeat-not-edited, the same as the script's line, and the same for
+Dockrac, KnowledgeBase (`/workspace2`), auto upload, STERU and
+LocalModelOffload. No folded mounts showed in this window.
