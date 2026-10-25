@@ -55,6 +55,7 @@ assert.equal(
 const { createRun, getRun, reopenRun, runEvents } =
   require("./orchestrator") as typeof import("./orchestrator");
 const { saveSettings } = require("./settings") as typeof import("./settings");
+const { installSpend } = require("./installBudget") as typeof import("./installBudget");
 const { db } = require("./db") as typeof import("./db");
 
 interface Cycle {
@@ -62,6 +63,11 @@ interface Cycle {
   spend: number;
   /** The window its last turn reports, which is what `startsFresh` reads. */
   window: number;
+  /**
+   * How its `result` ends the cycle when it is not a success: the CLI writes
+   * `error_max_budget_usd` and exits 1 when it stops at the limit it was handed.
+   */
+  subtype?: string;
 }
 
 /**
@@ -148,7 +154,8 @@ childProcess.spawn = (bin: string, args: readonly string[], options: unknown) =>
     },
     {
       type: "result",
-      subtype: "success",
+      subtype: cycle.subtype ?? "success",
+      is_error: cycle.subtype !== undefined,
       session_id: session,
       result: "Still working.",
       num_turns: 1,
@@ -156,10 +163,11 @@ childProcess.spawn = (bin: string, args: readonly string[], options: unknown) =>
       usage: { input_tokens: 10, output_tokens: 5 },
     },
   ];
+  const exitCode = cycle.subtype === undefined ? 0 : 1;
   // Settled on `end`, so every line has been read before `close` says so.
   stdout.on("end", () => {
-    child.emit("exit", 0, null);
-    child.emit("close", 0, null);
+    child.emit("exit", exitCode, null);
+    child.emit("close", exitCode, null);
   });
   setImmediate(() => {
     for (const e of events) stdout.write(`${JSON.stringify(e)}\n`);
@@ -186,6 +194,14 @@ async function settled(id: string) {
 async function runToEnd(
   cycles: Array<Cycle | FailedResume>,
   budget: Parameters<typeof createRun>[0]["budget"],
+  /**
+   * Called with the run's id before anything the loop does can have run:
+   * `createRun` returns synchronously and `startRun` does not read a guard until
+   * after its first `await`, so a row written here is one the first pre-cycle
+   * guard sees. It is how a run is made a member of a workflow, which `createRun`
+   * has no way to say.
+   */
+  beforeFirstGuard?: (runId: string) => void,
 ) {
   script = cycles;
   spawns = [];
@@ -196,6 +212,7 @@ async function runToEnd(
     budget,
     origin: "form",
   });
+  beforeFirstGuard?.(run.id);
   return settled(run.id);
 }
 
@@ -338,5 +355,170 @@ describe("a run whose work cycles resume one session", () => {
         .map((e) => e.payload.costUSD),
       [3, 2],
     );
+  });
+});
+
+describe("a run with no spending limit of its own, under the install's or its workflow's", () => {
+  // The cycle's own telemetry reaches every other run's install and workflow
+  // figures, and its ingest token is in its own environment, so a cycle with no
+  // `--max-budget-usd` could post any figure it liked into them. These drive the
+  // loop because the defect would be in the wiring: the pure choice
+  // (`cycleBudgetUSD`) is right with every input and says nothing about which
+  // inputs `startRun` reads, when, or whether the row and the argv agree.
+
+  /** What the install holds already, so a limit can be set a known distance above it. */
+  const heldBefore = () => installSpend().spentGuardUSD;
+
+  it("hands the install's headroom to each cycle and stamps the figure it handed", async () => {
+    saveSettings({ freshStartContextTokens: null });
+    saveSettings({ installDailyCostLimitUSD: heldBefore() + 20 });
+    try {
+      await runToEnd(
+        [
+          { spend: 4, window: SMALL },
+          { spend: 4, window: SMALL },
+        ],
+        { maxIterations: 2 },
+      );
+      // $20 left, then $16 once the first cycle's $4 is on the run: the figure
+      // the install guard would have refused the run at, less than which nothing
+      // it would have admitted is cut off.
+      assert.deepEqual(
+        spawns.map((s) => s.ceiling),
+        ["20", "16"],
+      );
+      assert.deepEqual(
+        spawns.map((s) => s.stamped),
+        [20, 16],
+      );
+    } finally {
+      saveSettings({ installDailyCostLimitUSD: null });
+    }
+  });
+
+  it("hands none when no limit applies, and the run's own limit when that is the smaller", async () => {
+    saveSettings({ freshStartContextTokens: null });
+    await runToEnd([{ spend: 1, window: SMALL }], { maxIterations: 1 });
+    assert.deepEqual(spawns.map((s) => [s.ceiling, s.stamped]), [[null, null]]);
+
+    saveSettings({ installDailyCostLimitUSD: heldBefore() + 20 });
+    try {
+      await runToEnd([{ spend: 1, window: SMALL }], { maxIterations: 1, maxRunCostUSD: 3 });
+      assert.deepEqual(spawns.map((s) => [s.ceiling, s.stamped]), [["3", 3]]);
+    } finally {
+      saveSettings({ installDailyCostLimitUSD: null });
+    }
+  });
+
+  it("hands a member of a workflow the tighter of that and the install's headroom", async () => {
+    saveSettings({ freshStartContextTokens: null });
+    // The install has far more room than the workflow, which has $12 less the
+    // $2 a sibling already spent.
+    saveSettings({ installDailyCostLimitUSD: heldBefore() + 2 + 1_000 });
+    try {
+      await runToEnd(
+        [
+          { spend: 4, window: SMALL },
+          { spend: 4, window: SMALL },
+        ],
+        { maxIterations: 2 },
+        (runId) => {
+          const at = Date.now();
+          db()
+            .prepare("INSERT INTO workflows (id, name, graph, created_at, updated_at) VALUES ('wf-hr', 'hr', '{}', ?, ?)")
+            .run(at, at);
+          db()
+            .prepare(
+              `INSERT INTO workflow_instances (id, workflow_id, workflow_name, graph, created_at, status, instance_budget)
+               VALUES ('inst-hr', 'wf-hr', 'hr', '{"nodes":[],"edges":[]}', ?, 'started', '{"maxInstanceCostUSD":12}')`,
+            )
+            .run(at);
+          db()
+            .prepare(
+              `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, created_at, finished_at, spent_usd)
+               VALUES ('run-hr-sibling', 'project', 'work', 'completed', '{"maxIterations":1}', 1, ?, ?, 2)`,
+            )
+            .run(at, at);
+          const member = db().prepare(
+            "INSERT INTO workflow_instance_runs (instance_id, node_id, node_name, position, run_id) VALUES ('inst-hr', ?, ?, ?, ?)",
+          );
+          member.run("n0", "Sibling", 0, "run-hr-sibling");
+          member.run("n1", "Member", 1, runId);
+        },
+      );
+      assert.deepEqual(
+        spawns.map((s) => [s.ceiling, s.stamped]),
+        [
+          ["10", 10],
+          ["6", 6],
+        ],
+      );
+    } finally {
+      saveSettings({ installDailyCostLimitUSD: null });
+    }
+  });
+
+  it("ends a cycle the CLI stops at that headroom on the install's limit, not on a limit of its own", async () => {
+    saveSettings({ freshStartContextTokens: null });
+    saveSettings({ installDailyCostLimitUSD: heldBefore() + 20 });
+    try {
+      const row = await runToEnd(
+        [{ spend: 20, window: SMALL, subtype: "error_max_budget_usd" }],
+        { maxIterations: 3 },
+      );
+      assert.equal(spawns.length, 1, "a run stopped at its limit goes no further");
+      assert.equal(row.status, "stopped");
+      // The same ending the pre-cycle guard gives a run at this limit. `cli_budget`
+      // is for a limit nobody here set, and this one is the operator's.
+      assert.equal(row.ending_code, "guard:install_cost");
+      assert.match(row.stop_reason ?? "", /\$20\.00 left of the install's rolling spending limit of \$\d+\.\d\d/);
+    } finally {
+      saveSettings({ installDailyCostLimitUSD: null });
+    }
+  });
+});
+
+describe("a run with a spending limit of its own larger than the install's headroom", () => {
+  // Its own limit used to win outright, so the cycle was handed $100 under an
+  // install with $5 left, and its telemetry was capped at $100 in the figure
+  // every other run's door reads: one forged `cost_usd` filled the install as
+  // surely as an uncapped cycle's did. Driven through the loop because the
+  // defect was in which inputs `startRun` read: it took no headroom at all for
+  // a run with a limit.
+  const heldBefore = () => installSpend().spentGuardUSD;
+
+  it("hands the headroom to argv and row alike, and ends a stop there on the install's limit", async () => {
+    saveSettings({ freshStartContextTokens: null });
+    saveSettings({ installDailyCostLimitUSD: heldBefore() + 5 });
+    try {
+      const row = await runToEnd(
+        [{ spend: 5, window: SMALL, subtype: "error_max_budget_usd" }],
+        { maxIterations: 3, maxRunCostUSD: 100 },
+      );
+      assert.deepEqual(spawns.map((s) => [s.ceiling, s.stamped]), [["5", 5]]);
+      assert.equal(row.status, "stopped");
+      // The run still had $100 of its own; naming that limit would send the
+      // operator to raise one that did not bind.
+      assert.equal(row.ending_code, "guard:install_cost");
+      assert.match(row.stop_reason ?? "", /\$5\.00 left of the install's rolling spending limit of \$\d+\.\d\d/);
+    } finally {
+      saveSettings({ installDailyCostLimitUSD: null });
+    }
+  });
+
+  it("still ends a stop at the run's own limit on that limit when it is the smaller", async () => {
+    saveSettings({ freshStartContextTokens: null });
+    saveSettings({ installDailyCostLimitUSD: heldBefore() + 20 });
+    try {
+      const row = await runToEnd(
+        [{ spend: 3, window: SMALL, subtype: "error_max_budget_usd" }],
+        { maxIterations: 3, maxRunCostUSD: 3 },
+      );
+      assert.deepEqual(spawns.map((s) => [s.ceiling, s.stamped]), [["3", 3]]);
+      assert.equal(row.ending_code, "guard:run_cost");
+      assert.match(row.stop_reason ?? "", /this run's \$3\.00 spending limit/);
+    } finally {
+      saveSettings({ installDailyCostLimitUSD: null });
+    }
   });
 });

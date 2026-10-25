@@ -35,6 +35,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Run lifecycle | [run-lifecycle.md](verification/run-lifecycle.md) |
 | Run lifecycle | [run-lifecycle-background-work.md](verification/run-lifecycle-background-work.md) — a work cycle's wait for background tasks, and what stopping one tells the next cycle |
 | Run lifecycle | [run-lifecycle-live-activity.md](verification/run-lifecycle-live-activity.md) — what a running cycle is inside: the open-call strip and the `/runs/live` sub-agent roster |
+| Run lifecycle | [run-lifecycle-resume-and-transcripts.md](verification/run-lifecycle-resume-and-transcripts.md) — what a resume finds in the session transcript: the 30-day sweep, a transcript gone, one truncated mid-turn, and a cycle the API refused |
 | Run lifecycle | [run-lifecycle-hooks-and-endings.md](verification/run-lifecycle-hooks-and-endings.md) — what a cycle reports about its hooks, the prompt fold on a cycle's row, the prior-read pointer and its holdout, and `runs.ending_code` |
 | Context control | [context-control-pruning.md](verification/context-control-pruning.md) — pruning, compaction and the context ceiling |
 | Context control | [context-control-intake-filter.md](verification/context-control-intake-filter.md) — the intake filter and its ledger |
@@ -48,7 +49,9 @@ measurement under *Verified* and cut the item down to what is still open.
 | Workflows and schedules | [workflows-and-schedules-folders.md](verification/workflows-and-schedules-folders.md) — one workflow against several saved folders, and two presses of it at once |
 | Concurrency and ownership | [concurrency-and-ownership.md](verification/concurrency-and-ownership.md) |
 | Isolation and landing | [isolation-and-landing.md](verification/isolation-and-landing.md) |
+| Isolation and landing | [isolation-and-landing-slot-context.md](verification/isolation-and-landing-slot-context.md): which `CLAUDE.md` and memory files a run in a slot loads from the directories above it |
 | Git and review | [git-and-review.md](verification/git-and-review.md) |
+| Git and review | [git-and-review-command-keys.md](verification/git-and-review-command-keys.md): which git configuration keys run a command, for the run's git-directory check |
 | Agents, templates and models | [agents-templates-and-models.md](verification/agents-templates-and-models.md) |
 | Other providers | [other-providers.md](verification/other-providers.md) — Codex, and the local provider |
 | Other providers | [codex-account-and-models.md](verification/codex-account-and-models.md) — Codex's usage windows and model list, read through `codex app-server` |
@@ -63,6 +66,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Security and sandboxing | [security-and-sandboxing-name-lookup.md](verification/security-and-sandboxing-name-lookup.md) — root's `PATH`, the agents' `PATH` and what a dropped process runs by name |
 | Security and sandboxing | [security-and-sandboxing-chat-config.md](verification/security-and-sandboxing-chat-config.md) — what the chat child loads from files a work cycle writes |
 | Security and sandboxing | [security-and-sandboxing-server-git.md](verification/security-and-sandboxing-server-git.md): what this app's own git runs from a repository a work cycle wrote |
+| Security and sandboxing | [security-and-sandboxing-telemetry-token.md](verification/security-and-sandboxing-telemetry-token.md): who can read a work cycle's telemetry ingest token, and the headers helper |
 | Container and environment | [container-and-environment-resources.md](verification/container-and-environment-resources.md) — memory, CPU, cgroup limits, OOM and the filter launcher |
 | Container and environment | [container-and-environment-stacks.md](verification/container-and-environment-stacks.md) — the stacks carrier, its installs, receipts and invocation counts |
 | Container and environment | [container-and-environment-deployment.md](verification/container-and-environment-deployment.md) — the image, network, volumes, backup and health |
@@ -73,4 +77,4 @@ measurement under *Verified* and cut the item down to what is still open.
 | Interface | [interface-narrow-viewports.md](verification/interface-narrow-viewports.md) — pages at 390px, layout sweeps and smoke-pages |
 | Interface | [interface-canvases.md](verification/interface-canvases.md) — the graph canvases, touched map and replay |
 | Interface | [interface-pages-and-api.md](verification/interface-pages-and-api.md) — pages, panels and API payloads |
-| Interface | [interface-run-pages.md](verification/interface-run-pages.md) — the runs list's Fleet card and the run page's Agent work |
+| Interface | [interface-run-pages.md](verification/interface-run-pages.md) — the runs list and its Fleet card, the run inspector, granted cycles and `/runs/live` |

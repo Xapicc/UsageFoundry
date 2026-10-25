@@ -547,6 +547,38 @@ function isolatedTemplate(
 }
 
 /**
+ * Whether a block of a section cuts a branch, or hands one on, that the end of
+ * the pass has to land.
+ *
+ * A run and an orchestrator block do it when their guards isolate — an
+ * orchestrator's emitted runs take its guards — and a review block always does,
+ * since it reviews only isolated work. Everything else starts no run of its own
+ * to cut one.
+ *
+ * `isolates` is the caller's answer rather than a lookup here, because the two
+ * askers know it differently: `loopBodyRefusal` has the template table, and
+ * `startWorkflow` has already planned every block and holds the guards it will
+ * run under. One definition of *which kinds*, two sources of *whether*.
+ * `canvasGraph.ts` keeps a copy of the kind table — it may not import this file.
+ */
+export function handsOnBranch(kind: WorkflowNodeKind, isolates: boolean): boolean {
+  return kind === "review" || ((kind === "run" || kind === "orchestrator") && isolates);
+}
+
+/**
+ * Whether a section is a **landing** section: at least one of its members
+ * hands on a branch. The other kind works in the folder throughout, so each
+ * pass's work is already where the next pass reads, and there is nothing to
+ * land — see `loopBodyRefusal` for what each kind is held to.
+ */
+export function sectionLands(
+  members: readonly WorkflowNode[],
+  isolates: (member: WorkflowNode) => boolean,
+): boolean {
+  return members.some((member) => handsOnBranch(member.kind, isolates(member)));
+}
+
+/**
  * Read a workflow off the wire, refusing anything that could not be run.
  *
  * Never throws, and every refusal names something the operator can change —
@@ -2446,6 +2478,18 @@ function loopBodyRefusal(
   // visited set. They were reachable only through the list, and the list is now
   // a cross-check on the links rather than a second way of stating a section.
   for (const loop of loops) {
+    // What kind of section this is, decided by its members and read by every
+    // rule below that is about landing. A section is **landing** when some
+    // member hands on a branch and **in-folder** when none does: every run
+    // works directly in the folder, so each pass's work is already where the
+    // next pass reads and there is nothing to land. The two are not mixed, and
+    // that is the deliberate line — a merge landing a branch into a checkout
+    // the same pass is also editing in place is a state nobody designed for, so
+    // it is refused by name rather than half supported.
+    const sectionMembers = bodyOf(loop).map((id) => byId.get(id)!);
+    const brancher = sectionMembers.find((m) =>
+      handsOnBranch(m.kind, isolatedTemplate(m.templateId, known)),
+    );
     for (const memberId of bodyOf(loop)) {
       const member = byId.get(memberId)!;
       // Two sections *can* still overlap: two loops with a `repeats` link into
@@ -2487,26 +2531,49 @@ function loopBodyRefusal(
         );
       }
 
-      // Guards that isolate, asked of the members that work in a checkout and
-      // of no others.
+      // Guards that isolate, asked of a run member **only in a landing
+      // section**.
       //
-      // A run member needs one because it commits: a pass whose guards work
-      // directly in the folder leaves no branch for the section's own merge
-      // block to land, so the work of every pass would go into the operator's
-      // checkout with nothing recording which pass put it there. An
-      // orchestrator member spends nothing on disk — it decides, and the runs
-      // it emits carry their own guards — and a merge block has no guards at
-      // all. Both are exempt **by name** rather than by passing a test written
-      // about a checkout, which would answer them with a sentence about a
-      // folder neither of them works in.
+      // A section that has a member cutting a branch ends in a merge block that
+      // lands it into the operator's checkout. A run member of that section
+      // whose guards work directly in the folder would be editing the checkout
+      // in place in the same pass, with nothing recording which pass put the
+      // work there, and a merge landing into a tree that is being written to is
+      // a state nobody designed for. So the pass is one or the other: every
+      // member that works in a checkout isolates, or none does. A section in
+      // which none does is not asked — it has no branch to land, which is what
+      // `brancher` being undefined says — and the sentence here names the
+      // member that makes this one a landing section, because "give it guards
+      // that isolate" and "make the rest work in the folder" are both the
+      // operator's to choose between.
+      //
+      // An orchestrator member is not asked in either kind: it spends nothing
+      // on disk — it decides, and the runs it emits carry its guards — and a
+      // merge block has no guards at all. Both are exempt **by name** rather
+      // than by passing a test written about a checkout, which would answer
+      // them with a sentence about a folder neither of them works in.
       //
       // Refused here rather than at the first pass, where it would be a throw
       // in the middle of an instance that had already started.
-      if (member.kind === "run" && !isolatedTemplate(member.templateId, known)) {
+      if (
+        brancher &&
+        member.kind === "run" &&
+        !isolatedTemplate(member.templateId, known)
+      ) {
+        // A review is never named here: it reviews only isolated work, so a run
+        // or an orchestrator that hands it a branch comes before it in the
+        // section's order and is the first one found.
+        const why =
+          brancher.kind === "orchestrator"
+            ? `the runs “${brancher.name}” starts in the same section work in checkouts of their own`
+            : `“${brancher.name}” in the same section works in a checkout of its own`;
         return (
-          `“${member.name}” is repeated by “${loop.name}”, and every pass has ` +
-          "to land what it produced — which needs a checkout of its own. Its " +
-          "guards work directly in the folder instead."
+          `“${member.name}” is repeated by “${loop.name}” and its guards work ` +
+          `directly in the folder, but ${why}, and the end of every pass has ` +
+          "to land what that produced. A pass cannot land a branch into the " +
+          `folder while “${member.name}” is also editing it in place. Give ` +
+          `“${member.name}” guards that isolate, or make every block of the ` +
+          "section work in the folder, so there is nothing to land."
         );
       }
     }
@@ -2537,6 +2604,14 @@ function loopBodyRefusal(
 
   for (const loop of loops) {
     const members = new Set(bodyOf(loop));
+    // Landing or in-folder — decided by the members, see the first pass over
+    // them above. Asked again here rather than carried across, because that
+    // loop returns on the first member it refuses and this one is a separate
+    // walk over the whole graph.
+    const lands = sectionLands(
+      [...members].map((id) => byId.get(id)!),
+      (m) => isolatedTemplate(m.templateId, known),
+    );
 
     // The `repeats` link is the only door in, and the loop block is the only
     // door out. Anything else makes "when is this block released" a question
@@ -2600,21 +2675,31 @@ function loopBodyRefusal(
       (id) => !within.some((e) => e.from === id),
     );
     if (sinks.length > 1) {
-      return (
-        `The section “${loop.name}” repeats ends in ${sinks.length} places: ` +
-        `${sinks.map((id) => `“${byId.get(id)!.name}”`).join(", ")}. A ` +
-        "section has one way out, and what it ends at is what lands the pass " +
-        "— so link each of these on towards the block that does, or its work " +
-        "is committed on a branch nothing ever lands."
-      );
+      const places = sinks.map((id) => `“${byId.get(id)!.name}”`).join(", ");
+      return lands
+        ? `The section “${loop.name}” repeats ends in ${sinks.length} places: ` +
+            `${places}. A section has one way out, and what it ends at is ` +
+            "what lands the pass — so link each of these on towards the block " +
+            "that does, or its work is committed on a branch nothing ever lands."
+        : `The section “${loop.name}” repeats ends in ${sinks.length} places: ` +
+            `${places}. A section has one way out, and what it ends at is ` +
+            "where the pass ends — so link each of these on towards the one " +
+            "block that does.";
     }
     const exit = byId.get(sinks[0])!;
-    if (exit.kind !== "merge") {
+    // Only a landing section ends at a merge block. An in-folder section's
+    // exit is whatever its last block is, because the work of every pass is
+    // already in the folder the next one reads and a merge block there would
+    // have nothing to land — `graphRefusal`'s merge rule says so in its own
+    // words, ahead of this, when one is drawn.
+    if (lands && exit.kind !== "merge") {
       return (
         `The section “${loop.name}” repeats ends at “${exit.name}”, which is ` +
         "not a merge block. Every pass has to land what it produced, because " +
         "the next one starts from the landed branch: add a merge block at the " +
-        `end of the section and link “${exit.name}” to it.`
+        `end of the section and link “${exit.name}” to it, or give every ` +
+        "block of the section guards that work in the folder, so there is " +
+        "nothing to land."
       );
     }
 
@@ -2641,10 +2726,12 @@ function loopBodyRefusal(
     // Refused here rather than mended in the editor, because the editor is one
     // of three doors a graph is saved through, and because the exit may not be
     // drawn yet when the fan-in link is. The sentence names the link to draw.
+    //
+    // A run member is asked here because it isolates: in a landing section
+    // every run member does, the first pass over the members above refused the
+    // one that did not, and an in-folder section has no member this asks about.
     const handsOnBranches = (member: WorkflowNode) =>
-      member.kind === "run" ||
-      member.kind === "review" ||
-      (member.kind === "orchestrator" && isolatedTemplate(member.templateId, known));
+      handsOnBranch(member.kind, isolatedTemplate(member.templateId, known));
     const unlanded = [...members]
       .map((id) => byId.get(id)!)
       .find(
@@ -2955,10 +3042,23 @@ function graphRefusal(
       (s) => s.kind !== "review" && !isolatedTemplate(s.templateId, known),
     );
     if (bare) {
+      // A merge block inside a section is where the in-folder kind of section
+      // meets this rule: every block of it works in the folder, the operator
+      // ended it the way a landing section ends, and this is the first sentence
+      // they read. It is the one sentence — the section rules below only run
+      // when this passes — so it carries both ways out rather than leaving the
+      // operator to find the second one in the docs.
+      const repeater = owners.get(node.id);
+      const sectionWay = repeater
+        ? ` “${repeater.name}” repeats this block: if every block of its ` +
+          "section is meant to work in the folder there is nothing to land, " +
+          `so remove “${node.name}” and end the section at the block in front ` +
+          `of it; otherwise give “${bare.name}” guards that isolate.`
+        : "";
       return (
         `“${bare.name}” leaves no branch for “${node.name}” to land — its ` +
         "guards work directly in the folder rather than in a checkout of " +
-        "their own."
+        `their own.${sectionWay}`
       );
     }
   }

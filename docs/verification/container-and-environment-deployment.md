@@ -77,7 +77,39 @@
   a cycle from renaming `/home/node/.codex` out of the agent-owned `/home/node`;
   a namespace the volume is not mounted in was not tried.
 
+- **A sandboxed work cycle sees `/home/node/.codex` as its own read-only
+  mount and can create no namespace, 2026-10-25** (board task `7662bc8a`),
+  read from a cycle under the CLI's sandbox on this install. Its
+  `mountinfo` lists `.codex` as the `usagefoundry_usagefoundry-codex` btrfs
+  volume, `ro`, over an `overlay` `/` mounted `ro`; `stat` gives `.codex`
+  device 41 and `/home/node` 60 (btrfs answers a per-subvolume device, not
+  `mountinfo`'s `0:38`), so `codexHomeNameUnsafeBecause` reads it as a mount
+  point; `access(W_OK)` is false for both; `unshare -U`, `-m`, `-Urm` and
+  `bwrap --unshare-user` all fail `EPERM` (`CapEff` 0, `NoNewPrivs` 1, three
+  seccomp filters). No rename was tried, so which of `EROFS` and `EBUSY` a
+  `mv` meets first is not measured; a cycle with `UF_SANDBOX` off was not read.
+
 ## Not yet verified by hand
+
+- **That a rename from a namespace where the mount is absent goes through**
+  (board task `7662bc8a`). Since Linux 3.18 `rename` is `EBUSY` only where
+  the dentry is a mount point in the caller's own namespace, so the tmpfs
+  should follow the directory to `codex-x` in the namespace that mounted it,
+  leaving the planted plain directory at `codex`, which
+  `codexHomeNameUnsafeBecause` refuses. Not run: `unshare` is `EPERM` in a
+  sandboxed cycle. As a non-root uid with namespaces allowed, never against
+  `/home/node`:
+  ```bash
+  P=$(mktemp -d)/p; mkdir -p "$P/codex"
+  unshare -Urm sh -c 'mount -t tmpfs none "$1/codex"; touch "$1.ready"
+    while [ ! -e "$1.go" ]; do sleep 0.1; done
+    grep -F "$1" /proc/self/mountinfo | cut -d" " -f5; cat "$1/codex/m"' sh "$P" &
+  while [ ! -e "$P.ready" ]; do sleep 0.1; done
+  mv "$P/codex" "$P/codex-x"; mkdir "$P/codex"; echo planted > "$P/codex/m"
+  touch "$P.go"; wait   # expect: mv succeeds; tmpfs listed at codex-x; "planted"
+  ```
+  Whether a cycle with `UF_SANDBOX` off can make a namespace at all is the
+  other half: `docker compose exec -u "$uid:$gid" usagefoundry unshare -Urm true`.
 
 - **That a container on this image leaves `/home/node/.codex` root's and
   sticky, and that an agent cannot rename `rules/` out of it** (board task

@@ -5,6 +5,7 @@ import {
   NODE_W,
   autoLayout,
   bodyOrder,
+  blockIsolates,
   bodyRegions,
   draftSignature,
   draftToGraph,
@@ -15,12 +16,14 @@ import {
   linksOfGraph,
   linksWithKind,
   linksWithMember,
+  linksWithTemplate,
   linksWithoutMember,
   markedAfterPress,
   resolveLayout,
   resolveLinkRelease,
   resolveRepeat,
   sectionExit,
+  sectionLands,
   sectionLink,
   sectionLinkStatement,
   sectionOf,
@@ -32,6 +35,7 @@ import {
   type LinkDraft,
   type WorkflowDraftBody,
 } from "./canvasGraph";
+import type { IsolationKnowledge } from "./canvasGraph";
 import type {
   WorkflowEdgeDTO,
   WorkflowNodeDTO,
@@ -1250,6 +1254,114 @@ test("a section that does not end at one merge block has no exit to mark", () =>
   assert.equal(unlanded[0].exitId, null);
 });
 
+/**
+ * What the editor knows of isolation: one template that works in the folder
+ * and one that does not, and the guards in Settings isolating. The same table
+ * the server cases in `workflows.test.ts` use, so the two sides are asked about
+ * the same blocks.
+ */
+const KNOWS: IsolationKnowledge = {
+  defaultIsolate: true,
+  templates: new Map([
+    ["t-iso", true],
+    ["t-flat", false],
+  ]),
+};
+const flat = { templateId: "t-flat" } as const;
+
+test("a section whose blocks all work in the folder ends at its last block", () => {
+  const blocks = [loop("l"), block("a", flat), block("b", flat)];
+  const links = [repeats("l", "a"), link("a", "b", { edge: "on-success" })];
+  const at = new Map(
+    ["l", "a", "b"].map((id) => [id, { x: 0, y: 0 }] as const),
+  );
+  assert.equal(sectionLands(["a", "b"], blocks, KNOWS), false);
+  assert.equal(sectionExit(["a", "b"], blocks, links, KNOWS), "b");
+  const [region] = bodyRegions(blocks, links, at, KNOWS);
+  assert.equal(region.exitId, "b");
+  assert.equal(region.lands, false, "the frame says it ends the pass, not that it lands");
+  // Without the knowledge, the reading before it existed: every block is taken
+  // to isolate, so the same section has no merge block to land through.
+  const unknown = bodyRegions(blocks, links, at)[0];
+  assert.equal(unknown.exitId, null);
+  assert.equal(unknown.lands, true);
+});
+
+test("one block that cuts a branch makes the section a landing one", () => {
+  const blocks = [loop("l"), block("a", flat), block("b", { templateId: "t-iso" })];
+  const links = [repeats("l", "a"), link("a", "b", { edge: "on-success" })];
+  assert.equal(sectionLands(["a", "b"], blocks, KNOWS), true);
+  assert.equal(
+    sectionExit(["a", "b"], blocks, links, KNOWS),
+    null,
+    "an isolating sink that is not a merge block lands nothing",
+  );
+  // A review always hands a branch on, whatever it names.
+  assert.equal(
+    sectionLands(["a", "v"], [block("a", flat), block("v", { kind: "review" })], KNOWS),
+    true,
+  );
+  assert.equal(blockIsolates({ templateId: "" }, KNOWS), true);
+  assert.equal(blockIsolates({ templateId: "" }, { ...KNOWS, defaultIsolate: false }), false);
+  assert.equal(blockIsolates({ templateId: "gone" }, KNOWS), false, "a deleted template isolates nothing");
+});
+
+test("a link drawn inside a section that works in the folder carries no branch", () => {
+  const blocks = [loop("l"), block("a", flat), block("b", flat)];
+  const links = [repeats("l", "a")];
+  // The editor mints the first link out of a block carrying its branch, which
+  // the server refuses at a block with no checkout — over a panel that has no
+  // switch to take it off.
+  assert.equal(sectionLink("a", "b", links, blocks).continueBranch, true);
+  assert.equal(sectionLink("a", "b", links, blocks, KNOWS).continueBranch, false);
+
+  const draft = {
+    blocks,
+    links: [...links, sectionLink("a", "b", links, blocks, KNOWS)],
+  };
+  const res = saved2(draft, KNOWS);
+  assert.ok(res.ok, res.ok ? "" : res.error);
+  const carried = saved2(
+    { blocks, links: [...links, sectionLink("a", "b", links, blocks)] },
+    KNOWS,
+  );
+  assert.equal(carried.ok, false, "the old link is what the server refuses");
+});
+
+test("a block put into a section that works in the folder goes after its last block", () => {
+  const blocks = [loop("l"), block("a", flat), block("b", flat)];
+  const links = [repeats("l", "a")];
+  const next = linksWithMember("l", "b", blocks, links, KNOWS);
+  assert.ok(next !== null);
+  assert.deepEqual(sectionOf("l", blocks, next), ["a", "b"]);
+  assert.equal(next.find((l) => l.from === "a" && l.to === "b")?.continueBranch, false);
+  assert.ok(saved2({ blocks, links: next }, KNOWS).ok);
+});
+
+test("switching a block to a template that works in the folder takes its branch off", () => {
+  const before = [loop("l"), block("a"), block("b"), block("m", { kind: "merge" })];
+  const links = [repeats("l", "a"), chain("a", "b"), link("b", "m", { edge: "on-success" })];
+  // `b` now names the flat template: its link from `a` carried a branch it
+  // can no longer hold, and the section panel offers no switch to clear it.
+  const after = before.map((b) => (b.id === "b" ? { ...b, ...flat } : b));
+  const next = linksWithTemplate("b", after, links, KNOWS);
+  assert.equal(next.find((l) => l.from === "a" && l.to === "b")?.continueBranch, false);
+  // Left alone when the new template still isolates, and outside a section.
+  assert.deepEqual(linksWithTemplate("b", before, links, KNOWS), links);
+  const outside = [chain("a", "b")];
+  assert.deepEqual(linksWithTemplate("b", after, outside, KNOWS), outside);
+});
+
+test("a link between blocks that work in the folder says no branch is handed over", () => {
+  const ends = { from: "A", to: "B", fromKind: "run", toKind: "run", carriedFrom: undefined } as const;
+  const edge = { edge: "on-success", continueBranch: false } as const;
+  assert.match(sectionLinkStatement(edge, ends).branch, /cuts its own branch/);
+  assert.match(
+    sectionLinkStatement(edge, { ...ends, inFolder: true }).branch,
+    /No branch is handed over: the work stays in the folder/,
+  );
+});
+
 test("a block put in a frame that lands runs beside the section, not after it", () => {
   const blocks = [
     loop("l"),
@@ -1296,6 +1408,21 @@ test("a link into a member that holds no branch never carries one", () => {
     false,
   );
 });
+
+/** `saved`, over a machine where the named templates do or do not isolate. */
+function saved2(draft: CanvasDraft, known: IsolationKnowledge) {
+  return normalizeWorkflowInput(
+    { name: "Nightly maintenance", graph: draftToGraph(draft) },
+    {
+      templates: new Map(
+        [...known.templates].map(([id, isolate]) => [id, { name: id, isolate }]),
+      ),
+      mountIds: ["main"],
+      defaultIsolate: known.defaultIsolate,
+      agents: new Map(),
+    },
+  );
+}
 
 /**
  * The server's answer to a drawn graph, where every block's guards isolate.

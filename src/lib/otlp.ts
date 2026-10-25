@@ -508,11 +508,20 @@ export function telemetrySpendSince(runId: string, since: number): TelemetrySpen
  * understates no real cycle — except by the one request that crosses it, which
  * ends the cycle and reaches `spent_usd` as soon as it reports.
  *
- * Uncapped when the cycle was handed no budget: a run with no `maxRunCostUSD`
- * has nothing bounding a cycle, so any ceiling here would be a guess, and one
- * set too low blinds both limits to money really being spent. Explicitly so,
- * because `Math.min(x, null)` is 0. The run's own live guard reads
- * `telemetrySpendSince` in full, so a forger still stops itself.
+ * A cycle is handed the install's or its workflow's headroom wherever that is
+ * smaller than what its run's own `maxRunCostUSD` has left, and in place of
+ * one the run does not have (`cycleBudgetUSD`), which is where those limits
+ * would end the run, so the cap is no guess and cannot blind them. It is also
+ * the most a forger can add, and that is the whole limit: a forged record reads
+ * as a cycle that spent its headroom, which refuses the other runs' doors for
+ * as long as the cycle runs.
+ *
+ * Uncapped when the cycle was handed no budget at all (no dollar limit to
+ * take a headroom from, or a Codex or local cycle), because any ceiling made up
+ * here would be a guess, and one set too low blinds both limits to money really
+ * being spent. Explicitly so, because `Math.min(x, null)` is 0. The run's own
+ * live guard reads `telemetrySpendSince` in full, so a forger still stops
+ * itself.
  */
 export function inFlightCostForOthers(
   runId: string,

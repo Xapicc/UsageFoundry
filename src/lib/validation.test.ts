@@ -300,6 +300,26 @@ describe("verdictsToActOn", () => {
     assert.deepEqual(verdictsToActOn([carried], 70, new Set(["A"]), 60), [carried]);
   });
 
+  it("reads the floor against when the check was asked for, not when its child spawned", () => {
+    // Queued behind another check at 105 and picked up at 115, so its child
+    // only spawned at 118 and finished at 120. `created_at` alone put it in the
+    // pick-up's segment, and its `not-finished` bought that segment a cycle.
+    const queued = { ...row("A", 118, 120, "not-finished"), asked_at: 105 };
+    assert.deepEqual(verdictsToActOn([queued], since, new Set(["A"]), 115), []);
+    // Asked for after the pick-up it is the segment's, whenever it spawned.
+    const asked = { ...row("A", 130, 140, "not-finished"), asked_at: 118 };
+    assert.deepEqual(verdictsToActOn([asked], since, new Set(["A"]), 115), [asked]);
+  });
+
+  it("reads a row with no request time by when its child spawned", () => {
+    // A validation from before `asked_at` existed. Null is not zero: read as
+    // zero it would be from before every pick-up and dropped without a word.
+    const before = { ...row("A", 105, 120, "not-finished"), asked_at: null };
+    assert.deepEqual(verdictsToActOn([before], since, new Set(["A"]), 115), []);
+    const after = { ...row("A", 118, 120, "not-finished"), asked_at: null };
+    assert.deepEqual(verdictsToActOn([after], since, new Set(["A"]), 115), [after]);
+  });
+
   it("leaves a task that is no longer this run's", () => {
     // The operator took it back, dropped it or closed it while it was read.
     // Their decision outranks the verdict.

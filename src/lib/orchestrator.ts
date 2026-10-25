@@ -64,8 +64,9 @@ import {
   guardEnding,
   normalizePolicy,
   planReadingAgeMs,
+  tighterHeadroom,
 } from "./budget";
-import { installBudgetRefusal, installBudgetVerdict } from "./installBudget";
+import { installBudgetReading, installBudgetRefusal } from "./installBudget";
 import {
   lastScanReadFailures,
   readCompactions,
@@ -238,6 +239,7 @@ import {
   clipReason,
   buildArgs,
   buildCodexArgs,
+  cycleBudgetIsHeadroom,
   cycleBudgetUSD,
   cycleDidNoWork,
   cycleEnding,
@@ -2679,6 +2681,24 @@ export function exitStopReason(
 }
 
 /**
+ * The log line for a resume that came back under a different session id.
+ *
+ * Named for the CLI that reported the id, `exitStopReason`'s rule: the
+ * `onSession` callback is shared by both providers and `handleCodexStreamLine`
+ * calls it with the Codex thread id, so a Codex cycle whose `thread.started`
+ * names another thread was logged as Claude Code's doing. A local run is still
+ * Claude Code.
+ */
+export function changedSessionNotice(
+  provider: RunProviderDTO | null,
+  resumeTarget: string,
+  reportedSessionId: string,
+): string {
+  const cli = RUN_PROVIDER_LABEL[provider === "codex" ? "codex" : "claude"];
+  return `This work cycle asked to resume session ${resumeTarget}, and ${cli} reported session ${reportedSessionId}. Later cycles will continue ${reportedSessionId}.`;
+}
+
+/**
  * Sleep, unless the run is interrupted first.
  *
  * The loop's `cancelled` checkpoints only run between cycles, so sleeping
@@ -3102,6 +3122,24 @@ export function probeIsolation(folder: string): IsolationPlan {
     };
   }
 
+  // The same store seen from the repository nested below a mount root that is
+  // itself a repository: the store is outside the nested one and inside the
+  // outer one, with the same three consequences, and it is the outer repository's
+  // rules that decide them. Refused rather than isolated anyway because one line
+  // in the outer `.gitignore` clears the refusal, where slots already made
+  // clear only by emptying the store.
+  if (repoRoot !== mountRoot && isRepositoryRoot(mountRoot) && !storeIgnoredBy(mountRoot)) {
+    return {
+      mode: "none",
+      repository: repoRoot,
+      reason:
+        `The workspace root ${mountRoot} is itself a repository, so checkouts of this one would go inside it, ` +
+        `in ${WORKTREE_STORE_DIR}/, and its .gitignore does not ignore that directory. Add the line ` +
+        `"${WORKTREE_STORE_DIR}/" to ${path.join(mountRoot, ".gitignore")} and commit it, and runs here get ` +
+        `checkouts of their own.`,
+    };
+  }
+
   // Recorded alongside the commit, because the commit alone cannot say where
   // this work is supposed to end up. A detached HEAD answers the literal string
   // "HEAD", which names no branch — stored as null so the landing path refuses
@@ -3125,7 +3163,8 @@ export function probeIsolation(folder: string): IsolationPlan {
  * Whether a repository's own ignore rules keep the checkout store out of it.
  *
  * Asked only of a repository at the mount root, the one whose working tree the
- * store sits in. The user-level excludes file is switched off for the question:
+ * store sits in, whether the run is on that repository or on one nested below
+ * it. The user-level excludes file is switched off for the question:
  * it is this container's, the operator's git on the host reads its own, and an
  * answer that leaned on it would hold here and not at the operator's terminal.
  * `.gitignore` and `info/exclude` are in the repository, so every git that
@@ -3144,6 +3183,31 @@ function storeIgnoredBy(repoRoot: string): boolean {
     "--",
     `${WORKTREE_STORE_DIR}/`,
   ]).ok;
+}
+
+/**
+ * Whether `dir` is itself a repository's working tree, by git's own answer.
+ *
+ * For a mount root that may or may not be one, and never more than a `stat`
+ * when it is not. Asked of git alone, a mount root that is not a repository
+ * climbs out of the mount to whatever repository is above it, which the
+ * checkout store is not inside and which this app has no business refusing
+ * over. So `.git` is looked for at `dir` itself first, and git's answer is
+ * accepted only when it names `dir`: an empty `.git` directory is skipped by
+ * git's discovery and would answer with the repository above. A `.git` git
+ * cannot use, such as a host checkout's gitdir that does not exist under the
+ * mount, is not a repository here, because the refusal this feeds names a
+ * `.gitignore` line that no edit would make git able to read.
+ */
+function isRepositoryRoot(dir: string): boolean {
+  if (!fs.existsSync(path.join(dir, ".git"))) return false;
+  const top = gitSync(dir, ["rev-parse", "--show-toplevel"]);
+  if (!top.ok || !top.stdout) return false;
+  try {
+    return fs.realpathSync(top.stdout) === dir;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -3191,7 +3255,9 @@ export function worktreeStore(repoRoot: string): string | null {
   // For a repository below the mount root it is outside the repo, so it cannot
   // show up in `git status` or be swept into a commit as a gitlink. For one at
   // the mount root it is inside, and only the repository's ignore rule keeps it
-  // out of both, which is why `probeIsolation` asks for that rule first.
+  // out of both, which is why `probeIsolation` asks for that rule first. It asks
+  // the same of a mount-root repository when the run is on one nested below it,
+  // because the store is then inside that outer repository instead.
   return path.join(realMountPath(mount), WORKTREE_STORE_DIR);
 }
 
@@ -12058,7 +12124,8 @@ export async function startRun(id: string): Promise<void> {
       // limit: a run refused by it would be refused whatever workflow it
       // belongs to, and halting a whole instance over a limit that is not about
       // that instance would take down blocks that are not the problem.
-      const installVerdict = installBudgetVerdict();
+      const installReading = installBudgetReading();
+      const installVerdict = installReading.verdict;
       if (installVerdict) {
         emit({
           runId: id,
@@ -12093,7 +12160,7 @@ export async function startRun(id: string): Promise<void> {
       // imports this module for `createRun` and `stopRun`, and a static import
       // back would make the pair a cycle. This call is already inside an async
       // function, past the point where both modules are fully evaluated.
-      const { enforceInstanceBudget } = await import("./workflows");
+      const { enforceInstanceBudget, instanceHeadroom } = await import("./workflows");
       const instanceGuard = enforceInstanceBudget(id, snapshot);
       if (instanceGuard?.kind === "halted") {
         // One row, on the run whose check found it. The instance carries the
@@ -12123,6 +12190,27 @@ export async function startRun(id: string): Promise<void> {
         );
       }
 
+      // What the install's and the workflow's dollar limits leave this cycle, the
+      // tighter of the two, read here off the figures the two checks above just
+      // passed, so a limit already reached has ended the run before this and
+      // what is read is positive. Read whether or not the run has a limit of its
+      // own: the cycle is handed the smaller of the two (`cycleBudgetUSD`), and a
+      // run's own limit larger than this headroom capped its telemetry above
+      // it. Neither a Codex cycle nor a local one is handed a `--max-budget-usd`
+      // at all. The reason it exists is the telemetry reading other runs are
+      // judged by: a cycle is taken in it at most at its budget, and its ingest
+      // token is in its own environment
+      // (`docs/agent/metering/run-spend-readings.md`).
+      //
+      // Read once for the pass, here and not at the spawn, so the argv and the
+      // row stamped below are one figure. It is stale by the awaits between,
+      // and what other runs spend meanwhile is the overshoot a guard read once
+      // at the door has always left.
+      const cycleHeadroom =
+        run.provider !== "codex" && run.provider !== "local"
+          ? tighterHeadroom(installReading.headroom, instanceHeadroom(id))
+          : null;
+
       // A session whose transcript is gone is restarted rather than resumed.
       // The pinned CLI deletes its own transcripts 30 days after they were last
       // written, and `sweepTranscripts` never lists a file the CLI removed
@@ -12130,7 +12218,8 @@ export async function startRun(id: string): Promise<void> {
       // exits 1 with a `result` event and no API call, which is not the shape
       // `looksLikeResumeFailure` retries, so each pick-up was charged a cycle
       // and ended `failed` on a bare exit code, because nothing on the row
-      // changes. Both measured: `docs/verification/run-lifecycle.md`. Dropped
+      // changes. Both measured:
+      // `docs/verification/run-lifecycle-resume-and-transcripts.md`. Dropped
       // by clearing the loop's session, `startsFresh`'s reason below: every
       // branch downstream already asks "is there a session", and the restart it
       // then takes, with `priorWorkNotice`, is the one a picked-up run gets.
@@ -12469,10 +12558,11 @@ export async function startRun(id: string): Promise<void> {
       // `active_started_at` travels with it because a workflow instance's guard
       // reads this run's in-flight spend and has nowhere else to learn where the
       // cycle began — see the column's note on `RunRow`. `active_budget_usd`
-      // with it, off the same two inputs `buildArgs` is handed below, so the
+      // with it, off the same three inputs `buildArgs` is handed below, so the
       // cap on that reading is the argv's own figure. Null on the cycles whose
-      // argv carries none: a local one (see `maxRunCostUSD` below) and a Codex
-      // one, whose CLI takes no such flag.
+      // argv carries none: a local one (see `maxRunCostUSD` below), a Codex
+      // one, whose CLI takes no such flag, and a Claude run with no limit of its
+      // own when neither the install nor its workflow has a dollar limit.
       db()
         .prepare(
           "UPDATE runs SET active_iteration = ?, active_started_at = ?," +
@@ -12483,7 +12573,11 @@ export async function startRun(id: string): Promise<void> {
           cycleStartedAt,
           local || run.provider === "codex"
             ? null
-            : cycleBudgetUSD(policy.maxRunCostUSD, spentGuardBeforeCycle),
+            : cycleBudgetUSD(
+                policy.maxRunCostUSD,
+                spentGuardBeforeCycle,
+                cycleHeadroom?.leftUSD ?? null,
+              ),
           id,
         );
 
@@ -12625,6 +12719,9 @@ export async function startRun(id: string): Promise<void> {
         // on a figure nobody was charged.
         maxRunCostUSD: local ? null : policy.maxRunCostUSD,
         spentGuardUSD: spentGuardBeforeCycle,
+        // Null for a local cycle for the reason above, which `cycleHeadroom`
+        // already is.
+        headroomUSD: cycleHeadroom?.leftUSD ?? null,
         // The run's own frozen copy, so every cycle — including one a restart
         // picks up hours later — opens as exactly the agent the operator started
         // it with, whatever has happened to the registry since. A copy rather
@@ -12773,10 +12870,7 @@ export async function startRun(id: string): Promise<void> {
             // run that quietly changed conversation looks, from outside,
             // exactly like one that restarted.
             if (resumeTarget && sid !== resumeTarget && sessionId === resumeTarget) {
-              log(
-                id,
-                `This work cycle asked to resume session ${resumeTarget}, and Claude Code reported session ${sid}. Later cycles will continue ${sid}.`,
-              );
+              log(id, changedSessionNotice(run.provider, resumeTarget, sid));
             }
             adoptSession(sid);
             if (run.provider === "codex") noteCodexThread(id, sid);
@@ -13212,14 +13306,30 @@ export async function startRun(id: string): Promise<void> {
       // already ends a run with, and the cycle stays charged to `iterations`
       // because it happened.
       if (res.subtype === "error_max_budget_usd") {
-        stopReason =
-          policy.maxRunCostUSD === null
-            ? "Claude Code stopped this work cycle at a spending limit of its own."
-            : `This work cycle was given what was left of this run's $${policy.maxRunCostUSD.toFixed(
+        // Which limit the cycle was handed, asked the way `buildArgs` decided
+        // it: a run with $95 of its own limit left under an install with $5 left
+        // was stopped at the install's, and naming its own would send the
+        // operator to raise a limit that did not bind.
+        const cutAtHeadroom =
+          cycleHeadroom !== null &&
+          cycleBudgetIsHeadroom(policy.maxRunCostUSD, spentGuardBeforeCycle, cycleHeadroom.leftUSD)
+            ? cycleHeadroom
+            : null;
+        stopReason = cutAtHeadroom
+          ? `This work cycle was given the $${cutAtHeadroom.leftUSD.toFixed(
+              2,
+            )} left of ${
+              cutAtHeadroom.scope === "install"
+                ? "the install's rolling spending limit"
+                : "this workflow's spending limit"
+            } of $${cutAtHeadroom.limitUSD.toFixed(2)}, and Claude Code stopped it there.`
+          : policy.maxRunCostUSD !== null
+            ? `This work cycle was given what was left of this run's $${policy.maxRunCostUSD.toFixed(
                 2,
               )} spending limit after the $${spentGuardBeforeCycle.toFixed(
                 2,
-              )} already spent, and Claude Code stopped it there.`;
+              )} already spent, and Claude Code stopped it there.`
+            : "Claude Code stopped this work cycle at a spending limit of its own.";
         // Into the log as well as onto the row. Every other way a run ends puts
         // a sentence in the stream — a refusal emits `error`, a tripped guard
         // emits `budget` — and a run that simply changed status with the reason
@@ -13229,10 +13339,18 @@ export async function startRun(id: string): Promise<void> {
         // by the CLI rather than decided here.
         log(id, stopReason);
         finalStatus = "stopped";
-        // The run's own spending limit when it has one — the CLI only enforced
-        // what this app handed it — and the CLI's own limit otherwise.
-        endingCode =
-          policy.maxRunCostUSD === null ? "cli_budget" : "guard:run_cost";
+        // Whichever limit it was handed, since the CLI only enforced what this
+        // app gave it: the install's or the workflow's when that was the smaller,
+        // where the cycle ended where the pre-cycle guard would have ended the
+        // run and so records that ending, and otherwise the run's own.
+        // `cli_budget` is left for a limit nobody here set.
+        endingCode = cutAtHeadroom
+          ? cutAtHeadroom.scope === "install"
+            ? "guard:install_cost"
+            : "workflow_guard"
+          : policy.maxRunCostUSD !== null
+            ? "guard:run_cost"
+            : "cli_budget";
         break;
       }
 
@@ -13292,7 +13410,8 @@ export async function startRun(id: string): Promise<void> {
         // refunded cycle has to be counted where `ranWorkCycle` reads if it did
         // anything. Spend is the evidence, not the turn count: the pinned CLI
         // reports `num_turns: 1` for an API error on a cycle's first turn
-        // (`docs/verification/run-lifecycle.md`, 2026-10-06). Tokens as well as
+        // (`docs/verification/run-lifecycle-resume-and-transcripts.md`,
+        // 2026-10-06). Tokens as well as
         // dollars, because a provider that reports no money still counts them.
         const spentBeforeRefusal = cycleSpend.costUSD > 0 || res.tokens > 0;
         // Jittered, so twenty-five runs meeting one failure at one instant do

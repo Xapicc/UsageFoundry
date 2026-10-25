@@ -254,6 +254,16 @@
   forks, and a look at the section list, a link inside the section, and a
   started instance's two hints.
 
+- **The instance page's wording for a loop that failed before its first pass
+  has not been rendered.** A loop with no pass is now offered "Carry on the
+  loop", and the row's description and the confirmation sheet's body read
+  "Failed before its first pass…" and "Its tasks are counted again…" for it
+  rather than the pass-numbered text. The server side is driven under
+  `npm test` (`loopSection.test.ts`); the strings typecheck and nothing has
+  drawn them. Settle: seed an instance whose loop failed on a board folder
+  removed before its release, serve a build over it, and read the row and the
+  sheet at 390px and 1280px.
+
 - **No loop has repeated a section against a live agent.** Everything about a
   multi-member pass is unit-tested or driven with the members held at `queued`:
   `loopSection.test.ts` caps concurrency at 1 so nothing is released, and writes

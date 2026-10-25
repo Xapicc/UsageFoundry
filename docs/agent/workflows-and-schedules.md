@@ -62,7 +62,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 ## [Schedules](workflows-and-schedules/schedules.md)
 
 - A schedule is the first thing here that starts an agent with no person present at all, and every property that makes that defensible is somewhere else.
-- A spending limit is not the bound of a press whose blocks report no cost.
+- No instance limit is the bound of a press whose blocks report no cost.
 - A missed window is not made up, an overlap is skipped rather than queued, and both are on the page.
 - The zone is stored with the schedule, and an unknown one is refused rather than replaced.
 - One timer per process, `globalThis`-pinned, lazily started and stopped.
@@ -75,12 +75,21 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - Membership is derived from a marked link, and the link is the *only* thing that states a section.
 - A `repeats` link is never a run dependency.
 - A loop's `bodyNodeIds` is derived from its `repeats` link and is never empty.
-- A section is one way in and one way out, and the way out has to land.
+- A landing section is one way in and one way out, and the way out has to land; an in-folder section has nothing to land.
 - A path to the exit is not a branch to it, so every run member has to hand its branch to something that takes it.
 - An orchestrator or review member is asked the same question about the branches it hands on, and only a link straight to a merge or review block answers it.
 - A loop's own task and an intra-section link's condition were each answered a different way before the frame, and both of those answers are still findable in the tree.
 - A body member is the one node here that is neither a run nor a ledger row.
 - A gate in a section holds every pass, and it is a member whose row is its whole record.
+
+## [The two kinds of section](workflows-and-schedules/loop-section-kinds.md)
+
+- A section is a landing section or an in-folder section, decided by its members, and the two are never mixed.
+- Mixed is refused rather than half supported, and that is the line and not an omission.
+- A merge block drawn at the end of an in-folder section is answered by `graphRefusal`'s merge rule, and a second refusal for it in `loopBodyRefusal` would be wrong.
+- Nothing in a pass assumes the exit is a merge block, and the loop holds no claim on a folder.
+- `startWorkflow` probes the run members of landing sections only.
+- The editor reads isolation off what its page already holds, and keeps its own copy of the kind table.
 
 ## [When a loop stops: exit conditions, caps and the board condition](workflows-and-schedules/loop-termination.md)
 
@@ -127,5 +136,8 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - A review block may take its verdict from each run's status instead of a model, and then it bills nothing and marks nothing.
 - A review block may take its verdict from a verify command saved on it, and then exit 0 is the whole of an approval.
 - Its fix runs are the instance's runs and its reviews' cost is the block's.
-- A full assist queue is waited out at both doors a review passes, and one block's branches pass the first one at a time.
 - It is one async function per block, the merge block's shape.
+
+## [The review door: the assist queue and the instance limit](workflows-and-schedules/review-door.md)
+
+- A full assist queue is waited out at both doors a review passes, and one instance's branches pass the first one at a time.

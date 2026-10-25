@@ -298,6 +298,35 @@ export function fmtTokens(n: number): string {
 }
 
 /**
+ * The tokens a run's token limit counts, and how many of them Codex did not
+ * report.
+ *
+ * `runs.spent_tokens` is what Codex reported on `turn.completed`. A cycle that
+ * ended without one is banked from its rollout into `spent_tokens_est`, and
+ * `spentGuardTokens` adds the two, so a display that read `spent_tokens` alone
+ * showed a run ended on `maxRunTokens` under its own limit. Only a Codex cycle
+ * writes that column, so any other provider is its reported figure and nothing
+ * banked.
+ */
+export function runTokenFigures(run: {
+  provider?: RunProviderDTO | null;
+  spent_tokens: number;
+  spent_tokens_est?: number;
+}): { counted: number; reported: number; banked: number } {
+  const banked = run.provider === "codex" ? (run.spent_tokens_est ?? 0) : 0;
+  return {
+    counted: run.spent_tokens + banked,
+    reported: run.spent_tokens,
+    banked,
+  };
+}
+
+/** The part of a Codex run's token count that came from its session log. */
+export function fmtBankedTokens(banked: number): string {
+  return `${fmtTokens(banked)} of them counted from the session log`;
+}
+
+/**
  * Bytes on disk, in the units `du -h` uses.
  *
  * Powers of 1024 and the `KB`/`MB`/`GB` spelling, because the number an
@@ -1280,6 +1309,29 @@ export function instanceOutcomeDetail(
     case "finished":
       return null;
   }
+}
+
+/**
+ * What a press's Spent cell may claim, from the three figures the DTO carries.
+ *
+ * `null` is "no block reported a cost", which the cell draws as `—`:
+ * `spentUSD` is 0 there because the members' `+=` is withheld, not because
+ * anything cost nothing, and `$0.00` down a column of presses is the
+ * measurement claim `memberSpendReading` and `blockSpendReading` refuse one
+ * column over. A press where only some blocks went unreported keeps its figure,
+ * which is a floor that `spentUnmeasured` says so beside. Here rather than next
+ * to those two because this page is a client component and `workflows.ts` opens
+ * the database.
+ */
+export function instanceSpendReading(
+  inst: Pick<
+    WorkflowInstanceDTO,
+    "spentUSD" | "spentSubjects" | "spentUnmeasured"
+  >,
+): number | null {
+  const nothingReported =
+    inst.spentSubjects > 0 && inst.spentUnmeasured === inst.spentSubjects;
+  return nothingReported ? null : inst.spentUSD;
 }
 
 /**

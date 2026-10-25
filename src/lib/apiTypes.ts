@@ -1642,6 +1642,11 @@ export interface RunDTO {
    * reported theirs. Shown beside `spent_usd`, never folded into it.
    */
   spent_usd_est?: number;
+  /**
+   * Tokens counted from a Codex cycle's session log when it ended without
+   * reporting. The token limit adds them to `spent_tokens`, so a display names
+   * them beside it rather than showing the reported figure alone.
+   */
   spent_tokens_est?: number;
   /** Queued runs only: how many are ahead of it **for its folder**. 0 means
    *  nothing queued is in front of it there — not that it is about to start. */
@@ -1739,6 +1744,7 @@ export type GitDirCommandClassDTO =
   | "remote"
   | "signing"
   | "interactive"
+  | "gc"
   | "alias"
   | "include";
 
@@ -1981,6 +1987,12 @@ export interface LiveRunDTO {
   spent_usd: number;
   /** Finished cycles' tokens — the only spend a Codex tile can show. */
   spent_tokens: number;
+  /**
+   * Tokens counted from a Codex cycle's session log when it ended without
+   * reporting, which the token limit adds to `spent_tokens`. Shown beside it,
+   * as `RunDTO.spent_usd_est` is beside `spent_usd`; 0 for every other provider.
+   */
+  spent_tokens_est: number;
   /**
    * A Codex cycle in flight, read off its session rollout (`codexRollout.ts`):
    * requests made and tokens used so far. **Null when nothing has been read**,
@@ -3183,7 +3195,10 @@ export type WorkflowPickUpDTO =
       retryRefusal: string | null;
     }
   | {
-      /** A stopped loop whose latest pass would now go through. */
+      /**
+       * A stopped loop whose latest pass would now go through, or `pass` 0: a
+       * loop that failed before it had a pass, which carrying on releases again.
+       */
       kind: "loop";
       nodeId: string;
       nodeName: string;
@@ -5389,6 +5404,35 @@ export interface DreamingNightDTO {
 }
 
 /**
+ * A night whose notes are on a branch that is not in the vault yet.
+ *
+ * Its own list rather than a field on `DreamingNightDTO`: the ledger has no rows
+ * for it (the signatures are held until the branch lands), so the notes tab has
+ * nothing to hang it on, and a night cut from the nights list must still show.
+ * Mirrors `LandingWait` in `dreamingLanding.ts`.
+ */
+export interface DreamingLandingDTO {
+  night: string;
+  /** The run page, where Land and Purge are. */
+  runId: string;
+  /** Signatures selected, so an upper bound on the notes on the branch. */
+  selected: number;
+  /** In `settleDreamingLandings`' words, lower-case and without a full stop. */
+  why: string;
+  /**
+   * `true` when the reason moves by itself within minutes (run live, in the
+   * merge queue, landed and not yet recorded). Read once, so it is drawn as true
+   * when the pane loaded and never as where the night ended.
+   */
+  settling: boolean;
+  /**
+   * How the newest merge queue row ended without landing. Null for an active row
+   * or none, because an active status is stale the moment it is read.
+   */
+  queueEnding: { status: "failed" | "skipped" | "cancelled"; message: string | null } | null;
+}
+
+/**
  * What `/dreaming` reads.
  *
  * `writerConfigured` and `refusal` are separate from `enabled` on purpose: the
@@ -5433,6 +5477,8 @@ export interface DreamingDTO {
 
   notes: DreamingNoteDTO[];
   nights: DreamingNightDTO[];
+  /** Oldest first; empty when every night's notes are in the vault. */
+  awaitingLanding: DreamingLandingDTO[];
   /**
    * Whether either list above was cut, and to what.
    *

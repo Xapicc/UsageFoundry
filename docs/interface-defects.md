@@ -283,3 +283,18 @@ nothing about it.
   arguably D because whether it overflows is the width's to say. Found by
   rendering the `unchanged` state over a long path; fixed with `break-all`.
   `RunGitDirNotice.test.tsx` does not pin classes, so no case was added.
+- **2026-10-25, board task `a51a2c11`, class D.** Every sentence in the
+  seven account sheets `/settings` writes inside an `EnvRow` wrapped mid-word
+  ("The link works f" / "rom any device."). `EnvRow`'s `<dd>` is `break-all`, so
+  a mount path cannot widen its column, and a `<dialog>` in the top layer is
+  outside the page's painting but not its inheritance: the sheet's computed
+  `word-break` was `break-all`. Class D because neither file is wrong on its
+  own: the `<dd>` is in `settings/page.tsx`, `Sheet` in `ui/`, and the
+  property crosses the boundary through the cascade, so no check of one
+  component's markup states it, and only an engine that resolves the cascade
+  reads it.
+  Found by opening the sheet in Chromium at 1280 and reading `getComputedStyle`
+  up the ancestors; fixed in `Sheet` with `word-break: normal` and
+  `overflow-wrap: anywhere`, so no host can reach in. The same `<dd>` still
+  breaks the page's own status prose mid-word, and is board task
+  `208ee53d`.

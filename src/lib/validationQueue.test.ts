@@ -35,7 +35,7 @@ let root: string;
 const MOUNT_DIR = "validation-queue-mount";
 const BRANCH = "uf/validation-queue";
 const repoRoot = () => path.join(root, MOUNT_DIR, "repo");
-const control = (name: "started" | "answer") => path.join(root, `stub-${name}`);
+const control = (name: "started" | "answer" | "verdict") => path.join(root, `stub-${name}`);
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, {
@@ -52,7 +52,8 @@ const git = (cwd: string, ...args: string[]) =>
 
 /**
  * A `claude` that reads until `answer` exists or it is signalled, then answers
- * `finished`. `started` gets a line per child, which is how a case counts them.
+ * `finished`, or with the JSON in `verdict` when a case has written one.
+ * `started` gets a line per child, which is how a case counts them.
  */
 function writeStub(dir: string): string {
   const stub = path.join(dir, "claude-stub.js");
@@ -67,7 +68,10 @@ function writeStub(dir: string): string {
 const fs = require("node:fs");
 fs.appendFileSync(${JSON.stringify(control("started"))}, String(process.pid) + "\\n");
 const answer = () => {
-  process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "\`\`\`json\\n" + ${JSON.stringify(verdict)} + "\\n\`\`\`", total_cost_usd: 0.02 }) + "\\n");
+  const verdict = fs.existsSync(${JSON.stringify(control("verdict"))})
+    ? fs.readFileSync(${JSON.stringify(control("verdict"))}, "utf8")
+    : ${JSON.stringify(verdict)};
+  process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "\`\`\`json\\n" + verdict + "\\n\`\`\`", total_cost_usd: 0.02 }) + "\\n");
   process.exit(0);
 };
 process.on("SIGINT", answer);
@@ -133,7 +137,7 @@ after(() => {
 });
 
 beforeEach(() => {
-  for (const name of ["started", "answer"] as const) {
+  for (const name of ["started", "answer", "verdict"] as const) {
     fs.rmSync(control(name), { force: true });
   }
 });
@@ -482,5 +486,122 @@ describe("a check asked for before the run's last pick-up", () => {
     // Let the check settle, so its child is not counted in the next case.
     await until("the check to settle", () => !validation.validationInFlight(runId));
     assert.equal(tasks.getTask(task.id)!.status, "done");
+  });
+
+  /**
+   * The third thing the wait counts, and the one the floor above could not
+   * reach: a claim asked for in the first segment, queued behind another check,
+   * whose child only spawns once the pick-up has happened. Its row's
+   * `created_at` is the spawn, so the floor read it as this segment's, waited
+   * for and acted on from then on. The row carries the request time instead.
+   */
+  it("is neither waited for nor acted on when its check only starts after the pick-up", async () => {
+    settings.saveSettings({ validateTaskCompletion: true, maxValidationCycles: 2 });
+    const runId = worktreeRun("running");
+    const first = heldTask(runId, "First, still reading at the pick-up");
+    const second = heldTask(runId, "Second, queued before the pick-up");
+    const since = Date.now();
+    // Both children answer `not-finished`, so a check the floor lets through is
+    // a pushback and a cycle bought, not a quiet null.
+    fs.writeFileSync(
+      control("verdict"),
+      JSON.stringify({ verdict: "not-finished", reason: "the tests were never written", evidence: [] }),
+    );
+
+    assert.equal((await validation.completeTaskWithValidation(first.id, runId)).kind, "checking");
+    await until("the first check to start", () => childrenStarted() === 1);
+    assert.equal((await validation.completeTaskWithValidation(second.id, runId)).kind, "queued");
+
+    // A run that ended `needs-review` and was picked up: a clock tick after the
+    // claims, so the pick-up cannot share their millisecond.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const pickedUpAt = Date.now();
+    database.db().prepare("UPDATE runs SET reopened_at = ? WHERE id = ?").run(pickedUpAt, runId);
+
+    // The first check settles after the pick-up and the second then starts. Its
+    // diff read is held so the stand-in can be told to keep reading before the
+    // child exists, which leaves the second check `running` for the boundary.
+    const realRunDiff = diffModule.runDiff;
+    let releaseDiff!: () => void;
+    const held = new Promise<void>((resolve) => (releaseDiff = resolve));
+    let reads = 0;
+    // As the cases above swap it: exports are writable under the CommonJS this
+    // suite compiles to.
+    const writable = diffModule as { runDiff: typeof realRunDiff };
+    writable.runDiff = async (id: string) => {
+      reads += 1;
+      await held;
+      return realRunDiff(id);
+    };
+    let boundary: ReturnType<typeof validation.validationAtBoundary> | null = null;
+    try {
+      fs.writeFileSync(control("answer"), "");
+      await until("the second claim's diff read to begin", () => reads === 1);
+      fs.rmSync(control("answer"), { force: true });
+      writable.runDiff = realRunDiff;
+      releaseDiff();
+      await until("the second check to start", () => childrenStarted() === 2);
+
+      const row = checksOf(runId).find((check) => check.task_id === second.id)!;
+      assert.equal(row.status, "running", "the second check answered before the boundary could meet it");
+      assert.ok(row.created_at >= pickedUpAt, "premise: its child spawned after the pick-up");
+      assert.ok(
+        row.asked_at !== null && row.asked_at < pickedUpAt,
+        `its request time was not recorded: asked_at ${row.asked_at}, pick-up ${pickedUpAt}`,
+      );
+      assert.equal(validation.validationInFlight(runId, pickedUpAt), false);
+
+      // The boundary polls every two seconds and waits eleven minutes, so a
+      // wait of any length at all is far past this.
+      const timedOut = Symbol("waited");
+      boundary = validation.validationAtBoundary(runId, since, () => false);
+      const met = await Promise.race([
+        boundary,
+        new Promise<symbol>((resolve) => setTimeout(() => resolve(timedOut), 1_500)),
+      ]);
+      assert.notEqual(met, timedOut, "the pick-up's boundary waited for a claim asked for before it");
+      assert.equal(met, null);
+    } finally {
+      writable.runDiff = realRunDiff;
+      releaseDiff();
+      fs.writeFileSync(control("answer"), "");
+    }
+    await boundary;
+    await settled(runId);
+
+    // Both said `not-finished` after the pick-up, and neither was asked for in
+    // its segment, so neither buys the pick-up a cycle.
+    assert.deepEqual(
+      checksOf(runId).map((check) => check.verdict),
+      ["not-finished", "not-finished"],
+    );
+    assert.equal(await validation.validationAtBoundary(runId, since, () => false), null);
+  });
+
+  /**
+   * A row written before `asked_at` existed has none, and a review or a
+   * resolution never has one: those keep the comparison they always made, by
+   * `created_at`. A null read as zero would count every one of them as from
+   * the first segment, and a row left out of the wait by a floor it is above
+   * is a run ending with its own check still to come.
+   */
+  it("is read by when its child spawned when the row has no request time", () => {
+    const runId = worktreeRun("running");
+    const task = heldTask(runId, "Checked by a row from before the column");
+    const spawnedAt = Date.now();
+    database
+      .db()
+      .prepare(
+        `INSERT INTO run_reviews (id, run_id, kind, created_at, status, task_id)
+         VALUES (?, ?, 'validate', ?, 'running', ?)`,
+      )
+      .run(`review-no-asked-at-${runId}`, runId, spawnedAt, task.id);
+    try {
+      assert.equal(validation.validationInFlight(runId), true);
+      assert.equal(validation.validationInFlight(runId, spawnedAt), true);
+      assert.equal(validation.validationInFlight(runId, spawnedAt + 1), false);
+    } finally {
+      database.db().prepare("DELETE FROM run_reviews WHERE run_id = ?").run(runId);
+    }
   });
 });

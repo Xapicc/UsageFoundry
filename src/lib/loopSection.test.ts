@@ -312,7 +312,13 @@ const loopBlock = (instanceId: string) => blockRow(instanceId, "L");
  */
 function settleQueuedRuns(
   instanceId: string,
-  opts: { done?: boolean; costUSD?: number; branch?: (runId: string) => string } = {},
+  opts: {
+    done?: boolean;
+    costUSD?: number;
+    branch?: (runId: string) => string;
+    /** Settle as a run that worked in the folder itself: no branch, no checkout. */
+    inFolder?: boolean;
+  } = {},
 ): void {
   const base = git(repoRoot(), "rev-parse", "HEAD").trim();
   for (const row of membersOf(instanceId)) {
@@ -321,6 +327,16 @@ function settleQueuedRuns(
       .prepare("SELECT status FROM runs WHERE id = ?")
       .get(row.runId) as { status: string } | undefined;
     if (!run || run.status !== "queued") continue;
+    if (opts.inFolder) {
+      dbMod
+        .db()
+        .prepare(
+          `UPDATE runs SET status='completed', iterations=1, finished_at=?,
+                           reported_done=?, spent_usd=? WHERE id=?`,
+        )
+        .run(Date.now(), opts.done ? 1 : 0, opts.costUSD ?? 0, row.runId);
+      continue;
+    }
     const branch = opts.branch ? opts.branch(row.runId) : `uf/${row.runId}`;
     if (!opts.branch) git(repoRoot(), "branch", "-f", branch, base);
     dbMod
@@ -356,7 +372,12 @@ function settleQueuedRuns(
  */
 async function drive(
   instanceId: string,
-  opts: { done?: boolean; costUSD?: number; branch?: (runId: string) => string } = {},
+  opts: {
+    done?: boolean;
+    costUSD?: number;
+    branch?: (runId: string) => string;
+    inFolder?: boolean;
+  } = {},
 ): Promise<void> {
   for (let step = 0; step < 40; step += 1) {
     settleQueuedRuns(instanceId, opts);
@@ -1504,6 +1525,22 @@ function assertLandedThenFailed(instanceId: string, reason: RegExp): void {
   );
 }
 
+/** What an instance blob written before `maxPasses` existed reads back as. */
+function dropPassCap(instanceId: string): void {
+  const db = dbMod.db();
+  const row = db
+    .prepare("SELECT graph FROM workflow_instances WHERE id=?")
+    .get(instanceId) as { graph: string };
+  const graph = JSON.parse(row.graph) as { nodes: NodeBlob[] };
+  const loop = graph.nodes.find((n) => n.id === "L");
+  assert.ok(loop);
+  delete loop.maxPasses;
+  db.prepare("UPDATE workflow_instances SET graph=? WHERE id=?").run(
+    JSON.stringify(graph),
+    instanceId,
+  );
+}
+
 describe("a loop that cannot decide while a pass is working", () => {
   it("carries the pass to its landing when the board can no longer be counted", async () => {
     const { boardDir, stopWhenTasks } = openBoard();
@@ -1517,22 +1554,8 @@ describe("a loop that cannot decide while a pass is working", () => {
   });
 
   it("carries the pass to its landing when the instance's graph has no pass cap", async () => {
-    // What an instance blob written before `maxPasses` existed reads back as.
     const instanceId = scene(WITH_SUCCESSOR);
-    await breakMidPass(instanceId, () => {
-      const db = dbMod.db();
-      const row = db
-        .prepare("SELECT graph FROM workflow_instances WHERE id=?")
-        .get(instanceId) as { graph: string };
-      const graph = JSON.parse(row.graph) as { nodes: NodeBlob[] };
-      const loop = graph.nodes.find((n) => n.id === "L");
-      assert.ok(loop);
-      delete loop.maxPasses;
-      db.prepare("UPDATE workflow_instances SET graph=? WHERE id=?").run(
-        JSON.stringify(graph),
-        instanceId,
-      );
-    });
+    await breakMidPass(instanceId, () => dropPassCap(instanceId));
 
     await drive(instanceId);
     assertLandedThenFailed(instanceId, /has no pass cap/);
@@ -1680,5 +1703,371 @@ describe("a loop failed on a board that could not be counted, with its pass sett
       membersOf(instanceId).some((m) => m.memberId === "after"),
       "the block behind the loop was never released",
     );
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* A section that works in the folder throughout                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The other kind of section has no merge block, and nothing in a pass may
+ * assume it does: a pass that waited on a merge row to decide it had settled
+ * would never settle one with none, and the loop would sit `looping` with every
+ * member done. Its members' runs are in-folder ones — no branch, no checkout —
+ * so what makes pass 1 visible to pass 2 is that it is already in the folder,
+ * and the only thing pass 2 may wait for is pass 1's last member.
+ *
+ * Driven through `advanceInstances` like the rest of this file, with the guards
+ * in Settings set to work in the folder because the fixture's blocks name no
+ * template, and put back after: a run's isolation is frozen at creation, so
+ * the setting only has to hold while the instance creates its members.
+ */
+describe("a pass of a section that works in the folder throughout", () => {
+  let restore: import("./settings").RunGuards;
+
+  before(async () => {
+    const settings = await import("./settings");
+    restore = settings.getSettings().chatDefaultGuards;
+    settings.saveSettings({ chatDefaultGuards: { ...restore, isolate: false } });
+  });
+
+  after(async () => {
+    const settings = await import("./settings");
+    settings.saveSettings({ chatDefaultGuards: restore });
+  });
+
+  const IN_FOLDER = {
+    nodes: [node("a"), node("b")],
+    edges: [
+      { from: "L", to: "a", edge: "repeats" },
+      { from: "a", to: "b", edge: "on-success" },
+    ],
+    body: ["a", "b"],
+  };
+
+  it("settles on its last member, takes the next pass, and ends at the cap", async () => {
+    const instanceId = scene({ ...IN_FOLDER, maxPasses: 2 });
+    await drive(instanceId, { inFolder: true });
+
+    const members = membersOf(instanceId);
+    assert.deepEqual(
+      members.map((m) => m.memberId),
+      [
+        ...["a", "b"].map((id) => passMemberId("L", 1, id)),
+        ...["a", "b"].map((id) => passMemberId("L", 2, id)),
+      ],
+      "two passes of the same two blocks, and no block that lands them",
+    );
+    assert.deepEqual(
+      workflows.blocksOf(instanceId).filter((b) => b.kind === "merge"),
+      [],
+      "a merge row was written for a section that has no merge block",
+    );
+    for (const member of members) {
+      const run = dbMod
+        .db()
+        .prepare("SELECT isolation FROM runs WHERE id = ?")
+        .get(member.runId) as { isolation: string | null };
+      assert.equal(run.isolation, "none", `${member.memberId} was created to isolate`);
+    }
+
+    // Pass 2 starts only once pass 1's last member is done: the pass settled on
+    // its members, with no merge to wait for.
+    const lastOfFirst = dbMod
+      .db()
+      .prepare("SELECT finished_at AS at FROM runs WHERE id = ?")
+      .get(members[1].runId) as { at: number };
+    const firstOfSecond = dbMod
+      .db()
+      .prepare("SELECT created_at AS at FROM runs WHERE id = ?")
+      .get(members[2].runId) as { at: number };
+    assert.ok(
+      firstOfSecond.at >= lastOfFirst.at,
+      "pass 2 was created before pass 1's last member finished",
+    );
+    assert.deepEqual(depsOf(members[2].runId), [], "pass 2 waits for nothing");
+
+    const block = loopBlock(instanceId);
+    assert.equal(block.status, "emitted");
+    assert.match(block.error ?? "", /limit of 2 pass\(es\)/);
+  });
+
+  it("stops on DONE like any other section, from its own runs", async () => {
+    const instanceId = scene({ ...IN_FOLDER, maxPasses: 5 });
+    await drive(instanceId, { inFolder: true, done: true });
+    assert.equal(membersOf(instanceId).length, 2, "a second pass was taken after DONE");
+    assert.match(loopBlock(instanceId).error ?? "", /reported the work complete on pass 1/);
+  });
+});
+
+/**
+ * What a press of Run asks of the disk, for each kind of section.
+ *
+ * A landing section's run members each need a worktree, and a folder that
+ * cannot have one — a plain directory here — refuses the press by name. An
+ * in-folder section's members cut no branch, so asking the disk for one would
+ * refuse a press that has nothing wrong with it: the folder is where the work
+ * is to happen, and `folderRefusal` has already said it is there.
+ */
+describe("a press of Run on a section, in a folder that is not a repository", () => {
+  let restore: import("./settings").RunGuards;
+  let orch: typeof import("./orchestrator");
+
+  before(async () => {
+    fs.mkdirSync(path.join(root, MOUNT_DIR, "plain"), { recursive: true });
+    orch = await import("./orchestrator");
+    const settings = await import("./settings");
+    restore = settings.getSettings().chatDefaultGuards;
+    // A press of Run reads a usage snapshot, and one that asked the provider
+    // would be a network call from a test.
+    settings.saveSettings({ planUsageFromApi: false });
+  });
+
+  after(async () => {
+    const settings = await import("./settings");
+    settings.saveSettings({ chatDefaultGuards: restore });
+  });
+
+  /** A saved workflow of `loop → a → rest…`, every block in `folder`. */
+  function saved(rest: Array<Record<string, unknown>>, folder: string) {
+    const flow = (id: string, extra: Record<string, unknown> = {}) => ({
+      id,
+      name: `Block ${id}`,
+      mountId,
+      folder,
+      task: `${id} the thing`,
+      ...extra,
+    });
+    const nodes = [
+      { id: "L", name: "Loop", kind: "loop", maxPasses: 2 },
+      flow("a"),
+      ...rest.map((r) => flow(r.id as string, r)),
+    ];
+    const ids = nodes.slice(1).map((n) => n.id as string);
+    const edges = [
+      { from: "L", to: "a", edge: "repeats", continueBranch: false },
+      ...ids.slice(1).map((id, i) => ({
+        from: ids[i],
+        to: id,
+        edge: "on-success",
+        continueBranch: false,
+      })),
+    ];
+    const parsed = workflows.normalizeWorkflowInput(
+      { name: `Section ${Math.random()}`, instanceBudget: null, graph: { nodes, edges } },
+      workflows.currentKnowledge(),
+    );
+    if (!parsed.ok) throw new Error(parsed.error);
+    return workflows.createWorkflow(parsed.value);
+  }
+
+  /** One run holding the only slot, so nothing a press creates is spawned. */
+  function holdTheSlot(): void {
+    const now = Date.now();
+    dbMod
+      .db()
+      .prepare(
+        `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
+                           created_at, started_at, work_dir)
+         VALUES (?, ?, 'hold the slot', 'running',
+                 '{"maxIterations":1,"permissionMode":"acceptEdits"}', 1, 0, ?, ?, NULL)`,
+      )
+      .run(`hold-slot-${now}`, repoRoot(), now, now);
+  }
+
+  const setIsolate = async (isolate: boolean) => {
+    const settings = await import("./settings");
+    settings.saveSettings({ chatDefaultGuards: { ...restore, isolate } });
+  };
+
+  it("lets an in-folder section through: its members need no worktree", async () => {
+    await setIsolate(false);
+    holdTheSlot();
+    const workflow = saved([{ id: "b" }], "plain");
+    const started = workflows.startWorkflow(workflow.id, await orch.currentSnapshot());
+    assert.ok(started.ok, `refused: ${!started.ok && started.reason}`);
+  });
+
+  it("still asks a landing section's run members for one", async () => {
+    await setIsolate(true);
+    holdTheSlot();
+    const workflow = saved(
+      [{ id: "m", name: "Land", kind: "merge", mergeStrategy: "merge", folder: "", mountId: "" }],
+      "plain",
+    );
+    const started = workflows.startWorkflow(workflow.id, await orch.currentSnapshot());
+    assert.equal(started.ok, false, "pressed a landing section in a folder with no repository");
+    assert.match(
+      !started.ok ? started.reason : "",
+      /“Block a” is repeated, and every pass has to land what it produced, which needs a checkout of its own/,
+    );
+  });
+
+  it("still refuses an in-folder section whose folder is not there", async () => {
+    await setIsolate(false);
+    holdTheSlot();
+    const workflow = saved([{ id: "b" }], "gone");
+    const started = workflows.startWorkflow(workflow.id, await orch.currentSnapshot());
+    assert.equal(started.ok, false);
+    assert.doesNotMatch(!started.ok ? started.reason : "", /checkout of its own/);
+    assert.match(!started.ok ? started.reason : "", /gone|No such folder/);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* A loop failed before it had a pass, and one with no cap to count by */
+/* ------------------------------------------------------------------ */
+
+describe("a loop that failed before its first pass", () => {
+  // A block in front of the loop, so pass 1's entry has something to start
+  // after, and an `on-success` block behind it for the failure to write off.
+  const withPredecessor = {
+    nodes: [node("before"), node("a"), mergeNode("m"), node("after")],
+    edges: [
+      { from: "before", to: "L", edge: "on-success", continueBranch: true },
+      { from: "L", to: "a", edge: "repeats" },
+      { from: "a", to: "m", edge: "on-success" },
+      { from: "L", to: "after", edge: "on-success" },
+    ],
+    body: ["a", "m"],
+    ownBlocks: [
+      { id: "before", kind: "run" },
+      { id: "after", kind: "run" },
+    ],
+  };
+
+  const loopPickUp = (instanceId: string) =>
+    workflows.pickUpsOf(workflows.getInstance(instanceId)!).filter((p) => p.kind === "loop");
+
+  /** The folder is gone before the loop is released, so no pass is ever opened. */
+  async function failedOnBoard(): Promise<{ instanceId: string; boardDir: string }> {
+    const { boardDir, stopWhenTasks } = openBoard();
+    const instanceId = scene({ ...withPredecessor, stopWhenTasks });
+    fs.rmSync(boardDir, { recursive: true });
+    await drive(instanceId);
+    // A loop that fails at its release is written off behind by the next advance,
+    // which in a running app is any terminal run anywhere.
+    workflows.advanceInstances();
+
+    const loop = loopBlock(instanceId);
+    assert.equal(loop.status, "failed");
+    assert.match(loop.error ?? "", /could not be counted/);
+    assert.equal(
+      membersOf(instanceId).some((m) => m.memberId === passMemberId("L", 1, "a")),
+      false,
+      "a pass was opened on a board that could not be counted",
+    );
+    assert.equal(blockRow(instanceId, "after").status, "blocked");
+    assert.equal(workflows.getInstance(instanceId)!.status, "blocked");
+    return { instanceId, boardDir };
+  }
+
+  it("offers the loop with the board's sentence while the folder is gone, and none once it is back", async () => {
+    const { instanceId, boardDir } = await failedOnBoard();
+
+    const gone = loopPickUp(instanceId);
+    assert.equal(gone.length, 1, "nothing on the page to press for a loop with no pass");
+    assert.match(gone[0].kind === "loop" ? (gone[0].refusal ?? "") : "", /could not be counted/);
+    const refused = workflows.resumeLoop(instanceId, "L");
+    assert.equal(refused.ok, false, "the door took a loop whose board still cannot be counted");
+    assert.equal(loopBlock(instanceId).status, "failed", "a refusal wrote nothing");
+    assert.equal(blockRow(instanceId, "after").status, "blocked", "a refusal wrote nothing");
+
+    fs.mkdirSync(boardDir, { recursive: true });
+    const back = loopPickUp(instanceId);
+    assert.equal(back.length, 1);
+    assert.equal(back[0].kind === "loop" ? back[0].refusal : "?", null);
+  });
+
+  it("starts pass 1 behind what released the loop, and puts the block behind it back", async () => {
+    const { instanceId, boardDir } = await failedOnBoard();
+    fs.mkdirSync(boardDir, { recursive: true });
+
+    assert.deepEqual(workflows.resumeLoop(instanceId, "L"), { ok: true });
+    assert.equal(loopBlock(instanceId).status, "looping", loopBlock(instanceId).error ?? "");
+    assert.equal(blockRow(instanceId, "after").status, "waiting", "the written-off block was not put back");
+    const entry = membersOf(instanceId).find((m) => m.memberId === passMemberId("L", 1, "a"));
+    assert.ok(entry, "pass 1's entry was never started");
+
+    // Carried by the loop's release, which is why the loop goes back to
+    // `waiting` rather than to `looping`: put straight to `looping`, pass 1's
+    // entry would start after nothing, on a fresh branch off the base.
+    const before = membersOf(instanceId).find((m) => m.memberId === "before");
+    assert.ok(before, "the block in front of the loop has no run");
+    assert.deepEqual(
+      depsOf(entry.runId).map((d) => [d.dependsOn, d.edge, d.continueBranch]),
+      [[before.runId, "on-success", 1]],
+    );
+  });
+
+  it("ends on the board rung when the board is clear by then, billing no pass", async () => {
+    const { instanceId, boardDir } = await failedOnBoard();
+    fs.mkdirSync(boardDir, { recursive: true });
+    dbMod.db().prepare("UPDATE tasks SET status='done'").run();
+
+    // Nothing advances it again here, as nothing would in a quiet app: the press
+    // alone has to release the block behind the loop.
+    assert.deepEqual(workflows.resumeLoop(instanceId, "L"), { ok: true });
+    const loop = loopBlock(instanceId);
+    assert.equal(loop.status, "emitted", loop.error ?? "");
+    assert.match(loop.error ?? "", /had at most 0 open task\(s\) left/);
+    assert.equal(
+      membersOf(instanceId).some((m) => m.memberId === passMemberId("L", 1, "a")),
+      false,
+      "a pass was billed on a board that was already clear",
+    );
+    assert.ok(
+      membersOf(instanceId).some((m) => m.memberId === "after"),
+      "the block behind the loop was never released",
+    );
+  });
+
+  it("is not offered when the loop repeats no section, which would fail the same way again", async () => {
+    // A graph saved when a loop held a task of its own and repeated that.
+    const instanceId = scene({
+      nodes: [node("after")],
+      edges: [{ from: "L", to: "after", edge: "on-success" }],
+      body: [],
+      ownBlocks: [{ id: "after", kind: "run" }],
+    });
+    await drive(instanceId);
+
+    assert.equal(loopBlock(instanceId).status, "failed");
+    assert.match(loopBlock(instanceId).error ?? "", /repeats no section/);
+    assert.deepEqual(loopPickUp(instanceId), []);
+  });
+});
+
+describe("a loop failed on a missing pass cap, with its pass settled whole", () => {
+  /** Pass 1 landed, and the loop then failed on a graph that carries no cap. */
+  async function failedOnCap(): Promise<string> {
+    const instanceId = scene({
+      ...WITH_SUCCESSOR,
+      edges: [
+        ...WITH_SUCCESSOR.edges.filter((e) => e.to !== "after"),
+        { from: "L", to: "after", edge: "on-success" },
+      ],
+    });
+    await breakMidPass(instanceId, () => dropPassCap(instanceId));
+    await drive(instanceId);
+    assertLandedThenFailed(instanceId, /has no pass cap/);
+    assert.equal(blockRow(instanceId, "after").status, "blocked");
+    return instanceId;
+  }
+
+  it("offers the loop with the missing cap as its refusal, and the press writes nothing", async () => {
+    const instanceId = await failedOnCap();
+
+    const offered = workflows
+      .pickUpsOf(workflows.getInstance(instanceId)!)
+      .filter((p) => p.kind === "loop");
+    assert.equal(offered.length, 1);
+    assert.match(offered[0].kind === "loop" ? (offered[0].refusal ?? "") : "", /has no pass cap/);
+
+    const refused = workflows.resumeLoop(instanceId, "L");
+    assert.equal(refused.ok, false, "the press was answered ok by a loop that cannot take a pass");
+    assert.equal(loopBlock(instanceId).status, "failed", "a refusal wrote nothing");
+    assert.equal(blockRow(instanceId, "after").status, "blocked", "a refusal wrote nothing");
   });
 });

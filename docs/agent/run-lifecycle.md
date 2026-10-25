@@ -59,13 +59,16 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - It notifies, because only a person ends it.
 - Two things are deliberately thin.
 
-## [Reopening, pick-ups and resumed sessions](run-lifecycle/reopen-and-resume.md)
+## [Reopening and pick-ups](run-lifecycle/reopen-and-resume.md)
 
 - Reopening a finished run is an operator decision, not a resume.
 - A reopened run carries one message, resolved at the door and consumed at the spawn.
 - A run that asked for a person is picked up by name, never in bulk, and is told what to check first.
 - A cycle the container killed is told so, above the branch that reads a stale column.
 - A restart on top of existing work says so in the prompt.
+
+## [Resumed sessions](run-lifecycle/resumed-sessions.md)
+
 - Whether a run can be continued is decided by `session_id`, so it is recorded the moment the stream names it — not when the cycle returns.
 - A resume that comes back under a different id is logged, never treated as a failure.
 - The first cycle of a resumed segment is the one that can fail without doing anything.

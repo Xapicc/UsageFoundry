@@ -13,6 +13,7 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - Containment stays **per mount**, while collision detection is deliberately **cross-mount**: `conflictKey`/`overlaps` see two mounts onto one directory as one folder. (was line 12)
 - Worktrees live at `<mountRoot>/.uf-worktrees/<repo>-<slot>` so the unmodified `resolveInMount` validates the agent's cwd. (was line 13)
 - A repository at the mount root is isolated only while its own ignore rules keep the store out, and this app's git never climbs out of a slot.
+- A repository nested below a mount root that is itself a repository is isolated only while the outer repository's own ignore rules keep the store out.
 - The agent is spawned with an argument array and `stdio: ["ignore", "pipe", "pipe"]`, **never a shell**, so prompt metacharacters are inert. (was line 14)
 - A review block's verify command is argv and never a shell, and only a person saves one.
 - `gitArgs` pins the signing programs and neutralises the repository's filter drivers, for the same reason it clears `core.hooksPath`.
@@ -27,6 +28,7 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 
 - An agent cannot select processes by name to signal them. (was line 21)
 - The Codex half of that denial is a file, and it holds only while root alone can change the directory Codex reads it from.
+- The name `CODEX_HOME` is reached by holds only while it is a mount point or its parent is root's alone.
 - …and the notice must contain no literal an agent could match on, because the notice is itself on every sibling's command line. (was line 22)
 - An agent must not sign a commit with the address it was given to recognise the operator by. (was line 23)
 - Nothing on a run's appended system prompt may carry a literal an agent could `pgrep -f` (was line 34)

@@ -228,9 +228,9 @@ describe("the cache read rate is a property of the model", () => {
   });
 
   it("keeps Sonnet 5.5's row through [1m], a snapshot and a provider prefix", () => {
-    // The pinned CLI names no `claude-sonnet-5-5[1m]`, but a newer one or a
-    // transcript may, and it is the 1M window the model already has at the
-    // standard rate — so it prices at the base row like every other `[1m]`.
+    // The pinned 2.1.310 names `claude-sonnet-5-5[1m]`, and a transcript may
+    // carry it, and it is the 1M window the model already has at the standard
+    // rate, so it prices at the base row like every other `[1m]`.
     for (const id of [
       "claude-sonnet-5-5[1m]",
       "claude-sonnet-5-5-20260928",

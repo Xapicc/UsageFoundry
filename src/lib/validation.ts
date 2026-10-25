@@ -513,8 +513,8 @@ const startingAskedAt = ((globalThis as unknown as {
 }).__ufValidationStartingAsked ??= new Map<string, number>());
 
 /**
- * Whether a check asked for, or begun, at `at` belongs to the segment starting
- * at `segmentStart` — the last pick-up (`runs.reopened_at`), null for a run
+ * Whether a check asked for at `at` belongs to the segment starting at
+ * `segmentStart`, the last pick-up (`runs.reopened_at`), null for a run
  * never picked up. One test for the boundary's wait and for the verdicts it
  * acts on, so the two cannot disagree about which checks are this segment's.
  */
@@ -701,6 +701,10 @@ async function startCheck(
       // of the target is not the run's base.
       baseSha: diff.measuredFrom?.commit ?? diff.base,
       headSha: diff.head,
+      // The row's `created_at` is the spawn, which a claim that waited behind
+      // another check reaches after the pick-up it was asked before; the
+      // segment floor reads this one.
+      askedAt,
       // The one spender in this app that only ever starts itself, so it must
       // not be able to run away: nothing presses anything here.
       maxBudgetUSD: settings.validationBudgetUSD,
@@ -1086,7 +1090,7 @@ export function closeStrandedValidations(rows: readonly ReviewRow[]): void {
  * Whether this run has a check reading, starting, or waiting its turn — every
  * state whose verdict the boundary has not seen yet.
  *
- * With a `segmentStart`, only checks begun or asked for since then count: the
+ * With a `segmentStart`, only checks asked for since then count: the
  * floor `verdictsToActOn` puts on the verdicts, applied to the wait that comes
  * before it. A check from before the last pick-up is never acted on, so
  * waiting for it — up to eleven minutes each, holding the run's folder and
@@ -1131,16 +1135,22 @@ function runningValidation(runId: string): ReviewRow | null {
  * once; and the task is still claimed by this run, so an operator who took it
  * back, dropped it or closed it meanwhile outranks the verdict.
  *
- * And the check began in this segment: not before `segmentStart`, the last
- * pick-up (`runs.reopened_at`), null for a run never picked up. A claim made in
- * a cycle that ended `needs-review` is not waited for, so its verdict can land
- * after the pick-up's first spawn, where `since` alone let it override the
- * pick-up's DONE and buy a cycle the operator never asked for — and landing a
- * minute earlier the same verdict bought nothing. A park is not a pick-up, so a
- * claim carried across one on `since` is still this segment's.
+ * And the check was asked for in this segment: not before `segmentStart`, the
+ * last pick-up (`runs.reopened_at`), null for a run never picked up. A claim
+ * made in a cycle that ended `needs-review` is not waited for, so its verdict
+ * can land after the pick-up's first spawn, where `since` alone let it override
+ * the pick-up's DONE and buy a cycle the operator never asked for, where landing
+ * a minute earlier the same verdict bought nothing. A park is not a pick-up, so
+ * a claim carried across one on `since` is still this segment's.
+ *
+ * Read by `asked_at` and not `created_at`, which is when the child spawned: a
+ * claim queued behind another check is asked for before the pick-up and may
+ * spawn after it. A row with no `asked_at`, such as one written before the
+ * column, falls back to `created_at`, the comparison it always made.
  */
 export function verdictsToActOn<
-  T extends Pick<ReviewRow, "task_id" | "created_at" | "finished_at" | "verdict">,
+  T extends Pick<ReviewRow, "task_id" | "created_at" | "finished_at" | "verdict"> &
+    Partial<Pick<ReviewRow, "asked_at">>,
 >(
   rows: readonly T[],
   since: number,
@@ -1159,7 +1169,7 @@ export function verdictsToActOn<
         row.verdict === "not-finished" &&
         row.finished_at !== null &&
         row.finished_at >= since &&
-        inSegment(row.created_at, segmentStart) &&
+        inSegment(row.asked_at ?? row.created_at, segmentStart) &&
         heldTaskIds.has(taskId),
     )
     .map(([, row]) => row)

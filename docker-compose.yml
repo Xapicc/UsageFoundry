@@ -582,6 +582,10 @@ services:
       # install upgrading onto this line starts signed out exactly once: a
       # sign-in made before it lived in the old container's writable layer,
       # which the volume masks rather than copies.
+      #
+      # Being a mount point is also what keeps a work cycle from renaming
+      # `.codex` out of the agents' `/home/node`, so without it every Codex
+      # cycle is refused (`codexHomeNameUnsafeBecause` in `codexRules.ts`).
       - usagefoundry-codex:/home/node/.codex
 
       # Where `scripts/backup-db.mjs` writes, and the one thing here that is

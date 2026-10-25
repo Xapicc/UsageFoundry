@@ -3068,20 +3068,118 @@ describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
     // The flat block sits behind another run block rather than in front of the
     // merge, so it is *this* rule that answers rather than the merge's own
     // "leaves no branch for me to land".
-    assert.match(
-      error(
-        graph(
-          [
-            repeater("l"),
-            node("a", { templateId: "t-flat" }),
-            node("b"),
-            merger("m"),
-          ],
-          [repeats("l", "a"), edge("a", "b"), edge("b", "m")],
-        ),
+    //
+    // And the sentence says *why*, which the old one could not: the section is a
+    // landing one because “B” cuts a branch, so the flat block is the odd one
+    // out and the operator has two ways to make the section one kind.
+    const refusal = error(
+      graph(
+        [
+          repeater("l"),
+          node("a", { templateId: "t-flat" }),
+          node("b"),
+          merger("m"),
+        ],
+        [repeats("l", "a"), edge("a", "b"), edge("b", "m")],
       ),
-      /needs a checkout of its own/,
     );
+    assert.match(
+      refusal,
+      /“A” is repeated by “L” and its guards work directly in the folder, but “B” in the same section works in a checkout of its own/,
+    );
+    assert.match(refusal, /Give “A” guards that isolate, or make every block of the section work in the folder/);
+  });
+
+  it("names an isolating orchestrator's runs as what makes a section land", () => {
+    // In its own words: an orchestrator's *runs* are what work in checkouts.
+    // A review is not worth a case of its own — it reviews only isolated work,
+    // so whatever hands it a branch is found first.
+    const refusal = error(
+      graph(
+        [
+          repeater("l"),
+          node("a", { templateId: "t-flat" }),
+          decider("d"),
+          merger("m"),
+        ],
+        [repeats("l", "a"), edge("a", "d"), edge("d", "m")],
+      ),
+    );
+    assert.match(
+      refusal,
+      /but the runs “D” starts in the same section work in checkouts of their own/,
+    );
+  });
+
+  describe("a section that works in the folder throughout", () => {
+    // The other kind of section: no member hands on a branch, so every pass's
+    // work is already in the folder the next pass reads and there is nothing
+    // to land. Held to the one-way-in, one-way-out shape and nothing more.
+    const flat = { templateId: "t-flat" };
+
+    it("saves ending at a run block, with no merge block", () => {
+      const v = value(
+        graph(
+          [repeater("l"), node("a", flat), node("b", flat)],
+          [repeats("l", "a"), edge("a", "b")],
+        ),
+      );
+      assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["a", "b"]);
+    });
+
+    it("saves ending at an orchestrator block on a template that works in the folder", () => {
+      const v = value(
+        graph(
+          [repeater("l"), node("a", flat), decider("d", flat)],
+          [repeats("l", "a"), edge("a", "d")],
+        ),
+      );
+      assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["a", "d"]);
+    });
+
+    it("is decided by the guards in Settings for a block that names no template", () => {
+      // `templateId: ""` is a real answer — the default guard set — and it is
+      // what makes a section in-folder on a machine whose default does not
+      // isolate, with no template named anywhere in it.
+      const raw = graph(
+        [repeater("l"), node("a", { templateId: "" })],
+        [repeats("l", "a")],
+      );
+      assert.ok(normalizeWorkflowInput(raw, { ...KNOWN, defaultIsolate: false }).ok);
+      assert.match(
+        error(raw),
+        /ends at “A”, which is not a merge block/,
+        "with a default that isolates it is a landing section and needs its merge",
+      );
+    });
+
+    it("keeps its one way out, and says so without a branch nobody lands", () => {
+      const refusal = error(
+        graph(
+          [repeater("l"), node("a", flat), node("b", flat), node("c", flat)],
+          [repeats("l", "a"), edge("a", "b"), edge("a", "c")],
+        ),
+      );
+      assert.match(refusal, /ends in 2 places: “B”, “C”/);
+      assert.match(refusal, /where the pass ends/);
+      assert.doesNotMatch(refusal, /nothing ever lands/);
+    });
+
+    it("answers a merge block drawn at its end with one sentence, naming both ways out", () => {
+      // The merge rule fires first and is the only sentence: nothing the section
+      // rules say can contradict it, because they are not reached.
+      const refusal = error(
+        graph(
+          [repeater("l"), node("a", flat), merger("m")],
+          [repeats("l", "a"), edge("a", "m")],
+        ),
+      );
+      assert.match(refusal, /“A” leaves no branch for “M” to land/);
+      assert.match(refusal, /“L” repeats this block/);
+      assert.match(refusal, /remove “M”/);
+      assert.match(refusal, /give “A” guards that isolate/);
+      assert.doesNotMatch(refusal, /not a merge block|needs a checkout/);
+    });
   });
 
   it("exempts an orchestrator member from that test, by name", () => {
@@ -3333,6 +3431,28 @@ describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
     );
     assert.match(refusal, /ends at “B”, which is not a merge block/);
     assert.match(refusal, /add a merge block at the end of the section/);
+    // The other way out, stated beside it: it is only a way out of a landing
+    // section for the operator who meant the section to work in the folder.
+    assert.match(
+      refusal,
+      /or give every block of the section guards that work in the folder, so there is nothing to land/,
+    );
+  });
+
+  it("still refuses a landing section ending at a run block, whatever the run is", () => {
+    // The in-folder kind must not have loosened the other: one member that cuts
+    // a branch makes the section one, and an exit that is not a merge block
+    // would leave that branch for nothing to land.
+    // The exit is an orchestrator on a template that works in the folder, which
+    // is a legal exit of an in-folder section — and here it sits behind a run
+    // that cuts a branch, so it is not one.
+    const refusal = error(
+      graph(
+        [repeater("l"), node("a"), decider("d", { templateId: "t-flat" })],
+        [repeats("l", "a"), edge("a", "d")],
+      ),
+    );
+    assert.match(refusal, /ends at “D”, which is not a merge block/);
   });
 
   it("refuses a loop whose worst case is more runs than anyone agreed to", () => {
@@ -3361,6 +3481,28 @@ describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
     assert.match(refusal, /Each pass is 4 run\(s\)/);
     assert.match(refusal, /which is 80 runs/);
     assert.match(refusal, /at most 60/);
+  });
+
+  it("counts a section that works in the folder the same way", () => {
+    // `worstCaseRuns` reads kinds and never guards, and there is no merge block
+    // here to be left out of the sum: four run blocks and 20 passes is 80
+    // whether or not anything lands.
+    const flat = { templateId: "t-flat" };
+    const refusal = error(
+      graph(
+        [
+          repeater("l", { maxPasses: 20 }),
+          node("a", flat),
+          node("b", flat),
+          node("c", flat),
+          node("d", flat),
+        ],
+        [repeats("l", "a"), edge("a", "b"), edge("b", "c"), edge("c", "d")],
+      ),
+    );
+    assert.match(refusal, /repeats 4 block\(s\) up to 20 time\(s\)/);
+    assert.match(refusal, /Each pass is 4 run\(s\)/);
+    assert.match(refusal, /which is 80 runs/);
   });
 
   it("charges an orchestrator member's fan-out again on every pass", () => {

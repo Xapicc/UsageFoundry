@@ -820,7 +820,9 @@ export function spawnCommand(
  * `usagefoundry-codex` at the default path — so a sign-in survives the rebuild.
  * That is a deployment fact rather than a decision this module can make: an
  * install that sets `CODEX_HOME` elsewhere has to mount something there itself,
- * or the credential is back in the container's writable layer.
+ * or the credential is back in the container's writable layer; and under a
+ * uid split, every Codex cycle is refused unless that path is a mount point or
+ * its parent is root's alone (`codexHomeNameUnsafeBecause`).
  */
 export const CODEX_HOME = env("CODEX_HOME", path.join(os.homedir(), ".codex"));
 

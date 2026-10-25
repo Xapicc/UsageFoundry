@@ -1152,19 +1152,57 @@ export function promptArgs(prompt: string): string[] {
 }
 
 /**
- * The `--max-budget-usd` a cycle is spawned with: what is left of the run's own
- * limit after the guard figure, or null when the run has none. `buildArgs`'s
- * `maxRunCostUSD` says why each half is what it is.
+ * The `--max-budget-usd` a cycle is spawned with: the smaller of what is left
+ * of the run's own limit after the guard figure and what the install's and its
+ * workflow's dollar limits have left (`headroomUSD`), either alone when the
+ * other does not apply, or null when nothing does. `buildArgs`'s
+ * `maxRunCostUSD` and `headroomUSD` say why each half is what it is.
  *
  * Its own function because two readers must agree on it to the cent: the argv,
  * and the row `startRun` stamps it on as `active_budget_usd`, which is what
  * bounds the cycle's own telemetry in the figures other runs are judged by.
+ *
+ * The smaller and not the run's own limit outright, which is what it used to
+ * be: a run at a $100 limit under an install with $5 left was handed 100, so its
+ * telemetry was capped at 100 in every other run's figures and one forged
+ * `cost_usd` filled the install's limit as surely as an uncapped cycle's did.
+ * `cycleBudgetIsHeadroom` says which of the two it was, for the stop.
  */
 export function cycleBudgetUSD(
   maxRunCostUSD: number | null,
   spentGuardUSD: number,
+  headroomUSD: number | null,
 ): number | null {
+  // `Math.max(0, …)` for the run limit's reason: a negative would reach the CLI
+  // as no limit. A headroom of 0 is *exhausted*, and an exhausted limit has
+  // ended the run at the pre-cycle guard before anything is spawned, so what
+  // this protects is the day that stops being true: the child is handed a
+  // budget no child can satisfy rather than none.
+  if (headroomUSD !== null && cycleBudgetIsHeadroom(maxRunCostUSD, spentGuardUSD, headroomUSD)) {
+    return Math.max(0, headroomUSD);
+  }
   return maxRunCostUSD === null ? null : Math.max(0, maxRunCostUSD - spentGuardUSD);
+}
+
+/**
+ * Whether the figure `cycleBudgetUSD` hands over is the headroom rather than
+ * what is left of the run's own limit: the question a cycle the CLI stops there
+ * is ended by, `guard:install_cost` or `workflow_guard` against
+ * `guard:run_cost`, and the sentence that names the limit.
+ *
+ * The same comparison `cycleBudgetUSD` makes, and it makes it by calling this,
+ * so the argv and the ending cannot name two different limits. A tie goes to
+ * the run's own limit, which the pre-cycle guard asks before the install's, for
+ * `tighterHeadroom`'s reason.
+ */
+export function cycleBudgetIsHeadroom(
+  maxRunCostUSD: number | null,
+  spentGuardUSD: number,
+  headroomUSD: number | null,
+): boolean {
+  if (headroomUSD === null) return false;
+  if (maxRunCostUSD === null) return true;
+  return Math.max(0, headroomUSD) < Math.max(0, maxRunCostUSD - spentGuardUSD);
 }
 
 export function buildArgs(opts: {
@@ -1203,6 +1241,26 @@ export function buildArgs(opts: {
    */
   maxRunCostUSD: number | null;
   spentGuardUSD: number;
+  /**
+   * What the install's rolling limit and the run's workflow's dollar limit have
+   * left, whichever is tighter; null when neither limit is configured, and
+   * always for a Codex or local cycle (which carries no `--max-budget-usd` at
+   * all). The cycle is handed the smaller of this and what `maxRunCostUSD` has
+   * left (`cycleBudgetUSD`), so a run with a limit of its own gets it as well.
+   *
+   * A cycle handed no budget used to be uncapped, and that was deliberate: any
+   * ceiling this app made up would be a guess, and one too low blinds the
+   * install and workflow limits to money really being spent. This one is not a
+   * guess. It is the figure those limits would end the run at between cycles,
+   * so a cycle bounded by it loses nothing they would have allowed. It is also
+   * what lets `inFlightCostForOthers` cap the cycle's telemetry in the figures
+   * other runs are judged by, which for an uncapped cycle took one forged
+   * `cost_usd: 1e9` whole. Required, with the two above, so a caller cannot
+   * drop it by omission: the stamped `active_budget_usd` and this argv must be
+   * one figure, and a loop that stamped it and forgot to pass it here would cap
+   * the reading at a ceiling the CLI was never given.
+   */
+  headroomUSD: number | null;
   /**
    * The agent this run **is**, or null for an ordinary run.
    *
@@ -1566,7 +1624,11 @@ export function buildArgs(opts: {
   // cycle that crosses the threshold rather than the one after it. Per
   // invocation, so a resumed session is bounded by what is left *now* rather
   // than by what the conversation has cost since it opened.
-  const cycleBudget = cycleBudgetUSD(opts.maxRunCostUSD, opts.spentGuardUSD);
+  const cycleBudget = cycleBudgetUSD(
+    opts.maxRunCostUSD,
+    opts.spentGuardUSD,
+    opts.headroomUSD,
+  );
   if (cycleBudget !== null) {
     args.push("--max-budget-usd", String(cycleBudget));
   }

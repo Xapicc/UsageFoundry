@@ -223,7 +223,14 @@ describe("prepareCodexRules when the cycle runs under another uid", () => {
     // uid at 0755, which no mode check alone would have caught.
     homeWithMode(0o755);
     const reason = refused(home(), self + 1);
-    assert.match(reason, new RegExp(`uid ${self}\\b`));
+    // The directory's own owner, not its parent's: the fixture's parent is not
+    // uid `self + 1`'s either, so the name check would refuse this too and
+    // hide a missing owner check behind its own reason.
+    assert.equal(
+      reason.includes(`${home()} is owned by uid ${self},`),
+      true,
+      `refused for something other than CODEX_HOME's owner: ${reason}`,
+    );
   });
 
   it("refuses a rules/ that is a link to a directory an agent owns, and writes nothing through it", () => {
@@ -256,5 +263,93 @@ describe("prepareCodexRules when the cycle runs under another uid", () => {
     fs.chmodSync(rulesDir(), 0o777);
     refused(rulesDir());
     assert.equal(fs.existsSync(CODEX_RULES_FILE), false);
+  });
+
+  it("refuses a CODEX_HOME the agents could rename out of its parent", () => {
+    // A perfect 1770 home and 0755 `rules/` keep nothing if the name they are
+    // reached by can be swapped: the fixture's parent is a plain directory on
+    // the same filesystem, so only its mode stands between a cycle and a
+    // directory of its own at that name. Every other case here runs under a
+    // 0700 parent, which is why they answer ready.
+    homeWithMode(0o1770);
+    const parent = path.dirname(home());
+    fs.chmodSync(parent, 0o777);
+    try {
+      const reason = refused(home());
+      assert.match(reason, /not a mount point/);
+      assert.match(reason, /Mount the usagefoundry-codex volume at CODEX_HOME/);
+      assert.equal(fs.existsSync(rulesDir()), false, "made rules/ under a swappable name");
+    } finally {
+      fs.chmodSync(parent, 0o700);
+    }
+  });
+});
+
+/**
+ * Whether the name `CODEX_HOME` is reached by can be swapped, decided over two
+ * `lstat` results. The suite can neither mount a volume nor chown to root, so
+ * the stock shape, a mount point under the agents' `/home/node`, is only
+ * reachable here, and it is the case that has to stay ready: refusing it
+ * refuses every Codex cycle on every install.
+ */
+describe("codexHomeNameUnsafeBecause", () => {
+  const home = "/home/node/.codex";
+  const agent = 1000;
+  const server = 0;
+  const dir = (dev: number, uid: number, mode: number) => ({
+    dev,
+    uid,
+    mode: fs.constants.S_IFDIR | mode,
+  });
+
+  it("answers null for a mount point under the agents' own directory", () => {
+    assert.equal(
+      mod.codexHomeNameUnsafeBecause(home, dir(41, server, 0o1770), dir(60, agent, 0o755), server),
+      null,
+    );
+  });
+
+  it("refuses a plain directory under the agents' own directory, naming both fixes", () => {
+    const reason = mod.codexHomeNameUnsafeBecause(
+      home,
+      dir(60, server, 0o1770),
+      dir(60, agent, 0o755),
+      server,
+    );
+    assert.equal(typeof reason, "string");
+    assert.match(reason!, /\/home\/node\/\.codex is not a mount point/);
+    assert.match(reason!, /\/home\/node is owned by uid 1000, not by this server's uid 0/);
+    assert.match(reason!, /Mount the usagefoundry-codex volume at CODEX_HOME/);
+    assert.match(reason!, /point CODEX_HOME at a directory whose parent only root can write/);
+  });
+
+  it("answers null for a plain directory under a parent only the server can write", () => {
+    assert.equal(
+      mod.codexHomeNameUnsafeBecause(
+        "/var/lib/codex/home",
+        dir(60, server, 0o1770),
+        dir(60, server, 0o755),
+        server,
+      ),
+      null,
+    );
+  });
+
+  it("refuses a server-owned parent with any write bit for group or others, sticky or not", () => {
+    // A child keeps the server's supplementary groups, so no group's write bit
+    // is provably out of its reach.
+    for (const mode of [0o775, 0o757, 0o1777, 0o1775]) {
+      const reason = mod.codexHomeNameUnsafeBecause(
+        "/var/lib/codex/home",
+        dir(60, server, 0o1770),
+        dir(60, server, mode),
+        server,
+      );
+      assert.match(
+        reason ?? "",
+        new RegExp(`/var/lib/codex is mode ${mode.toString(8).padStart(4, "0")}`),
+        `answered null under a ${mode.toString(8)} parent`,
+      );
+    }
   });
 });

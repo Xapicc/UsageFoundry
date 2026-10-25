@@ -134,6 +134,7 @@ const {
   refusalDisposition,
   refusalStopReason,
   exitStopReason,
+  changedSessionNotice,
   refusalKind,
   refusalResumeAt,
   reopenPrompt,
@@ -2242,6 +2243,28 @@ describe("rate limits, apart from the rest", () => {
     }
   });
 
+  it("names the CLI that reported a changed session id in the cycle's log line", () => {
+    const resumed = "0199abcd-0000-7000-8000-000000000000";
+    const reported = "0199abcd-0000-7000-8000-000000000001";
+
+    // The callback is shared by both providers and a Codex cycle hands it the
+    // thread id, so this sentence used to blame Claude Code for a Codex thread.
+    const codex = changedSessionNotice("codex", resumed, reported);
+    assert.equal(
+      codex,
+      `This work cycle asked to resume session ${resumed}, and Codex reported session ${reported}. Later cycles will continue ${reported}.`,
+    );
+    assert.doesNotMatch(codex, /Claude Code/);
+
+    // A local run is still Claude Code, as in `exitStopReason`.
+    for (const provider of ["claude", "local", null] as const) {
+      assert.equal(
+        changedSessionNotice(provider, "sess-1", "sess-2"),
+        "This work cycle asked to resume session sess-1, and Claude Code reported session sess-2. Later cycles will continue sess-2.",
+      );
+    }
+  });
+
   it("gives each refusal cause its own instruction to the operator", () => {
     // The test above pins the two *causes* apart; this pins the two sentences
     // apart, which is the half an operator actually reads. `refusalStopReason`
@@ -2817,6 +2840,7 @@ describe("buildArgs", () => {
     maxRunCostUSD: null,
     maxRunCostFactor: null,
     spentGuardUSD: 0,
+    headroomUSD: null,
   };
 
   /**
@@ -3645,6 +3669,68 @@ describe("buildArgs", () => {
     assert.equal(args[args.indexOf("--max-budget-usd") + 1], "0");
   });
 
+  /**
+   * A run with no limit of its own is bounded by what the install's and its
+   * workflow's dollar limits have left.
+   *
+   * Without it the cycle had no `--max-budget-usd`, the row's
+   * `active_budget_usd` was null and `inFlightCostForOthers` took its telemetry
+   * in full, so one forged `cost_usd` ended every other run on `install_cost`.
+   * The figure is the one the pre-cycle guards would end the run at, so it is
+   * not a guess that could blind them. Each case is one way to get the choice
+   * wrong without anything throwing.
+   */
+  it("carries the install's or workflow's headroom into a cycle with no limit of its own", () => {
+    const args = buildArgs({ ...base, isolated: true, spentGuardUSD: 12, headroomUSD: 7.5 });
+    // The headroom already is what is left, so what the run has spent is not
+    // taken off it a second time.
+    assert.equal(args[args.indexOf("--max-budget-usd") + 1], "7.5");
+  });
+
+  /**
+   * A run with a limit of its own is handed the headroom too, whenever it is
+   * the smaller.
+   *
+   * Its own limit used to win outright, so a run at a $100 limit under an
+   * install with $5 left was spawned with 100, stamped 100, and one forged
+   * `cost_usd` read as $100 in every other run's install figure: past the
+   * limit, refusing every door. The stop has to name the same limit the argv
+   * was given, so `cycleBudgetIsHeadroom` is asked here beside it.
+   */
+  it("hands a run with a limit of its own the smaller of what that and the headroom leave", () => {
+    const { cycleBudgetIsHeadroom } =
+      require("./cycleInvocation") as typeof import("./cycleInvocation");
+    const handed = (maxRunCostUSD: number, spentGuardUSD: number, headroomUSD: number) => {
+      const args = buildArgs({ ...base, isolated: true, maxRunCostUSD, spentGuardUSD, headroomUSD });
+      return [
+        args[args.indexOf("--max-budget-usd") + 1],
+        cycleBudgetIsHeadroom(maxRunCostUSD, spentGuardUSD, headroomUSD),
+      ];
+    };
+    assert.deepEqual(handed(100, 0, 5), ["5", true], "the install's headroom is the smaller");
+    assert.deepEqual(handed(5, 1.25, 1), ["1", true], "what is spent comes off the run's limit only");
+    assert.deepEqual(handed(5, 1.25, 10), ["3.75", false], "the run's own remainder is the smaller");
+    // A tie goes to the run's own limit, which the pre-cycle guard asks first.
+    assert.deepEqual(handed(5, 1, 4), ["4", false]);
+  });
+
+  it("hands an exhausted headroom over as a budget nothing can satisfy, never as no budget", () => {
+    // The pre-cycle guard ends a run at a limit that is reached, so no cycle is
+    // spawned for a headroom of 0. If one ever is, `null` would be the child's
+    // way out of every limit; and a negative would read as none to the CLI.
+    for (const headroomUSD of [0, -3]) {
+      const args = buildArgs({ ...base, isolated: true, headroomUSD });
+      assert.equal(args[args.indexOf("--max-budget-usd") + 1], "0", String(headroomUSD));
+    }
+  });
+
+  it("still attaches nothing when no limit applies", () => {
+    assert.equal(
+      buildArgs({ ...base, isolated: true, headroomUSD: null }).includes("--max-budget-usd"),
+      false,
+    );
+  });
+
   it("still passes the mode, the model and the session to resume", () => {
     const args = buildArgs({
       ...base,
@@ -3733,6 +3819,7 @@ describe("the cycle adapter", () => {
     isolated: true,
     maxRunCostUSD: 20,
     spentGuardUSD: 5,
+    headroomUSD: null,
     agent: {
       name: "reviewer",
       description: "reads diffs",
@@ -3867,6 +3954,7 @@ describe("buildCodexArgs", () => {
     resumeSessionId: null,
     maxRunCostUSD: null,
     spentGuardUSD: 0,
+    headroomUSD: null,
     // Deliberately unread by this builder and set anyway, because that is the
     // fact worth pinning: isolation is a Claude-side git grant, and Codex is
     // given the same run's checkout through `-C` and the sandbox instead.
@@ -5230,6 +5318,7 @@ describe("injectionFates", () => {
     maxRunCostUSD: null,
     maxRunCostFactor: null,
     spentGuardUSD: 0,
+    headroomUSD: null,
   };
 
   const fatesOf = (argv: string[]) =>

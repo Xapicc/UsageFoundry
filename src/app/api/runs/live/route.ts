@@ -91,6 +91,7 @@ function liveRun(r: RunRow, pruning: PruneSavingsDTO | null): LiveRunDTO {
     validation_cycles: r.validation_cycles,
     spent_usd: r.spent_usd,
     spent_tokens: r.spent_tokens,
+    spent_tokens_est: r.spent_tokens_est,
     cycleCodex:
       codex && codex.requests > 0 ? { requests: codex.requests, tokens: codex.tokens } : null,
     // Zero requests is "nothing arrived", which is not "$0": most runs export

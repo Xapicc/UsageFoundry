@@ -15,6 +15,7 @@ import {
   INSTANCE_OUTCOME_TONE,
   instanceCanMove,
   instanceOutcomeDetail,
+  instanceSpendReading,
   landingSummary,
   loopSpendShown,
   passRuns,
@@ -23,6 +24,7 @@ import {
   readFailureMessage,
   resolveLiveModel,
   runPageNotes,
+  runTokenFigures,
   storedFolderState,
   taskProjectDraft,
   taskProjectPayload,
@@ -428,6 +430,30 @@ test("a negative token figure is scaled and signed like a positive one", () => {
   assert.equal(fmtTokens(-5), "−5");
   assert.equal(fmtTokens(0), "0");
   assert.equal(fmtTokens(81_822), "81.8k");
+});
+
+/**
+ * What a Codex run's token limit counts, as a display reads it.
+ *
+ * `spentGuardTokens` is `spent_tokens + spent_tokens_est` and the run page, the
+ * runs list and the live tile read `spent_tokens` alone, so a run killed at
+ * 120,500 tokens of a 100,000 limit showed 20,500. The column is only ever
+ * written for Codex, so another provider's figure is left as it was reported.
+ */
+test("a Codex run's token figure is the one its limit counts, and an absent column is zero banked", () => {
+  assert.deepEqual(
+    runTokenFigures({ provider: "codex", spent_tokens: 90_000, spent_tokens_est: 30_500 }),
+    { counted: 120_500, reported: 90_000, banked: 30_500 },
+  );
+  assert.deepEqual(runTokenFigures({ provider: "codex", spent_tokens: 90_000 }), {
+    counted: 90_000,
+    reported: 90_000,
+    banked: 0,
+  });
+  assert.deepEqual(
+    runTokenFigures({ provider: "claude", spent_tokens: 90_000, spent_tokens_est: 30_500 }),
+    { counted: 90_000, reported: 90_000, banked: 0 },
+  );
 });
 
 /**
@@ -1087,4 +1113,27 @@ test("instanceOutcomeDetail says what the badge cannot, and nothing for finished
     "no folder",
   );
   assert.equal(instanceOutcomeDetail({ ...base, status: "finished" }), null);
+});
+
+test("instanceSpendReading is unknown, not $0.00, when no block reported a cost", () => {
+  // An all-Codex press: every member is a subject, none was measured, and the
+  // sum is 0 because the run loop withholds its `+=`.
+  assert.equal(
+    instanceSpendReading({ spentUSD: 0, spentSubjects: 2, spentUnmeasured: 2 }),
+    null,
+  );
+  // A partly measured press keeps its floor, and a measured $0.00 stays one.
+  assert.equal(
+    instanceSpendReading({ spentUSD: 1.5, spentSubjects: 3, spentUnmeasured: 1 }),
+    1.5,
+  );
+  assert.equal(
+    instanceSpendReading({ spentUSD: 0, spentSubjects: 2, spentUnmeasured: 0 }),
+    0,
+  );
+  // No subjects at all is nothing to have failed to report.
+  assert.equal(
+    instanceSpendReading({ spentUSD: 0, spentSubjects: 0, spentUnmeasured: 0 }),
+    0,
+  );
 });
