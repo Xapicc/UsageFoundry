@@ -133,6 +133,7 @@ import { getTemplate, listTemplates, type RunTemplate } from "./templates";
 import { WORKSPACE_MOUNTS, mountById } from "./config";
 import { dataDirRefusal } from "./serverLock";
 import { notStringRefusal } from "./http";
+import { gitSync } from "./git";
 import {
   passMemberId,
   passMemberIn,
@@ -277,6 +278,7 @@ import {
   normalizeWorkflowInput,
   resolveBoardFolder,
   sectionLands,
+  sectionTail,
   sharedFolderRefusal,
   withChosenFolder,
   workingFolders,
@@ -5777,11 +5779,97 @@ const NO_PASS_CAP =
   "a loop without a cap.";
 
 /**
+ * Whether a pass finished whole: every member settled and completed, so what
+ * decides the next one is the read between the two and not the pass.
+ */
+function passWhole(pass: LoopPass | undefined): pass is LoopPass {
+  return (
+    pass !== undefined &&
+    pass.members.length > 0 &&
+    passSettled(pass) &&
+    pass.members.every(memberCompleted)
+  );
+}
+
+/**
+ * Why the pass after `settled` may not open because its in-folder tail left the
+ * folder uncommitted, or null when there is no tail or it left the folder clean.
+ *
+ * A landing section's tail edits the operator's checkout in place, and nothing
+ * commits an in-folder run's work (`docs/agent/isolation-and-landing/` — the
+ * only commits are the operator's, `commitPending` and a landing's own). So what
+ * the tail leaves is still in the tree when the next pass starts, and that
+ * costs twice: the pass's isolated runs branch from the last commit and never
+ * see it, and its merge is refused over it at `planItem` — after the runs were
+ * created and billed. Refused here, before either, and **not** by committing on
+ * the tail's behalf: that would put commits on the operator's own branch that
+ * nobody asked for, which no other door of this app does.
+ *
+ * Read with the queue's own rule, `git status --porcelain` non-empty or
+ * unreadable, so an untracked file counts and an ignored one does not. The
+ * folder is the one the tail's run recorded rather than one resolved from the
+ * node, because that is where it actually worked.
+ *
+ * Synchronous for `advanceLoop`'s reason, and the one place a pass boundary
+ * spawns git: once per pass, only for a section that has a tail.
+ */
+function tailLeftDirt(
+  loop: WorkflowNode,
+  section: LoopSection,
+  settled: LoopPass,
+): string | null {
+  // Structural: which blocks come after every merge does not depend on what any
+  // of them isolates, so the answer is the same however the guards stand now.
+  const { tail } = sectionTail(section.nodes, section.graph.edges, () => false);
+  if (tail.size === 0) return null;
+
+  const names = new Set<string>();
+  const folders = new Set<string>();
+  for (const member of settled.members) {
+    if (!tail.has(member.nodeId) || !member.run) continue;
+    const row = db()
+      .prepare("SELECT folder FROM runs WHERE id = ?")
+      .get(member.run.id) as { folder: string } | undefined;
+    if (!row) continue;
+    names.add(`“${section.nodes.find((n) => n.id === member.nodeId)?.name ?? member.name}”`);
+    folders.add(row.folder);
+  }
+
+  const next = settled.pass + 1;
+  const works = [...names].join(", ");
+  for (const folder of folders) {
+    const status = gitSync(folder, ["status", "--porcelain"]);
+    if (!status.ok) {
+      return (
+        `Pass ${next} of “${loop.name}” was not started: the folder ${works} ` +
+        `worked in could not be read (${status.stderr || "git status failed"}), ` +
+        "so what it left there is not known and the pass's merge could be " +
+        "refused over it."
+      );
+    }
+    if (status.stdout === "") continue;
+    const lines = status.stdout.split("\n");
+    const shown = lines.slice(0, 3).join(", ");
+    const more = lines.length > 3 ? ` and ${lines.length - 3} more` : "";
+    return (
+      `Pass ${next} of “${loop.name}” was not started: the folder ${works} ` +
+      `worked in has uncommitted changes (${shown}${more}). Nothing commits ` +
+      `what a block that works in the folder edits, so pass ${next}'s runs ` +
+      "would branch from the last commit without it and its merge would be " +
+      `refused over it. Have ${works} commit what it changes, or discard it ` +
+      "before it ends, then carry the loop on."
+    );
+  }
+  return null;
+}
+
+/**
  * Why pass `pass` of a loop cannot be carried on, or null when it can. Pass 0 is
  * a loop that failed before it had one.
  *
- * Pure over the instance as read, so a pick-up asks it before writing anything
- * and refuses with the sentence rather than half-reopening. A loop still
+ * Pure over the instance as read — bar one `git status` of the folder a tail
+ * worked in — so a pick-up asks it before writing anything and refuses with the
+ * sentence rather than half-reopening. A loop still
  * `looping` is always fine: the pass is live, and reviving its members is the
  * whole of what there is to do.
  */
@@ -5794,7 +5882,8 @@ function loopPassRefusal(
     (b) => b.nodeId === loopNodeId && b.kind === "loop",
   );
   if (!loop) return "That loop is not part of this workflow run.";
-  const latest = loopPasses(instance.id, loopNodeId).at(-1)?.pass ?? 0;
+  const latestRow = loopPasses(instance.id, loopNodeId).at(-1);
+  const latest = latestRow?.pass ?? 0;
   if (pass !== latest) {
     return (
       `Pass ${pass} of “${loop.nodeName}” is not its latest — pass ${latest} ` +
@@ -5831,6 +5920,13 @@ function loopPassRefusal(
     if (typeof node.maxPasses !== "number") return NO_PASS_CAP;
     const board = loopBoardCount(node);
     if (!board.ok) return `Its tasks could not be counted: ${board.error}`;
+    // The other read `advanceLoop` makes between two passes, and asked only of a
+    // pass that settled whole: a pass with a blocked member never reached its
+    // tail, so what is in the folder is not the tail's to answer for.
+    if (passWhole(latestRow)) {
+      const dirt = tailLeftDirt(node, loopSection(instance.graph, node), latestRow);
+      if (dirt) return dirt;
+    }
   }
   return null;
 }
@@ -6136,6 +6232,24 @@ export function resumeLoop(instanceId: string, loopNodeId: string): PickUpOutcom
   }
   const refusal = loopPassRefusal(instance, loopNodeId, pass);
   if (refusal) return { ok: false, status: 409, error: refusal };
+  // The rule `pickUpsOf` offers a loop by, asked of the press too: a loop the
+  // page offers nothing for would otherwise be answered ok here, released, and
+  // failed again on the same sentence — API only, but the same defect a pick-up
+  // exists to remove.
+  if (!passWouldProceed(instance, loopNodeId, pass)) {
+    return {
+      ok: false,
+      status: 409,
+      error:
+        pass === 0
+          ? `“${loop.nodeName}” repeats no section, so releasing it again would ` +
+            "fail it on the same sentence. Start the workflow again from its " +
+            "saved graph."
+          : `Pass ${pass} of “${loop.nodeName}” would stop on the same sentence ` +
+            "again, so there is nothing to carry on from until what stopped it " +
+            "has cleared.",
+    };
+  }
 
   db().transaction(() => {
     reopenLoopPass(instance, loopNodeId, pass);
@@ -7412,6 +7526,14 @@ function advanceLoop(
       // rows rather than a count somebody has to keep: a pass whose entry run
       // has been created and whose merge block does not exist yet would
       // otherwise read as settled.
+      // Before anything of the pass exists, so a refusal bills nothing: this
+      // pass's runs would branch from a commit that lacks what the tail left,
+      // and its merge would be refused over it.
+      const dirt = latest ? tailLeftDirt(node, section, latest) : null;
+      if (dirt) {
+        settleLoop(instanceId, nodeId, "failed", dirt);
+        return;
+      }
       openPass(instanceId, node, section, decision.pass);
       // Pass 1's entry starts after whatever released the loop; nothing is
       // carried between passes at all — see `stepPass`. Tested on the number
@@ -7506,6 +7628,61 @@ function openPass(
       member.kind,
     );
   }
+}
+
+/**
+ * Why a run or orchestrator member of a loop's section may not work under the
+ * isolation its guards now give it, or null when it may.
+ *
+ * A section's kind is decided at Save and again at Run, from the guards as they
+ * stood, and the shape rules hold it there: a section with a merge block lands,
+ * so every block in front of the last merge isolates and every block behind it
+ * works in the folder; a section without one works in the folder throughout.
+ * The guards are read again for every pass, though — a template's isolate
+ * switch or Settings' default guards can change while the loop repeats — and
+ * nothing else asks whether what a pass now plans is still what the section was
+ * accepted as. Unasked, an in-folder section's second pass cuts branches that no
+ * merge lands and the loop carries on repeating work no pass reads, and a
+ * landing section's head edits the folder in place while its merge lands into
+ * it. Both are the silent, billed repetition the landing rule exists to stop.
+ *
+ * **Blocked, not frozen.** Pinning each member's isolation at Run would keep the
+ * loop going on guards the operator has since changed; a refusal that names the
+ * switch and the way back leaves that choice with them. The kind is read off the
+ * instance's own graph — a merge block is what makes a section land — so it
+ * needs nothing recorded at Run and holds for pass 1 as for pass 2.
+ */
+function sectionKindRefusal(
+  loop: WorkflowNode,
+  section: LoopSection,
+  member: WorkflowNode,
+  isolates: boolean,
+): string | null {
+  if (member.kind !== "run" && member.kind !== "orchestrator") return null;
+  const lands = section.nodes.some((n) => n.kind === "merge");
+  const { afterMerges } = sectionTail(section.nodes, section.graph.edges, () => false);
+  const wantsCheckout = lands && !afterMerges.has(member.id);
+  if (isolates === wantsCheckout) return null;
+
+  const template = member.templateId ? getTemplate(member.templateId) : null;
+  const subject =
+    member.kind === "orchestrator" ? `the runs “${member.name}” starts` : `“${member.name}”`;
+  const because = template
+    ? `its template “${template.name}” ${isolates ? "isolates" : "does not isolate"}`
+    : `the default guards in Settings ${isolates ? "isolate" : "do not isolate"}`;
+  const switchedOn = template ? `“${template.name}”` : "the default guards in Settings";
+  return isolates
+    ? `${subject} would now work in a checkout of its own, because ${because}, but ` +
+        (lands
+          ? `it comes after the last merge block of the section “${loop.name}” repeats, where blocks work in the folder`
+          : `the section “${loop.name}” repeats has no merge block, so nothing would land the branch it cuts`) +
+        `. Its work would sit on a branch no pass reads, and the loop would go on repeating it. ` +
+        `Put ${switchedOn} back to working in the folder, or start the workflow again so the section is checked afresh.`
+    : `${subject} would now work directly in the folder, because ${because}, but the ` +
+        `section “${loop.name}” repeats lands each pass's branches into that folder through its ` +
+        `merge block, and a block editing the folder in place while they land is a state nothing ` +
+        `was designed for. Put ${switchedOn} back to isolating, or start the workflow again so ` +
+        "the section is checked afresh.";
 }
 
 /**
@@ -7605,6 +7782,17 @@ function stepPass(
       // starting a run that is not the thing the graph named.
       node.agentId ? getAgent(node.agentId) : null,
     );
+    // The guards are read again for every pass, so what they now say is checked
+    // against the kind the section was accepted as — see `sectionKindRefusal`.
+    const kind = plan.ok
+      ? // `createRun` reads an absent switch as isolating, so this does too.
+        sectionKindRefusal(loop, section, node, plan.input.isolate !== false)
+      : null;
+    if (kind) {
+      upsertBlock(instanceId, passNode(node, pass, memberId(node.id)), "blocked", kind);
+      wrote = true;
+      continue;
+    }
     const ready = plan.ok ? readyToCreate(plan.input, node.name) : plan;
     if (!ready.ok) {
       upsertBlock(instanceId, passNode(node, pass, memberId(node.id)), "blocked", ready.reason);
@@ -7898,6 +8086,31 @@ async function startBlockTurn(
     const missing = agentRefusal(node.agentId, agentKnowledgeOf(own));
     if (missing) {
       settleBlock(instanceId, nodeId, { status: "failed", error: missing, costUSD: 0 });
+      return;
+    }
+  }
+
+  // A pass's orchestrator takes the same question as a run member, for the same
+  // reason and before the same spend: its emitted runs take its guards, which are
+  // read again for every pass. A template that has gone is `emitBlockRuns`'
+  // refusal to make, not a flip to read here.
+  const inPass = passMemberIn(instance.graph, nodeId);
+  const owner = inPass
+    ? instance.graph.nodes.find((n) => n.id === inPass.loopNodeId)
+    : undefined;
+  const bodyNode = inPass?.bodyNodeId
+    ? instance.graph.nodes.find((n) => n.id === inPass.bodyNodeId)
+    : undefined;
+  const bodyTemplate = bodyNode?.templateId ? getTemplate(bodyNode.templateId) : null;
+  if (owner && bodyNode && (!bodyNode.templateId || bodyTemplate)) {
+    const mismatch = sectionKindRefusal(
+      owner,
+      loopSection(instance.graph, owner),
+      bodyNode,
+      guardsFor(bodyTemplate, chatGuards()).isolate,
+    );
+    if (mismatch) {
+      settleBlock(instanceId, nodeId, { status: "failed", error: mismatch, costUSD: 0 });
       return;
     }
   }
