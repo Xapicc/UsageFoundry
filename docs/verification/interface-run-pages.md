@@ -34,6 +34,22 @@ otherwise go, is already past the 20 KB line.
   Caveat: neither row had a granted cycle; that arithmetic is
   `fleet.test.ts`'s.
 
+- **An untouched pick-up sheet keeps each run's spending limit, and its inputs are named, 2026-10-25**,
+  the standalone bundle built from `1fd87a73`, a throwaway `DATA_DIR`, a
+  `CLAUDE_BIN` that cannot spawn, new work held, headless Chromium at 1280, two
+  `stopped` rows (one stored with `maxRunCostUSD` 5, one with none). In the open
+  dialog `getByLabel(/More work cycles/)`, `getByLabel(/Spending limit/)` and
+  `getByLabel(/Remove each run's spending limit/)` each resolved to one control
+  (the first holding `1`, the third `role="switch"` with `aria-checked` false),
+  and a click on the first label focused its input. Pressed with nothing
+  touched, `POST /api/fleet` carried `"budget":{"moreIterations":1}` and the
+  limited row's stored `maxRunCostUSD` was still 5. With 8 typed and the switch
+  turned on, the spending field was disabled, the body carried
+  `"maxRunCostUSD":null` and both rows read `null`. Switched on, then Cancel,
+  then reopened: the switch read off. `npm run smoke-pages` 100/100 against this
+  bundle. Caveat: the typed-number press (a limit of 8 set on every run) was
+  asserted by `fleet.test.ts`, not driven in the browser.
+
 - **A local run's Agent work section is a sentence, 2026-10-17**, the first
   bundle and install. A `completed` local run, with a `session_id` and
   `spent_tokens` 4321, was inserted into SQLite. `GET
