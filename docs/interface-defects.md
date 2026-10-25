@@ -298,3 +298,19 @@ nothing about it.
   `overflow-wrap: anywhere`, so no host can reach in. The same `<dd>` still
   breaks the page's own status prose mid-word, and is board task
   `208ee53d`.
+- **2026-10-25, board task `208ee53d`, class D, arguably B.** `EnvRow`'s `<dd>`
+  on `/settings` was `break-all`, which breaks every line at the last character
+  that fits, and it shares the cell with status prose: the Sandbox row read "a
+  s" / "andbox that cannot start stops the C" / "LI", and the Claude account,
+  Codex and Admin key rows broke mid-word the same way. `break-all` had been
+  chosen over `break-words` for a measured reason (`break-word` leaves
+  min-content at the whole path, so a long `DATA_DIR` widened the `dl`
+  column), so the cell was right for one half of what it holds and wrong for
+  the other. Arguably B because the class is in `EnvRow`'s markup; D because
+  whether it is wrong depends on what the callers put in `children`, which is
+  prose in most rows and a path in two, and only an engine shows which words
+  break where. Found while fixing `a51a2c11`, by reading `getComputedStyle`
+  up the ancestors of a sheet; fixed by `word-break: normal` and
+  `overflow-wrap: anywhere` on the `<dd>`, the pair `Sheet` already states. The
+  Local model row's `mono break-all` span has the same shape over a URL and
+  prose ("· 32,768-token window · token set") and is left as it was.
