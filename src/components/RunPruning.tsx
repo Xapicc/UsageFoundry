@@ -45,15 +45,23 @@ export function RunPruning({
   statement: PruneStatement | null;
   pruner: ContextPrunerDTO | null;
 }) {
-  const bound = savings ? netBound(savings) : "exact";
+  // A run none of whose prunes could be priced has every dollar field 0 on the
+  // wire, which reads as a measured nothing; the same run is "—" on the live
+  // tile and "?" on the runs list. The token count beside it is a measurement
+  // and stays.
+  const priced = !!savings && savings.pricedPrunes > 0;
+  // No net is drawn when nothing was priced, so there is no figure for a bound
+  // to qualify, and the token count already says "at least" for itself.
+  const bound = savings && priced ? netBound(savings) : "exact";
   return (
     <>
       {savings && (
         <>
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
             <Stat>
-              {savings.netUSD >= 0 ? "+" : "−"}
-              {fmtUSD(Math.abs(savings.netUSD))}
+              {priced
+                ? `${savings.netUSD >= 0 ? "+" : "−"}${fmtUSD(Math.abs(savings.netUSD))}`
+                : "—"}
             </Stat>
             <div className="text-xs tabular-nums text-ink-muted">
               {/* Bound to the figure it sits beside, on the same baseline, and

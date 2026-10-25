@@ -187,6 +187,7 @@ const {
   staleTurn,
   subjectForCapability,
   turnCostOf,
+  withChatLimitStop,
   writeMcpConfig,
   writeMcpHeaders,
   MCP_CONFIG_BASE,
@@ -2787,5 +2788,76 @@ describe("chatEnv — the PATH the chat's tools are resolved on", () => {
       "the git block contributed nothing, so the composition above is untested",
     );
     assert.equal(env.PATH, chatPath());
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* A turn stopped at its spending limit                                */
+/* ------------------------------------------------------------------ */
+
+describe("withChatLimitStop — a turn stopped at its limit names the limit", () => {
+  // The shape the CLI writes when it ends a turn at `--max-budget-usd`: an
+  // error `result` with a subtype and no text to put in `error`, which
+  // `turnResultOf` fills with a sentence naming the subtype.
+  const stoppedAtLimit = (subtype: string) =>
+    parseTurnOutput(
+      JSON.stringify({
+        type: "result",
+        subtype,
+        is_error: true,
+        session_id: "s1",
+        total_cost_usd: 2.01,
+        usage: { input_tokens: 10, output_tokens: 5 },
+      }),
+      "",
+      1,
+    );
+
+  it("replaces the subtype sentence with the limit and its figure", () => {
+    const raw = stoppedAtLimit("error_max_budget_usd");
+    assert.equal(raw.error, "The chat failed (error_max_budget_usd).");
+
+    const result = withChatLimitStop(raw, 2);
+    assert.equal(
+      result.error,
+      "This turn was given the $2.00 Orchestrator chat limit, and Claude Code stopped it there.",
+    );
+    // Still a failure, still billed, still resumable: only the sentence moved.
+    assert.equal(result.status, "failed");
+    assert.equal(result.subtype, "error_max_budget_usd");
+    assert.equal(result.costUSD, 2.01);
+    assert.equal(result.sessionId, "s1");
+  });
+
+  it("prints the figure to the cent", () => {
+    const result = withChatLimitStop(stoppedAtLimit("error_max_budget_usd"), 0.5);
+    assert.match(result.error ?? "", /given the \$0\.50 Orchestrator chat limit/);
+  });
+
+  it("states no figure when none was handed to the child", () => {
+    const result = withChatLimitStop(stoppedAtLimit("error_max_budget_usd"), null);
+    assert.equal(
+      result.error,
+      "Claude Code stopped this turn at a spending limit of its own.",
+    );
+  });
+
+  it("leaves every other failure as the CLI reported it", () => {
+    for (const subtype of ["error_during_execution", "error_max_turns"]) {
+      const raw = stoppedAtLimit(subtype);
+      assert.equal(withChatLimitStop(raw, 2), raw, subtype);
+    }
+    // A turn that ended with no `result` event carries no subtype at all.
+    const none = parseTurnOutput("", "", 1);
+    assert.equal(withChatLimitStop(none, 2), none);
+  });
+
+  it("leaves a turn that answered alone", () => {
+    const ok = parseTurnOutput(
+      JSON.stringify({ type: "result", subtype: "success", result: "hi", session_id: "s1" }),
+      "",
+      0,
+    );
+    assert.equal(withChatLimitStop(ok, 2), ok);
   });
 });
