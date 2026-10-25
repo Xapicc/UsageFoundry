@@ -1185,7 +1185,7 @@ export function WorkflowCanvas({
                       region.exitId === null
                         ? region.memberIds.length === 0
                           ? ""
-                          : region.lands
+                          : region.lands && region.ends.length < 2
                             ? ". No merge block to land a pass through"
                             : ". The pass ends in more than one place"
                         : `, ${region.exitLands ? "landing through" : "ending at"} ${label(

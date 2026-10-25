@@ -768,6 +768,12 @@ export interface BodyRegion {
    */
   lands: boolean;
   /**
+   * The members nothing else in the section follows. More than one means the
+   * section has no single end, whether or not it has a merge block, which is
+   * what the frame says rather than "no merge block".
+   */
+  ends: string[];
+  /**
    * Whether the exit is a merge block that lands the pass. False when there is
    * no exit, and false when the exit is the last block of the section's
    * in-folder tail — a landing section may end there, working in the folder
@@ -776,7 +782,7 @@ export interface BodyRegion {
   exitLands: boolean;
   /** The in-folder tail, in pass order: empty for a section without one. */
   tail: string[];
-  /** The merge blocks that hand straight on to the tail. */
+  /** The merge blocks that land the branches in front of the tail: all of them. */
   tailFedBy: string[];
   x: number;
   y: number;
@@ -881,6 +887,26 @@ export function sectionTail(
 }
 
 /**
+ * The members nothing else in the section follows, in pass order.
+ *
+ * Kept apart from `sectionExit` because the frame and the panel need the count
+ * and not only the answer: a landing section with a merge block and two of
+ * these has a merge block, and "no merge block" would be the wrong sentence.
+ */
+export function sectionEnds(
+  memberIds: readonly string[],
+  links: readonly LinkDraft[],
+): string[] {
+  const inside = new Set(memberIds);
+  return memberIds.filter(
+    (id) =>
+      !links.some(
+        (l) => l.edge !== "repeats" && l.from === id && inside.has(l.to),
+      ),
+  );
+}
+
+/**
  * The block a pass ends at, or null where there is not exactly one.
  *
  * The client's reading of the rule `graphRefusal` enforces — a section is one
@@ -899,13 +925,7 @@ export function sectionExit(
   links: readonly LinkDraft[],
   known?: IsolationKnowledge,
 ): string | null {
-  const inside = new Set(memberIds);
-  const sinks = memberIds.filter(
-    (id) =>
-      !links.some(
-        (l) => l.edge !== "repeats" && l.from === id && inside.has(l.to),
-      ),
-  );
+  const sinks = sectionEnds(memberIds, links);
   if (sinks.length !== 1) return null;
   if (!sectionLands(memberIds, blocks, known)) return sinks[0];
   return blocks.find((b) => b.id === sinks[0])?.kind === "merge" ||
@@ -926,26 +946,31 @@ export function sectionShape(
   known?: IsolationKnowledge,
 ): {
   lands: boolean;
+  ends: string[];
   exitId: string | null;
   exitLands: boolean;
   tail: string[];
   tailFedBy: string[];
 } {
+  const lands = sectionLands(memberIds, blocks, known);
   const exitId = sectionExit(memberIds, blocks, links, known);
   const tail = sectionTail(memberIds, blocks, links, known);
   const intoTail = new Set(tail);
   return {
-    lands: sectionLands(memberIds, blocks, known),
+    lands,
+    ends: sectionEnds(memberIds, links),
     exitId,
-    exitLands: exitId !== null && !intoTail.has(exitId),
+    // `lands` is in it because an in-folder section's exit is any block at all:
+    // the pass ends there, and nothing is landed.
+    exitLands: exitId !== null && lands && !intoTail.has(exitId),
     tail,
-    tailFedBy: memberIds.filter(
-      (id) =>
-        blocks.find((b) => b.id === id)?.kind === "merge" &&
-        links.some(
-          (l) => l.edge !== "repeats" && l.from === id && intoTail.has(l.to),
-        ),
-    ),
+    // The tail is what follows *every* merge, so each merge reaches all of it,
+    // however many gates or blocks stand between — a merge with a direct link
+    // into the tail is only the shortest way for one to.
+    tailFedBy:
+      tail.length === 0
+        ? []
+        : memberIds.filter((id) => blocks.find((b) => b.id === id)?.kind === "merge"),
   };
 }
 
@@ -1372,13 +1397,18 @@ export function resolveRepeat(
  * of the frame it is applied to:
  *
  *   - an empty frame — the block becomes what each pass starts at
- *   - a frame that lands through a merge block — the block runs beside what is
- *     already there and that merge block lands it too, which is the fan a
- *     section is allowed and the shape `sectionLink` sets the branch for
- *     - unless the entry *is* that merge block, where running beside it would
+ *   - a frame that lands through a merge block, or through merge blocks with
+ *     an in-folder tail behind them — a block that cuts a branch runs beside
+ *     what is already there and those merge blocks land it too, which is the
+ *     fan a section is allowed and the shape `sectionLink` sets the branch for
+ *     - unless the entry *is* a merge block, where running beside it would
  *       mean landing before the work: the block goes in front of it instead
+ *   - the same frame, a block that works in the folder — it has no branch for
+ *     a merge block to land, so beside the section it would be refused by
+ *     name; it goes after the last block of the tail, or after the merge block
+ *     where there is no tail yet, and so becomes one
  *   - anything else — the block is linked after the section's last member,
- *     because there is no exit yet to land it through
+ *     because there is no merge block yet to land it through
  *
  * Returns null when the gesture cannot mean anything: the block is the loop,
  * another loop, or already a member.
@@ -1403,21 +1433,41 @@ export function linksWithMember(
   }
 
   const entryId = members[0];
-  // A merge exit only: an in-folder section's sink is an ordinary last block,
-  // and a new one goes after it like any other link of a chain.
-  const sink = sectionExit(members, blocks, links, known);
-  const exitId =
-    sink !== null && blocks.find((b) => b.id === sink)?.kind === "merge" ? sink : null;
-  if (exitId !== null && block.kind !== "merge") {
-    if (exitId === entryId) {
+  // The merge blocks that land this section's branches. An in-folder section's
+  // sink is an ordinary last block with nothing to land through, and a new one
+  // goes after it like any other link of a chain.
+  const shape = sectionShape(members, blocks, links, known);
+  const landers =
+    shape.tail.length > 0
+      ? shape.tailFedBy
+      : shape.exitId !== null && shape.exitLands
+        ? [shape.exitId]
+        : [];
+  if (landers.length > 0 && block.kind !== "merge") {
+    const worksInFolder =
+      (block.kind === "run" || block.kind === "orchestrator") &&
+      !blockIsolates(block, known);
+    if (worksInFolder) {
+      // Beside the section it would leave the merge block no branch of its own
+      // to land, which the server refuses by name.
+      const after = shape.tail.length > 0 ? shape.tail[shape.tail.length - 1] : landers[0];
+      return [...links, sectionLink(after, blockId, links, blocks, known)];
+    }
+    if (landers.includes(entryId)) {
       return [
         ...links.filter((l) => !(l.from === loopId && l.edge === "repeats")),
         { from: loopId, to: blockId, edge: "repeats", continueBranch: false },
-        sectionLink(blockId, exitId, links, blocks, known),
+        sectionLink(blockId, entryId, links, blocks, known),
       ];
     }
     const withEntry = [...links, sectionLink(entryId, blockId, links, blocks, known)];
-    return [...withEntry, sectionLink(blockId, exitId, withEntry, blocks, known)];
+    return landers.reduce(
+      (written, lander) => [
+        ...written,
+        sectionLink(blockId, lander, written, blocks, known),
+      ],
+      withEntry,
+    );
   }
   return [
     ...links,

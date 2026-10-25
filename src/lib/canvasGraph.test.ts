@@ -1282,6 +1282,11 @@ test("a section whose blocks all work in the folder ends at its last block", () 
   const [region] = bodyRegions(blocks, links, at, KNOWS);
   assert.equal(region.exitId, "b");
   assert.equal(region.lands, false, "the frame says it ends the pass, not that it lands");
+  assert.equal(
+    region.exitLands,
+    false,
+    "the card, the label, the panel and the member list all read this, and the work is already in the folder",
+  );
   // Without the knowledge, the reading before it existed: every block is taken
   // to isolate, so the same section has no merge block to land through.
   const unknown = bodyRegions(blocks, links, at)[0];
@@ -1333,6 +1338,7 @@ test("a landing section may end in an in-folder tail, and the editor reads it as
   assert.equal(sectionExit(members, blocks, links, KNOWS), "b");
   assert.deepEqual(sectionShape(members, blocks, links, KNOWS), {
     lands: true,
+    ends: ["b"],
     exitId: "b",
     exitLands: false,
     tail: ["b"],
@@ -1344,6 +1350,7 @@ test("a landing section may end in an in-folder tail, and the editor reads it as
   // The same section without its tail still ends at the merge, which lands it.
   assert.deepEqual(sectionShape(["o", "m"], blocks, before, KNOWS), {
     lands: true,
+    ends: ["m"],
     exitId: "m",
     exitLands: true,
     tail: [],
@@ -1430,6 +1437,104 @@ test("a frame marks the merge in front of a tail and the end of the tail", () =>
   assert.deepEqual(region.tailFedBy, ["m"], "the merge lands the branches, not the pass");
   // Unknown isolation reads every block as isolating, the reading before.
   assert.deepEqual(bodyRegions(blocks, links, at)[0].tail, []);
+});
+
+test("a tail that ends in two places has ends to count and no exit to name", () => {
+  const { blocks: base, links: before } = SWEEP;
+  const blocks = [...base, block("c", flat)];
+  const links = [
+    ...before,
+    link("m", "b", { edge: "on-success" }),
+    link("m", "c", { edge: "on-success" }),
+  ];
+  const shape = sectionShape(sectionOf("l", blocks, links), blocks, links, KNOWS);
+  // The frame and the panel tell "no merge block" from "more than one end" by
+  // this count: with a merge present, the first sentence would be untrue.
+  assert.equal(shape.lands, true);
+  assert.equal(shape.exitId, null);
+  assert.deepEqual(shape.ends, ["b", "c"]);
+  assert.deepEqual(shape.tail, ["b", "c"]);
+  assert.deepEqual(shape.tailFedBy, ["m"]);
+  const res = saved2({ blocks, links }, KNOWS);
+  assert.equal(res.ok, false);
+  assert.match(res.ok ? "" : res.error, /ends in 2 places/);
+});
+
+test("every merge that reaches the tail lands the branches, whatever stands between", () => {
+  const onSuccess = (from: string, to: string) => link(from, to, { edge: "on-success" });
+  const isolating = { kind: "orchestrator", templateId: "t-iso" } as const;
+  const blocks = [
+    loop("l"),
+    block("e", { kind: "gate" }),
+    block("o1", isolating),
+    block("o2", isolating),
+    block("m1", { kind: "merge" }),
+    block("m2", { kind: "merge" }),
+    block("g1", { kind: "gate" }),
+    block("g2", { kind: "gate" }),
+    block("f", flat),
+  ];
+  const links = [
+    repeats("l", "e"),
+    onSuccess("e", "o1"),
+    onSuccess("e", "o2"),
+    onSuccess("o1", "m1"),
+    onSuccess("o2", "m2"),
+    onSuccess("m1", "g1"),
+    onSuccess("m2", "g2"),
+    onSuccess("g1", "f"),
+    onSuccess("g2", "f"),
+  ];
+  const members = sectionOf("l", blocks, links);
+  const shape = sectionShape(members, blocks, links, KNOWS);
+  // `g1` is behind one merge and not the other, so it is not in the tail; `f`
+  // is behind both. Neither merge links to `f` itself.
+  assert.deepEqual(shape.tail, ["f"]);
+  assert.deepEqual([...shape.tailFedBy].sort(), ["m1", "m2"]);
+  assert.equal(shape.exitId, "f");
+  assert.equal(shape.exitLands, false);
+  const res = saved2({ blocks, links }, KNOWS);
+  assert.ok(res.ok, res.ok ? "" : res.error);
+});
+
+test("a block that cuts a branch goes beside a section with a tail, into the merge", () => {
+  const { blocks: base, links: before } = SWEEP;
+  const blocks = [...base, block("x", { templateId: "t-iso" })];
+  const links = [...before, sectionLink("m", "b", before, base, KNOWS)];
+  const next = linksWithMember("l", "x", blocks, links, KNOWS);
+  assert.ok(next !== null);
+  // Not after `b`, which would take the whole section out of the shape the
+  // server accepts and blame `b`, a block the operator did not touch.
+  assert.ok(!next.some((l) => l.from === "b" && l.to === "x"));
+  assert.ok(next.some((l) => l.from === "x" && l.to === "m"));
+  const members = sectionOf("l", blocks, next);
+  assert.ok(members.includes("x"));
+  assert.deepEqual(sectionTail(members, blocks, next, KNOWS), ["b"]);
+  const res = saved2({ blocks, links: next }, KNOWS);
+  assert.ok(res.ok, res.ok ? "" : res.error);
+});
+
+test("a block that works in the folder goes after the merge, or after the tail", () => {
+  const { blocks: base, links: before } = SWEEP;
+  const blocks = [...base, block("y", flat)];
+
+  // No tail yet: beside the section it would leave the merge no branch of its
+  // own to land, so it becomes the tail.
+  const afterMerge = linksWithMember("l", "y", blocks, before, KNOWS);
+  assert.ok(afterMerge !== null);
+  assert.ok(afterMerge.some((l) => l.from === "m" && l.to === "y"));
+  const members = sectionOf("l", blocks, afterMerge);
+  assert.deepEqual(sectionTail(members, blocks, afterMerge, KNOWS), ["y"]);
+  const first = saved2({ blocks, links: afterMerge }, KNOWS);
+  assert.ok(first.ok, first.ok ? "" : first.error);
+
+  // A tail already: after its last block.
+  const tailed = [...before, sectionLink("m", "b", before, base, KNOWS)];
+  const afterTail = linksWithMember("l", "y", blocks, tailed, KNOWS);
+  assert.ok(afterTail !== null);
+  assert.ok(afterTail.some((l) => l.from === "b" && l.to === "y"));
+  const second = saved2({ blocks, links: afterTail }, KNOWS);
+  assert.ok(second.ok, second.ok ? "" : second.error);
 });
 
 test("a link drawn inside a section that works in the folder carries no branch", () => {
