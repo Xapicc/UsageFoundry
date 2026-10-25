@@ -12130,7 +12130,8 @@ export async function startRun(id: string): Promise<void> {
       // exits 1 with a `result` event and no API call, which is not the shape
       // `looksLikeResumeFailure` retries, so each pick-up was charged a cycle
       // and ended `failed` on a bare exit code, because nothing on the row
-      // changes. Both measured: `docs/verification/run-lifecycle.md`. Dropped
+      // changes. Both measured:
+      // `docs/verification/run-lifecycle-resume-and-transcripts.md`. Dropped
       // by clearing the loop's session, `startsFresh`'s reason below: every
       // branch downstream already asks "is there a session", and the restart it
       // then takes, with `priorWorkNotice`, is the one a picked-up run gets.
@@ -13292,7 +13293,8 @@ export async function startRun(id: string): Promise<void> {
         // refunded cycle has to be counted where `ranWorkCycle` reads if it did
         // anything. Spend is the evidence, not the turn count: the pinned CLI
         // reports `num_turns: 1` for an API error on a cycle's first turn
-        // (`docs/verification/run-lifecycle.md`, 2026-10-06). Tokens as well as
+        // (`docs/verification/run-lifecycle-resume-and-transcripts.md`,
+        // 2026-10-06). Tokens as well as
         // dollars, because a provider that reports no money still counts them.
         const spentBeforeRefusal = cycleSpend.costUSD > 0 || res.tokens > 0;
         // Jittered, so twenty-five runs meeting one failure at one instant do

@@ -608,7 +608,8 @@ describe("a dependent behind a run the provider refused after it worked", () => 
 
   // The turn count is not the evidence of work: the pinned CLI reports
   // `num_turns: 1` for an API error on a cycle's first turn, having done
-  // nothing (`docs/verification/run-lifecycle.md`, 2026-10-06). What it spent is.
+  // nothing (`docs/verification/run-lifecycle-resume-and-transcripts.md`,
+  // 2026-10-06). What it spent is.
   it("control: a transient error that spent nothing on its one turn still ran nothing", async () => {
     const { parentId, childId } = await stoppedInBackoff({ text: OVERLOADED, turns: 1 }, 0);
     assert.equal(getRun(parentId)!.spent_usd, 0);
