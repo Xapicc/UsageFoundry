@@ -242,9 +242,11 @@ export function FleetControls({
         </p>
         <Field
           label="More work cycles"
+          htmlFor="fleet-more-cycles"
           hint="For each run, on top of the cycles it has already used. Blank means no cycle limit — a run with no time limit of its own is then refused"
         >
           <Input
+            id="fleet-more-cycles"
             type="number"
             min={1}
             step={1}
@@ -254,10 +256,12 @@ export function FleetControls({
         </Field>
         <Field
           label="Spending limit (USD)"
+          htmlFor="fleet-spend-limit"
           hint="Blank keeps each run's own limit"
           disabled={removeSpendLimit}
         >
           <Input
+            id="fleet-spend-limit"
             type="number"
             min={0}
             step="0.01"
