@@ -198,6 +198,34 @@
   GitHub token's "configured" line and the failed-sign-ins row were not drawn;
   the sheets are `Sheet`'s and were not re-read. One Chromium, one font stack.
 
+- **The Local model row's signed-in line wraps at spaces and still holds a long
+  URL inside its column, 2026-10-25** (`npm run build` at `5ba27e95` with and
+  without the change, standalone bundle against a scratch `DATA_DIR`,
+  `CLAUDE_HOME` and workspace root, a `CLAUDE_BIN` and a `CODEX_BIN` that cannot
+  spawn, `/api/local-provider` intercepted to signed in with model
+  `qwen2.5-coder` and a 32,768-token window; Chromium 151.0.7922.34 via
+  Playwright 1.62.1, skin in `localStorage` before first paint; `/settings` at
+  390 and 1280, both skins, with the base URL `http://127.0.0.1:11434/v1` and
+  with `http://` plus a 70-character hyphen-free host and `:11434/v1`, 86
+  characters in all). Mid-word was counted as in the `EnvRow` entry above: a
+  line break between two letters or digits in a word of 24 characters or fewer
+  outside the URL, read off each character's range rect. Before: the
+  `mono break-all` span read `word-break: break-all`, and 5 of the 8 readings
+  broke a prose word, "window" in all four at 390 ("…32,768-token win" / "dow ·
+  token set") and "token" at 1280 ascii over the long URL. After:
+  `word-break: normal` and `overflow-wrap: anywhere` on the span, 0 of 8, every
+  break outside the URL falling at a space or at the hyphen in "32,768-token".
+  The long host still breaks inside itself, once or twice, because it cannot
+  fit a line of its own.
+  The `dl` is 358px at 390 and 748px (default) or 624px (ascii) at 1280, and in
+  all 16 readings, before and after, `dl`, `dd` and the document have
+  `scrollWidth` equal to `clientWidth` and the span's right edge is inside the
+  `dd`'s. `npm run smoke-pages`: 100/100 page loads clean on the standalone
+  bundle, run on the changed tree only. Caveats: the signed-in state was an
+  intercept and not a real sign-in; the signed-out line, the sign-in sheet, and a
+  sign-in with no window figure or no token were not drawn. One Chromium, one
+  font stack.
+
 ## Not yet verified by hand
 
 - **The shared layer's 390px pass (2026-09-10) was never on a real phone or

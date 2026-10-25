@@ -2323,7 +2323,11 @@ function LocalModelAccount() {
       ) : state?.signedIn ? (
         <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1.5">
           <Badge tone="ok">signed in</Badge>
-          <span className="mono break-all">
+          {/* The pair `EnvRow`'s `<dd>` states, and not `break-all`: this span
+              is a URL inside prose, and `break-all` broke "window" mid-word.
+              Stated here rather than left to inherit because the span's own
+              rule is what overrode the cell's last time. */}
+          <span className="mono [word-break:normal] [overflow-wrap:anywhere]">
             {state.model} · {state.baseUrl}
             {state.contextTokens !== null
               ? ` · ${state.contextTokens.toLocaleString("en-US")}-token window`
