@@ -109,6 +109,30 @@ export interface ConfigView {
    * either.
    */
   auth: AuthBootSignal["kind"];
+  /**
+   * Which of `IGNORED_GITHUB_ENV` carry a value in this server's environment,
+   * as names only, for the same reason as `auth`: a view without the value is
+   * a check that cannot print it.
+   */
+  ignoredGithubVars: string[];
+}
+
+/**
+ * The two names every child's environment strip drops. `agentGitEnv` hands a
+ * child a GitHub credential under them, from `UF_GITHUB_TOKEN` or
+ * `UF_GITHUB_TOKENS`, after the strip, so a value the server was started with
+ * under either name reaches no child.
+ */
+const IGNORED_GITHUB_ENV = ["GH_TOKEN", "GITHUB_TOKEN"] as const;
+
+/**
+ * Which of the ignored GitHub names the environment gives a value, trimmed, so
+ * a stray space is not a credential. Takes the map rather than reading
+ * `process.env`, as `explicitlyBlank` does, so the test can hand it one without
+ * going through `inspectConfig`, which makes the data directory.
+ */
+export function ignoredGithubVars(env: Record<string, string | undefined>): string[] {
+  return IGNORED_GITHUB_ENV.filter((n) => (env[n] ?? "").trim() !== "");
 }
 
 /**
@@ -253,6 +277,25 @@ export function checkConfig(view: ConfigView): ConfigProblem[] {
     });
   }
 
+  // A warning rather than a refusal, like every check but `DATA_DIR`: nothing is
+  // lost, a credential is merely not used. It exists because the failure is
+  // otherwise silent where the operator is not looking — an operator who had
+  // `GH_TOKEN` exported (most likely `npm run dev` on a host, since stock
+  // compose forwards neither name) used to get a working `gh` and `git push` in
+  // work cycles by accident, and now sees it stop only inside a tool call.
+  for (const name of view.ignoredGithubVars) {
+    problems.push({
+      severity: "warn",
+      variable: name,
+      message:
+        `${name} is set in this server's environment and is ignored: every ` +
+        `child this app spawns has it removed, so no work cycle, chat turn or ` +
+        `review gets a GitHub credential from it. Set UF_GITHUB_TOKEN ` +
+        `(install-wide) or UF_GITHUB_TOKENS (per repository) instead, and ` +
+        `unset ${name}.`,
+    });
+  }
+
   for (const name of view.blankVars) {
     // DATA_DIR already refused above; saying it twice would bury the refusal.
     if (name === "DATA_DIR") continue;
@@ -339,6 +382,7 @@ export function inspectConfig(): ConfigView {
     blankVars: explicitlyBlank(process.env, STRICT_ENV_VARS),
     trustedProxyHops: process.env.UF_TRUSTED_PROXY_HOPS ?? "",
     auth: authBootSignal({ token: AUTH_TOKEN, allowNoAuth: ALLOW_NO_AUTH }).kind,
+    ignoredGithubVars: ignoredGithubVars(process.env),
   };
 }
 

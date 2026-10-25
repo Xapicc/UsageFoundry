@@ -22,6 +22,7 @@ import { authBootSignal } from "./authGuard";
 import {
   checkConfig,
   explicitlyBlank,
+  ignoredGithubVars,
   probeDataDir,
   type ConfigProblem,
   type ConfigView,
@@ -58,6 +59,7 @@ function view(over: Partial<ConfigView> = {}): ConfigView {
     blankVars: [],
     trustedProxyHops: "",
     auth: "enabled",
+    ignoredGithubVars: [],
     ...over,
   };
 }
@@ -247,6 +249,30 @@ describe("checkConfig", () => {
     assert.deepEqual(checkConfig(view({ auth: "unauthenticated" })), []);
   });
 
+  it("warns about a GitHub token the strips drop, naming the settings that work, and never its value", () => {
+    // The strip landed with nothing saying so: an operator who had `GH_TOKEN`
+    // exported got a working `gh` in work cycles by accident and then lost it,
+    // visible only inside a tool call. The value is fed through the same path
+    // the boot uses, `ignoredGithubVars` into the view, so what is asserted is
+    // that no step between the environment and the sentence carries it.
+    const fake = "ghp_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE0000";
+    for (const name of ["GH_TOKEN", "GITHUB_TOKEN"]) {
+      const problems = checkConfig(
+        view({ ignoredGithubVars: ignoredGithubVars({ [name]: fake }) }),
+      );
+      assert.equal(problems.length, 1, name);
+      assert.equal(problems[0].severity, "warn", name);
+      assert.equal(problems[0].variable, name);
+      assert.match(problems[0].message, /UF_GITHUB_TOKEN\b/);
+      assert.match(problems[0].message, /UF_GITHUB_TOKENS\b/);
+      assert.equal(problems[0].message.includes(fake), false, problems[0].message);
+    }
+    assert.deepEqual(
+      checkConfig(view({ ignoredGithubVars: ["GH_TOKEN", "GITHUB_TOKEN"] })).map((p) => p.variable),
+      ["GH_TOKEN", "GITHUB_TOKEN"],
+    );
+  });
+
   it("reports every problem rather than the first", () => {
     const problems = checkConfig(
       view({
@@ -301,6 +327,24 @@ describe("explicitlyBlank", () => {
       ["DATA_DIR", ""],
     ]);
     assert.deepEqual(explicitlyBlank(env, ["DATA_DIR"]), ["DATA_DIR"]);
+  });
+});
+
+describe("ignoredGithubVars", () => {
+  it("names a variable with a value, and not one unset or blank", () => {
+    // Whitespace is blank here as it is for the other credentials: a value
+    // that is only a stray space is not a token anyone meant to export.
+    const fake = "ghp_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE0000";
+    assert.deepEqual(ignoredGithubVars({ GH_TOKEN: fake }), ["GH_TOKEN"]);
+    assert.deepEqual(ignoredGithubVars({ GITHUB_TOKEN: fake }), ["GITHUB_TOKEN"]);
+    assert.deepEqual(ignoredGithubVars({ GH_TOKEN: fake, GITHUB_TOKEN: fake }), [
+      "GH_TOKEN",
+      "GITHUB_TOKEN",
+    ]);
+    assert.deepEqual(ignoredGithubVars({}), []);
+    assert.deepEqual(ignoredGithubVars({ GH_TOKEN: "", GITHUB_TOKEN: "  \t" }), []);
+    // The names this app reads are the ones that work, so they are never "ignored".
+    assert.deepEqual(ignoredGithubVars({ UF_GITHUB_TOKEN: fake, UF_GITHUB_TOKENS: fake }), []);
   });
 });
 
