@@ -134,6 +134,7 @@ const {
   refusalDisposition,
   refusalStopReason,
   exitStopReason,
+  changedSessionNotice,
   refusalKind,
   refusalResumeAt,
   reopenPrompt,
@@ -2238,6 +2239,28 @@ describe("rate limits, apart from the rest", () => {
       assert.equal(
         exitStopReason(provider, 2, "sess-1"),
         "Could not resume this run's Claude Code session (exit 2). Its work is still on disk; pick it up by hand with: claude --resume sess-1",
+      );
+    }
+  });
+
+  it("names the CLI that reported a changed session id in the cycle's log line", () => {
+    const resumed = "0199abcd-0000-7000-8000-000000000000";
+    const reported = "0199abcd-0000-7000-8000-000000000001";
+
+    // The callback is shared by both providers and a Codex cycle hands it the
+    // thread id, so this sentence used to blame Claude Code for a Codex thread.
+    const codex = changedSessionNotice("codex", resumed, reported);
+    assert.equal(
+      codex,
+      `This work cycle asked to resume session ${resumed}, and Codex reported session ${reported}. Later cycles will continue ${reported}.`,
+    );
+    assert.doesNotMatch(codex, /Claude Code/);
+
+    // A local run is still Claude Code, as in `exitStopReason`.
+    for (const provider of ["claude", "local", null] as const) {
+      assert.equal(
+        changedSessionNotice(provider, "sess-1", "sess-2"),
+        "This work cycle asked to resume session sess-1, and Claude Code reported session sess-2. Later cycles will continue sess-2.",
       );
     }
   });
