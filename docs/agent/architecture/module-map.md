@@ -114,6 +114,8 @@ fleet.ts        the three controls that act on the whole install — stop
                 transition of its own: it composes stopInstance, stopRun,
                 stopWaitingRun and reopenRun, and the hold is one settings row
                 seven sites that start work read
+fleetPickUp.ts  the pick-up sheet's wire, client-safe: which of its fields reach
+                reopenFleet, so an untouched one never overwrites a run's own
 workspace.ts    the folder walk, shared by /api/folders and the chat's tools
 tasks.ts        the taskboard: one board across every mount, and the only
                 module that touches the tasks table. A task is not a run — it
