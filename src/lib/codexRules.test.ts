@@ -288,7 +288,7 @@ describe("prepareCodexRules when the cycle runs under another uid", () => {
 /**
  * Whether the name `CODEX_HOME` is reached by can be swapped, decided over two
  * `lstat` results. The suite can neither mount a volume nor chown to root, so
- * the stock shape — a mount point under the agents' `/home/node` — is only
+ * the stock shape, a mount point under the agents' `/home/node`, is only
  * reachable here, and it is the case that has to stay ready: refusing it
  * refuses every Codex cycle on every install.
  */

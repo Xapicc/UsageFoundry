@@ -151,7 +151,7 @@ export type NameStat = Pick<fs.Stats, "dev" | "uid" | "mode">;
  * they are reached by: a rename is a write to the directory holding the name,
  * and on the stock image that is `/home/node`, the agents' own. So the name
  * holds only if `rename` cannot take it, for one of two reasons. Either `home`
- * is a mount point — its device differs from its parent's — which `rename` and
+ * is a mount point (its device differs from its parent's), which `rename` and
  * `rmdir` refuse with `EBUSY` from the namespace it is mounted in; that is the
  * `usagefoundry-codex` volume compose mounts there. Or the parent is the
  * server's and has no write bit for group or others. Any group, not only the
@@ -191,7 +191,7 @@ export function codexHomeNameUnsafeBecause(
 
 /**
  * Make `rules/` if it is missing, and say what is wrong with it, with
- * `CODEX_HOME` or with the name `CODEX_HOME` is reached by — or null when only
+ * `CODEX_HOME` or with the name `CODEX_HOME` is reached by, or null when only
  * this server can change any of them.
  *
  * `CODEX_HOME` and its name first, and before anything is made inside: while
