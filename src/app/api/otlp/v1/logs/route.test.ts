@@ -30,11 +30,13 @@ import { after, before, describe, it } from "node:test";
  * logged. They drive the route and read the guard's own figure, because that
  * figure is what the forgery was aimed at.
  *
- * The last one is the other direction: a *positive* cost the poster made up,
+ * The last two are the other direction: a *positive* cost the poster made up,
  * read by the install limit and a workflow instance's limit, which sum every
  * running run's cycle in flight and so judge every other run by it. One
  * `cost_usd: 1e9` ended each run that reached its pre-cycle check while the
- * forging cycle ran, and halted its instance's members.
+ * forging cycle ran, and halted its instance's members. The second is the same
+ * forgery from a run with no cost limit of its own, which used to be handed no
+ * budget to be capped at.
  */
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "uf-otlp-route-"));
