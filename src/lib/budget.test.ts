@@ -1499,7 +1499,7 @@ describe("evaluateInstallBudget — the cap on everything this install spends", 
   });
 });
 
-describe("spendHeadroom and tighterHeadroom — what a cycle with no limit of its own is handed", () => {
+describe("spendHeadroom and tighterHeadroom: what a cycle with no limit of its own is handed", () => {
   // The figure becomes `--max-budget-usd` for a run with no `maxRunCostUSD`, so
   // each case is a way to hand a child a ceiling that is wrong in a direction
   // nothing reports: too high leaves the forged reading it exists to cap, and

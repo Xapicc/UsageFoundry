@@ -64,7 +64,7 @@ interface Cycle {
   /** The window its last turn reports, which is what `startsFresh` reads. */
   window: number;
   /**
-   * How its `result` ends the cycle when it is not a success — the CLI writes
+   * How its `result` ends the cycle when it is not a success: the CLI writes
    * `error_max_budget_usd` and exits 1 when it stops at the limit it was handed.
    */
   subtype?: string;

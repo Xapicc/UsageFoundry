@@ -237,7 +237,7 @@ export function installBudgetVerdict(
 }
 
 /**
- * The verdict and, when it admits, what the limit has left — off **one**
+ * The verdict and, when it admits, what the limit has left, off **one**
  * reading of `installSpend`.
  *
  * One reading is what makes the pair consistent: a headroom taken from a second

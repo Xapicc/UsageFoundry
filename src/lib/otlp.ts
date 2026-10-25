@@ -515,8 +515,8 @@ export function telemetrySpendSince(runId: string, since: number): TelemetrySpen
  * that spent its headroom, which refuses the other runs' doors for as long as
  * the cycle runs.
  *
- * Uncapped when the cycle was handed no budget at all — no dollar limit to
- * take a headroom from, or a Codex or local cycle — because any ceiling made up
+ * Uncapped when the cycle was handed no budget at all (no dollar limit to
+ * take a headroom from, or a Codex or local cycle), because any ceiling made up
  * here would be a guess, and one set too low blinds both limits to money really
  * being spent. Explicitly so, because `Math.min(x, null)` is 0. The run's own
  * live guard reads `telemetrySpendSince` in full, so a forger still stops

@@ -1153,7 +1153,7 @@ export function promptArgs(prompt: string): string[] {
 
 /**
  * The `--max-budget-usd` a cycle is spawned with: what is left of the run's own
- * limit after the guard figure, or — for a run with none — what the install's
+ * limit after the guard figure, or, for a run with none, what the install's
  * and its workflow's dollar limits have left (`headroomUSD`), or null when
  * nothing applies. `buildArgs`'s `maxRunCostUSD` and `headroomUSD` say why each
  * half is what it is.
@@ -1227,7 +1227,7 @@ export function buildArgs(opts: {
    * ceiling this app made up would be a guess, and one too low blinds the
    * install and workflow limits to money really being spent. This one is not a
    * guess. It is the figure those limits would end the run at between cycles,
-   * so a cycle bounded by it loses nothing they would have allowed — and it is
+   * so a cycle bounded by it loses nothing they would have allowed. It is also
    * what lets `inFlightCostForOthers` cap the cycle's telemetry in the figures
    * other runs are judged by, which for an uncapped cycle took one forged
    * `cost_usd: 1e9` whole. Required, with the two above, so a caller cannot

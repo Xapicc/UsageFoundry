@@ -1314,7 +1314,7 @@ export function normalizeInstallBudget(raw: unknown): InstallBudgetPolicy {
  *
  * The install's rolling limit and a workflow's `maxInstanceCostUSD` both judge
  * other runs by a figure that includes this run's cycle in flight, so the most
- * that cycle may add to it is what the limit has left — the amount the guard
+ * that cycle may add to it is what the limit has left, the amount the guard
  * would end the run at between cycles. Handed to the CLI as `--max-budget-usd`
  * that is a bound on a real cycle and no guess: nothing the guard would have
  * allowed is cut off by it.
@@ -1339,7 +1339,7 @@ export interface SpendHeadroom {
  * The headroom under one dollar limit, or `null` when none is configured.
  *
  * Pure, for `evaluateInstallBudget`'s reason: what reads the figure is the
- * caller. `null` means no dollar limit applies — a workflow bounded only by
+ * caller. `null` means no dollar limit applies; a workflow bounded only by
  * window fractions is out of scope, because a fraction is not a number of
  * dollars a child can be handed.
  */

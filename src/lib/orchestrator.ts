@@ -12136,9 +12136,9 @@ export async function startRun(id: string): Promise<void> {
       // its own environment (`docs/agent/metering/run-spend-readings.md`).
       //
       // Read once for the pass, here and not at the spawn, so the argv and the
-      // row stamped below are one figure. It is stale by the awaits between —
-      // what other runs spend meanwhile is the overshoot a guard read once at
-      // the door has always left.
+      // row stamped below are one figure. It is stale by the awaits between,
+      // and what other runs spend meanwhile is the overshoot a guard read once
+      // at the door has always left.
       const cycleHeadroom =
         policy.maxRunCostUSD === null &&
         run.provider !== "codex" &&

@@ -433,8 +433,8 @@ describe("what the install's spend limit is measured from", () => {
     clearAll();
     addRun({ id: "spent", status: "completed", spent: 60, finishedAt: NOW - HOUR });
 
-    // No limit is no headroom — `null`, which a cycle reads as nothing to hand
-    // the child — and the shipped default must stay that.
+    // No limit is no headroom: `null`, which a cycle reads as nothing to hand
+    // the child, and the shipped default must stay that.
     settings.saveSettings({ installDailyCostLimitUSD: null });
     assert.deepEqual(installBudget.installBudgetReading(NOW), { verdict: null, headroom: null });
 
