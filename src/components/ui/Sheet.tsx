@@ -117,7 +117,7 @@ export function Sheet({
       // and not out of its *inheritance*: it still inherits from the element
       // it is written inside. Settings writes its account sheets inside an
       // `EnvRow`'s `<dd>`, which is `break-all` so that a mount path (one
-      // unbreakable token) cannot widen its column — and every sentence in
+      // unbreakable token) cannot widen its column, and every sentence in
       // those sheets inherited it and wrapped at the last character that fit
       // ("The link works f" / "rom any device"). `word-break: normal` hands
       // prose its word boundaries back; `overflow-wrap: anywhere` keeps what
