@@ -299,19 +299,25 @@ function blockAt(src: string, open: number): string {
  *
  * Each is `function f(e){return`${e}.signature.json`}`, or since 2.1.280 the
  * same with the suffix in a constant of its own module (`${e}${Ee}` beside
- * `Ee=".stamp.json"`). A minified name can be defined in more than one module,
- * so every definition of that shape must agree, or this throws rather than
- * choosing between them.
+ * `Ee=".stamp.json"`), or since 2.1.310 a concatenation with a default
+ * argument (`function y1t(e=n3()){return e+cY}` beside `cY=".synced-at"`). A
+ * minified name can be defined in more than one module, so every definition of
+ * one of those shapes must agree, or this throws rather than choosing between
+ * them.
  */
 function sidecarSuffix(src: string, fn: string): string {
   const found = new Set<string>();
-  const definition = new RegExp(`function ${fn}\\(\\w+\\)\\{return\`\\$\\{\\w+\\}(?:([^\`$]+)|\\$\\{(\\w+)\\})\`\\}`, "g");
+  const definition = new RegExp(
+    `function ${fn}\\(\\w+(?:=\\w+\\(\\))?\\)\\{return` +
+      `(?:\`\\$\\{\\w+\\}(?:([^\`$]+)|\\$\\{(\\w+)\\})\`| \\w+\\+(\\w+))\\}`,
+    "g",
+  );
   for (const def of src.matchAll(definition)) {
     if (def[1] !== undefined) {
       found.add(def[1]);
       continue;
     }
-    const constant = new RegExp(`[,;\\s]${def[2]}="([^"]+)"`).exec(moduleAround(src, def.index));
+    const constant = new RegExp(`[,;\\s]${def[2] ?? def[3]}="([^"]+)"`).exec(moduleAround(src, def.index));
     if (constant) found.add(constant[1]);
   }
   if (found.size !== 1) {

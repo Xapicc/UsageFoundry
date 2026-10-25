@@ -51,6 +51,24 @@
   nine. That is why `claude-haiku-5-5` is priced and labelled but seeded off,
   with no `[1m]` variant. Caveat: the same arm64 package as above.
 
+- **The 2.1.310 binary names Sonnet 5.5 and Haiku 5.5, and its `[1m]` list
+  moved, 2026-10-25.** `grep -a -c` over the linux-arm64 package: 12
+  `sonnet-5-5` and 10 `haiku-5-5` (0 and 0 on 2.1.280). Its `claude-…[1m]` ids
+  are the 2.1.280 nine with `claude-sonnet-5-5[1m]` added and
+  `claude-opus-4-7[1m]` gone. The catalogue's seeds are unchanged by the bump:
+  the two entries above are still seeded off, though the reason those entries
+  give no longer holds, and `claude-opus-4-7[1m]` is still offered. Both are a
+  decision for a change of their own.
+
+- **The sandbox's config-directory binds re-read on 2.1.310, 2026-10-25: one
+  name added.** `sandboxMountPoints.test.ts` threw at `y1t`, a third sidecar
+  call in the `remote-settings.json` loop, written as `e+cY` with a default
+  argument rather than a template literal; `cY` is `".synced-at"`. With the
+  reader taught that shape, the CLI binds `remote-settings.json.synced-at`
+  as a file, which is now a placeholder (`sandboxMountPoints.ts` says why), and
+  the suite passes against 2.1.310 (21 of 21) and, as it should, fails its
+  accounting against 2.1.280.
+
 - **The sandbox's config-directory binds re-read on the pinned 2.1.280,
   2026-09-27, and the bound set is not identical: one name was added.**
   `sandboxMountPoints.test.ts` threw at "the config-directory bind loop" against

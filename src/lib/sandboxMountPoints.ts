@@ -120,6 +120,15 @@ export const SANDBOX_MOUNT_POINT_NAMES: readonly string[] = [
  * `SANDBOX_CONFIG_DIR_REFUSED` says why those two stay. What is left after this
  * is therefore the two policy documents and nothing else — every one of the 26
  * failures recorded on 2026-09-12 and 2026-09-13 is one of these ten names.
+ *
+ * **`remote-settings.json.synced-at` joined in 2.1.310, and it is a
+ * placeholder rather than a refusal.** It is the CLI's record of when it last
+ * synced remote settings, bound beside the two signatures in the same loop.
+ * Unlike the policy stamp, an empty one reads exactly as none: the reader takes
+ * the file only if its trimmed contents match `/^\d{1,16}$/` and otherwise
+ * answers `undefined`, the same as for a missing file, so the cache's age reads
+ * as unknown either way (read from the 2.1.310 bundle, not run). No failure of
+ * it has been seen, because no run has been on 2.1.310 yet.
  */
 export const SANDBOX_CONFIG_DIR_NAMES: readonly string[] = [
   "daemon.json",
@@ -131,6 +140,7 @@ export const SANDBOX_CONFIG_DIR_NAMES: readonly string[] = [
   "remote-settings-consent.json",
   "remote-settings.json.signature-iat.json",
   "remote-settings.json.signature.json",
+  "remote-settings.json.synced-at",
   "scheduled_tasks.json",
 ];
 

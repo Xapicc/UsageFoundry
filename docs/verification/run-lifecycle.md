@@ -67,6 +67,16 @@
   afternoon against the two binaries side by side, so that is how the binary
   stores the literal and not a flag that went away.
 
+- **Every `--` flag this app's `src/lib/` names is in the 2.1.310 binary if it
+  was in 2.1.280's, 2026-10-25**, checked before that day's bump. All 104
+  `"--…"` literals in non-test `src/lib/*.ts` grepped out of
+  `@anthropic-ai/claude-code-linux-arm64` at both versions side by side: the 87
+  found in 2.1.280 are all in 2.1.310 except `--no-commit`, `--refresh` and
+  `--write-tree`, which this app passes to git, not to `claude`. Every flag the
+  work cycle, chat, review and vault gate put on a `claude` argv is among the 87,
+  `--tools`, `--json-schema` and `--setting-sources` included. So a run will at
+  least start.
+
 - **The failed `tool_result` shape comes from real CLI 2.1.226 transcripts.**
   Both the string and the array-of-blocks `content` carry `is_error: true`.
 
