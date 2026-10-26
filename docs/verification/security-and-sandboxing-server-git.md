@@ -105,6 +105,71 @@
   as `locked initializing` in `worktree list --porcelain`, and a locked tree
   needs `remove -f -f`.
 
+- **A filter planted in a submodule's own git directory runs on the
+  superproject's `status`, and `--ignore-submodules` cannot stop all of the
+  subcommands that reach it, 2026-10-26.** Board task `a559b561`, `main` at
+  `a177041e`, the image's git 2.39.5, every `GIT_*` variable unset, a scratch
+  `HOME` and `GIT_CONFIG_NOSYSTEM=1`. A superproject with submodule `sm` had
+  `filter.x.clean = <prog>` in `.git/modules/sm/config`, `* filter=x` in its
+  `info/attributes` and a `touch`ed file in `sm/`. Plain `status --porcelain`
+  (v1, v2 and long), `diff`, `diff --name-only --diff-filter=U`, `checkout
+  <branch>`, `add -A` and `commit -a` each ran it. `commit -m`, `update-index
+  -q --refresh`, `reset --hard` and `read-tree -m -u HEAD` did not; `stash`
+  had nothing to stash and `merge` was already up to date, so neither says much. `--ignore-submodules=dirty`
+  stopped `status` and `diff` even with `submodule.sm.ignore=none` in
+  `.git/config`; `-c diff.ignoreSubmodules=all` stopped `status` until that
+  key was set. `add -A` ran it under `-c diff.ignoreSubmodules=dirty` and
+  `-c submodule.sm.ignore=dirty`. With the `.gitmodules` entry removed,
+  `status` still recursed. `--config-env=filter.x.clean=B` with `B` empty on
+  the superproject's `status` ran nothing, so the blank reaches the child.
+  Caveat: uid 1000 in an agent container, not a booted image.
+
+- **Three more routes into a submodule the superproject's index does not
+  list, and the switch that closes each, 2026-10-26.** Same harness. With the
+  repository's `submodule.recurse=true`, `checkout -q`, `reset --hard` and
+  `read-tree -m -u HEAD <commit>` onto a commit adding a registered submodule
+  ran a smudge planted in `.git/modules/sm/`, and `merge` did not; `-c
+  submodule.recurse=false` stopped all three. With a repository left in the
+  tree that only the target branch lists as a gitlink, `checkout <branch>`,
+  `checkout -b` and `switch` ran its clean filter while reporting local
+  changes, and `-q` stopped each. Under the superproject's
+  `diff.submodule=diff`, `diff --no-textconv <a> <b>` across a submodule move
+  ran a textconv planted in the submodule's git directory, and `-c
+  diff.submodule=short` stopped it.
+
+- **The fixes above, through this app's `git()`, 2026-10-26.** The cases in
+  `gitFilterProbe.test.ts`'s submodule `describe` (status from the top and a
+  subdirectory, `gitSync` status, `add -A`, a submodule inside a submodule,
+  `read-tree -u`, `checkout`, the textconv patch) each wrote the marker
+  against `a177041e`'s `git.ts` and wrote none with the change; the
+  plain-git control fired every plant on both. `ls-files --stage -z` over a
+  100,000-entry index took 16 ms and printed 6.5 MB. Caveat: what the extra
+  steps cost a `status` poll on a real large checkout was not measured.
+
+- **A file renamed away and renamed back has a new ctime, 2026-10-26.** Node's
+  `statSync(..., { bigint: true })` before a rename away, a rename of another
+  file in, and both renames back: `ctimeNs` differed, `ino` did not, on this
+  container's overlay `$TMPDIR` and on the fuse mount holding the worktrees.
+  `utimes` to the file's own times changed `ctimeNs` too.
+
+- **The configuration fingerprint stops a nonstop `.git/config` swap and does
+  not stop a paced one, 2026-10-26.** Board task `7d41bb25`. A repository with
+  `* filter=x` in `.git/info/attributes`, and a second process renaming over
+  `.git/config` with a version alternately with and without `filter.x.clean`,
+  while this app's compiled `git()` ran `add -A` after an edit, 300 or 1000
+  times. Against `a177041e`: 66 and 77 of 300 ran the filter with the swaps
+  back to back, and 32, 16 and 8 of 1000 with 10, 20 and 50 ms between them.
+  With the change: 0 and 1 of 300 back to back, about 297 of each 300
+  refused, and 37, 14 and 3 of 1000 paced. Caveat: one container, one run
+  per setting; the paced totals, 56 before and 54 after, are within noise.
+
+- **A blanked merge driver's failure starts with git's `cannot run :` line,
+  2026-10-26.** Board task `adb9e828`, same harness as the merge-driver entry
+  above. `merge-tree --write-tree -z` printed `error: cannot run : No such
+  file or directory`, then `error: error: Failed to execute internal merge`
+  and `fatal: failure to merge`, and exited 128. `merge --no-edit` printed the
+  same first two lines, then `Merge with strategy ort failed.`
+
 ## Not yet verified by hand
 
 - **Any way to keep this app's git from running hooks defined in config.**
@@ -115,3 +180,12 @@
   --allow-empty -m t` in a repository with `hook.x.command 'touch <marker>'`
   and `hook.x.event pre-commit`. Expect no marker, and expect a plain `git
   commit` there to create it.
+
+- **Whether a work cycle can race this app's git on `.git/config` in
+  practice.** Board task `7d41bb25`. The race is shown above with a writer
+  this harness started; a cycle doing it beside a sibling run's `worktree
+  add`, a Land or a checkout `status` is inferred from a cycle being able to
+  write the common git directory. Settle with a stub cycle that renames over
+  `.git/config` in a loop while a sibling run is admitted on the same
+  repository, and look for the planted program's marker and for refusals
+  naming `.git/config`.

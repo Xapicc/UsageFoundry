@@ -130,12 +130,20 @@ const PROBE_ISOLATION_SPAWNS = 4;
 /**
  * The whole stated bound for one admission.
  *
- * Per checkout inspected: one `git status --porcelain`, and — only when that
- * comes back clean — one `rev-parse --git-common-dir` on it. Plus one more for
- * the repository's own git directory, asked once however many slots are looked
- * at.
+ * `status --porcelain` is a content subcommand, so `git()` prepares it against a
+ * repository that may have planted a filter or merge driver: per checkout
+ * inspected that is one `rev-parse --git-path` to fingerprint its config against
+ * a mid-call swap (board task 7d41bb25), one `config --get-regexp` filter probe,
+ * one `ls-files` to find populated submodules whose own config a child would
+ * read (board task a559b561), and the `status` itself — four, where before the
+ * submodule and swap work it was the probe and the `status`. A clean checkout
+ * costs one more, a `rev-parse --git-common-dir`, but these are all dirty. Plus
+ * one for the repository's own git directory, asked once however many slots are
+ * looked at. What this still pins is that the count does not grow with the
+ * repository's age: the slot cap bounds it whether four slots are dirty or
+ * sixteen, which is the fault the file exists for.
  */
-const BOUND = PROBE_ISOLATION_SPAWNS + 2 * MAX_SLOT_PROBES_PER_ADMISSION + 1;
+const BOUND = PROBE_ISOLATION_SPAWNS + 4 * MAX_SLOT_PROBES_PER_ADMISSION + 1;
 
 /** Admit one isolated run on `folder` and report what it cost in subprocesses. */
 function admit(folder: string): { spawns: number; run: RunRow } {
