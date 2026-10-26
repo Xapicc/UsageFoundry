@@ -166,10 +166,10 @@ export function gitEnv(): NodeJS.ProcessEnv {
  * helper with it (measured for the chat's block, `chat-child-config-files.md`),
  * so those two belong to Deliver's own fetch/push env, not to every git child.
  *
- * `extraConfig` is where `git()`/`gitSync()` splice the filter neutralisers for
- * the content-moving subcommands (see `driverNeutralizers`); it precedes the
- * subcommand because it is config, and defaults to none so a read call is
- * unchanged.
+ * `extraConfig` is where `git()`/`gitSync()` splice the submodule pins and the
+ * driver blanks for the content-moving subcommands (see `prepareContentCall`);
+ * it precedes the subcommand because it is config, and defaults to none so a
+ * read call is unchanged.
  */
 export const gitArgs = (args: string[], extraConfig: string[] = []) => [
   "-c",
@@ -235,21 +235,10 @@ const BLANK_VAR = "USAGEFOUNDRY_BLANK";
  * filter already has. `merge.default` needs nothing of its own: it names a
  * driver, and a driver it names is defined by keys this blanks.
  *
- * `-z` output is `key\nvalue` per record; the driver name is the subsection,
- * whose case git preserves and which the override must match, so it is captured
- * verbatim and never lower-cased.
+ * The driver name is the subsection, whose case git preserves and which the
+ * override must match, so it is captured verbatim and never lower-cased.
  */
-function driverNeutralizers(configOutput: string): string[] {
-  const filters = new Set<string>();
-  const merges = new Set<string>();
-  for (const record of configOutput.split("\0")) {
-    if (!record) continue;
-    const key = record.split("\n", 1)[0];
-    const filter = /^filter\.(.+)\.(?:clean|smudge|process|required)$/i.exec(key);
-    if (filter) filters.add(filter[1]);
-    const merge = /^merge\.(.+)\.(?:driver|name|recursive)$/i.exec(key);
-    if (merge) merges.add(merge[1]);
-  }
+function neutralizers(filters: Iterable<string>, merges: Iterable<string>): string[] {
   const out: string[] = [];
   for (const name of filters) {
     for (const command of ["clean", "smudge", "process"]) {
@@ -260,20 +249,80 @@ function driverNeutralizers(configOutput: string): string[] {
   return out;
 }
 
+/** One record of the probe's output: the file it came from, its key, its value. */
+interface ConfigRecord {
+  origin: string;
+  key: string;
+  value: string | null;
+}
+
+/**
+ * `-z --show-origin` output is `<origin> NUL <key> LF <value> NUL` per record,
+ * with no LF at all for a key written without a value.
+ */
+function configRecords(output: string): ConfigRecord[] {
+  const fields = output.split("\0");
+  const records: ConfigRecord[] = [];
+  for (let i = 0; i + 1 < fields.length; i += 2) {
+    const entry = fields[i + 1];
+    const lf = entry.indexOf("\n");
+    records.push({
+      origin: fields[i],
+      key: lf === -1 ? entry : entry.slice(0, lf),
+      value: lf === -1 ? null : entry.slice(lf + 1),
+    });
+  }
+  return records;
+}
+
+/** The filter and merge drivers the records define, by name. */
+function driverNames(records: ConfigRecord[]): { filters: string[]; merges: string[] } {
+  const filters: string[] = [];
+  const merges: string[] = [];
+  for (const { key } of records) {
+    const filter = /^filter\.(.+)\.(?:clean|smudge|process|required)$/i.exec(key);
+    if (filter) filters.push(filter[1]);
+    const merge = /^merge\.(.+)\.(?:driver|name|recursive)$/i.exec(key);
+    if (merge) merges.push(merge[1]);
+  }
+  return { filters, merges };
+}
+
 /**
  * Reads the repository's filter and merge drivers, without running any of them.
  *
  * `config` is a read that runs nothing the repository chose, so it is never
  * itself a content subcommand and the enumeration never recurses. `--includes`
  * because a driver reached through an `include.path` would fire too. It exits 1
- * with nothing on stdout when no driver is defined, which is the common case;
- * `readFilterProbe` is where every other ending is told apart from that one.
- * The `merge` section also holds plain settings (`merge.ff`, `merge.renames`),
- * so exit 0 can be a list with no driver in it, which blanks nothing.
+ * with nothing on stdout when no driver and no include is defined, which is the
+ * common case; `readFilterProbe` is where every other ending is told apart from
+ * that one. The `merge` section also holds plain settings (`merge.ff`,
+ * `merge.renames`), so exit 0 can be a list with no driver in it, which blanks
+ * nothing.
+ *
+ * The `include` keys and `--show-origin` are for `configFingerprint`: an
+ * included file is configuration the call reads, so it is watched like the
+ * repository's own, and its path is relative to the file that names it. They
+ * blank nothing.
  */
-const FILTER_PROBE = ["config", "-z", "--includes", "--get-regexp", "^(filter|merge)\\."];
+const FILTER_PROBE = [
+  "config",
+  "-z",
+  "--show-origin",
+  "--includes",
+  "--get-regexp",
+  "^(filter|merge|include|includeif)\\.",
+];
 
-/** How a probe child ended, as `readFilterProbe` reads it. */
+/**
+ * The most any step of the probe may print. Only the index listing comes near
+ * it — about 65 bytes a file, so a checkout of a million files — and it is a
+ * bound at all because `spawnSync` otherwise stops at 1 MiB, which is a
+ * checkout of fifteen thousand.
+ */
+const STEP_MAX_BYTES = 64 * 1024 * 1024;
+
+/** How one of the probe's git children ended. */
 interface ProbeEnding {
   code: number | null;
   signal: NodeJS.Signals | null;
@@ -281,11 +330,39 @@ interface ProbeEnding {
   stderr: string;
   /** The clock that killed it, if one did. */
   timedOutAfterMs: number | null;
+  /** Killed for printing more than `STEP_MAX_BYTES`. */
+  overflowed: boolean;
 }
 
 /**
- * What a probe's ending means for the call that asked for it: the `-c` blanks
- * to splice in, or the reason the call must not run.
+ * Why a step of the probe failed, as the reason the call was not run.
+ *
+ * The reason names the step, how it ended and what git said, because the
+ * operator reading it sees only that a run's git call failed.
+ */
+function probeFailure(ending: ProbeEnding, cwd: string, args: string[], step: string[]): string {
+  let how: string;
+  if (ending.overflowed) {
+    how = `printed more than ${STEP_MAX_BYTES} characters`;
+  } else if (ending.timedOutAfterMs !== null) {
+    how = `was killed after ${fmtDuration(ending.timedOutAfterMs)} without finishing`;
+  } else if (ending.signal) {
+    how = `was killed by ${ending.signal}`;
+  } else if (ending.code === null) {
+    how = "ended without an exit status";
+  } else {
+    how = `exited with status ${ending.code}${ending.stdout === "" ? "" : " and printed output"}`;
+  }
+  // One line, so a caller that keeps only the line of git's output that names
+  // the failure (`gitFailureLine`) keeps this whole sentence rather than the
+  // tail of it.
+  const said = ending.stderr ? `: ${ending.stderr.replace(/\s*\n\s*/g, " ")}` : "";
+  return `The filter probe failed in ${cwd}, so git ${args[0]} was not run: git ${step.join(" ")} ${how}${said}`;
+}
+
+/**
+ * What a probe's ending means for the call that asked for it: the records to
+ * read the drivers and includes from, or the reason the call must not run.
  *
  * Only exit 1 with an empty stdout is "no filters", and only exit 0 is a list
  * to blank. Everything else (killed by its clock, killed by a signal, never
@@ -299,44 +376,23 @@ interface ProbeEnding {
  *
  * One function for `git()` and `gitSync()` so the two cannot read a probe
  * differently, and so a probe widened to more keys (`hook.*`) inherits the check
- * rather than re-deriving it. The reason names the probe, how it ended and what
- * git said, because the operator reading it sees only that a run's git call
- * failed.
+ * rather than re-deriving it.
  */
 function readFilterProbe(
   probe: ProbeEnding,
   cwd: string,
   args: string[],
-): { ok: true; extra: string[] } | { ok: false; reason: string } {
-  if (probe.code === 0) return { ok: true, extra: driverNeutralizers(probe.stdout) };
-  if (probe.code === 1 && probe.stdout === "") return { ok: true, extra: [] };
-
-  let how: string;
-  if (probe.timedOutAfterMs !== null) {
-    how = `was killed after ${fmtDuration(probe.timedOutAfterMs)} without finishing`;
-  } else if (probe.signal) {
-    how = `was killed by ${probe.signal}`;
-  } else if (probe.code === null) {
-    how = "ended without an exit status";
-  } else {
-    how = `exited with status ${probe.code}${probe.stdout === "" ? "" : " and printed output"}`;
-  }
-  // One line, so a caller that keeps only the line of git's output that names
-  // the failure (`gitFailureLine`) keeps this whole sentence rather than the
-  // tail of it.
-  const said = probe.stderr ? `: ${probe.stderr.replace(/\s*\n\s*/g, " ")}` : "";
-  return {
-    ok: false,
-    reason:
-      `The filter probe failed in ${cwd}, so git ${args[0]} was not run: ` +
-      `git ${FILTER_PROBE.join(" ")} ${how}${said}`,
-  };
+): { ok: true; records: ConfigRecord[] } | { ok: false; reason: string } {
+  if (probe.code === 0 && !probe.overflowed) return { ok: true, records: configRecords(probe.stdout) };
+  if (probe.code === 1 && probe.stdout === "") return { ok: true, records: [] };
+  return { ok: false, reason: probeFailure(probe, cwd, args, FILTER_PROBE) };
 }
 
 /**
  * The subcommands that convert content between the working tree and the object
- * store, and so consult a filter driver. The enumeration costs one extra
- * `git config` child, so it is paid only here and not on the object-store reads
+ * store, and so consult a filter driver. Preparing one costs three git children
+ * for each repository it reaches (see `prepareContentCall`), so it is paid only
+ * here and not on the object-store reads
  * — `rev-parse`, `rev-list`, `merge-base`, `cat-file`, `ls-tree`, `log`,
  * `show` — that are the bulk of this app's git calls and never touch the
  * working tree. `status`, `update-index --refresh` and `diff` are on the list
@@ -422,6 +478,282 @@ function probeSites(
 }
 
 /**
+ * Every gitlink in the index, with paths relative to the directory it ran in
+ * (`:/` reaches the whole tree from a subdirectory, as `../sm`).
+ */
+const GITLINK_LIST = ["ls-files", "--stage", "-z", "--", ":/"];
+
+/**
+ * The populated submodules in a probe site's index, each a probe site of its
+ * own.
+ *
+ * A content subcommand starts a child git inside a populated submodule —
+ * `status` and a work-tree `diff` to ask whether it is dirty, and `add -A`,
+ * `commit -a`, a `checkout` reporting local changes and an unforced
+ * `worktree remove` the same way — and that child reads the submodule's own
+ * configuration and `info/attributes`, in `.git/modules/<name>/` or in the
+ * submodule's `.git` directory, which a probe in `cwd` never reads. A filter
+ * planted there ran on this app's own `status` of the superproject (board task
+ * a559b561), and on each subcommand named here (measured, 2.39.5).
+ *
+ * Telling git not to recurse covers too little. `--ignore-submodules` stops
+ * `status` and `diff`, but `add` has no such flag and ran the filter under
+ * every `ignore` setting, and the config form, `diff.ignoreSubmodules`, loses
+ * to a `submodule.<name>.ignore` the repository sets (both measured). So the
+ * probe follows the child instead. git hands the blanks on to a submodule's
+ * child in `GIT_CONFIG_PARAMETERS` (measured), so a submodule's drivers blanked
+ * on the superproject's call are blanked in the child that would have run
+ * them; a submodule nested in one is reached by probing that one in turn.
+ *
+ * A gitlink counts when its directory holds a `.git`, which is the test git
+ * applies before it starts the child, and whether or not `.gitmodules` names
+ * it, because git recurses into one it does not (measured).
+ */
+function populatedGitlinks(dir: string, output: string): string[] {
+  const trees: string[] = [];
+  for (const record of output.split("\0")) {
+    if (!record.startsWith("160000 ")) continue;
+    const tab = record.indexOf("\t");
+    if (tab === -1) continue;
+    const tree = path.resolve(dir, record.slice(tab + 1));
+    if (fs.existsSync(path.join(tree, ".git"))) trees.push(tree);
+  }
+  return trees;
+}
+
+/**
+ * How many repositories one content subcommand's probe reaches, its own and
+ * every populated submodule counted. Each costs three git children on every
+ * such call, and `status` is polled, so a checkout with more is refused rather
+ * than probed.
+ */
+const MAX_PROBE_SITES = 64;
+
+/** A site's own configuration files, absolute: `config` and `config.worktree`. */
+const CONFIG_FILES = [
+  "rev-parse",
+  "--path-format=absolute",
+  "--git-path",
+  "config",
+  "--git-path",
+  "config.worktree",
+];
+
+/**
+ * What a configuration file is at one moment, as a string that changes whenever
+ * it is written or replaced.
+ *
+ * The probe and the call each read configuration for themselves, so a writer
+ * swapping `.git/config` between a version without a driver and one with it
+ * had the driver run whenever the probe read the first and the call the second
+ * (board task 7d41bb25: 88 of 300 calls against a rename loop, 2.39.5). git
+ * 2.39 cannot be handed the configuration the probe read, so nothing here
+ * closes that; `prepareContentCall` refuses a call when a file the probe read
+ * changed between the moment before the probe and the moment before the call.
+ *
+ * The inode and ctime rather than mtime, because `utimes` sets mtime to
+ * anything and ctime only to now, and a rename replaces the inode: a file
+ * renamed away and back reads as changed (measured on this container's overlay
+ * and fuse mounts). A file that is not there is a state too, so one created in
+ * the window counts.
+ */
+function configFingerprint(file: string): string {
+  try {
+    const stat = fs.statSync(file, { bigint: true });
+    return `${stat.dev}:${stat.ino}:${stat.ctimeNs}:${stat.size}`;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return code === "ENOENT" ? "absent" : `unreadable (${code})`;
+  }
+}
+
+/**
+ * The files the records' `include.path` and `includeIf.<condition>.path` name,
+ * resolved as git resolves them: `~/` against the child's `HOME`, anything
+ * else against the directory of the file that names it. A conditional include
+ * is listed whether or not its condition holds, which watches more than git
+ * reads and never less.
+ */
+function includeTargets(dir: string, records: ConfigRecord[]): string[] {
+  const home = gitEnv().HOME;
+  const targets: string[] = [];
+  for (const { origin, key, value } of records) {
+    if (!/^include(?:if\..+)?\.path$/i.test(key) || !value || !origin.startsWith("file:")) continue;
+    if (value.startsWith("~/")) {
+      // git ignores a `~/` include when HOME is unset, so there is nothing to watch.
+      if (home) targets.push(path.join(home, value.slice(2)));
+      continue;
+    }
+    const namedIn = path.resolve(dir, origin.slice("file:".length));
+    targets.push(path.resolve(path.dirname(namedIn), value));
+  }
+  return targets;
+}
+
+/**
+ * Config every content subcommand carries so that git starts no child inside a
+ * submodule the probe could not have read first.
+ *
+ * `submodule.recurse=false`, because with the repository's `submodule.recurse`
+ * on, a `checkout`, `reset --hard` or `read-tree -u` onto a commit that adds a
+ * submodule checks it out with a child git that reads `.git/modules/<name>/`,
+ * which the probe, listing the index as it stood before, never reached: a smudge
+ * planted there ran on each of the three (measured, 2.39.5), and Land runs
+ * `read-tree -m -u` in the operator's checkout. `diff.submodule=short`, because
+ * under `diff.submodule=diff` a patch of a submodule change is made by a child
+ * `git diff` inside the submodule, which runs the submodule's textconv: the
+ * `--no-textconv` that `diff.ts` passes is the parent's option and does not
+ * reach the child (measured). On the command line, each outranks the
+ * repository's own value.
+ */
+const SUBMODULE_PINS = ["-c", "submodule.recurse=false", "-c", "diff.submodule=short"];
+
+/**
+ * The subcommands that get `--quiet`, because their report of the local changes
+ * left after a switch is a diff of the *new* index against the work tree. A
+ * submodule only the target has is then asked whether it is dirty by a child
+ * that reads its own configuration, and the probe listed the index before the
+ * switch: a clean filter in a submodule directory left behind ran that way
+ * (measured, 2.39.5, for `checkout`, `checkout -b` and `switch`). Nothing but
+ * `--quiet` turns the report off; `diff.ignoreSubmodules` loses to the
+ * repository's `submodule.<name>.ignore`, as above.
+ */
+const QUIETED = new Set(["checkout", "switch"]);
+
+/** A git child that preparing a content subcommand needs run in `dir`. */
+interface PrepareStep {
+  dir: string;
+  args: string[];
+}
+
+/** The content subcommand as it is to be spawned, or why it must not be. */
+type Prepared =
+  | {
+      ok: true;
+      args: string[];
+      /** The pins and blanks, spliced in ahead of the subcommand. */
+      extra: string[];
+      /** The merge drivers blanked, for `explainBlankedMergeDrivers`. */
+      mergeDrivers: string[];
+    }
+  | { ok: false; reason: string };
+
+/**
+ * Everything a content subcommand is spawned with, worked out by the git
+ * children it yields and is handed back the endings of.
+ *
+ * A generator so that `git()` and `gitSync()` drive the same steps, one
+ * awaiting each child and the other spawning it synchronously, and cannot
+ * prepare a call differently. Each site takes three: where its configuration
+ * lives, fingerprinted before the probe runs; the probe; and, for every
+ * subcommand but `merge-tree`, which writes no work tree, the index listing its
+ * populated submodules, which become sites. Then every watched file is
+ * fingerprinted again, last thing before the caller spawns the call, and one
+ * that changed refuses it.
+ */
+function* prepareContentCall(
+  cwd: string,
+  args: string[],
+): Generator<PrepareStep, Prepared, ProbeEnding> {
+  const sites = probeSites(cwd, args);
+  if (!sites.ok) return sites;
+
+  const filters = new Set<string>();
+  const merges = new Set<string>();
+  const watched = new Map<string, string>();
+  const watch = (file: string) => {
+    if (!watched.has(file)) watched.set(file, configFingerprint(file));
+  };
+  const queue = [...sites.dirs];
+  const seen = new Set<string>();
+  for (let i = 0; i < queue.length; i++) {
+    const dir = queue[i];
+    // A submodule reached twice, through a symlink or a gitlink back up the
+    // tree, is one site. A path that does not resolve is keyed as written, and
+    // the git children run in it next say what is wrong with it.
+    let identity = dir;
+    try {
+      identity = fs.realpathSync(dir);
+    } catch {}
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    if (seen.size > MAX_PROBE_SITES) {
+      return {
+        ok: false,
+        reason:
+          `git ${args[0]} was not run in ${cwd}: it reaches more than ${MAX_PROBE_SITES} ` +
+          "repositories counting populated submodules, more than the filter probe reads before one call.",
+      };
+    }
+
+    const located = yield { dir, args: CONFIG_FILES };
+    if (located.code !== 0 || located.overflowed) {
+      return { ok: false, reason: probeFailure(located, dir, args, CONFIG_FILES) };
+    }
+    for (const file of located.stdout.split("\n")) if (file !== "") watch(file);
+
+    const probe = yield { dir, args: FILTER_PROBE };
+    const read = readFilterProbe(probe, dir, args);
+    if (!read.ok) return read;
+    const names = driverNames(read.records);
+    for (const name of names.filters) filters.add(name);
+    for (const name of names.merges) merges.add(name);
+    for (const file of includeTargets(dir, read.records)) watch(file);
+
+    if (args[0] === "merge-tree") continue;
+    const index = yield { dir, args: GITLINK_LIST };
+    if (index.code !== 0 || index.overflowed) {
+      return { ok: false, reason: probeFailure(index, dir, args, GITLINK_LIST) };
+    }
+    queue.push(...populatedGitlinks(dir, index.stdout));
+  }
+
+  for (const [file, before] of watched) {
+    if (configFingerprint(file) !== before) {
+      return {
+        ok: false,
+        reason:
+          `${file} changed while the filter probe read it, so git ${args[0]} was not run in ${cwd}: ` +
+          "a driver written there then would have run unblanked.",
+      };
+    }
+  }
+  return {
+    ok: true,
+    args: QUIETED.has(args[0]) ? [args[0], "--quiet", ...args.slice(1)] : args,
+    extra: [...SUBMODULE_PINS, ...neutralizers(filters, merges)],
+    mergeDrivers: [...merges],
+  };
+}
+
+/**
+ * A failed call's result with git's `cannot run :` line saying why it could not.
+ *
+ * A blanked merge driver fails the merge with `error: cannot run : No such file
+ * or directory`, which names no driver and no reason, so a repository relying
+ * on a legitimate one (`merge.ours.driver = true`) got a refusal it could not
+ * diagnose (board task adb9e828). The sentence goes on that same line because
+ * the callers that show a failure keep one line of it: `parseMergeTree` line 0,
+ * which is this one for both `merge-tree` and `merge` (measured, 2.39.5), and
+ * `gitFailureLine` the first `error:` line, which is this one too. Every merge
+ * driver blanked is named, since git does not say which file it was merging.
+ */
+function explainBlankedMergeDrivers<T extends { ok: boolean; stderr: string }>(
+  res: T,
+  drivers: string[],
+): T {
+  if (res.ok || drivers.length === 0) return res;
+  const lines = res.stderr.split("\n");
+  const at = lines.findIndex((line) => line.includes("cannot run : "));
+  if (at === -1) return res;
+  const keys = drivers.map((name) => `merge.${name}.driver`).join(", ");
+  lines[at] +=
+    ` (this app does not run a repository's merge drivers, so it blanked ${keys} ` +
+    `and git could not merge a file that uses ${drivers.length === 1 ? "it" : "one of them"})`;
+  return { ...res, stderr: lines.join("\n") };
+}
+
+/**
  * The longest one synchronous git call may hold the event loop.
  *
  * Named rather than inlined because it is read from outside this module:
@@ -443,43 +775,45 @@ export const GIT_SYNC_TIMEOUT_MS = 20_000;
  * below.
  */
 export function gitSync(cwd: string, args: string[]): GitResult {
-  let extra: string[] = [];
+  let call = { args, extra: [] as string[], mergeDrivers: [] as string[] };
   if (CONTENT_SUBCOMMANDS.has(args[0])) {
-    const sites = probeSites(cwd, args);
-    if (!sites.ok) return { ok: false, stdout: "", stderr: sites.reason, code: null };
-    const blanks = new Set<string>();
-    for (const dir of sites.dirs) {
-      const probe = spawnGitSync(dir, FILTER_PROBE, []);
-      // `spawnSync` reports its own clock as an error with this code, and a child
-      // that could not start as one with its message, which is all there is to say.
-      const timedOut = (probe.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
-      const verdict = readFilterProbe(
-        {
-          code: probe.status,
-          signal: probe.signal,
-          stdout: probe.stdout ?? "",
-          stderr: (probe.stderr ?? "").trim() || probe.error?.message || "",
-          timedOutAfterMs: timedOut ? GIT_SYNC_TIMEOUT_MS : null,
-        },
-        dir,
-        args,
-      );
-      if (!verdict.ok) return { ok: false, stdout: "", stderr: verdict.reason, code: null };
-      for (const blank of verdict.extra) blanks.add(blank);
-    }
-    extra = [...blanks];
+    const steps = prepareContentCall(cwd, args);
+    let step = steps.next();
+    while (!step.done) step = steps.next(stepSync(step.value));
+    if (!step.value.ok) return { ok: false, stdout: "", stderr: step.value.reason, code: null };
+    call = step.value;
   }
-  const res = spawnGitSync(cwd, args, extra);
+  const res = spawnGitSync(cwd, call.args, call.extra);
 
+  return explainBlankedMergeDrivers(
+    {
+      ok: res.status === 0,
+      stdout: (res.stdout ?? "").trim(),
+      stderr: (res.stderr ?? "").trim(),
+      code: res.status,
+    },
+    call.mergeDrivers,
+  );
+}
+
+/** One step of `prepareContentCall`, spawned synchronously. */
+function stepSync(step: PrepareStep): ProbeEnding {
+  const res = spawnGitSync(step.dir, step.args, [], STEP_MAX_BYTES);
+  // `spawnSync` reports its own clock and its buffer limit as errors with these
+  // codes, and a child that could not start as one with its message, which is
+  // all there is to say.
+  const errno = (res.error as NodeJS.ErrnoException | undefined)?.code;
   return {
-    ok: res.status === 0,
-    stdout: (res.stdout ?? "").trim(),
-    stderr: (res.stderr ?? "").trim(),
     code: res.status,
+    signal: res.signal,
+    stdout: res.stdout ?? "",
+    stderr: (res.stderr ?? "").trim() || res.error?.message || "",
+    timedOutAfterMs: errno === "ETIMEDOUT" ? GIT_SYNC_TIMEOUT_MS : null,
+    overflowed: errno === "ENOBUFS",
   };
 }
 
-function spawnGitSync(cwd: string, args: string[], extra: string[]) {
+function spawnGitSync(cwd: string, args: string[], extra: string[], maxBuffer?: number) {
   return spawnSync(GIT_BIN, gitArgs(args, extra), {
     cwd,
     env: { ...gitEnv(), [BLANK_VAR]: "" },
@@ -487,6 +821,7 @@ function spawnGitSync(cwd: string, args: string[], extra: string[]) {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     timeout: GIT_SYNC_TIMEOUT_MS,
+    ...(maxBuffer === undefined ? {} : { maxBuffer }),
   });
 }
 
@@ -575,40 +910,40 @@ export async function git(
     input?: string;
   } = {},
 ): Promise<GitResult & { overflowed: boolean; timedOutAfterMs: number | null }> {
-  let extra: string[] = [];
+  let call = { args, extra: [] as string[], mergeDrivers: [] as string[] };
   if (CONTENT_SUBCOMMANDS.has(args[0])) {
-    const refused = (reason: string) => ({
-      ok: false,
-      stdout: "",
-      stderr: reason,
-      code: null,
-      overflowed: false,
-      timedOutAfterMs: null,
-    });
-    const sites = probeSites(cwd, args);
-    if (!sites.ok) return refused(sites.reason);
-    const blanks = new Set<string>();
-    for (const dir of sites.dirs) {
-      // The probe is a `config` read, never a content subcommand, so it is spawned
-      // directly and never recurses. It takes the clock the caller gave the call: a
-      // probe that fails now fails the call, so a call that has no clock (landing)
-      // must not have one on its probe either. `trim: false` keeps the `-z` record
-      // separators intact.
-      const probe = await spawnGit(dir, FILTER_PROBE, [], {
+    const steps = prepareContentCall(cwd, args);
+    let step = steps.next();
+    while (!step.done) {
+      // A step is a read (`rev-parse`, `config`, `ls-files`), never a content
+      // subcommand, so it is spawned directly and never recurses. It takes the
+      // clock the caller gave the call: a step that fails now fails the call, so
+      // a call that has no clock (landing) must not have one on its probe
+      // either. `trim: false` keeps the `-z` record separators intact.
+      const ending = await spawnGit(step.value.dir, step.value.args, [], {
         env: opts.env,
         timeoutMs: opts.timeoutMs,
         trim: false,
+        maxBytes: STEP_MAX_BYTES,
       });
-      const verdict = readFilterProbe(probe, dir, args);
-      if (!verdict.ok) return refused(verdict.reason);
-      for (const blank of verdict.extra) blanks.add(blank);
+      step = steps.next(ending);
     }
-    extra = [...blanks];
+    if (!step.value.ok) {
+      return {
+        ok: false,
+        stdout: "",
+        stderr: step.value.reason,
+        code: null,
+        overflowed: false,
+        timedOutAfterMs: null,
+      };
+    }
+    call = step.value;
   }
 
   // `signal` is the probe's to read; the public result has never carried it.
-  const { signal: _signal, ...result } = await spawnGit(cwd, args, extra, opts);
-  return result;
+  const { signal: _signal, ...result } = await spawnGit(cwd, call.args, call.extra, opts);
+  return explainBlankedMergeDrivers(result, call.mergeDrivers);
 }
 
 /**

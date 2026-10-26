@@ -18,10 +18,15 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - A review block's verify command is argv and never a shell, and only a person saves one.
 - `gitArgs` pins the signing programs and neutralises the repository's filter drivers, for the same reason it clears `core.hooksPath`.
 - A conditional include is probed where the child git reads it.
+- A submodule is probed where its own child git reads it, and none the probe has not read is recursed into.
+- The probe and the call still read configuration separately; a fingerprint narrows the window between them and does not close it.
 - `core.hooksPath=/dev/null` does not switch off a hook defined in config on git 2.54 or later, and git has no switch that does.
 - `gitArgs` also passes `safe.directory=*`, and the image sets it system-wide for the agent's own git. (was line 15)
 - `permissionMode` is narrowed against the four literals in `POST /api/runs` before it reaches `--permission-mode`. (was line 17)
 - `bypassPermissions` is offered in the new-run form with a warning; the default stays `acceptEdits`. (was line 35)
+
+## [Agent definitions](security/agent-definitions.md)
+
 - A named agent is not a capability surface, and the absence of two columns is what enforces that — more so now that the run *is* the agent. (was line 19)
 - Reading an agent definition off disk is scoped, and only the scope that needs no path is on the wire. (was line 20)
 

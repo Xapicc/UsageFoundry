@@ -26,6 +26,8 @@ import { after, before, describe, it } from "node:test";
 
 const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-git-probe-")));
 const modeFile = path.join(root, "mode");
+/** The program the plant modes write into a repository's configuration. */
+const plantFile = path.join(root, "plant");
 const realGit = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
 const gitStub = path.join(root, "git");
 
@@ -37,15 +39,27 @@ fs.writeFileSync(
   gitStub,
   [
     "#!/bin/sh",
+    `mode="$(cat '${modeFile}')"`,
     'for arg in "$@"; do',
     '  if [ "$arg" = "--get-regexp" ]; then',
-    `    case "$(cat '${modeFile}')" in`,
+    '    case "$mode" in',
     // `exec`, so the clock's SIGKILL reaches the process holding the pipes.
     "      hang) exec sleep 120 ;;",
     '      refused) echo "error: could not lock config file" >&2; echo "fatal: unable to read config file" >&2; exit 128 ;;',
     "      killed) kill -9 $$ ;;",
     '      output-with-one) echo "filter.x.clean"; exit 1 ;;',
+    // The probe answers from the configuration as it was, and the driver is
+    // written the moment after: the race a writer swapping `.git/config` wins.
+    '      plant-after-probe) out="$(mktemp)"',
+    `        '${realGit}' "$@" > "$out"; status=$?`,
+    `        '${realGit}' config filter.x.clean "$(cat '${plantFile}')"`,
+    '        cat "$out"; rm -f "$out"; exit $status ;;',
     "    esac",
+    "  fi",
+    // An included file written after the probe has named it, while the index
+    // is listed.
+    `  if [ "$arg" = "ls-files" ] && [ "$mode" = "plant-include" ]; then`,
+    `    printf '[filter "x"]\\n\\tclean = %s\\n' "$(cat '${plantFile}')" > .git/evil.inc`,
     "  fi",
     "done",
     `exec '${realGit}' "$@"`,
@@ -56,6 +70,7 @@ fs.writeFileSync(
 process.env.GIT_BIN = gitStub;
 
 const { addWorktree, git, gitSync } = require("./git") as typeof import("./git");
+const { gitFailureLine, parseMergeTree } = require("./land") as typeof import("./land");
 
 const setMode = (mode: string) => fs.writeFileSync(modeFile, mode);
 
@@ -312,6 +327,34 @@ describe("a planted merge driver runs in neither merge-tree nor merge", () => {
     plain(repo, ["merge-tree", "--write-tree", "-z", "main", "side"]);
     assert.equal(fs.existsSync(marker), true, "the planted merge driver did not fire, so the cases above measure nothing");
   });
+
+  // git's own words for a blanked driver are "cannot run : No such file or
+  // directory", which names neither the driver nor why (board task adb9e828).
+  it("Land's preview of a merge the blank failed names the driver and says why", async () => {
+    const { repo } = plantedMergeRepo();
+    const res = await git(repo, ["merge-tree", "--write-tree", "-z", "main", "side"]);
+    const preview = parseMergeTree(res.stdout, res.stderr, res.code);
+
+    assert.equal(preview.outcome, "unknown");
+    const reason = preview.outcome === "unknown" ? preview.reason : "";
+    assert.match(reason, /cannot run :/, "git's own line must still be there");
+    assert.match(reason, /merge\.evil\.driver/);
+    assert.match(reason, /does not run a repository's merge drivers/);
+
+    const viaSync = gitSync(repo, ["merge-tree", "--write-tree", "-z", "main", "side"]);
+    assert.match(viaSync.stderr.split("\n")[0], /merge\.evil\.driver/);
+  });
+
+  it("a merge the blank failed says so on the line gitFailureLine keeps", async () => {
+    const { repo } = plantedMergeRepo();
+    const res = await git(repo, ["merge", "--no-edit", "side"]);
+
+    assert.equal(res.ok, false);
+    const line = gitFailureLine(res.stderr);
+    assert.match(line, /cannot run :/);
+    assert.match(line, /does not run a repository's merge drivers/);
+    assert.match(line, /merge\.evil\.driver/);
+  });
 });
 
 /**
@@ -441,5 +484,332 @@ describe("a driver behind a conditional include is probed where the child reads 
       plain(repo, ["worktree", "remove", slot]);
       assert.equal(fs.existsSync(marker), true, `${condition(repo)}: the clean filter did not fire on remove`);
     }
+  });
+});
+
+const longAgo = new Date("2001-01-01T00:00:00Z");
+/** Stat-dirty, which is what has a `status` re-hash the file, or ask its submodule. */
+const staleFile = (file: string) => fs.utimesSync(file, longAgo, longAgo);
+
+/** A program that leaves a line in `<name>.ran` when it runs, and passes its input through. */
+function plantProgram(name: string): { prog: string; marker: string } {
+  const marker = path.join(root, `${name}.ran`);
+  const prog = path.join(root, `${name}.sh`);
+  fs.writeFileSync(prog, `#!/bin/sh\necho "ran $*" >> ${marker}\ncat\n`, { mode: 0o755 });
+  return { prog, marker };
+}
+
+/** A repository with one committed file and a committer, at `dir`. */
+function committedRepo(dir: string, file = "s.txt"): void {
+  fs.mkdirSync(dir, { recursive: true });
+  plain(dir, ["init", "-q", "-b", "main"]);
+  plain(dir, ["config", "user.email", "a@b.c"]);
+  plain(dir, ["config", "user.name", "a"]);
+  fs.writeFileSync(path.join(dir, file), "s\n");
+  plain(dir, ["add", "-A"]);
+  plain(dir, ["commit", "-q", "-m", file]);
+}
+
+/** Plants filter `x` in a submodule's own git directory, where a probe in the superproject never reads. */
+function plantInGitDir(gitDir: string, keys: [string, string][], attribute = "filter=x"): void {
+  for (const [key, value] of keys) plain(gitDir, ["config", "-f", path.join(gitDir, "config"), key, value]);
+  fs.mkdirSync(path.join(gitDir, "info"), { recursive: true });
+  fs.writeFileSync(path.join(gitDir, "info", "attributes"), `* ${attribute}\n`);
+}
+
+/**
+ * A superproject whose submodule `sm`, cloned the way `git submodule add` does,
+ * has a clean filter planted in `.git/modules/sm/`, and a stat-dirty file.
+ */
+function submoduleRepo(): { repo: string; marker: string } {
+  const name = `repo${count++}`;
+  const repo = path.join(root, name);
+  committedRepo(`${repo}-src`);
+  committedRepo(repo, "top.txt");
+  plain(repo, ["-c", "protocol.file.allow=always", "submodule", "add", "-q", `${repo}-src`, "sm"]);
+  plain(repo, ["commit", "-q", "-m", "sm"]);
+  const { prog, marker } = plantProgram(name);
+  plantInGitDir(path.join(repo, ".git", "modules", "sm"), [["filter.x.clean", prog]]);
+  staleFile(path.join(repo, "sm", "s.txt"));
+  return { repo, marker };
+}
+
+/**
+ * A repository holding repository `a`, which holds `b`, each added as a bare
+ * gitlink that no `.gitmodules` names, with the filter planted in `b`'s own
+ * `.git` two levels below the superproject.
+ */
+function nestedEmbeddedRepo(): { repo: string; marker: string } {
+  const name = `repo${count++}`;
+  const repo = path.join(root, name);
+  committedRepo(repo, "top.txt");
+  committedRepo(path.join(repo, "a"));
+  committedRepo(path.join(repo, "a", "b"));
+  plain(path.join(repo, "a"), ["-c", "advice.addEmbeddedRepo=false", "add", "b"]);
+  plain(path.join(repo, "a"), ["commit", "-q", "-m", "b"]);
+  plain(repo, ["-c", "advice.addEmbeddedRepo=false", "add", "a"]);
+  plain(repo, ["commit", "-q", "-m", "a"]);
+  const { prog, marker } = plantProgram(name);
+  plantInGitDir(path.join(repo, "a", "b", ".git"), [["filter.x.clean", prog]]);
+  staleFile(path.join(repo, "a", "b", "s.txt"));
+  return { repo, marker };
+}
+
+/**
+ * A checkout on `main`, which has no submodule, and a branch `evil` that adds
+ * `sm`, with a smudge planted in `.git/modules/sm/` and the repository's
+ * `submodule.recurse` on: switching the tree to `evil` checks `sm` out with a
+ * child git the probe, listing `main`'s index, never reached.
+ */
+function addedSubmoduleRepo(): { repo: string; marker: string } {
+  const name = `repo${count++}`;
+  const repo = path.join(root, name);
+  committedRepo(`${repo}-src`);
+  committedRepo(repo, "top.txt");
+  plain(repo, ["checkout", "-q", "-b", "evil"]);
+  plain(repo, ["-c", "protocol.file.allow=always", "submodule", "add", "-q", `${repo}-src`, "sm"]);
+  plain(repo, ["commit", "-q", "-m", "sm"]);
+  const { prog, marker } = plantProgram(name);
+  plantInGitDir(path.join(repo, ".git", "modules", "sm"), [
+    ["filter.x.smudge", prog],
+    ["filter.x.clean", prog],
+  ]);
+  plain(repo, ["-c", "submodule.recurse=false", "checkout", "-q", "main"]);
+  fs.rmSync(path.join(repo, "sm"), { recursive: true, force: true });
+  plain(repo, ["config", "submodule.recurse", "true"]);
+  return { repo, marker };
+}
+
+/**
+ * A checkout on `main` with a populated repository `sm` left in its tree that
+ * `main`'s index does not list, and a branch `evil` whose index does: only the
+ * report `checkout` prints after the switch asks `sm` anything.
+ */
+function leftoverGitlinkRepo(): { repo: string; marker: string } {
+  const name = `repo${count++}`;
+  const repo = path.join(root, name);
+  committedRepo(repo, "top.txt");
+  plain(repo, ["checkout", "-q", "-b", "evil"]);
+  committedRepo(path.join(repo, "sm"));
+  plain(repo, ["-c", "advice.addEmbeddedRepo=false", "add", "sm"]);
+  plain(repo, ["commit", "-q", "-m", "sm"]);
+  const { prog, marker } = plantProgram(name);
+  plantInGitDir(path.join(repo, "sm", ".git"), [["filter.x.clean", prog]]);
+  // git leaves a directory holding a repository where it stands.
+  plain(repo, ["checkout", "-q", "main"]);
+  staleFile(path.join(repo, "sm", "s.txt"));
+  return { repo, marker };
+}
+
+/**
+ * Two commits of a superproject that move submodule `sm`, a textconv planted
+ * in `.git/modules/sm/` for every file in it, and the superproject's
+ * `diff.submodule=diff`, which has a patch of that move made by a child `git
+ * diff` inside `sm`.
+ */
+function submoduleTextconvRepo(): { repo: string; marker: string } {
+  const name = `repo${count++}`;
+  const repo = path.join(root, name);
+  committedRepo(`${repo}-src`);
+  committedRepo(repo, "top.txt");
+  plain(repo, ["-c", "protocol.file.allow=always", "submodule", "add", "-q", `${repo}-src`, "sm"]);
+  plain(repo, ["commit", "-q", "-m", "sm"]);
+  const sm = path.join(repo, "sm");
+  fs.appendFileSync(path.join(sm, "s.txt"), "t\n");
+  plain(sm, ["-c", "user.email=a@b.c", "-c", "user.name=a", "commit", "-q", "-am", "t"]);
+  plain(repo, ["commit", "-q", "-am", "move sm"]);
+  const marker = path.join(root, `${name}.ran`);
+  const prog = path.join(root, `${name}.sh`);
+  fs.writeFileSync(prog, `#!/bin/sh\necho "ran $*" >> ${marker}\ncat "$1"\n`, { mode: 0o755 });
+  plantInGitDir(path.join(repo, ".git", "modules", "sm"), [["diff.t.textconv", prog]], "diff=t");
+  plain(repo, ["config", "diff.submodule", "diff"]);
+  return { repo, marker };
+}
+
+/**
+ * A content subcommand starts a child git inside a populated submodule, and
+ * that child reads the submodule's own configuration and attributes, which
+ * the probe in the superproject never read: a filter planted in
+ * `.git/modules/<name>/` ran on this app's own `status` of the superproject
+ * (board task a559b561). `add -A` is here because no flag or setting stops it
+ * recursing; the rest are each a way the child is reached that probing the
+ * index alone would miss.
+ */
+describe("a driver planted in a submodule's git directory runs in no child of this app's git", () => {
+  before(() => setMode("pass"));
+
+  it("git(): status of the superproject runs nothing", async () => {
+    const { repo, marker } = submoduleRepo();
+    const res = await git(repo, ["status", "--porcelain"], { trim: false });
+
+    ranNothing(marker);
+    assert.equal(res.ok, true, res.stderr);
+  });
+
+  it("gitSync(): status of the superproject runs nothing", () => {
+    const { repo, marker } = submoduleRepo();
+    const res = gitSync(repo, ["status", "--porcelain"]);
+
+    ranNothing(marker);
+    assert.equal(res.ok, true, res.stderr);
+  });
+
+  it("git(): status from a subdirectory of the superproject runs nothing", async () => {
+    const { repo, marker } = submoduleRepo();
+    const below = path.join(repo, "below");
+    fs.mkdirSync(below);
+    const res = await git(below, ["status", "--porcelain"], { trim: false });
+
+    ranNothing(marker);
+    assert.equal(res.ok, true, res.stderr);
+  });
+
+  it("git(): add -A, which nothing tells not to recurse, runs nothing", async () => {
+    const { repo, marker } = submoduleRepo();
+    const res = await git(repo, ["add", "-A"]);
+
+    ranNothing(marker);
+    assert.equal(res.ok, true, res.stderr);
+  });
+
+  it("git(): a submodule's own submodule is reached too", async () => {
+    const { repo, marker } = nestedEmbeddedRepo();
+    const res = await git(repo, ["status", "--porcelain"], { trim: false });
+
+    ranNothing(marker);
+    assert.equal(res.ok, true, res.stderr);
+  });
+
+  it("git(): read-tree -u onto a commit that adds a submodule does not recurse into it", async () => {
+    const { repo, marker } = addedSubmoduleRepo();
+    const res = await git(repo, ["read-tree", "-m", "-u", "HEAD", "evil"]);
+
+    ranNothing(marker);
+    assert.equal(res.ok, true, res.stderr);
+  });
+
+  it("git(): checkout onto a branch whose index alone lists a submodule runs nothing", async () => {
+    const { repo, marker } = leftoverGitlinkRepo();
+    const res = await git(repo, ["checkout", "evil"]);
+
+    ranNothing(marker);
+    assert.equal(res.ok, true, res.stderr);
+    assert.equal(plain(repo, ["rev-parse", "--abbrev-ref", "HEAD"]).trim(), "evil");
+  });
+
+  it("git(): a patch of a submodule move runs none of the submodule's textconv", async () => {
+    const { repo, marker } = submoduleTextconvRepo();
+    const res = await git(repo, ["diff", "--no-ext-diff", "--no-textconv", "HEAD~1", "HEAD"]);
+
+    ranNothing(marker);
+    assert.equal(res.ok, true, res.stderr);
+    assert.match(res.stdout, /Subproject commit/);
+  });
+
+  it("control: each plant runs under plain git", () => {
+    const fired = (label: string, marker: string) => {
+      assert.equal(fs.existsSync(marker), true, `${label}: the plant did not fire, so its case measures nothing`);
+    };
+    const status = submoduleRepo();
+    plain(status.repo, ["status", "--porcelain"]);
+    fired("status", status.marker);
+    const add = submoduleRepo();
+    plain(add.repo, ["-c", "diff.ignoreSubmodules=all", "-c", "submodule.sm.ignore=all", "add", "-A"]);
+    fired("add -A, under every ignore setting", add.marker);
+    const nested = nestedEmbeddedRepo();
+    plain(nested.repo, ["status", "--porcelain"]);
+    fired("nested status", nested.marker);
+    const added = addedSubmoduleRepo();
+    plain(added.repo, ["read-tree", "-m", "-u", "HEAD", "evil"]);
+    fired("read-tree -u", added.marker);
+    const leftover = leftoverGitlinkRepo();
+    plain(leftover.repo, ["-c", "submodule.recurse=false", "checkout", "evil"]);
+    fired("checkout", leftover.marker);
+    const textconv = submoduleTextconvRepo();
+    plain(textconv.repo, ["diff", "--no-ext-diff", "--no-textconv", "HEAD~1", "HEAD"]);
+    fired("diff", textconv.marker);
+  });
+});
+
+/**
+ * The probe and the call each read configuration for themselves, so a writer
+ * swapping `.git/config` between a version with a driver and one without had
+ * the driver run whenever the probe read the clean one and the call the other
+ * (board task 7d41bb25). The stub makes that race deterministic: it answers
+ * the probe from the configuration as it was and writes the driver straight
+ * after. Nothing on git 2.39 closes the race, and these pin what the
+ * fingerprint of the configuration files now refuses: a file changed between
+ * the moment before the probe and the moment before the call.
+ */
+describe("a driver written between the probe and the call is refused", () => {
+  /** A repository whose attributes name filter `x`, which its configuration does not define yet. */
+  function namedButUndefinedRepo(): { repo: string; marker: string } {
+    const name = `repo${count++}`;
+    const repo = path.join(root, name);
+    committedRepo(repo, "f.txt");
+    const { prog, marker } = plantProgram(name);
+    fs.writeFileSync(plantFile, prog);
+    fs.mkdirSync(path.join(repo, ".git", "info"), { recursive: true });
+    fs.writeFileSync(path.join(repo, ".git", "info", "attributes"), "* filter=x\n");
+    fs.writeFileSync(path.join(repo, "f.txt"), "two\n");
+    return { repo, marker };
+  }
+
+  after(() => setMode("pass"));
+
+  it("git(): .git/config rewritten after the probe refuses the call", async () => {
+    const { repo, marker } = namedButUndefinedRepo();
+    setMode("plant-after-probe");
+    const res = await git(repo, ["add", "-A"]);
+    setMode("pass");
+
+    ranNothing(marker);
+    assert.equal(res.ok, false, "the call ran on a configuration the probe never read");
+    assert.equal(res.code, null);
+    assert.match(res.stderr, /\.git\/config changed while the filter probe read it/);
+    assert.equal(res.stderr.includes("\n"), false, res.stderr);
+  });
+
+  it("gitSync(): .git/config rewritten after the probe refuses the call", () => {
+    const { repo, marker } = namedButUndefinedRepo();
+    setMode("plant-after-probe");
+    const res = gitSync(repo, ["add", "-A"]);
+    setMode("pass");
+
+    ranNothing(marker);
+    assert.equal(res.ok, false);
+    assert.match(res.stderr, /\.git\/config changed while the filter probe read it/);
+  });
+
+  it("git(): an included file written after the probe named it refuses the call", async () => {
+    const { repo, marker } = namedButUndefinedRepo();
+    plain(repo, ["config", "include.path", "evil.inc"]);
+    setMode("plant-include");
+    const res = await git(repo, ["add", "-A"]);
+    setMode("pass");
+
+    ranNothing(marker);
+    assert.equal(res.ok, false);
+    assert.match(res.stderr, /evil\.inc changed while the filter probe read it/);
+  });
+
+  it("control: what each plant leaves behind runs the driver", () => {
+    const viaConfig = namedButUndefinedRepo();
+    setMode("plant-after-probe");
+    gitSync(viaConfig.repo, ["add", "-A"]);
+    setMode("pass");
+    plain(viaConfig.repo, ["add", "-A"]);
+    assert.equal(fs.existsSync(viaConfig.marker), true, "the planted .git/config driver did not fire");
+
+    // Written by hand: the stub writes it while the index is listed, a step
+    // that exists only because submodules are probed.
+    const viaInclude = namedButUndefinedRepo();
+    plain(viaInclude.repo, ["config", "include.path", "evil.inc"]);
+    fs.writeFileSync(
+      path.join(viaInclude.repo, ".git", "evil.inc"),
+      `[filter "x"]\n\tclean = ${fs.readFileSync(plantFile, "utf8")}\n`,
+    );
+    plain(viaInclude.repo, ["add", "-A"]);
+    assert.equal(fs.existsSync(viaInclude.marker), true, "the planted included driver did not fire");
   });
 });
