@@ -767,12 +767,13 @@ describe("a block behind a pass's merge block", () => {
     [
       "an edit to a tracked file",
       () => fs.appendFileSync(path.join(repoRoot(), "a.txt"), "tail was here\n"),
-      /M a\.txt/,
+      // Quoted as git printed it, leading space and all.
+      /\( M a\.txt/,
     ],
     [
       "a file git has not seen",
       () => fs.writeFileSync(path.join(repoRoot(), "tail-note.txt"), "tail was here\n"),
-      /\?\? tail-note\.txt/,
+      /\(\?\? tail-note\.txt/,
     ],
   ];
 
@@ -804,14 +805,17 @@ describe("a block behind a pass's merge block", () => {
       assert.match(loopRow.error ?? "", shown);
       assert.match(loopRow.error ?? "", /commit what it changes/);
 
-      // Offered, with the same sentence, while the folder is still dirty.
+      // Offered without reading the folder, which the page polls; the press is
+      // what reads it, and refuses with the sentence the loop failed on.
       const offered = workflows
         .pickUpsOf(workflows.getInstance(instanceId)!)
         .filter((p) => p.kind === "loop");
       assert.equal(offered.length, 1);
-      assert.match(offered[0].kind === "loop" ? (offered[0].refusal ?? "") : "", /was not started/);
+      assert.equal(offered[0].kind === "loop" ? offered[0].refusal : "?", null);
       const refused = workflows.resumeLoop(instanceId, "L");
       assert.equal(refused.ok, false, "the press carried a loop on over a dirty folder");
+      assert.equal(refused.ok ? 0 : refused.status, 409);
+      assert.equal(refused.ok ? "" : refused.error, loopRow.error);
       assert.equal(blockRow(instanceId, "L").status, "failed", "a refusal wrote nothing");
 
       git(repoRoot(), "add", "-A");

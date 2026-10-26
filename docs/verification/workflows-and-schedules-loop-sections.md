@@ -239,6 +239,21 @@
   folder missing the pick-up was refused by name and wrote nothing. Caveat:
   nothing landed; see the open item below.
 
+- **An orchestrator tail's dirt, and a pick-up that spawns nothing, under
+  `npm test` (2026-10-26, at `a177041e` plus this change).**
+  `loopSection.test.ts` drives a landing section whose tail is an orchestrator
+  on a flat template: its emitted runs leave an edit in the folder, and the loop
+  fails at the boundary on the same sentence a run tail gets, with no pass-2
+  row, where before it opened pass 2. Mutating the compiled `workflows.js` to
+  read `member.run` alone fails that case; putting `loopPassDirt` back inside
+  `loopPassRefusal` fails the case that counts `spawnSync` and `spawn` across
+  `pickUpsOf`, which is 0 now; dropping `--branch` fails the sentence's ` M
+  a.txt`, whose leading space `gitSync`'s trim used to take. The press over the
+  dirty folder answers 409 with the sentence the loop failed on, and carries on
+  once it is committed. Caveat: the repository is a plain `git init`, and spawns
+  are counted at `child_process`'s `spawnSync` and `spawn`, so a git started
+  another way would not be seen.
+
 ## Not yet verified by hand
 
 - **The three loop panels changed with the runtime have not been opened in a
@@ -302,10 +317,11 @@
   its section (`sectionKindRefusal`) are driven under `npm test` against a real
   repository and the real merge queue (`loopMergeOwnership.test.ts`,
   `loopSection.test.ts`), and nothing else. Nothing has drawn the stop sentence
-  on the instance page or the loop's *Carry on* with it as the refusal, and the
-  synchronous `git status --porcelain` at the pass boundary has not been timed
-  on a large checkout. Settle: seed a two-pass landing section whose tail edits
-  a tracked file, serve a build over it, read the failed loop's row and its
-  pick-up at 390px and 1280px, commit the edit and press *Carry on*; then time
+  on the instance page or the 409 a *Carry on* pressed over it returns, and the
+  synchronous `git status --porcelain` at the pass boundary and at the press has
+  not been timed on a large checkout. Settle: seed a two-pass landing section
+  whose tail edits a tracked file, serve a build over it, read the failed loop's
+  row and its pick-up at 390px and 1280px, press *Carry on* and read the error,
+  commit the edit and press it again; then time
   `gitSync(folder, ["status", "--porcelain"])` on the largest repository in the
   mount.
