@@ -179,14 +179,17 @@ read — reaches something that is not this run's business.
   `post-checkout` and `reference-transaction` ran on `git checkout -b`. A
   clean filter ran on `status` and `diff`. So the next `git status` you run in
   that checkout on your host runs the command **as you, outside the
-  container** and outside everything else on this page. That last step is
-  inferred and not yet measured on a host; `docs/verification/git-and-review.md`
-  carries the probe. This app's own git and the chat's ignore `core.fsmonitor`
-  and hooks, but yours does not. This app's own git also blanks every filter
-  and merge driver before a command that could run one, reading the names from
-  the repository and from each populated submodule's own git directory, since
-  a command in the superproject runs the submodule's too. Here is what protects
-  you and what does not, measured with git 2.39.5:
+  container** and outside everything else on this page. That last step was
+  measured on 2026-10-25 on macOS with OrbStack: a plain `git status` on the
+  host ran a fsmonitor a work cycle planted, and `git checkout -b` ran its
+  hook. Docker Desktop and Linux hosts are not yet measured;
+  `docs/verification/git-and-review.md` carries the probe. This app's own git
+  and the chat's ignore `core.fsmonitor` and hooks, but yours does not. This
+  app's own git also blanks every filter and merge driver before a command that
+  could run one, reading the names from the repository and from each populated
+  submodule's own git directory, since a command in the superproject runs the
+  submodule's too. Here is what protects you and what does not, measured with
+  git 2.39.5:
   - `git config --global core.fsmonitor false` does **not** protect you,
     because the repository's own value wins. A global `core.hooksPath` stops
     `.git/hooks` only until the repository sets a `core.hooksPath` of its own.

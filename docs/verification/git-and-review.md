@@ -197,6 +197,19 @@
   stub's. That a vault's evicted iCloud files make `status` or `checkout` pass
   20 s is the nightly failure's likely cause and is not measured.
 
+- **A planted `core.fsmonitor` and hook run in the operator's own git on the
+  host, 2026-10-25, macOS 27.0.1, host git 2.54.0 (Apple Git-157), OrbStack.**
+  Board task `da885677`. As `UF_AGENT_UID` (1000) inside the live container,
+  with its git 2.39.5: `git init` of `/workspace/uf-fsmonitor-probe`,
+  `core.fsmonitor "touch .git/fsmonitor-ran #"` and an executable
+  `.git/hooks/post-checkout` that touches `.git/hook-ran`. On the host the
+  hook showed as `-rwxr-xr-x`, owned by the operator. The host's `git status`
+  alone wrote `.git/fsmonitor-ran`; after `git commit -q --allow-empty -m x`
+  and `git checkout -q -b probe`, `.git/hook-ran` existed too, both owned by
+  the operator. So OrbStack's file sharing keeps the exec bit, and the
+  command runs as the operator, outside the container. The directory was
+  removed afterwards.
+
 ## Not yet verified by hand
 
 - **That an evicted iCloud checkout is what outlasted 20 s.** Reported from a
@@ -220,22 +233,17 @@
   repository, land the first, then `docker compose exec usagefoundry ls
   /tmp/uf-sign-ran /tmp/uf-smudge-ran`: neither should exist.
 
-- **A planted `core.fsmonitor` running in the operator's own git on the
-  host.** Inferred from the two entries above and from
-  `security-and-sandboxing-chat-config.md`, where it ran on `status`, `diff`
-  and `blame` in the container: a work cycle writes the bind mount as its
-  owner, so the operator's `git status` in that checkout runs the command as
-  the operator. Unmeasured: the host's git, the bind mount, and on macOS the
-  platform's file sharing (the hook's exec bit included). To settle it, in a
-  scratch directory and never a real repository:
+- **A planted `core.fsmonitor` running in the operator's own git on a host
+  other than macOS with OrbStack.** Measured there on 2026-10-25 (Verified
+  above). Unmeasured: Docker Desktop's file sharing and a Linux host's plain
+  bind mount, where ownership and the exec bit may come through differently.
+  To settle it, in a scratch directory and never a real repository:
   `uid=$(docker compose exec -T usagefoundry printenv UF_AGENT_UID)`, then
   `docker compose exec --user "$uid" usagefoundry sh -c 'git init -q /workspace/uf-fsmonitor-probe && cd /workspace/uf-fsmonitor-probe && git config core.fsmonitor "touch .git/fsmonitor-ran #" && printf "#!/bin/sh\ntouch .git/hook-ran\n" > .git/hooks/post-checkout && chmod +x .git/hooks/post-checkout'`.
   Then, on the host in the same directory, run `git status`, `git commit -q
   --allow-empty -m x`, `git checkout -q -b probe` and
   `ls .git/fsmonitor-ran .git/hook-ran`. Both files existing confirms the
-  gap. The probe left both markers when run in the container on 2026-10-06,
-  from the repository's root and from a subdirectory. Board task `da885677`
-  is the operator's.
+  gap.
 
 - **The git-directory warning in a booted image, as root with the uid split
   on.** Unmeasured: the server reading `hooks/` and `info/attributes` as root
