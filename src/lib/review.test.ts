@@ -304,9 +304,10 @@ describe("reviewEnv — the PATH the reviewer's tools are resolved on", () => {
  * The reviewer, resolver and validator run in a checkout a work cycle writes,
  * with no `--setting-sources`, so that checkout's `.claude/settings.json` `env`
  * is applied over theirs. Measured on 2.1.310, such a file sent the key to the
- * host it named and wrote the spend the CLI reported. Every way this encoder is
- * wrong is silent: a stock install with no flag, a second `--settings` that
- * drops the first, or a pin left out so the checkout's value is the only one.
+ * host it named and wrote the spend the CLI reported, and its hooks put their
+ * text in the validator's request. Every way this encoder is wrong is silent: a
+ * stock install with no flag, a second `--settings` that drops the first, a pin
+ * left out so the checkout's value is the only one, or hooks left on.
  */
 describe("assistSettingsArgs — the endpoint a checkout's settings cannot move", () => {
   const overlayOf = (args: string[]) => {
@@ -314,8 +315,20 @@ describe("assistSettingsArgs — the endpoint a checkout's settings cannot move"
     return JSON.parse(args[args.indexOf("--settings") + 1]) as {
       env?: Record<string, string>;
       sandbox?: { filesystem: { allowWrite: string[] } };
+      disableAllHooks?: boolean;
     };
   };
+
+  it("turns every hook off, with or without a write set", () => {
+    // Measured on 2.1.310: a checkout's `SessionStart` and `UserPromptSubmit`
+    // hooks reached the validator's request until this was set.
+    assert.equal(overlayOf(assistSettingsArgs(null, {})).disableAllHooks, true);
+    const withSandbox = overlayOf(
+      assistSettingsArgs({ sandbox: { filesystem: { allowWrite: ["/w/repo"] } } }, {}),
+    );
+    assert.equal(withSandbox.disableAllHooks, true);
+    assert.deepEqual(withSandbox.sandbox?.filesystem.allowWrite, ["/w/repo"]);
+  });
 
   it("pins every listed variable on a stock install, which sends no write set", () => {
     const settings = overlayOf(assistSettingsArgs(null, { ANTHROPIC_BASE_URL: "http://127.0.0.1:8789" }));

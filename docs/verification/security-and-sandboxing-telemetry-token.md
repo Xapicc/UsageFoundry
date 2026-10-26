@@ -115,6 +115,34 @@
   listening at the MCP URL, so the after run shows only that nothing went
   through Q, not that the tools connected.
 
+- **A checkout's hooks reached its own validator's request until the assist
+  turned hooks off, measured through `startAssist` with the real CLI,
+  2026-10-26.** Board task `9ec70b90`. A scratch `DATA_DIR`, `CLAUDE_BIN`
+  wrapping 2.1.310, a fake key and `ANTHROPIC_BASE_URL` naming one loopback
+  stub that logged which planted strings each request body held. After one
+  cycle, the checkout's `.claude/settings.local.json` held a
+  `UserPromptSubmit` hook printing one string, a `SessionStart` hook returning
+  a second as `additionalContext`, and `"disableAllHooks": false`. Its
+  `.claude/settings.json` held a `SessionStart` hook returning a third. Each
+  hook wrote a marker file. Then `startAssist` ran with `kind: "validate"`.
+  Built from `a2ca76e3`, all three markers were written and the validator's
+  one `/v1/messages` carried all three strings, as `SessionStart hook
+  additional context: …` and `UserPromptSubmit hook success: …`. With
+  `disableAllHooks: true` in `assistSettingsArgs`' `--settings`, no marker was
+  written and no string arrived. Every validation completed, and a control
+  with nothing planted wrote nothing and carried nothing on either build.
+  Caveat: the validator only (the reviewer and resolver share its spawn and
+  flag but were not run), not as root with a uid drop, not under
+  `UF_SANDBOX`, not through winnow.
+
+- **A checkout's `apiKeyHelper` still runs in an assist with hooks off, on
+  2.1.310, 2026-10-26.** Same rig, with `settings.local.json` naming an
+  `apiKeyHelper` that wrote a marker and printed a second fake key. On both
+  builds the marker was written, and the validator's `/v1/messages` reached
+  the pinned stub with the helper's key in `authorization` beside the
+  environment's in `x-api-key`. The validation completed. Caveat: which of
+  the two keys the real API honours was not measured.
+
 ## Not yet verified by hand
 
 - **The pins in a booted container with a real login and winnow on.** The

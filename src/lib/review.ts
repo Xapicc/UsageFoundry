@@ -1383,8 +1383,8 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
 }
 
 /**
- * The assist's one `--settings`: the endpoint pins, and the write set where
- * anything confines this child.
+ * The assist's one `--settings`: the endpoint pins, no hooks, and the write
+ * set where anything confines this child.
  *
  * An assist runs in a run's checkout or a merge of one and passes no
  * `--setting-sources`, so the CLI applies the `env` of that checkout's
@@ -1397,16 +1397,31 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
  * (measured on 2.1.310), so the pins go here, read off `spawnEnv`, which must
  * be the environment the child is spawned with.
  *
+ * No hooks either, because the same checkout's hooks run in this child and
+ * speak to its model. Measured on 2.1.310 through `startAssist`: a
+ * `UserPromptSubmit` and a `SessionStart` hook planted in the checkout's
+ * `settings.local.json`, which is never in the diff, and a `SessionStart` in
+ * its `settings.json` all ran, and all three texts reached the validator's
+ * request, so a run could write its own validator's brief. `disableAllHooks`
+ * here stopped all three, a project file's `"disableAllHooks": false`
+ * included. Chosen over `--setting-sources user`, which would also drop the
+ * repository's permissions and agents. It costs the operator's own user-scope
+ * and plugin hooks, which no longer run in an assist either, as in the chat.
+ * It does not stop a project `apiKeyHelper` (measured: it still ran).
+ *
  * Always emitted, a stock install's argv included: the write set is withheld
  * where no managed sandbox exists, but a stock install's checkout redirects the
- * credential exactly as any other's does. One flag for both halves, because
- * the CLI keeps only the last `--settings` it is given.
+ * credential exactly as any other's does. One flag for all three, because the
+ * CLI keeps only the last `--settings` it is given.
  */
 export function assistSettingsArgs(
   sandbox: SandboxOverlay | null,
   spawnEnv: Readonly<Record<string, string | undefined>>,
 ): string[] {
-  return ["--settings", JSON.stringify({ env: cycleEnvPins(spawnEnv), ...sandbox })];
+  return [
+    "--settings",
+    JSON.stringify({ env: cycleEnvPins(spawnEnv), ...sandbox, disableAllHooks: true }),
+  ];
 }
 
 /**
