@@ -87,8 +87,12 @@ function parseId(raw: string, name: string): number {
  * opposite directions: credentials the process cannot apply fail every spawn
  * with EPERM, and no credentials at all is a container that looks separated on
  * the page and shares one uid in fact. The gid is required rather than defaulted
- * to the uid for the same reason — libuv sets gid and uid and never calls
- * `setgroups`, so a child that is handed no gid keeps root's group 0.
+ * to the uid for the same reason — libuv calls `setgid` only when it is handed a
+ * gid, so a child that is handed none keeps root's primary group 0. It does
+ * clear the supplementary list: `uv__process_child_init` calls
+ * `setgroups(0, NULL)` whenever a uid or a gid is handed, and ignores its
+ * result. That is read from libuv 1.51.0's `src/unix/process.c`, the copy
+ * Node 22.23.4 vendors, and not measured as root.
  *
  * @param serverUid `process.getuid?.() ?? null` — null on a platform with no uids.
  */
@@ -115,7 +119,7 @@ export function resolveChildCredentials(o: {
   if (!gidRaw) {
     throw new Error(
       "UF_AGENT_UID is set but UF_AGENT_GID is not. A child spawned with a uid " +
-        "and no gid keeps the server's groups, which on this image is group 0.",
+        "and no gid keeps the server's primary group, which on this image is group 0.",
     );
   }
   const gid = parseId(gidRaw, "UF_AGENT_GID");
@@ -341,13 +345,19 @@ export function deprioritiseChildForOom(
  * credential — and a different gid, which is the whole of what keeps a
  * work-cycle agent out of this turn's capability file.
  *
- * What makes that hold is the same libuv behaviour called out above: `setgid`
- * and `setuid` are called and `setgroups` never is, so a child's group set is
- * the gid handed here plus whatever *supplementary* groups this process already
- * carries — which on this image is root's, and root is in no group but 0.
- * Neither side is therefore in the other's group, which is what makes the
- * 0710/0040 pair in `mcpConfigOwnership` decide anything. An image that gave the
- * server supplementary membership of either group would undo it silently.
+ * What makes that hold is the same libuv behaviour called out above:
+ * `setgroups(0, NULL)` runs before `setgid` and `setuid`, so a child's group
+ * set is the gid handed here and nothing this process carries besides. Neither
+ * side is therefore in the other's group, which is what makes the 0710/0040
+ * pair in `mcpConfigOwnership` decide anything. That is read from libuv
+ * 1.51.0's source and not measured as root. libuv also ignores a failed
+ * `setgroups`, and a user namespace whose `setgroups` file says `deny` refuses
+ * it while still allowing `setgid`. There the child keeps this process's
+ * supplementary groups, which on this image are root's, and root is in no
+ * group but 0. An image that gave the server membership of either group and ran
+ * it somewhere `setgroups` is refused would undo the pair silently, which is
+ * why `codexHomeNameUnsafeBecause` still refuses every group's write bit
+ * rather than assume the drop.
  */
 export function chatChildCredentials(): { uid?: number; gid?: number } {
   const c = separation();

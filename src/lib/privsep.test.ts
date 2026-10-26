@@ -63,8 +63,9 @@ describe("resolveChildCredentials", () => {
   });
 
   it("refuses a uid with no gid beside it", () => {
-    // libuv sets gid then uid and never calls setgroups, so a child handed no
-    // gid keeps the server's — group 0 on this image.
+    // libuv clears the supplementary groups but calls setgid only when handed a
+    // gid, so a child handed none keeps the server's primary group — 0 on this
+    // image. Read from libuv 1.51.0's src/unix/process.c, not measured as root.
     assert.throws(
       () =>
         resolveChildCredentials({ serverUid: 0, agentUid: "1000", agentGid: "" }),

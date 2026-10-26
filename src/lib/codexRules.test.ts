@@ -336,8 +336,9 @@ describe("codexHomeNameUnsafeBecause", () => {
   });
 
   it("refuses a server-owned parent with any write bit for group or others, sticky or not", () => {
-    // A child keeps the server's supplementary groups, so no group's write bit
-    // is provably out of its reach.
+    // libuv clears a child's supplementary groups but ignores that call
+    // failing (read from 1.51.0's source, not measured), so no group's write
+    // bit is provably out of its reach. Stricter than needed, on purpose.
     for (const mode of [0o775, 0o757, 0o1777, 0o1775]) {
       const reason = mod.codexHomeNameUnsafeBecause(
         "/var/lib/codex/home",
