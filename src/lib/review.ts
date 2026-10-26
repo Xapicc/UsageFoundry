@@ -18,18 +18,20 @@ import {
 } from "./localCertification";
 import { localRunsOnBranch } from "./localProvider";
 import { agentEnvironment, stackGrants } from "./stacks";
+import { cycleEnvPins } from "./cycleInvocation";
 import {
   currentSnapshot,
   emitRunEvent,
   getRun,
   isShuttingDown,
   promptArgs,
-  sandboxArgsFor,
+  sandboxOverlayFor,
   SEARCH_TOOLS,
   signalTree,
   trackAssistChild,
   workDirOf,
   type RunRow,
+  type SandboxOverlay,
 } from "./orchestrator";
 
 /**
@@ -1230,7 +1232,14 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
     // fix is that one entry for this scope — not a wider default for every
     // child. Nothing here has been executed against a sandbox; see
     // `docs/verification.md`.
-    args.push(...sandboxArgsFor({ kind: "assist", cwd, permissionMode }));
+    //
+    // Read once, because the pins beside the write set have to be the values
+    // this child is spawned with: asked twice, `agentEnvironment`'s cached
+    // stack exports can have been refreshed in between.
+    const env = reviewEnv();
+    args.push(
+      ...assistSettingsArgs(sandboxOverlayFor({ kind: "assist", cwd, permissionMode }), env),
+    );
 
     // Last, after every flag: a review's prompt quotes the run's task, and a
     // caller may hand this anything. See `promptArgs`.
@@ -1241,7 +1250,7 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
     const cli = spawnCommand(CLAUDE_BIN, args);
     const child = spawn(cli.command, cli.args, {
       cwd,
-      env: reviewEnv(),
+      env,
       // Dropped like every other child. A reviewer cannot write, but it reads a
       // diff out of a repository and is no more trusted than the run it reviews.
       ...childCredentials(),
@@ -1371,6 +1380,32 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
       void land(parseReviewOutput(stdout, stderr, code));
     });
   });
+}
+
+/**
+ * The assist's one `--settings`: the endpoint pins, and the write set where
+ * anything confines this child.
+ *
+ * An assist runs in a run's checkout or a merge of one and passes no
+ * `--setting-sources`, so the CLI applies the `env` of that checkout's
+ * `.claude/settings.json` and `settings.local.json`, and of
+ * `$CLAUDE_CONFIG_DIR/settings.json`, over the environment it was spawned
+ * with. Each file is one a work cycle can write, and its `env` decides where
+ * the reviewer's or validator's requests go and the credential on them, and
+ * what spend it reports (`PINNED_CYCLE_ENV`). `--settings` outranks all three
+ * (measured on 2.1.310), so the pins go here, read off `spawnEnv`, which must
+ * be the environment the child is spawned with.
+ *
+ * Always emitted, a stock install's argv included: the write set is withheld
+ * where no managed sandbox exists, but a stock install's checkout redirects the
+ * credential exactly as any other's does. One flag for both halves, because
+ * the CLI keeps only the last `--settings` it is given.
+ */
+export function assistSettingsArgs(
+  sandbox: SandboxOverlay | null,
+  spawnEnv: Readonly<Record<string, string | undefined>>,
+): string[] {
+  return ["--settings", JSON.stringify({ env: cycleEnvPins(spawnEnv), ...sandbox })];
 }
 
 /**

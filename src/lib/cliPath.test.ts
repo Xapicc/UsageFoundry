@@ -537,18 +537,54 @@ describe("the chat child's own configuration", () => {
     });
   });
 
-  it("loads no settings from its cwd and no hooks, in the one --settings the CLI keeps", () => {
+  it("loads no settings from its cwd and no hooks, in the one --settings the CLI keeps", async () => {
     // The CLI keeps only the last `--settings`, so a second flag for the hook
-    // switch would silently drop the sandbox write set, or the reverse.
+    // switch would silently drop the sandbox write set or the endpoint pins,
+    // or the reverse.
+    const { cycleEnvPins } = await import("./cycleInvocation");
     const allowWrite = ["/workspace"];
+    const spawnEnv = { ANTHROPIC_BASE_URL: "http://127.0.0.1:8789" };
     for (const overlay of [null, { sandbox: { filesystem: { allowWrite } } }]) {
-      const args = chat.chatSettingsArgs(overlay);
+      const args = chat.chatSettingsArgs(overlay, spawnEnv);
       assert.equal(args[args.indexOf("--setting-sources") + 1], "user");
       assert.equal(args.filter((arg) => arg === "--settings").length, 1);
       assert.deepEqual(JSON.parse(args[args.indexOf("--settings") + 1]), {
+        env: cycleEnvPins(spawnEnv),
         ...overlay,
         disableAllHooks: true,
       });
+    }
+  });
+
+  it("pins the endpoint a user settings file could move, at the values the chat is spawned with", async () => {
+    // `$CLAUDE_CONFIG_DIR/settings.json` is the scope `--setting-sources user`
+    // keeps, and a work cycle writes it unless `UF_LOCK_CLAUDE_HOME` holds.
+    // Measured on 2.1.310, its `env.ANTHROPIC_BASE_URL` took the chat's request
+    // and credential to the host it named.
+    const { PINNED_CYCLE_ENV } = await import("./cycleInvocation");
+    const saved = { HTTPS_PROXY: process.env.HTTPS_PROXY, NODE_EXTRA_CA_CERTS: process.env.NODE_EXTRA_CA_CERTS };
+    process.env.HTTPS_PROXY = "http://corp:3128";
+    // A CA in the agents' `HOME`, which `chatHomeEnv` takes away from the
+    // chat: a pin read off any environment but the spawned one would hand it
+    // back through the `--settings` that is meant to close the user scope.
+    process.env.NODE_EXTRA_CA_CERTS = path.join(agentsHome, "planted-ca.pem");
+    const pinsOf = (env: NodeJS.ProcessEnv) => {
+      const args = chat.chatSettingsArgs(null, env);
+      return (JSON.parse(args[args.indexOf("--settings") + 1]) as { env: Record<string, string> }).env;
+    };
+    try {
+      const pins = pinsOf(chat.chatEnv(chatHome));
+      assert.deepEqual(Object.keys(pins), [...PINNED_CYCLE_ENV]);
+      assert.equal(pins.HTTPS_PROXY, "http://corp:3128");
+      // Emptied rather than left out, or the user file's value would be the
+      // only one.
+      assert.equal(pins.NODE_EXTRA_CA_CERTS, "");
+      assert.equal(pinsOf(chat.chatEnv(null)).NODE_EXTRA_CA_CERTS, process.env.NODE_EXTRA_CA_CERTS);
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
     }
   });
 
@@ -562,7 +598,7 @@ describe("the chat child's own configuration", () => {
     assert.deepEqual(denyRead, [chat.MCP_CONFIG_BASE]);
 
     const overlay = sandboxOverlay({ kind: "confined", allowWrite: ["/workspace"] }, "on", denyRead);
-    const args = chat.chatSettingsArgs(overlay);
+    const args = chat.chatSettingsArgs(overlay, {});
     assert.equal(args.filter((arg) => arg === "--settings").length, 1);
     const settings = JSON.parse(args[args.indexOf("--settings") + 1]);
     assert.deepEqual(settings.sandbox.filesystem, {
@@ -593,7 +629,7 @@ describe("the chat child's own configuration", () => {
       [chat.MCP_CONFIG_BASE],
     );
     assert.equal(stock, null);
-    const stockArgs = chat.chatSettingsArgs(stock);
+    const stockArgs = chat.chatSettingsArgs(stock, {});
     assert.equal("sandbox" in JSON.parse(stockArgs[stockArgs.indexOf("--settings") + 1]), false);
   });
 });

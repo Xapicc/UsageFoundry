@@ -5,8 +5,10 @@ import os from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
 
+import { PINNED_CYCLE_ENV } from "./cycleInvocation";
 import {
   assistModel,
+  assistSettingsArgs,
   assistToolUses,
   parseReviewOutput,
   reviewEnv,
@@ -265,10 +267,10 @@ describe("settleOnExit", () => {
  * for the reason `childEnv`'s is: what §2 claims is that a directory on the
  * agents' `PATH` arrives, in the position it was put at.
  *
- * `reviewEnv()` is the whole of what the spawn site passes — `env: reviewEnv()`
- * at `review.ts:818`, with no extras merged over it — so unlike the chat's and
- * the run loop's there is no composition here to pin separately. That is the
- * property being relied on, so it is asserted rather than left implied.
+ * `reviewEnv()` is the whole of what the spawn site passes — the one `env` it
+ * builds, with no extras merged over it — so unlike the chat's and the run
+ * loop's there is no composition here to pin separately. That is the property
+ * being relied on, so it is asserted rather than left implied.
  */
 describe("reviewEnv — the PATH the reviewer's tools are resolved on", () => {
   const previous = { PATH: process.env.PATH, UF_AGENT_PATH: process.env.UF_AGENT_PATH };
@@ -295,6 +297,63 @@ describe("reviewEnv — the PATH the reviewer's tools are resolved on", () => {
       TOOLBOX,
       "a directory first on the agents' PATH did not reach the reviewer first",
     );
+  });
+});
+
+/**
+ * The reviewer, resolver and validator run in a checkout a work cycle writes,
+ * with no `--setting-sources`, so that checkout's `.claude/settings.json` `env`
+ * is applied over theirs. Measured on 2.1.310, such a file sent the key to the
+ * host it named and wrote the spend the CLI reported. Every way this encoder is
+ * wrong is silent: a stock install with no flag, a second `--settings` that
+ * drops the first, or a pin left out so the checkout's value is the only one.
+ */
+describe("assistSettingsArgs — the endpoint a checkout's settings cannot move", () => {
+  const overlayOf = (args: string[]) => {
+    assert.equal(args.filter((a) => a === "--settings").length, 1, "one --settings, or one half is dropped");
+    return JSON.parse(args[args.indexOf("--settings") + 1]) as {
+      env?: Record<string, string>;
+      sandbox?: { filesystem: { allowWrite: string[] } };
+    };
+  };
+
+  it("pins every listed variable on a stock install, which sends no write set", () => {
+    const settings = overlayOf(assistSettingsArgs(null, { ANTHROPIC_BASE_URL: "http://127.0.0.1:8789" }));
+    assert.deepEqual(Object.keys(settings.env ?? {}), [...PINNED_CYCLE_ENV]);
+    assert.equal(settings.env?.ANTHROPIC_BASE_URL, "http://127.0.0.1:8789");
+    // Left out rather than emptied, the checkout's value would be the only one.
+    assert.equal(settings.env?.HTTP_PROXY, "");
+    assert.equal("sandbox" in settings, false);
+  });
+
+  it("shares the one --settings with the write set", () => {
+    const allowWrite = ["/w/repo"];
+    const settings = overlayOf(
+      assistSettingsArgs({ sandbox: { filesystem: { allowWrite } } }, { HTTPS_PROXY: "http://corp:3128" }),
+    );
+    assert.equal(settings.env?.HTTPS_PROXY, "http://corp:3128");
+    assert.deepEqual(settings.sandbox?.filesystem.allowWrite, allowWrite);
+  });
+
+  it("never puts a credential on the argv", () => {
+    // `/proc/<pid>/cmdline` is readable by every process in the container.
+    const args = assistSettingsArgs(null, {
+      ANTHROPIC_API_KEY: "sk-ant-secret",
+      ANTHROPIC_AUTH_TOKEN: "bearer-secret",
+      CLAUDE_CODE_OAUTH_TOKEN: "oauth-secret",
+    });
+    assert.doesNotMatch(args.join(" "), /secret/);
+  });
+
+  it("pins the environment the reviewer is spawned with", () => {
+    const previous = process.env.HTTPS_PROXY;
+    process.env.HTTPS_PROXY = "http://corp:3128";
+    try {
+      assert.equal(overlayOf(assistSettingsArgs(null, reviewEnv())).env?.HTTPS_PROXY, "http://corp:3128");
+    } finally {
+      if (previous === undefined) delete process.env.HTTPS_PROXY;
+      else process.env.HTTPS_PROXY = previous;
+    }
   });
 });
 

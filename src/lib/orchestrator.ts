@@ -7595,11 +7595,6 @@ function agentWritableStackStateDirs(): string[] {
   return dirs.sort();
 }
 
-/** The overlay for a child spawned right now, against this install's policy. */
-export function sandboxArgsFor(scope: SandboxScope): string[] {
-  return sandboxArgs(sandboxSettings(scope), currentSandbox().state);
-}
-
 /** The overlay as an object, for a child spawned right now. */
 export function sandboxOverlayFor(scope: SandboxScope): SandboxOverlay | null {
   return sandboxOverlay(

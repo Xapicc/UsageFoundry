@@ -60,6 +60,7 @@ import { getTemplate, type RunTemplate } from "./templates";
 import type { RunProviderDTO } from "./apiTypes";
 import { providerTerminusRefusal } from "./budget";
 import { getLocalSignIn } from "./localProvider";
+import { cycleEnvPins } from "./cycleInvocation";
 import {
   agentDefinition,
   agentKnowledgeOf,
@@ -3260,6 +3261,13 @@ function launchOrchestratorChild(
   //
   // And the directory the capability file is in, which a sandboxed `Bash` call
   // may not read (`chatCapabilityDenyRead`).
+  //
+  // The environment is built here rather than at the spawn, and handed to
+  // both, because the endpoint pins in that `--settings` have to be the values
+  // the child is spawned with: `chatHomeEnv` removes a variable naming a path
+  // in the agents' `HOME`, and a pin read off any other environment would put
+  // it back.
+  const env = chatEnv();
   args.push(
     ...chatSettingsArgs(
       sandboxOverlayFor({
@@ -3267,6 +3275,7 @@ function launchOrchestratorChild(
         dirs: mountDirs,
         denyRead: chatCapabilityDenyRead(),
       }),
+      env,
     ),
   );
 
@@ -3347,7 +3356,7 @@ function launchOrchestratorChild(
   const cli = spawnCommand(CLAUDE_BIN, args);
   const child = spawn(cli.command, cli.args, {
     cwd,
-    env: chatEnv(),
+    env,
     // Dropped like every other child, and this is the one that most needs it:
     // it runs `bypassPermissions` with no allowlist, so the only thing between
     // it and the server's own files is that it is not the server's uid.
@@ -4652,18 +4661,29 @@ const CHAT_GIT_CONFIG: ReadonlyArray<readonly [string, string]> = [
  * user's and every plugin's hooks too. That is the cost: no hook the operator
  * wrote runs in a chat turn, which is the trade `chatPath` made for the same
  * child, because a hook here runs holding the capability every other child is
- * kept from. What the user scope can do besides hooks — `env`, `apiKeyHelper`
- * — is closed by the lock and by nothing here.
+ * kept from.
+ *
+ * The user scope's `env` is pinned where it decides where requests go. That
+ * file is a work cycle's to write unless `UF_LOCK_CLAUDE_HOME` holds, and
+ * measured on 2.1.310 its `ANTHROPIC_BASE_URL` took this child's request and
+ * credential to the host it named, and a `--settings` `env` overrode it. So
+ * `PINNED_CYCLE_ENV` goes into the `--settings` below at the values in
+ * `spawnEnv`, which must be the environment the child is spawned with. What the
+ * user scope can still do — `apiKeyHelper`, permission rules, and every `env`
+ * key not on that list — is closed by the lock and by nothing here.
  *
  * One `--settings` carrying the sandbox overlay too, because the CLI keeps only
  * the last (`sandboxOverlay`).
  */
-export function chatSettingsArgs(sandbox: SandboxOverlay | null): string[] {
+export function chatSettingsArgs(
+  sandbox: SandboxOverlay | null,
+  spawnEnv: Readonly<Record<string, string | undefined>>,
+): string[] {
   return [
     "--setting-sources",
     "user",
     "--settings",
-    JSON.stringify({ ...sandbox, disableAllHooks: true }),
+    JSON.stringify({ env: cycleEnvPins(spawnEnv), ...sandbox, disableAllHooks: true }),
   ];
 }
 
