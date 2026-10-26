@@ -33,6 +33,13 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - A review block's verify command is the one gate that switches a slot a later run took over; Land and Deliver refuse it.
 - Land is withheld on the gate's refusals that need no command run, and the card says why.
 
+## [Another git process in the operator's checkout](isolation-and-landing/another-git-in-the-checkout.md)
+
+- A land that meets another git process's lock is asked again, from a fresh read, four times in all, and only over a checkout proved as it was.
+- The abort that takes a refused land back is asked again on the same terms.
+- A merge open in the checkout refuses the land and halts the queue, and nothing here aborts it.
+- The waits are not a clock on the land.
+
 ## [Who may land a branch](isolation-and-landing/who-may-land-a-branch.md)
 
 - One branch, one Land button: the last run on it, and only once nothing behind it can still commit. (was line 16)

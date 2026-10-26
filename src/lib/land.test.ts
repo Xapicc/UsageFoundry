@@ -12,6 +12,7 @@ import {
   parseCount,
   parseMergeTree,
   parseStatusZ,
+  passingRefusal,
   purgedMessage,
   purgeRefusal,
   selectBranchCandidates,
@@ -156,6 +157,7 @@ describe("landRefusal", () => {
     headBranch: "main",
     dirty: false,
     readable: true,
+    merging: false,
   };
 
   const landable = {
@@ -391,6 +393,7 @@ describe("landRefusal for a branch a chain shares", () => {
     headBranch: "main",
     dirty: false,
     readable: true,
+    merging: false,
   };
 
   /** Everything else in order, so only the chain can be the reason. */
@@ -588,7 +591,7 @@ describe("unsettledBranchRefusal holds both exits while the branch can still mov
       ahead: 1,
       pendingCount: 0,
       preview: { outcome: "clean" as const },
-      checkout: { path: "/r", headBranch: "main", dirty: false, readable: true },
+      checkout: { path: "/r", headBranch: "main", dirty: false, readable: true, merging: false },
     };
     const cases = [
       { runId: "aaaaaaaa", runStatus: "running" as const, chain: alone },
@@ -629,6 +632,7 @@ describe("landRecheck", () => {
     headBranch: "main",
     dirty: false,
     readable: true,
+    merging: false,
   };
   const landable = {
     runId: "run-a",
@@ -656,6 +660,7 @@ describe("landRecheck", () => {
       { ...clean, dirty: true, readable: false },
       { ...clean, headBranch: "feature/other" },
       { ...clean, headBranch: null },
+      { ...clean, merging: true },
     ]) {
       const refusal = landRecheck({ target: "main", checkout, busyRunId: null });
       assert.ok(refusal, `${JSON.stringify(checkout)} was let through`);
@@ -668,6 +673,37 @@ describe("landRecheck", () => {
       landRecheck({ target: "main", checkout: clean, busyRunId: "abcdef0123456789" }) ?? "",
       /Run abcdef01 is working in this folder/,
     );
+  });
+});
+
+/**
+ * Which of git's refusals `landRun` asks again. Wrong one way, a land that met
+ * an editor's `git status` for a millisecond was a failed row; the other way, a
+ * branch git refuses for good is merged into the checkout four times.
+ */
+describe("passingRefusal", () => {
+  it("takes another git process's moment in the checkout, as each git version words it", () => {
+    for (const stderr of [
+      "error: Unable to write index.\nAutomatic merge failed; fix conflicts and then commit the result.",
+      "fatal: stash failed",
+      "fatal: Unable to create '/workspace/repo/.git/index.lock': File exists.\n\nAnother git process seems to be running",
+      "error: Unable to create '/workspace/repo/.git/refs/heads/main.lock': File exists.",
+    ]) {
+      assert.equal(passingRefusal(stderr), true, stderr);
+    }
+  });
+
+  it("leaves a refusal about the branch or the checkout to the operator", () => {
+    for (const stderr of [
+      "fatal: You have not concluded your merge (MERGE_HEAD exists).",
+      "error: The following untracked working tree files would be overwritten by merge:\n\tadded.txt",
+      "error: Your local changes to the following files would be overwritten by merge:\n\tshared.txt",
+      "merge: abc123 - not something we can merge",
+      "fatal: There is no merge to abort (MERGE_HEAD missing).",
+      "",
+    ]) {
+      assert.equal(passingRefusal(stderr), false, stderr);
+    }
   });
 });
 

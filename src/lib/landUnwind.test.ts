@@ -158,6 +158,30 @@ describe("unwind after a squash that wrote", () => {
   });
 });
 
+describe("unwind of a merge whose abort meets another git process", () => {
+  it("asks again once the lock is let go, rather than leaving the checkout mid-merge", async () => {
+    // A true merge leaves MERGE_HEAD, and the abort needs the index lock that
+    // another process — a `git status` on the host — holds for a moment. Asked
+    // once, the checkout was left mid-merge and the next land in the queue
+    // walked into git's "You have not concluded your merge".
+    const repo = fixture("abort-meets-lock", { conflict: true });
+    assert.notEqual(gitStatus(repo, "merge", "--no-edit", "uf/run"), 0, "the merge did not conflict");
+    const lock = path.join(repo, ".git", "index.lock");
+    fs.writeFileSync(lock, "");
+    const release = setTimeout(() => fs.rmSync(lock), 300);
+
+    try {
+      assert.equal(await unwind(repo, "merge", true), "restored");
+    } finally {
+      clearTimeout(release);
+    }
+
+    assert.equal(fs.existsSync(path.join(repo, ".git", "MERGE_HEAD")), false);
+    assert.equal(git(repo, "status", "--porcelain"), "");
+    assert.equal(read(repo, "shared.txt"), "main\n");
+  });
+});
+
 describe("unwind after a fast-forward git wrote and could not record", () => {
   /**
    * Another process holding `main`'s ref lock: git writes the branch's tree

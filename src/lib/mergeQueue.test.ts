@@ -47,7 +47,13 @@ const base: LandState = {
   merged: false,
   landedUnchanged: false,
   preview: { outcome: "clean" },
-  checkout: { path: "/workspace/repo", headBranch: "main", dirty: false, readable: true },
+  checkout: {
+    path: "/workspace/repo",
+    headBranch: "main",
+    dirty: false,
+    readable: true,
+    merging: false,
+  },
   pending: null,
   blocked: null,
   verifySwitch: null,
@@ -188,6 +194,18 @@ describe("planItem", () => {
     );
     assert.equal(plan.action, "halt");
     assert.match(plan.action === "halt" ? plan.reason : "", /uncommitted changes/);
+  });
+
+  it("halts on a checkout left mid-merge, which reads as clean", () => {
+    // A MERGE_HEAD over an unchanged tree is what a land refused at the index
+    // lock leaves when its abort meets the lock too; read as clean, the next
+    // row merged into it and failed on git's "You have not concluded your merge".
+    const plan = planItem(
+      { ...base, checkout: { ...base.checkout!, merging: true }, blocked: "merging" },
+      open,
+    );
+    assert.equal(plan.action, "halt");
+    assert.match(plan.action === "halt" ? plan.reason : "", /middle of a merge/);
   });
 
   it("halts on a checkout standing on the wrong branch", () => {

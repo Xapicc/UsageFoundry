@@ -27,7 +27,7 @@ Twenty-three are renderings rather than functions — every `*.test.tsx` in the 
 | `checkoutGitClock.test.ts` |  |
 | `cutOffCheckout.test.ts` | [cycle] |
 | `diff.test.ts` |  |
-| `land.test.ts` | [landing], [merge-queue], [harnesses] |
+| `land.test.ts` | [landing], [merge-queue], [harnesses], [contention] |
 | `mountRootIsolation.test.ts` |  |
 | `orchestrator.test.ts` | [cycle], [argv], [ceiling], [pruning], [parsers], [codex-cycle], [budgets], [pricing], [landing], [merge-queue], [sandbox], [harnesses] |
 | `patch.test.ts` |  |
@@ -265,9 +265,9 @@ Units that are about no test file in the tree:
 | `deleteBranch.test.ts` |  |
 | `diffSlotReuse.test.ts` |  |
 | `landAfterSquash.test.ts` | [resolution] |
-| `landAfterVerify.test.ts` |  |
+| `landAfterVerify.test.ts` | [contention] |
 | `landMovedBranch.test.ts` |  |
-| `landUnwind.test.ts` |  |
+| `landUnwind.test.ts` | [contention] |
 | `landView.test.ts` | [cards] |
 | `repoLock.test.ts` |  |
 
@@ -288,11 +288,15 @@ Units that are about no test file in the tree:
 | `projectPush.test.ts` |  |
 | `projects.test.ts` |  |
 
+## [Another git process in the operator's checkout](testing/landing-contention.md)
+
+Cases in `landAfterVerify.test.ts`, `landUnwind.test.ts`, `land.test.ts` and `mergeQueue.test.ts`, each listed under its own section, that pin what a land does when another git process holds a lock in the checkout.
+
 ## [The merge queue](testing/merge-queue.md)
 
 | Test file | Also in |
 |---|---|
-| `mergeQueue.test.ts` | [argv], [resolution] |
+| `mergeQueue.test.ts` | [argv], [resolution], [contention] |
 | `mergeQueueDrain.test.ts` | [fleet] |
 | `mergeQueueOrder.test.ts` |  |
 | `mergeQueueView.test.ts` |  |
@@ -570,6 +574,7 @@ It prints nothing as this is written. Whoever owns a file it names owes that fil
 [task-deps]: testing/taskboard-comments-deps-and-mcp.md
 [landing]: testing/landing-and-delivery.md
 [merge-queue]: testing/merge-queue.md
+[contention]: testing/landing-contention.md
 [resolution]: testing/conflict-resolution.md
 [run-page]: testing/run-page-panels-and-file-maps.md
 [argv]: testing/spawn-argv-and-child-env.md

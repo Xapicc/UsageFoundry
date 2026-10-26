@@ -159,6 +159,15 @@ export interface CheckoutState {
   dirty: boolean;
   /** False when `git status` itself failed — which counts as dirty. */
   readable: boolean;
+  /**
+   * A merge is open in it. Not implied by `dirty`: `status --porcelain` lists
+   * nothing for a MERGE_HEAD over a tree that matches HEAD, which is what a
+   * land git refused at the index lock leaves when its abort meets the same
+   * lock. The next land in the queue then met git's "You have not concluded
+   * your merge", and its own abort took the leftover back out under a card
+   * saying the checkout was as it was.
+   */
+  merging: boolean;
 }
 
 /** One path in a checkout that is changed and no commit holds. */
@@ -556,6 +565,7 @@ async function countAhead(
 async function checkoutStateOf(folder: string): Promise<CheckoutState> {
   const head = await git(folder, ["rev-parse", "--abbrev-ref", "HEAD"], NO_CLOCK);
   const status = await git(folder, ["status", "--porcelain"], NO_CLOCK);
+  const merge = await git(folder, ["rev-parse", "-q", "--verify", "MERGE_HEAD"], NO_CLOCK);
   return {
     path: folder,
     headBranch: head.ok && head.stdout !== "HEAD" ? head.stdout : null,
@@ -564,6 +574,9 @@ async function checkoutStateOf(folder: string): Promise<CheckoutState> {
     // a merge at exactly the moment it is least safe.
     dirty: !status.ok || status.stdout !== "",
     readable: status.ok,
+    // Anything but git's "no such ref" counts as a merge in progress, for the
+    // reason an unreadable status counts as dirty.
+    merging: merge.code !== 1,
   };
 }
 
@@ -1761,6 +1774,11 @@ function checkoutRefusal(checkout: CheckoutState | null, target: string): string
   if (!checkout.readable) {
     return "Could not read your checkout's status, so nothing is offered. Check it by hand.";
   }
+  // Ahead of `dirty`, which a merge with conflicts also is: stashing, which
+  // that sentence offers, is not a way out of a merge.
+  if (checkout.merging) {
+    return "Your checkout is in the middle of a merge — finish it, or run git merge --abort there, then land again.";
+  }
   if (checkout.dirty) {
     return "Your checkout has uncommitted changes — commit or stash them first.";
   }
@@ -2005,139 +2023,25 @@ export async function landRun(
     );
     if (seeded) return { ok: false, reason: seeded };
 
-    // Worked out before the recheck below, because nothing may await between
-    // that read and the first write into the checkout — and worked out in the
-    // object store alone, so a conflict here refuses with the checkout never
-    // touched. Null for every branch no squash on its chain still holds back.
-    const pastSquash = await mergePastSquash(folder, target, branch, tip, chainRuns(run));
-    if (pastSquash && !pastSquash.ok) {
-      return { ok: false, reason: pastSquash.reason, conflicts: pastSquash.conflicts };
+    // Another git process in the checkout — an editor's or a shell prompt's
+    // `git status` on the host, reacting to the files the last land wrote —
+    // refuses a merge for as long as it holds the index lock, which is
+    // milliseconds. Each attempt re-proves everything from a fresh read, so
+    // the one rule about retrying here, that nothing awaits between the last
+    // read of the checkout and the merge's spawn, holds for every attempt.
+    const job = { run, runId, folder, target, branch, tip, strategy, asker };
+    let attempt = await mergeIntoCheckout(job);
+    let tries = 1;
+    while (!attempt.ok && attempt.passing && tries < PASSING_ATTEMPTS) {
+      await afterPassingRefusal(tries);
+      attempt = await mergeIntoCheckout(job);
+      tries++;
     }
-
-    // Re-proved here rather than trusted from `landState`, which was read
-    // before the operator's check and may be fifteen minutes old — see
-    // `landRecheck`. The status read is the last `await` before the merge, so
-    // the overlap check below and the merge's spawn share one turn.
-    const checkout = await checkoutStateOf(folder);
-    const busyRunId = runWorkingIn(folder)?.id ?? null;
-    const refusal = landRecheck({ target, checkout, busyRunId });
-    // `landRecheck` names a working run ahead of the checkout, so with one
-    // present the refusal is that run's hold rather than the checkout's state.
-    if (refusal) {
-      return { ok: false, reason: refusal, ...(busyRunId ? { heldCheckout: folder } : {}) };
+    if (!attempt.ok) {
+      const { passing: _passing, ...refused } = attempt;
+      return tries > 1 ? { ...refused, reason: `${refused.reason} (Tried ${tries} times.)` } : refused;
     }
-
-    // The run half of `landState`'s verdict, asked again for `deliverRun`'s
-    // reason: the check may have run for `VERIFY_TIMEOUT_MS`, long enough for
-    // the run to be reopened or a continuation to be started on this branch.
-    // One that has not committed yet leaves the tip where the check saw it, so
-    // `verifyInSlot` passes it, and this run is no longer the one that lands
-    // the branch. Synchronous from the reads to the merge's spawn.
-    const current = getRun(runId);
-    if (!current) return { ok: false, reason: "No such run." };
-    const chain = branchChain(current);
-    const unsettled = unsettledBranchRefusal(
-      {
-        runId,
-        runStatus: current.status,
-        chain,
-        loopBlock: loopStillRepeating(chain, asker),
-      },
-      "land",
-    );
-    if (unsettled) return { ok: false, reason: unsettled };
-
-    // Again where nothing awaits before the spawn, `spawnAssist`'s reason: the
-    // operator's check and the `rev-parse` both await after the read above,
-    // and a merge begun during the grace is one the exit can cut off part-way.
-    // One begun before it is waited on.
-    if (isShuttingDown()) return { ok: false, reason: LAND_SHUTDOWN_REFUSAL };
-
-    // `read-tree -u` overwrites an ignored file and has no flag that stops it,
-    // so the land past a squash asks the disk itself — synchronously, so that
-    // nothing awaits between the answer and the write.
-    const inTheWay = pastSquash ? untrackedAt(folder, pastSquash.added) : [];
-    if (inTheWay.length > 0) return { ok: false, reason: overwriteRefusal(branch, inTheWay) };
-
-    // No clock on the merge itself, which is the whole of `NO_CLOCK`'s reason:
-    // a merge killed part-way through reads here exactly like git refusing one,
-    // so a repository large enough to take a while was told its work could not
-    // be merged and had it rolled back.
-    //
-    // `--no-overwrite-ignore` because git's default replaces a file the checkout
-    // ignores wherever the branch tracks that path — a config file an agent
-    // committed with `git add -f`, one the seeding list does not name, since
-    // one it names was refused above — and `git status` never lists one, so the
-    // checkout read clean and the operator's own file was gone, never having
-    // been in git, under a card that said it landed.
-    const merge = pastSquash
-      ? await applyMergedTree(folder, strategy, branch, target, pastSquash)
-      : strategy === "squash"
-        ? await git(folder, ["merge", "--squash", "--no-overwrite-ignore", tip], NO_CLOCK)
-        : await git(
-            folder,
-            ["merge", "--no-edit", "--no-overwrite-ignore", "-m", mergeSubject(branch, target), tip],
-            NO_CLOCK,
-          );
-
-    if (!merge.ok) {
-      const conflicts = await conflictedFiles(folder);
-      const unwound = await unwind(folder, strategy, conflicts.length > 0);
-      return {
-        ok: false,
-        reason: mergeRefusal(branch, merge.stderr, conflicts, unwound),
-        conflicts,
-      };
-    }
-
-    let squashCommit: string | null = null;
-    if (strategy === "squash" || pastSquash) {
-      // `--squash` stages the change and stops, and so does a merge applied
-      // past a squash. Without this the operator is left holding a staged merge
-      // that the app claims to have landed.
-      const commit = await git(
-        folder,
-        strategy === "squash"
-          ? [
-              "commit",
-              "-m",
-              taskSubject(run),
-              "-m",
-              `Squashed from ${branch} (UsageFoundry run ${run.id}).`,
-            ]
-          : ["commit", "--no-edit"],
-        NO_CLOCK,
-      );
-      if (!commit.ok) {
-        const unwound = await unwind(folder, strategy, true);
-        const why = commit.stderr.split("\n")[0] || "unknown error";
-        const what = strategy === "squash" ? "squash" : "merge";
-        if (unwound !== "restored") {
-          return {
-            ok: false,
-            reason: `The ${what} could not be committed and could not be rolled back, so it is still staged in your checkout — look at git status there before anything else: ${why}`,
-          };
-        }
-        // The same cause as a merge refused at the lock, so the same sentence:
-        // which git step met the other process is not the operator's business,
-        // and only `lockRefusal` says a lock left by a crashed git is theirs to
-        // remove. Asked once the tree is proved restored, `mergeRefusal`'s rule.
-        const lock = heldLock(commit.stderr);
-        return {
-          ok: false,
-          reason: lock
-            ? lockRefusal(lock)
-            : `The ${what} could not be committed and was rolled back: ${why}`,
-        };
-      }
-    }
-    if (strategy === "squash") {
-      // What `isLandedTip` asks the target for. Unreadable leaves it null, which
-      // reads as not landed: a branch kept that could have gone, never the
-      // other way round.
-      const head = await git(folder, ["rev-parse", "HEAD"], NO_CLOCK);
-      squashCommit = head.ok ? head.stdout : null;
-    }
+    const squashCommit = attempt.squashCommit;
 
     const now = Date.now();
     db().transaction(() => {
@@ -2175,6 +2079,182 @@ export async function landRun(
     landing.delete(folder);
     untrack();
   }
+}
+
+/** One attempt at the write into the operator's checkout, and what it left. */
+type MergeAttempt =
+  | { ok: true; squashCommit: string | null }
+  | {
+      ok: false;
+      reason: string;
+      conflicts?: string[];
+      heldCheckout?: string;
+      /** `passingRefusal`'s kind, over a checkout proved as it was. */
+      passing: boolean;
+    };
+
+/**
+ * From the last read of the checkout through the merge and, for a squash, its
+ * commit: everything `landRun` re-proves immediately before it writes, so that
+ * a second attempt asks all of it again rather than trusting the first's.
+ */
+async function mergeIntoCheckout(job: {
+  run: RunRow;
+  runId: string;
+  folder: string;
+  target: string;
+  branch: string;
+  tip: string;
+  strategy: LandStrategy;
+  asker: LandAsker | null;
+}): Promise<MergeAttempt> {
+  const { run, runId, folder, target, branch, tip, strategy, asker } = job;
+  // Worked out before the recheck below, because nothing may await between
+  // that read and the first write into the checkout — and worked out in the
+  // object store alone, so a conflict here refuses with the checkout never
+  // touched. Null for every branch no squash on its chain still holds back.
+  const pastSquash = await mergePastSquash(folder, target, branch, tip, chainRuns(run));
+  if (pastSquash && !pastSquash.ok) {
+    return { ok: false, reason: pastSquash.reason, conflicts: pastSquash.conflicts, passing: false };
+  }
+
+  // Re-proved here rather than trusted from `landState`, which was read
+  // before the operator's check and may be fifteen minutes old — see
+  // `landRecheck`. The status read is the last `await` before the merge, so
+  // the overlap check below and the merge's spawn share one turn.
+  const checkout = await checkoutStateOf(folder);
+  const busyRunId = runWorkingIn(folder)?.id ?? null;
+  const refusal = landRecheck({ target, checkout, busyRunId });
+  // `landRecheck` names a working run ahead of the checkout, so with one
+  // present the refusal is that run's hold rather than the checkout's state.
+  if (refusal) {
+    return {
+      ok: false,
+      reason: refusal,
+      ...(busyRunId ? { heldCheckout: folder } : {}),
+      passing: false,
+    };
+  }
+
+  // The run half of `landState`'s verdict, asked again for `deliverRun`'s
+  // reason: the check may have run for `VERIFY_TIMEOUT_MS`, long enough for
+  // the run to be reopened or a continuation to be started on this branch.
+  // One that has not committed yet leaves the tip where the check saw it, so
+  // `verifyInSlot` passes it, and this run is no longer the one that lands
+  // the branch. Synchronous from the reads to the merge's spawn.
+  const current = getRun(runId);
+  if (!current) return { ok: false, reason: "No such run.", passing: false };
+  const chain = branchChain(current);
+  const unsettled = unsettledBranchRefusal(
+    {
+      runId,
+      runStatus: current.status,
+      chain,
+      loopBlock: loopStillRepeating(chain, asker),
+    },
+    "land",
+  );
+  if (unsettled) return { ok: false, reason: unsettled, passing: false };
+
+  // Again where nothing awaits before the spawn, `spawnAssist`'s reason: the
+  // operator's check and the `rev-parse` both await after the read above,
+  // and a merge begun during the grace is one the exit can cut off part-way.
+  // One begun before it is waited on.
+  if (isShuttingDown()) return { ok: false, reason: LAND_SHUTDOWN_REFUSAL, passing: false };
+
+  // `read-tree -u` overwrites an ignored file and has no flag that stops it,
+  // so the land past a squash asks the disk itself — synchronously, so that
+  // nothing awaits between the answer and the write.
+  const inTheWay = pastSquash ? untrackedAt(folder, pastSquash.added) : [];
+  if (inTheWay.length > 0) {
+    return { ok: false, reason: overwriteRefusal(branch, inTheWay), passing: false };
+  }
+
+  // No clock on the merge itself, which is the whole of `NO_CLOCK`'s reason:
+  // a merge killed part-way through reads here exactly like git refusing one,
+  // so a repository large enough to take a while was told its work could not
+  // be merged and had it rolled back.
+  //
+  // `--no-overwrite-ignore` because git's default replaces a file the checkout
+  // ignores wherever the branch tracks that path — a config file an agent
+  // committed with `git add -f`, one the seeding list does not name, since
+  // one it names was refused above — and `git status` never lists one, so the
+  // checkout read clean and the operator's own file was gone, never having
+  // been in git, under a card that said it landed.
+  const merge = pastSquash
+    ? await applyMergedTree(folder, strategy, branch, target, pastSquash)
+    : strategy === "squash"
+      ? await git(folder, ["merge", "--squash", "--no-overwrite-ignore", tip], NO_CLOCK)
+      : await git(
+          folder,
+          ["merge", "--no-edit", "--no-overwrite-ignore", "-m", mergeSubject(branch, target), tip],
+          NO_CLOCK,
+        );
+
+  if (!merge.ok) {
+    const conflicts = await conflictedFiles(folder);
+    const unwound = await unwind(folder, strategy, conflicts.length > 0);
+    return {
+      ok: false,
+      reason: mergeRefusal(branch, merge.stderr, conflicts, unwound),
+      conflicts,
+      // Only over a checkout proved as it was: anything else is the
+      // operator's to look at before a second merge lands on top of it.
+      passing: conflicts.length === 0 && unwound === "restored" && passingRefusal(merge.stderr),
+    };
+  }
+
+  let squashCommit: string | null = null;
+  if (strategy === "squash" || pastSquash) {
+    // `--squash` stages the change and stops, and so does a merge applied
+    // past a squash. Without this the operator is left holding a staged merge
+    // that the app claims to have landed.
+    const commit = await git(
+      folder,
+      strategy === "squash"
+        ? [
+            "commit",
+            "-m",
+            taskSubject(run),
+            "-m",
+            `Squashed from ${branch} (UsageFoundry run ${run.id}).`,
+          ]
+        : ["commit", "--no-edit"],
+      NO_CLOCK,
+    );
+    if (!commit.ok) {
+      const unwound = await unwind(folder, strategy, true);
+      const why = commit.stderr.split("\n")[0] || "unknown error";
+      const what = strategy === "squash" ? "squash" : "merge";
+      if (unwound !== "restored") {
+        return {
+          ok: false,
+          reason: `The ${what} could not be committed and could not be rolled back, so it is still staged in your checkout — look at git status there before anything else: ${why}`,
+          passing: false,
+        };
+      }
+      // The same cause as a merge refused at the lock, so the same sentence:
+      // which git step met the other process is not the operator's business,
+      // and only `lockRefusal` says a lock left by a crashed git is theirs to
+      // remove. Asked once the tree is proved restored, `mergeRefusal`'s rule.
+      const lock = heldLock(commit.stderr);
+      return {
+        ok: false,
+        reason: lock
+          ? lockRefusal(lock)
+          : `The ${what} could not be committed and was rolled back: ${why}`,
+        passing: passingRefusal(commit.stderr),
+      };
+    }
+  }
+  if (strategy === "squash") {
+    // What `isLandedTip` asks the target for. Unreadable leaves it null, which
+    // reads as not landed: a branch kept that could have gone, never the
+    // other way round.
+    const head = await git(folder, ["rev-parse", "HEAD"], NO_CLOCK);
+    squashCommit = head.ok ? head.stdout : null;
+  }
+  return { ok: true, squashCommit };
 }
 
 /**
@@ -2446,13 +2526,48 @@ function heldLock(stderr: string): string | null {
 }
 
 /**
+ * Whether git refused for a moment rather than for good: another process held
+ * a lock in the checkout. "Unable to write index." is a true merge meeting the
+ * index lock (2.39.5 writes MERGE_HEAD first, measured), and "stash failed" is
+ * the `stash create` every true merge runs before it touches anything. A full
+ * disk prints the first too, and is asked `PASSING_ATTEMPTS` times for nothing.
+ *
+ * The three, plus the lock by name, were 35 of the 72 failed merge-queue rows
+ * on the install by 2026-10-26, every one of them since 2026-09-12, and none
+ * of them about the branch.
+ *
+ * Exported for `land.test.ts`.
+ */
+export function passingRefusal(stderr: string): boolean {
+  return (
+    heldLock(stderr) !== null ||
+    /^error: Unable to write index\.$/m.test(stderr) ||
+    /^fatal: stash failed$/m.test(stderr)
+  );
+}
+
+/**
+ * How many times a land, or the abort that takes one back, meets another git
+ * process before it says so. Four: the first and three more. What holds the
+ * lock is a `git status` that takes milliseconds, but one the last attempt's
+ * own writes set off, so the waits double rather than repeat.
+ */
+const PASSING_ATTEMPTS = 4;
+const PASSING_RETRY_MS = 1_000;
+
+/** The wait after the `tries`-th attempt: one, two, then four seconds. */
+function afterPassingRefusal(tries: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, PASSING_RETRY_MS * 2 ** (tries - 1)));
+}
+
+/**
  * Why a land that met another git process in the checkout did not happen.
  *
  * The lock is the operator's to remove and never this app's: a live one belongs
  * to a git that is writing the index or the branch, and taking it from under
- * that process is how either is corrupted. Nor is the merge retried in
- * `landRun`, which may not await between its last read of the checkout and the
- * merge's spawn.
+ * that process is how either is corrupted. By the time a person reads this,
+ * `landRun` has already tried `PASSING_ATTEMPTS` times, each from a fresh read
+ * of the checkout.
  */
 function lockRefusal(lock: string): string {
   return (
@@ -2548,7 +2663,14 @@ export async function unwind(
   // Least of all these: a rollback killed part-way through leaves the
   // operator's own checkout mid-merge.
   if (strategy !== "squash") {
-    const abort = await git(folder, ["merge", "--abort"], NO_CLOCK);
+    // Asked again while it meets the lock that refused the merge: given up
+    // after one, a land left the checkout mid-merge, and the next row in the
+    // queue walked into it.
+    let abort = await git(folder, ["merge", "--abort"], NO_CLOCK);
+    for (let tries = 1; !abort.ok && passingRefusal(abort.stderr) && tries < PASSING_ATTEMPTS; tries++) {
+      await afterPassingRefusal(tries);
+      abort = await git(folder, ["merge", "--abort"], NO_CLOCK);
+    }
     if (abort.ok) return "restored";
     if (wrote) return (await resetDespiteRef(folder)) ? "restored" : "mid-merge";
     // Usually there was nothing to abort: a merge git refused up front writes

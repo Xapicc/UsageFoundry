@@ -1046,6 +1046,69 @@ describe("landRun into a checkout another git process holds the index lock of", 
     });
   }
 
+  it("lands once the lock is let go, without a second press", async () => {
+    // Held for the length of a `git status` on the host rather than for the
+    // whole land: the case the queue met, where each refusal was a failed row.
+    const s = scene("index-lock-passing");
+    const lock = path.join(s.repo, ".git", "index.lock");
+    fs.writeFileSync(lock, "");
+    const release = setTimeout(() => fs.rmSync(lock), 300);
+
+    let landed: Awaited<ReturnType<typeof land.landRun>>;
+    try {
+      landed = await land.landRun(s.runId, "merge");
+    } finally {
+      clearTimeout(release);
+    }
+
+    assert.equal(landed.ok, true, landed.ok ? "" : landed.reason);
+    assert.equal(fs.readFileSync(path.join(s.repo, "shared.txt"), "utf8"), "branch\n");
+    assert.notEqual(landedAt(s.runId), null);
+  });
+
+  it("lands a true merge once the lock is let go, its first abort having met the lock too", async () => {
+    // Under 2.39.5 the merge writes MERGE_HEAD before it meets the lock, and
+    // the abort meets the same lock; that pair, and the row behind it failing
+    // on the MERGE_HEAD left over, was most of what failed in the queue.
+    const s = scene("index-lock-passing-true-merge");
+    fs.writeFileSync(path.join(s.repo, "other.txt"), "main moved\n");
+    git(s.repo, "commit", "-qam", "main moved");
+    const lock = path.join(s.repo, ".git", "index.lock");
+    fs.writeFileSync(lock, "");
+    const release = setTimeout(() => fs.rmSync(lock), 300);
+
+    let landed: Awaited<ReturnType<typeof land.landRun>>;
+    try {
+      landed = await land.landRun(s.runId, "merge");
+    } finally {
+      clearTimeout(release);
+    }
+
+    assert.equal(landed.ok, true, landed.ok ? "" : landed.reason);
+    assert.equal(fs.readFileSync(path.join(s.repo, "shared.txt"), "utf8"), "branch\n");
+    assert.equal(fs.readFileSync(path.join(s.repo, "other.txt"), "utf8"), "main moved\n");
+    assert.equal(fs.existsSync(path.join(s.repo, ".git", "MERGE_HEAD")), false);
+  });
+
+  it("refuses a checkout left mid-merge, and leaves that merge where it was", async () => {
+    // A MERGE_HEAD over a tree that matches HEAD, which is what a land refused
+    // at the lock leaves when its abort meets the lock too. `status
+    // --porcelain` lists nothing for it, so the next land merged into it, met
+    // "You have not concluded your merge", and its own abort took the leftover
+    // out under a card saying the checkout was as it was.
+    const s = scene("left-mid-merge");
+    const mergeHead = path.join(s.repo, ".git", "MERGE_HEAD");
+    fs.writeFileSync(mergeHead, `${s.base}\n`);
+
+    const landed = await land.landRun(s.runId, "merge");
+
+    assert.equal(landed.ok, false, "landed into a checkout mid-merge");
+    assert.match(landed.ok ? "" : landed.reason, /^Your checkout is in the middle of a merge/);
+    assert.equal(fs.existsSync(mergeHead), true, "a merge it did not start was aborted");
+    assert.equal(git(s.repo, "rev-parse", "main").trim(), s.base);
+    assert.equal(landedAt(s.runId), null);
+  });
+
   it("says a merge left part-way is part-way, rather than that the checkout is as it was", async () => {
     // Not a fast-forward, so git writes MERGE_HEAD before it finds the lock
     // taken, and the abort needs the same lock. Before `unwind` asked, the card

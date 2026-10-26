@@ -188,6 +188,12 @@ export function planItem(
     if (!checkout.readable) {
       return { action: "halt", reason: "Could not read the checkout's status." };
     }
+    if (checkout.merging) {
+      return {
+        action: "halt",
+        reason: "The checkout is in the middle of a merge — finish it, or run git merge --abort there.",
+      };
+    }
     if (checkout.dirty) {
       return {
         action: "halt",
