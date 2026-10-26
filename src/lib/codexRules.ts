@@ -155,8 +155,10 @@ export type NameStat = Pick<fs.Stats, "dev" | "uid" | "mode">;
  * `rmdir` refuse with `EBUSY` from the namespace it is mounted in; that is the
  * `usagefoundry-codex` volume compose mounts there. Or the parent is the
  * server's and has no write bit for group or others. Any group, not only the
- * agents': `privsep.ts` says a child keeps the server's supplementary groups,
- * so a group-writable parent is not provably out of a cycle's reach from here.
+ * agents', which is stricter than libuv needs and deliberately so: a child's
+ * supplementary groups are cleared before it drops (`privsep.ts`, read from
+ * libuv's source and not measured), but libuv ignores that call failing, so a
+ * group-writable parent is not provably out of a cycle's reach from here.
  * Sticky does not rescue the parent the way it rescues `CODEX_HOME`, because
  * nothing here needs the agents to create entries beside it.
  *

@@ -136,6 +136,17 @@
   `SendMessage` is still offered as a deferred tool. Caveat: all six cycles came
   through `childEnv`, so `chatEnv`, `reviewEnv` and `authEnv` were not seen live.
 
+- **A child spawned with `{uid, gid}` loses the server's supplementary groups,
+  read from libuv source, not measured, 2026-10-26.** Node 22.23.4 bundles libuv
+  1.51.0 (`node_shared_libuv` false), and its `deps/uv/src/unix/process.c` is
+  byte-identical to libuv's `v1.51.0` tag. There `uv__process_child_init` calls
+  `setgroups(0, NULL)` whenever SETUID or SETGID is set (l.385–394), then
+  `setgid` (l.396) and `setuid` (l.399), and ignores `setgroups`' result. On
+  Linux, `fork()` (l.841) is the only path to it; `posix_spawn` is `__APPLE__`
+  only (l.420–817). `spawn` reaches `uv_spawn` via `process_wrap.cc` (l.222,
+  234, 362), `spawnSync` via `spawn_sync.cc` (l.516, 866, 881). Caveat: a
+  refused `setgroups`, e.g. under `setgroups` = `deny`, keeps the groups.
+
 ## Not yet verified by hand
 
 - **What an authenticated work cycle replaces under `~/.claude` is unwatched,
@@ -312,3 +323,10 @@
   refresh: `ls /tmp/cc-socks/`, polled throughout, must never show its pid.
   Started by hand with `--debug-file`, its log must hold no `Late bind` line.
   That cycle is billed.
+
+- **That a dropped child really loses root's supplementary groups.** The
+  libuv reading above is source only; this container's uid 1000 cannot drop, and
+  a user namespace refuses `setgroups`. Settle as root in a scratch container:
+  `usermod -aG node root`, a fresh shell, then
+  `node -e 'require("child_process").spawnSync("grep",["^Groups","/proc/self/status"],{uid:1000,gid:1000,stdio:"inherit"})'`.
+  An empty `Groups:` confirms the drop.
