@@ -5813,8 +5813,12 @@ function passWhole(pass: LoopPass | undefined): pass is LoopPass {
  * `emitted` runs', which edit the folder in place all the same — read through
  * `member.run` alone, an orchestrator tail looked like one that touched nothing.
  *
- * Synchronous for `advanceLoop`'s reason, and the one place a pass boundary
- * spawns git: once per pass, only for a section that has a tail.
+ * Synchronous for `advanceLoop`'s reason, and a spawn on the event loop that no
+ * poll may pay for. It is asked from exactly two doors, both of them a decision
+ * to write rather than a read: `advanceLoop` at a pass boundary (once per pass,
+ * only for a section that has a tail) and `resumeLoop` at a press, through
+ * `loopPassDirt`. `loopPassRefusal`, which `pickUpsOf` calls on every poll of an
+ * instance page, never reaches it.
  */
 function tailLeftDirt(
   loop: WorkflowNode,
@@ -5876,11 +5880,12 @@ function tailLeftDirt(
  * Why pass `pass` of a loop cannot be carried on, or null when it can. Pass 0 is
  * a loop that failed before it had one.
  *
- * Pure over the instance as read — bar one `git status` of the folder a tail
- * worked in — so a pick-up asks it before writing anything and refuses with the
- * sentence rather than half-reopening. A loop still
- * `looping` is always fine: the pass is live, and reviving its members is the
- * whole of what there is to do.
+ * Pure over the instance as read, so a pick-up asks it before writing anything
+ * and refuses with the sentence rather than half-reopening — and so `pickUpsOf`
+ * can ask it on every poll of an instance page. The folder is therefore not read
+ * here: a loop whose tail left it dirty is offered, and `resumeLoop` refuses the
+ * press with `loopPassDirt`. A loop still `looping` is always fine: the pass is
+ * live, and reviving its members is the whole of what there is to do.
  */
 function loopPassRefusal(
   instance: WorkflowInstance,
@@ -5929,15 +5934,25 @@ function loopPassRefusal(
     if (typeof node.maxPasses !== "number") return NO_PASS_CAP;
     const board = loopBoardCount(node);
     if (!board.ok) return `Its tasks could not be counted: ${board.error}`;
-    // The other read `advanceLoop` makes between two passes, and asked only of a
-    // pass that settled whole: a pass with a blocked member never reached its
-    // tail, so what is in the folder is not the tail's to answer for.
-    if (passWhole(latestRow)) {
-      const dirt = tailLeftDirt(node, loopSection(instance.graph, node), latestRow);
-      if (dirt) return dirt;
-    }
   }
   return null;
+}
+
+/**
+ * Why the folder a failed loop's tail worked in still keeps its next pass from
+ * opening, or null — what `loopPassRefusal` leaves out, asked by the press and
+ * by nothing that polls.
+ *
+ * Asked only of a pass that settled whole: a pass with a blocked member never
+ * reached its tail, so what is in the folder is not the tail's to answer for.
+ * A press that gets past this when it should not costs no bill — `advanceLoop`
+ * asks `tailLeftDirt` again at the boundary, before pass N+1 exists.
+ */
+function loopPassDirt(instance: WorkflowInstance, loopNodeId: string): string | null {
+  const node = instance.graph.nodes.find((n) => n.id === loopNodeId);
+  const latest = loopPasses(instance.id, loopNodeId).at(-1);
+  if (node?.kind !== "loop" || !passWhole(latest)) return null;
+  return tailLeftDirt(node, loopSection(instance.graph, node), latest);
 }
 
 /**
@@ -6239,7 +6254,7 @@ export function resumeLoop(instanceId: string, loopNodeId: string): PickUpOutcom
       error: `“${loop.nodeName}” is ${loop.status}, so there is no stopped pass to carry on from.`,
     };
   }
-  const refusal = loopPassRefusal(instance, loopNodeId, pass);
+  const refusal = loopPassRefusal(instance, loopNodeId, pass) ?? loopPassDirt(instance, loopNodeId);
   if (refusal) return { ok: false, status: 409, error: refusal };
   // The rule `pickUpsOf` offers a loop by, asked of the press too: a loop the
   // page offers nothing for would otherwise be answered ok here, released, and

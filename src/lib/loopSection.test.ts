@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import childProcess, { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { after, afterEach, before, beforeEach, describe, it } from "node:test";
+import { after, afterEach, before, beforeEach, describe, it, mock } from "node:test";
 
 import { passMemberId } from "./passIds";
 
@@ -2082,6 +2082,58 @@ describe("a pass of a section whose in-folder tail is an orchestrator", () => {
       "a clean folder stopped the loop",
     );
     assert.notEqual(loopBlock(instanceId).status, "failed", loopBlock(instanceId).error ?? "");
+  });
+
+  describe("and the loop failed over what it left", () => {
+    /** Spawns made while `body` runs, of the two calls `git.ts` makes a process with. */
+    function spawnsDuring<T>(body: () => T): { result: T; spawns: number } {
+      const spawnSync = mock.method(childProcess, "spawnSync");
+      const spawn = mock.method(childProcess, "spawn");
+      try {
+        const result = body();
+        return { result, spawns: spawnSync.mock.callCount() + spawn.mock.callCount() };
+      } finally {
+        spawnSync.mock.restore();
+        spawn.mock.restore();
+      }
+    }
+
+    const loopPickUp = (instanceId: string) =>
+      workflows.pickUpsOf(workflows.getInstance(instanceId)!).filter((p) => p.kind === "loop");
+
+    it("is offered without reading the folder, because the page polls what it offers", async () => {
+      const instanceId = scene({ ...(await orchestratedTail()), maxPasses: 2 });
+      await driveTail(instanceId, editTrackedFile);
+      assert.equal(loopBlock(instanceId).status, "failed");
+
+      const { result: offered, spawns } = spawnsDuring(() => loopPickUp(instanceId));
+
+      assert.equal(spawns, 0, "listing the pick-ups spawned a process to read the folder");
+      assert.equal(offered.length, 1);
+      assert.equal(offered[0].kind === "loop" ? offered[0].refusal : "?", null);
+    });
+
+    it("refuses the press while the folder is dirty, and carries on once it is committed", async () => {
+      const instanceId = scene({ ...(await orchestratedTail()), maxPasses: 2 });
+      await driveTail(instanceId, editTrackedFile);
+
+      const refused = workflows.resumeLoop(instanceId, "L");
+      assert.equal(refused.ok, false, "the press carried a loop on over a dirty folder");
+      assert.equal(refused.ok ? 0 : refused.status, 409);
+      assert.match(refused.ok ? "" : refused.error, /Pass 2 of “Chip away” was not started/);
+      assert.match(refused.ok ? "" : refused.error, /\( M a\.txt\)/);
+      assert.equal(loopBlock(instanceId).status, "failed", "a refusal wrote nothing");
+
+      git(repoRoot(), "add", "-A");
+      git(repoRoot(), "commit", "-q", "-m", "what the tail left");
+
+      assert.deepEqual(workflows.resumeLoop(instanceId, "L"), { ok: true });
+      assert.equal(loopBlock(instanceId).status, "looping", loopBlock(instanceId).error ?? "");
+      assert.ok(
+        workflows.blocksOf(instanceId).some((b) => passTwo(b.nodeId)),
+        "pass 2 never opened once the folder was clean",
+      );
+    });
   });
 });
 
