@@ -3190,6 +3190,28 @@ describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
       assert.doesNotMatch(refusal, /nothing ever lands/);
     });
 
+    it("refuses a gate as its exit, and takes the same gate at its entry", () => {
+      // A gate holds what is behind it, and the exit has nothing behind it
+      // inside the section: the general rule answers, and a section is not
+      // exempt. At the entry the gate holds each pass before it starts, which
+      // is the pause a gate at the exit would have been drawn for — and one
+      // that never holds a pass the loop has already decided not to take.
+      const refusal = error(
+        graph(
+          [repeater("l"), node("a", flat), gater("g")],
+          [repeats("l", "a"), edge("a", "g")],
+        ),
+      );
+      assert.match(refusal, /“G” is a gate with nothing after it/);
+      const v = value(
+        graph(
+          [repeater("l"), gater("g"), node("a", flat)],
+          [repeats("l", "g"), edge("g", "a")],
+        ),
+      );
+      assert.deepEqual(v.graph.nodes[0].bodyNodeIds, ["g", "a"]);
+    });
+
     it("answers a merge block drawn at its end with one sentence, naming both ways out", () => {
       // The merge rule fires first and is the only sentence: nothing the section
       // rules say can contradict it, because they are not reached.
@@ -3424,6 +3446,16 @@ describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
       assert.doesNotMatch(refusal, /nothing ever lands/);
     });
 
+    it("refuses a gate as the tail's exit, as it does anywhere a gate holds nothing", () => {
+      const refusal = error(
+        graph(
+          [repeater("l"), decider("o"), merger("m"), node("t", flat), gater("g")],
+          [repeats("l", "o"), edge("o", "m"), edge("m", "t"), edge("t", "g")],
+        ),
+      );
+      assert.match(refusal, /“G” is a gate with nothing after it/);
+    });
+
     it("refuses an either-way link out of a merge into the tail, and says why", () => {
       // A merge that failed still *finished*, so this link would release a block
       // that edits the folder over whatever the failure left in it: a merge
@@ -3433,6 +3465,73 @@ describe("normalizeWorkflowInput — the blocks a loop repeats", () => {
       assert.match(refusal, /“B” is set to start once “M” finishes either way/);
       assert.match(refusal, /can leave the folder part-way through the merge/);
       assert.match(refusal, /Set that link to start only if “M” completes/);
+    });
+
+    describe("a merge's either-way link that reaches the tail by another way", () => {
+      // Two fanned-out branches, each with its own merge, so the tail “T” sits
+      // behind both. The rule is about the link out of the merge, wherever it
+      // leads on the way to the tail.
+      const branches = [repeater("l"), gater("g0"), decider("o1"), decider("o2"), merger("m1")];
+      const fan = [
+        repeats("l", "g0"),
+        edge("g0", "o1"),
+        edge("g0", "o2"),
+        edge("o1", "m1"),
+        edge("o2", "m2"),
+      ];
+
+      /** “M1” reaches the tail through a gate. */
+      const throughGate = (
+        out: "on-success" | "on-finish",
+        onwards: "on-success" | "on-finish" = "on-success",
+      ) =>
+        graph(
+          [...branches, merger("m2"), gater("g"), node("t", flat)],
+          [
+            ...fan,
+            edge("m1", "g", { edge: out }),
+            edge("g", "t", { edge: onwards }),
+            edge("m2", "t"),
+          ],
+        );
+
+      /** “M1” reaches the tail through the other merge, which lands its own runs. */
+      const throughMerge = (out: "on-success" | "on-finish") =>
+        graph(
+          [...branches, merger("m2"), node("t", flat)],
+          [...fan, edge("m1", "m2", { edge: out }), edge("m2", "t")],
+        );
+
+      it("refuses it through a gate, where a failed merge would be held for Continue", () => {
+        // The gate is not in the tail, so a check on direct merge-to-tail
+        // links never saw this one: with “M1” failed the gate is held, and a
+        // person pressing Continue released “T” over whatever it left.
+        const refusal = error(throughGate("on-finish"));
+        assert.match(refusal, /“G” is set to start once “M1” finishes either way/);
+        assert.match(
+          refusal,
+          /the blocks “G” leads to at the end of the section work directly in that folder/,
+        );
+        assert.match(refusal, /Set that link to start only if “M1” completes/);
+      });
+
+      it("refuses it through another merge block", () => {
+        const refusal = error(throughMerge("on-finish"));
+        assert.match(refusal, /“M2” is set to start once “M1” finishes either way/);
+      });
+
+      it("saves the same shapes with the link out of the merge on-success", () => {
+        const ids = (raw: unknown) =>
+          [...value(raw).graph.nodes[0].bodyNodeIds].sort();
+        assert.deepEqual(ids(throughGate("on-success")), ["g", "g0", "m1", "m2", "o1", "o2", "t"]);
+        assert.deepEqual(ids(throughMerge("on-success")), ["g0", "m1", "m2", "o1", "o2", "t"]);
+      });
+
+      it("leaves the link behind that gate to say either condition", () => {
+        // Past an on-success link the gate is never released over a failed
+        // merge, so what it says to the tail is the tail's own business.
+        assert.ok(normalizeWorkflowInput(throughGate("on-success", "on-finish"), KNOWN).ok);
+      });
     });
 
     it("leaves a link between two tail blocks to say either condition", () => {

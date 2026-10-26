@@ -570,14 +570,14 @@ already did, one billed pass at a time until the cap catches it.
 
 If **every** block works directly in the folder, there are no branches: each
 pass's work is already in the folder, so the next pass sees it with nothing to
-land, and the section may end at any block. The canvas marks that exit **ends
-the pass** instead of *lands the pass*. A merge block in such a section has
+land, and the section may end at any block but a gate. The canvas marks that
+exit **ends the pass** instead of *lands the pass*. A merge block in such a section has
 nothing to land and is refused with that reason.
 
 A landing section may also **end in the folder**. After its last merge block it
 can hold blocks that work directly in the folder — a run or orchestrator on a
-template that does not isolate, or a gate — and the last of them is then the
-exit and *ends the pass*; the merge before it *lands the branches*. This is the
+template that does not isolate — and the last of them is then the exit and
+*ends the pass*; the merge before it *lands the branches*. This is the
 one place the two kinds meet, and it is safe because those blocks start only
 once every merge in front of them has finished landing, and the next pass
 starts only once they have finished too. Everything before the merge still has
@@ -663,11 +663,11 @@ ends.
 each pass starts at. The way out is its **exit**, the single block the section
 ends at. In a landing section it must be a merge block, or the last block of
 its in-folder tail; in a section that works in the folder throughout it may be
-any block. Both are marked on the frame.
+any block but a gate. Both are marked on the frame.
 Between those two ends the shape is free: the section may fork, and two branches
 that fork may meet again at the merge that lands them both.
 
-Three things are refused, each naming the block to fix:
+Five things are refused, each naming the block to fix:
 
 - A section that **ends in more than one place**. The second ending is a block
   whose work nothing lands, which is the same defect as a member with no path to
@@ -678,16 +678,24 @@ Three things are refused, each naming the block to fix:
   should work in the folder, keep it after every merge block and give it a
   template that does not isolate. When it is on the default guards the
   sentence says so, because those isolate whenever Settings do.
-- A **link from a merge block into that tail set to start either way**. A merge
-  that failed has still finished, and it can leave the folder part-way through
-  the merge; set the link to start only if the merge completes.
+- A **link out of a merge block set to start either way, on any path to that
+  tail**. A merge that failed has still finished, and it can leave the folder
+  part-way through the merge; set the link to start only if the merge
+  completes. A gate or another merge block between the two does not change
+  that: the link out of the merge is the one that is asked, and once it says
+  *only if it completes* the links behind it may say either.
+- A **gate as the section's exit**. A gate holds what is behind it, and the exit
+  has nothing behind it in the section, so it is refused as a gate with nothing
+  after it. To stop for a person before each pass, put the gate at the
+  section's entry, where it holds every pass that is going to run and none that
+  is not.
 - A **link across the boundary**. A block outside the frame cannot link to a
   block inside it: link it to the frame instead, and the loop hands on to it
   after the last pass. Otherwise "when does this block start" has two answers —
   once, or once per pass — and only one of them is what anybody meant. The canvas
   says this one as you draw it rather than waiting for Save.
 
-**A section holds run blocks, orchestrator blocks, review blocks and merge blocks.** A loop
+**A section holds run blocks, orchestrator blocks, review blocks, gate blocks and merge blocks.** A loop
 inside a loop is left out, and it is refused by name: one pass cap multiplying
 another is a number nobody can work out from the two they typed. Repeat one
 section, not a section that repeats. A deliver block is left out too, for a

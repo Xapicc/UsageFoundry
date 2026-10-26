@@ -2837,20 +2837,43 @@ function loopBodyRefusal(
     // own edits in it where the queue refused to touch them. A block that
     // works in that folder would edit on top of it. `on-success` is released
     // only by a merge that landed everything, which leaves the folder clean.
+    //
+    // **Any path, not only a direct link**: a gate or another merge between the
+    // two is released by an `on-finish` link just the same, and a gate is then
+    // held for a person to press Continue over the very folder the failure
+    // left. So it is the link out of the merge that is asked, whenever the tail
+    // is reachable from where it leads. Once that first link is `on-success`
+    // the blocks behind it never start over a failed merge, so a later link on
+    // the path may say either.
+    const reachesTail = new Set(tail);
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const e of within) {
+        if (reachesTail.has(e.to) && !reachesTail.has(e.from)) {
+          reachesTail.add(e.from);
+          grew = true;
+        }
+      }
+    }
     const unsafeLink = within.find(
       (e) =>
         e.edge === "on-finish" &&
-        tail.has(e.to) &&
+        reachesTail.has(e.to) &&
         byId.get(e.from)!.kind === "merge",
     );
     if (unsafeLink) {
       const from = byId.get(unsafeLink.from)!;
       const to = byId.get(unsafeLink.to)!;
+      // Said about the block the link leads to when that is the tail itself,
+      // and about the tail it leads on to when something stands in between.
+      const working = tail.has(to.id)
+        ? `“${to.name}” works`
+        : `the blocks “${to.name}” leads to at the end of the section work`;
       return (
         `“${to.name}” is set to start once “${from.name}” finishes either ` +
         `way, inside the section “${loop.name}” repeats. A merge that failed ` +
         "can leave the folder part-way through the merge, or with what it was " +
-        `landing staged, and “${to.name}” works directly in that folder. ` +
+        `landing staged, and ${working} directly in that folder. ` +
         `Set that link to start only if “${from.name}” completes, so it runs ` +
         "once everything has landed."
       );
