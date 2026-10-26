@@ -89,8 +89,10 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - A landing section may end in an in-folder tail.
 - Why the tail is safe, and what that rests on.
 - The tail must leave the folder clean, and the loop refuses a pass over what it left rather than committing for it.
-- A link from a merge into the tail may not be `on-finish`, and the sentence says why.
+- A link out of a merge may not be `on-finish` on any path to the tail, and the sentence says why.
+- Any path, not only a direct merge-to-tail link.
 - A merge block drawn at the end of an in-folder section is answered by `graphRefusal`'s merge rule, and a second refusal for it in `loopBodyRefusal` would be wrong.
+- A gate is never a section's exit, and the general rule is what says so.
 - Nothing in a pass assumes the exit is a merge block, and the loop holds no claim on a folder.
 - `startWorkflow` probes the run members of landing sections that cut a branch, and nothing else.
 - The editor reads isolation off what its page already holds, and keeps its own copy of the kind table.
