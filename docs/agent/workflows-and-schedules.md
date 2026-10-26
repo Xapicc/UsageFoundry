@@ -98,15 +98,19 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - The editor reads isolation off what its page already holds, and keeps its own copy of the kind table.
 - The inspector says which of the two a block is, from what the editor already holds.
 
-## [When a loop stops: exit conditions, caps and the board condition](workflows-and-schedules/loop-termination.md)
+## [When a loop stops: exit conditions, caps and a requested stop](workflows-and-schedules/loop-termination.md)
 
 - A loop's exit conditions are five, and the first of them is what the agents said rather than what a row says.
 - A pass that reported it could not finish ends the loop, and the rung above it is why that works at all.
 - The guards are read again for every pass, and a pass whose guards no longer match the section it was accepted as is blocked, not carried on.
 - A loop's two caps are termini, not guards, and that is why they are allowed on a node at all.
+- "Stop after this pass" is a terminus read when the pass settles, never a halt, and it sits between what the pass did and what a limit says.
+- Whether a failed loop can carry on is read twice, and only the press reads the folder.
+
+## [A loop's board condition: when it is read, and what it counts](workflows-and-schedules/loop-board-condition.md)
+
 - A loop's board condition is a third terminus and the only one that is not a fact about a pass, which is why it alone is read before the first pass and never while one is still working.
 - The condition's numbers are an `or`, its project is one folder unless told otherwise, and a condition saved as one number is read in exactly one place.
-- "Stop after this pass" is a terminus read when the pass settles, never a halt, and it sits between what the pass did and what a limit says.
 
 ## [Loop passes: scheduling, run counts, members and `looping`](workflows-and-schedules/loop-passes.md)
 

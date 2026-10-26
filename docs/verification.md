@@ -44,7 +44,8 @@ measurement under *Verified* and cut the item down to what is still open.
 | Taskboard | [taskboard-board-and-tools.md](verification/taskboard-board-and-tools.md) — the board, its MCP tools and validation |
 | Taskboard | [taskboard-comments.md](verification/taskboard-comments.md) — task comments and threads |
 | Taskboard | [taskboard-dependencies.md](verification/taskboard-dependencies.md) — task dependencies and their drawing |
-| Workflows and schedules | [workflows-and-schedules-loop-sections.md](verification/workflows-and-schedules-loop-sections.md) — a loop's repeated section: frames, marking, passes and pick-ups |
+| Workflows and schedules | [workflows-and-schedules-loop-sections.md](verification/workflows-and-schedules-loop-sections.md) — a loop's repeated section: frames, marking and passes |
+| Workflows and schedules | [workflows-and-schedules-loop-pick-ups.md](verification/workflows-and-schedules-loop-pick-ups.md) — picking a stopped loop up, and an in-folder tail that leaves the folder dirty |
 | Workflows and schedules | [workflows-and-schedules-general.md](verification/workflows-and-schedules-general.md) — the canvas, instances, schedules, and a loop's region, link and board stop, review blocks |
 | Workflows and schedules | [workflows-and-schedules-folders.md](verification/workflows-and-schedules-folders.md) — one workflow against several saved folders, and two presses of it at once |
 | Concurrency and ownership | [concurrency-and-ownership.md](verification/concurrency-and-ownership.md) |
