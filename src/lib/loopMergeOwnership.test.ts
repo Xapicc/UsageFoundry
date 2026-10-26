@@ -767,12 +767,13 @@ describe("a block behind a pass's merge block", () => {
     [
       "an edit to a tracked file",
       () => fs.appendFileSync(path.join(repoRoot(), "a.txt"), "tail was here\n"),
-      /M a\.txt/,
+      // Quoted as git printed it, leading space and all.
+      /\( M a\.txt/,
     ],
     [
       "a file git has not seen",
       () => fs.writeFileSync(path.join(repoRoot(), "tail-note.txt"), "tail was here\n"),
-      /\?\? tail-note\.txt/,
+      /\(\?\? tail-note\.txt/,
     ],
   ];
 

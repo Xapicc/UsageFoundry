@@ -5808,7 +5808,10 @@ function passWhole(pass: LoopPass | undefined): pass is LoopPass {
  * Read with the queue's own rule, `git status --porcelain` non-empty or
  * unreadable, so an untracked file counts and an ignored one does not. The
  * folder is the one the tail's run recorded rather than one resolved from the
- * node, because that is where it actually worked.
+ * node, because that is where it actually worked. A run member is the run it
+ * became; an orchestrator member has no run of its own and its work is its
+ * `emitted` runs', which edit the folder in place all the same — read through
+ * `member.run` alone, an orchestrator tail looked like one that touched nothing.
  *
  * Synchronous for `advanceLoop`'s reason, and the one place a pass boundary
  * spawns git: once per pass, only for a section that has a tail.
@@ -5825,20 +5828,26 @@ function tailLeftDirt(
 
   const names = new Set<string>();
   const folders = new Set<string>();
+  const folderOf = db().prepare("SELECT folder FROM runs WHERE id = ?");
   for (const member of settled.members) {
-    if (!tail.has(member.nodeId) || !member.run) continue;
-    const row = db()
-      .prepare("SELECT folder FROM runs WHERE id = ?")
-      .get(member.run.id) as { folder: string } | undefined;
-    if (!row) continue;
-    names.add(`“${section.nodes.find((n) => n.id === member.nodeId)?.name ?? member.name}”`);
-    folders.add(row.folder);
+    if (!tail.has(member.nodeId)) continue;
+    for (const run of member.run ? [member.run, ...member.emitted] : member.emitted) {
+      const row = folderOf.get(run.id) as { folder: string } | undefined;
+      if (!row) continue;
+      names.add(`“${section.nodes.find((n) => n.id === member.nodeId)?.name ?? member.name}”`);
+      folders.add(row.folder);
+    }
   }
 
   const next = settled.pass + 1;
   const works = [...names].join(", ");
   for (const folder of folders) {
-    const status = gitSync(folder, ["status", "--porcelain"]);
+    // `--branch` for its header line, which `gitSync` trims along with the
+    // output's own edges: without one, the first entry loses the leading space
+    // of its index column (` M a.ts` reads as `M a.ts`) and the sentence quotes
+    // a status git never printed. The header is never blank, so only entries
+    // after it are the folder's changes.
+    const status = gitSync(folder, ["status", "--porcelain", "--branch", "--no-ahead-behind"]);
     if (!status.ok) {
       return (
         `Pass ${next} of “${loop.name}” was not started: the folder ${works} ` +
@@ -5847,8 +5856,8 @@ function tailLeftDirt(
         "refused over it."
       );
     }
-    if (status.stdout === "") continue;
-    const lines = status.stdout.split("\n");
+    const lines = status.stdout.split("\n").slice(1);
+    if (lines.length === 0) continue;
     const shown = lines.slice(0, 3).join(", ");
     const more = lines.length > 3 ? ` and ${lines.length - 3} more` : "";
     return (

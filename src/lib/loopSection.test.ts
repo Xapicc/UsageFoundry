@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { after, before, beforeEach, describe, it } from "node:test";
+import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 
 import { passMemberId } from "./passIds";
 
@@ -1967,6 +1967,121 @@ describe("a pass of a section that lands, then works in the folder", () => {
       // And it waits for no run: the merge block is what it is behind.
       assert.deepEqual(depsOf(tail.runId), []);
     }
+  });
+});
+
+/**
+ * A landing section whose in-folder tail is an orchestrator: a run in a checkout
+ * of its own, the merge block that lands it, and a deciding turn whose runs work
+ * in the folder.
+ *
+ * The tail rule admits an orchestrator as it admits a run, and what it leaves in
+ * the folder is its **emitted** runs' work: the member is a ledger row and has no
+ * run of its own, so a reading that looked only at the run a member became saw an
+ * orchestrator tail as one that never touched the folder, and opened the next
+ * pass over what it left.
+ */
+describe("a pass of a section whose in-folder tail is an orchestrator", () => {
+  const TAIL = passMemberId("L", 1, "t");
+  /** The runs the tail's deciding turn started, as the folder-settling predicate reads them. */
+  const tailRun = (memberId: string) => /#pass-\d+#t#/.test(memberId);
+
+  async function orchestratedTail() {
+    return {
+      nodes: [
+        node("a"),
+        mergeNode("m"),
+        node("t", { kind: "orchestrator", fanOut: 2, folder: "", templateId: await flatTemplate() }),
+      ],
+      edges: [
+        { from: "L", to: "a", edge: "repeats" },
+        { from: "a", to: "m", edge: "on-success" },
+        { from: "m", to: "t", edge: "on-success" },
+      ],
+      body: ["a", "m", "t"],
+    };
+  }
+
+  /**
+   * Carry pass 1 to its end, deciding the tail's turn once its merge has landed
+   * and leaving what `leave` writes in the folder as the tail's runs start, until
+   * the loop has either stopped or opened pass 2 — the two answers `advanceLoop`
+   * gives at the boundary.
+   *
+   * New work is held from the moment the merge is in flight until the turn is
+   * decided. A merge advances the instance itself when it lands, a tick after
+   * anything a test can do, and that advance would claim the tail's turn and let
+   * its spawn fail against a `CLAUDE_BIN` that is not there before `decide`
+   * could settle it. Held, the turn is claimed in the same tick it is decided.
+   */
+  async function driveTail(instanceId: string, leave?: () => void): Promise<void> {
+    const settings = await import("./settings");
+    const merge = passMemberId("L", 1, "m");
+    const statusOf = (memberId: string) =>
+      workflows.blocksOf(instanceId).find((b) => b.nodeId === memberId)?.status ?? null;
+    let decided = false;
+    try {
+      for (let step = 0; step < 60; step += 1) {
+        settleQueuedRuns(instanceId, { inFolder: tailRun });
+        workflows.advanceInstances();
+        if (!decided && statusOf(merge) === "thinking") settings.setNewWorkPaused(true);
+        if (!decided && statusOf(merge) === "emitted" && statusOf(TAIL) === "waiting") {
+          settings.setNewWorkPaused(false);
+          workflows.advanceInstances();
+          decide(instanceId, TAIL, twoRuns, 0);
+          decided = true;
+          leave?.();
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        const status = loopBlock(instanceId).status;
+        if (status !== "looping" && status !== "waiting") return;
+        if (workflows.blocksOf(instanceId).some((b) => passTwo(b.nodeId))) return;
+      }
+      assert.fail("the loop never reached the end of pass 1");
+    } finally {
+      settings.setNewWorkPaused(false);
+    }
+  }
+
+  const passTwo = (id: string) => id.startsWith(passMemberId("L", 2, ""));
+  const editTrackedFile = () =>
+    fs.appendFileSync(path.join(repoRoot(), "a.txt"), "tail was here\n");
+
+  // A case that fails part-way leaves what its tail wrote in the operator's tree.
+  afterEach(() => {
+    git(repoRoot(), "reset", "--hard", "-q");
+    git(repoRoot(), "clean", "-fdq");
+  });
+
+  it("does not open pass 2 over what its runs left in the folder", async () => {
+    const instanceId = scene({ ...(await orchestratedTail()), maxPasses: 2 });
+    await driveTail(instanceId, editTrackedFile);
+
+    assert.deepEqual(
+      workflows.blocksOf(instanceId).map((b) => b.nodeId).filter(passTwo),
+      [],
+      "pass 2 was opened over a folder its merge would be refused",
+    );
+    assert.deepEqual(membersOf(instanceId).map((m) => m.memberId).filter(passTwo), []);
+    const loop = loopBlock(instanceId);
+    assert.equal(loop.status, "failed", loop.error ?? "");
+    assert.match(loop.error ?? "", /Pass 2 of “Chip away” was not started/);
+    assert.match(loop.error ?? "", /“T”/, "the sentence does not name the tail");
+    // Quoted as git printed it: ` M` is a worktree edit, and the space is the
+    // index column. `gitSync` trims its output, which took it off the first line.
+    assert.match(loop.error ?? "", /\( M a\.txt\)/);
+    assert.match(loop.error ?? "", /commit what it changes/);
+  });
+
+  it("takes pass 2 when the tail's runs left the folder clean", async () => {
+    const instanceId = scene({ ...(await orchestratedTail()), maxPasses: 2 });
+    await driveTail(instanceId);
+
+    assert.ok(
+      workflows.blocksOf(instanceId).some((b) => passTwo(b.nodeId)),
+      "a clean folder stopped the loop",
+    );
+    assert.notEqual(loopBlock(instanceId).status, "failed", loopBlock(instanceId).error ?? "");
   });
 });
 
