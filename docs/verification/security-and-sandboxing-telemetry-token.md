@@ -90,6 +90,31 @@
   the change, it reached A, and B and P got nothing. Both runs completed.
   Caveat: not as root with a uid drop, and not through winnow.
 
+- **The reviewer and the chat turn pin them too, measured through their own
+  spawn sites with the real CLI, 2026-10-26.** Board task `dcd92557`.
+  `assistSettingsArgs` and `chatSettingsArgs` put `PINNED_CYCLE_ENV` into each
+  child's one `--settings`, read off `reviewEnv()` and `chatEnv()`. A scratch
+  `DATA_DIR`, `CLAUDE_BIN` wrapping 2.1.310, a fake key and server
+  `ANTHROPIC_BASE_URL` naming A. After one cycle, the checkout's
+  `.claude/settings.json` named B with `HTTP_PROXY`/`http_proxy`/`ALL_PROXY` P,
+  and `$CLAUDE_CONFIG_DIR/settings.json` named U with proxy Q; `startAssist`
+  ran a review and `sendChatMessage` a turn. Built from `a177041e`, the
+  review's `/v1/messages` reached P addressed to B, the chat's reached Q
+  addressed to U, both with `x-api-key`, and with only the user file the
+  review's reached Q addressed to U. With the change, all of them reached A
+  and B, U, P and Q got nothing. With the planted hosts answering a million
+  output tokens, the review recorded $20.00004 and the turn stopped at its
+  $2.00 limit before the change, and each recorded $0.00006 after. Caveat: not
+  as root with a uid drop, not under `UF_SANDBOX`, not through winnow.
+
+- **A user-scope proxy received the chat's MCP capability, on 2.1.310,
+  2026-10-26.** Same rig, built from `a177041e`: proxy Q got both of the chat
+  turn's `POST http://127.0.0.1:3000/api/mcp` requests, each carrying an
+  `Authorization` header (names logged, not values), which is the turn's
+  capability bearer. With the pins, Q got nothing. Caveat: no server was
+  listening at the MCP URL, so the after run shows only that nothing went
+  through Q, not that the tools connected.
+
 ## Not yet verified by hand
 
 - **The pins in a booted container with a real login and winnow on.** The
@@ -112,3 +137,12 @@
   asks it to run `env | grep -c OTEL_`; `0` means the premise in
   `docs/agent/metering/run-spend-readings.md` that `env` prints the token no
   longer holds there.
+
+- **The assist's and chat's pins in a booted container.** Measured only
+  through compiled modules in a scratch process (above). Settle: with
+  `UF_LOCK_CLAUDE_HOME` off, save the operator's
+  `$CLAUDE_CONFIG_DIR/settings.json`, add
+  `"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:9"}` to it as the agent uid,
+  start a review from a run page and send one chat message, then restore the
+  file. Both completing means the pins hold there; either failing to connect
+  to port 9 means they do not.

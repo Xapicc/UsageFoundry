@@ -1390,9 +1390,10 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
  * `--setting-sources`, so the CLI applies the `env` of that checkout's
  * `.claude/settings.json` and `settings.local.json`, and of
  * `$CLAUDE_CONFIG_DIR/settings.json`, over the environment it was spawned
- * with. Each file is one a work cycle can write, and its `env` decides where
- * the reviewer's or validator's requests go and the credential on them, and
- * what spend it reports (`PINNED_CYCLE_ENV`). `--settings` outranks all three
+ * with. A work cycle writes the checkout's two, and the user file too unless
+ * `UF_LOCK_CLAUDE_HOME` holds, and their `env` decides where the reviewer's or
+ * validator's requests go, the credential on them and the spend it reports
+ * (`PINNED_CYCLE_ENV`). `--settings` outranks all three
  * (measured on 2.1.310), so the pins go here, read off `spawnEnv`, which must
  * be the environment the child is spawned with.
  *

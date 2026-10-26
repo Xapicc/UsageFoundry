@@ -360,7 +360,7 @@ Its cases are in `orchestrator.test.ts`; see that file's row above.
 | `codexRollout.test.ts` |  |
 | `mcpStatus.test.ts` |  |
 | `notify.test.ts` |  |
-| `review.test.ts` | [pricing], [landing], [stacks] |
+| `review.test.ts` | [pricing], [landing], [stacks], [argv] |
 | `liveStream.test.ts` |  |
 | `liveSubagents.test.ts` |  |
 | `liveTiles.test.ts` |  |
