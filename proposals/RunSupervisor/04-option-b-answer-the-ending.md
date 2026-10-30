@@ -59,7 +59,7 @@ No new status, no new tool, no model.
 | **Spend with nobody present** | None. The cycle an answer starts passes the pre-cycle `evaluateBudget` (`src/lib/orchestrator.ts:12058`-`:12075`), and an answer cannot be given with nobody present. |
 | **Injection** | The run's reason is read by a person. The answer is a person's words. No model reads another model's text on the way. |
 | **What the operator sees** | The reason and the answer, both on the run page. The answer is also the cycle's prompt, shown under the run's next cycle row (`proposals/ContinuousImprovement/README.md`, item 0e). `run.needs_review` already notifies. In the morning: the runs list filtered to `needs-review`, every row of which is a question nobody has answered. |
-| **Providers** | All three. `cycleEnding` reads the final text whatever CLI wrote it. A Codex run's session resumes through its own adapter. A local run is unchanged. |
+| **Providers** | All three. `cycleEnding` reads the final text whatever CLI wrote it. A Codex run's session resumes through its own adapter, as `codex exec resume` (`src/lib/cycleInvocation.ts:2029`). A local run is unchanged. |
 | **Too much, too little** | Floor: an answer box nobody uses is visible as unanswered `needs-review` rows older than a week. Kill criterion, fixed in [`13-validation.md`](13-validation.md) §3: if the operator keeps answering decisions by starting fresh runs, B was wrong about why the pick-up route is unused. B does not make asking cheaper for the run. The notice's wording, which makes the ending cost more than carrying on, stays. |
 
 ## 4. Cost to build
@@ -98,8 +98,9 @@ about use, not about correctness.
 **Recommended**, as the whole of what the measured traffic supports, and it is
 small. It is the stack park's refund applied to the ending this app already
 teaches, and it adds nothing a model could get wrong. Be clear about its reach.
-Of the ≈ 13 decisions in the window, four arrived as a `needs-review` ending:
-`925e5b4e` and `9f968ffa` each reserve a choice for the operator, `2ce878df` had
-no task at all, and `b8664b0d` asked whether its documented state was enough to
-close. Those four are what B reaches. The rest went to the board as tasks, and B
+Of the ≈ 13 decisions in the window, three arrived as a `needs-review` ending:
+`925e5b4e` and `9f968ffa` each reserve a choice for the operator, and `2ce878df`
+had no task at all. A fourth, `b8664b0d`, is classed physical (a host-shell
+measurement), with a secondary question: whether its documented state was enough
+to close. Those three, or four counting that question, are what B reaches. The rest went to the board as tasks, and B
 changes nothing for them; they stay [A](03-option-a-build-nothing.md)'s.

@@ -63,8 +63,9 @@ Three consequences follow.
    There it wakes nothing: the cycle is already live, already counted, already
    under `--max-budget-usd`.
 3. **Any refund is bounded by a count on the row.** Neither the person nor the
-   model bounds it. `MAX_STACK_WAITS_PER_RUN` and `guard_refunds` are the
-   arrangement (`docs/agent/budgets-and-guards/termini-and-waiting.md:11`).
+   model bounds it. `guard_refunds` (`docs/agent/budgets-and-guards/termini-and-waiting.md:11`)
+   and `MAX_STACK_WAITS_PER_RUN` (`docs/agent/budgets-and-guards/termini-and-waiting.md:13`,
+   `src/lib/stackRequests.ts:83`) are the arrangement.
 
 And the cycle a release starts passes the pre-cycle `evaluateBudget` like any
 other (`src/lib/orchestrator.ts:12058`-`:12075`), through `promoteQueued`, never
@@ -81,7 +82,7 @@ and "a guard set arriving from storage may never widen what a run may do"
 |---|---|
 | A fact the repository, the board, an earlier run or the vault records, citing where | Any change to the run's budget, `maxIterations`, `maxDurationMinutes`, permission mode, isolation, model or agent |
 | The brief's intent, **where** the brief or the operator's own words in the originating conversation show it, quoting them | Any of the operator's presses: push, land, deliver, fetch. The chat is told it does not "push or git fetch yourself … a push cannot be taken back" (`src/lib/chat.ts:4298`-`:4302`) |
-| A known fix for an error, where `CLAUDE.md`, a memory note or `list_recurring_failures` records it | Claiming, closing or clearing an `operatorOnly` task (`src/lib/tasks.ts:369`-`:375`) |
+| A known fix for an error, where `CLAUDE.md`, a memory note or `list_recurring_failures` records it | Claiming an `operatorOnly` task, which is the only way a run could come to close one (`src/lib/tasks.ts:369`-`:375`), or clearing the mark (`docs/agent/taskboard/operator-only-and-release.md:35`-`:48`) |
 | "The brief does not say; carry on under your best reading and record it" | Anything outside the brief's scope: a second task, a file the brief fences off, a repository it does not name |
 | | A destructive or irreversible step: a history rewrite, a deletion outside the run's own checkout, anything sent off the machine |
 | | A credential, a decision the brief reserves, a preference only the operator holds |
@@ -266,8 +267,9 @@ under `--tools ""` is assumed, not measured; U4 settles it.
 
 ### C10. A channel that is never used is as much a failure as one that is used too much
 
-- **Too little.** `ask_operator` was called 3 times in 152 operator turns, each
-  time prompted by the operator, because its judgement sat in a deferred
+- **Too little.** `ask_operator` was called 3 times in 152 operator turns by the
+  vault's count, and 3 in 142 by this survey's recount, each time prompted by the
+  operator or about the operator's own data, because its judgement sat in a deferred
   description ([`02-what-already-asks.md`](02-what-already-asks.md) §3).
 - **Too much.** *Ask or Assume (Edwards and Schuster 2026)* (`confidence:
   medium`, `status: growing`) found that the arm told to ask "asked once" on

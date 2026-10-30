@@ -13,7 +13,7 @@
    - **0** of those were anything a model could answer;
    - 7 ended `NEEDS_REVIEW`, 0 called `request_stack`, and 0 were picked up with
      a note ([`00-problem.md`](00-problem.md) §2).
-2. **The model-answerable traffic is three questions, and they share one cause.**
+2. **The model-answerable traffic is three cases, and they share one cause.**
    Runs tried to write a memory note with a shell redirect into a directory that
    only the Write tool can reach. A supervisor would have said what the operator's
    own memory note already says. Errors were otherwise solved by the runs in a
@@ -22,8 +22,10 @@
    would be tool-less, stateless, server-gated and inside a call that wakes
    nothing. *Ask or Assume*'s 16 points were recovered with a user who held the
    missing specification. No document here holds a specification a run cannot
-   read, and the operator's chat words already reach the run as a 4,946-character
-   median brief.
+   read. The chat's proposals already carry the conversation into the run: its
+   briefs' median was 4,946 characters when the *UsageFoundry Orchestrator Chat
+   Quality Proposal* (vault, `confidence: medium`, `status: archived`) measured
+   them on 2026-09-02.
 4. **What does cost something is answering a decision to a stranger.** A run that
    wrote five costed options and stopped is answered today by the operator
    filing or briefing a **fresh** run, which re-derives the reading. The pick-up
@@ -52,7 +54,7 @@
 - **D, a tool-less tiered supervisor.** The right shape and the wrong month.
   Three to four days to say three things. Kept as the build if the overturning
   fact arrives.
-- **C, a general ask-and-park.** The same four questions as B at three to five
+- **C, a general ask-and-park.** The same three or four questions as B at three to five
   times the build, and a second way to reach a person beside the ending runs
   already use. Built if pick-ups start failing for a taken slot.
 - **E, the spawner answers.** A block has ended before its runs exist. A chat
@@ -84,9 +86,9 @@ of the sketch. Its escalation path is B, which will already exist.
 **Option A, build nothing.** It differs from B by a day of build and by whether a
 decision reaches the run that asked or a fresh one. B rests on an unmeasured
 premise, that the operator would use the box: zero pick-up notes in the window
-means either the route was too dear or it is not how they work. If the box goes
-unused for the first five decision-shaped endings after it ships, revert it, and A
-is the answer ([`13-validation.md`](13-validation.md) §3).
+means either the route was too dear or it is not how they work. If, of the first
+five decision-shaped `needs-review` endings after it ships, however long they take
+to arrive, at most one is answered through the box, revert it, and A is the answer ([`13-validation.md`](13-validation.md) §3).
 
 ## If the operator wants a supervisor anyway
 

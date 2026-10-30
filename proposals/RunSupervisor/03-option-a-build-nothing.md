@@ -20,7 +20,7 @@ judge anything.
 
 Every one of those routes survives a restart, notifies where it should
 (`run.needs_review`, `src/lib/notify.ts:108`-`:112`), is permanent on the task
-page (`docs/agent/retention.md:24`), starts nothing, and costs nothing beyond the
+page (`docs/agent/retention.md:26`), starts nothing, and costs nothing beyond the
 run's own cycle. A supervisor adds a fourth way to reach the operator beside the
 three that work, and *Orchestration Topologies* (vault, `confidence: medium`,
 `status: growing`) finds that most added coordination loses to a matched single
@@ -51,10 +51,13 @@ ends.
 **A decision answered on the board is answered to a stranger.** The run that
 asked had the context: it had read the code, measured, and written five options
 with their costs. The run that acts on the answer starts cold and re-derives it.
-ContinuousImprovement measured re-derivation on this install, finding that 73.2%
-of `Read` calls hit a file an earlier run had already read
-(`proposals/ContinuousImprovement/README.md:72`). A new run pays that again, plus
-a brief someone had to write.
+ContinuousImprovement measured the reading half of that on this install: 73.2% of
+`Read` calls hit a path an earlier run on the repository had already read, of
+which it judged 36.1% of all reading addressable, and it called the figure "an
+opportunity, not a bill" (`proposals/ContinuousImprovement/README.md:106`-`:108`,
+`:119`). That measures re-reading, not the cost of re-deriving a decision, which
+nobody has measured. A new run pays some of it again, plus a brief someone had to
+write.
 
 The pick-up route avoids that and is unused: **zero** operator pick-up notes in
 the window ([`00-problem.md`](00-problem.md) §2). Whether that is because it is

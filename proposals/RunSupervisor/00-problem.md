@@ -75,7 +75,7 @@ keys them.
 
 - **Population.** 494 runs from 2026-10-01 to 2026-10-27: 483 isolated runs
   keyed by their `uf/…` branch and 11 unisolated. By repository: UsageFoundry 272,
-  Dockrac 190, auto-upload 23, four others 9. They made 656 prompt cycles; 346
+  Dockrac 190, auto-upload 23, three others 9. They made 656 prompt cycles; 346
   runs had one.
 - **Excluded.** Validator (664), resolver (56), reviewer, chat (92 sessions),
   dispatcher, vault-gate (231), vault-folder and Mac sessions, every sub-agent,
@@ -110,7 +110,7 @@ The upper bound is what their reports say they decided alone, and that is kind 4
 | …the same, handed over as `release_task` | 13 in 13 runs (4 also ended `NEEDS_REVIEW`) | 0 | 13 | 0 |
 | …the same, filed as an `operatorOnly` task | 58 calls in 56 runs (of 668 `create_task`) | — | 58 | — |
 | …or as a task that hands a decision over in words | 6 | — | 6 | — |
-| **(b) Help with an error**: a known trap hit for real | `tsc: not found` 22 runs; memory directory not writable from Bash 18; nested `claude` "Not logged in" 1; the other four `CLAUDE.md` traps **0** | 3 | 0 | 38 |
+| **(b) Help with an error**: a known trap hit for real | `tsc: not found` 22 runs; memory directory not writable from Bash 18; nested `claude` "Not logged in" 1; the other three `CLAUDE.md` traps **0** | 3 | 0 | 38 |
 | **(c) About its own task**: report says already done, or the brief was wrong | 34 keyword hits, 18 genuine | 0 | 3 | 15 |
 | …final reports listing judgement calls or assumptions | 84 keyword hits; seeded sample of 25 | 0 | 2 | 19 (4 false positives) |
 | **(d) A check before a destructive step** | 68 keyword hits; 2 genuine stops, both handled | 0 | 2 deferrals, not destructive | 4 |
@@ -138,12 +138,14 @@ Scripts, in [`scripts/`](scripts/): `needs_review.py` (all (a) rows),
 2. **Errors (b) were solved by the runs themselves, fast.** `tsc: not found`, the
    `NODE_ENV=production` trap `CLAUDE.md` names first, cost a median of one
    assistant message and at most three; 13 of the 22 briefs already named it.
-   - The four other traps never fired for real. Every hit on their strings was a
+   - The three other `CLAUDE.md` traps never fired for real. Every hit on their strings was a
      run *reading* `CLAUDE.md` or a memory note that quotes them, which is the
      traps' documentation working.
    - The 3 MODEL-ANSWERABLE cases are runs that tried to write a memory note with
      a shell redirect, were refused because the directory is Write-tool only, and
-     ran out of turns. A supervisor could have said so. So does the operator's
+     never applied the fix: no `Write` or `Edit` on the memory directory after the
+     refusal (`scripts/known_errors.py`). Nothing shows they wanted to ask. A
+     supervisor could have said so. So does the operator's
      own memory note `uf-bash-call-pid-netns.md`: "This memory directory is
      read-only to Bash; write it with the Write tool." A cycle's sandbox
      configuration lists `/home/node/.claude/projects` among the paths it denies
@@ -162,8 +164,9 @@ Scripts, in [`scripts/`](scripts/): `needs_review.py` (all (a) rows),
 4. **Destructive steps (d) are not a kind on this evidence.** The two genuine
    stops were "I'm reading it before deleting it" and "I couldn't tell whether
    they were mine, so I didn't delete them". Both are a run being careful on its
-   own, and neither needed an answer. The 71 "did not push" hits are runs obeying
-   the 305 briefs that say so. **The kind is dropped.**
+   own, and neither needed an answer. The 71 "did not push" hits sit beside 305
+   briefs that tell the run not to push; the two sets were not intersected, so
+   reading those hits as compliance is an inference. **The kind is dropped.**
 5. **The stack park has never been used** in this window, on an install where
    `taskboardForRuns` is on.
 
@@ -189,7 +192,7 @@ prompt.
 1. **The need is small, and it is the operator's.** In 27 days, 494 runs raised:
    - about 13 decisions;
    - about 60 physical hand-offs;
-   - **3 questions a read-only model could have answered**, all three a
+   - **3 points a read-only model could have answered**, all three a
      filesystem rule the harness already states.
 
    Most of the operator's idea is a model that answers on their behalf. On this

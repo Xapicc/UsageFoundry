@@ -72,12 +72,12 @@ On the measured traffic, very little.
   was refused for a taken slot. That cannot be measured from transcripts, so it is
   assumed rare, not shown rare.
 - **The question is structured** (choices) rather than a free-text reason. The two
-  decision-shaped `needs-review` reasons already listed their options in prose,
-  and one recommended one.
+  `needs-review` reasons that reserve a choice already listed their options in
+  prose, and one recommended one.
 - **The run is not counted as ended** on the runs list, so it does not look like
   a judgement on the task.
 
-It carries the same four `needs-review` decisions B does, and it competes with the
+It carries the same three or four `needs-review` decisions B does, and it competes with the
 ending runs already know. Runs did not use `request_stack` once in the window.
 A second ask-and-park tool has no evidence it would fare differently.
 

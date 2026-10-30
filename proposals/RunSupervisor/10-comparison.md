@@ -5,8 +5,8 @@
 | | Who answers | Transport | Wakes or extends a run (C1) | Widens a guard (C2) | Hub or upward injection (C6) | Logged where the operator pages (C4) | Measured traffic it serves | Build |
 |---|---|---|---|---|---|---|---|---|
 | **A** nothing | operator, on the board | ask-and-end; a fresh run acts | no | no | no; a person reads it | task notes, forever | all of it, to a cold run | 0 |
-| **B** answer the ending | operator, on the run page | ask-and-end; pick-up of the same run | only the operator's press, refund ≤ 3 | no | no | reason + answer on the run page | the 4 decision-shaped `needs-review` endings, to the run that asked | ½–1 d |
-| **C** ask and park | operator | park at the cycle end | only the operator's press, refund ≤ 3 | no | no | question rows | the same 4, keeping the slot | 2–3 d |
+| **B** answer the ending | operator, on the run page | ask-and-end; pick-up of the same run | only the operator's press, refund ≤ 3 | no | no | reason + answer on the run page | the 3–4 decision-shaped `needs-review` endings, to the run that asked | ½–1 d |
+| **C** ask and park | operator | park at the cycle end | only the operator's press, refund ≤ 3 | no | no | question rows | the same 3–4, keeping the slot | 2–3 d |
 | **D** tiered supervisor | server, then a tool-less model, then operator via B | blocking call, < 60 s | no; the answer lands in a live call | no; Tier 0 gates by kind | stateless and tool-less: no hub, no act | `run_supervisions` rows | **3** memory-directory writes, and half of one close-check dispute | 3–4 d |
 | **E** the spawner | a fork of the proposing chat | blocking call or park | as D | as D | the chat's context; tool-less | as D | **0**; and `origin: chat` runs only | 2–3 d after D |
 | **F** native messaging | whoever is live in the container | CLI inbox | **yes**: another turn | **yes**: `plan` ↔ `acceptEdits` | **yes**: peer, forwardable | **no**: not on the receiver's stream | 0; there is no live spawner | ~0, unscopable |
@@ -37,7 +37,7 @@ code would show any of them.
 
 ## What dominates what, on the evidence
 
-- **B dominates C on the measured traffic.** They serve the same four questions.
+- **B dominates C on the measured traffic.** They serve the same three or four questions.
   C's extras are the slot kept, a structured question, and a non-ending status.
   None of those was seen to matter, and C costs three to five times the build and
   a second way to reach a person beside the one runs already use.
@@ -45,7 +45,7 @@ code would show any of them.
   available to D as plain message rows, without resuming the most privileged
   child's session. No measured question needed it.
 - **B weakly dominates A**, by one day of build against the cold start of a fresh
-  run on four decisions a month. That is a small margin, and B's premise that the
+  run on three or four decisions a month. That is a small margin, and B's premise that the
   operator would use the box is unmeasured. So A is the runner-up, not a
   distant third.
 - **D does not dominate B, and B does not dominate D.** They serve disjoint

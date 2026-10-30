@@ -282,7 +282,8 @@ that is waiting.
 
 - **The silence watchdog.** Any stdout or stderr chunk re-arms it
   (`src/lib/orchestrator.ts:8574`-`:8590`). When it fires, the run ends
-  `failed` with ending code `deadline` (`src/lib/orchestrator.ts:8737`-`:8746`).
+  `failed` with ending code `deadline` (`src/lib/orchestrator.ts:8737`-`:8746`,
+  `:879`, `:892`-`:893`).
   "The CLI heartbeats a tool call on the main thread every 30 seconds"
   (`src/lib/orchestrator.ts:1048`-`:1049`), measured for `Bash`.
 - **The live guards.** Under the default `between-cycles` enforcement they are
@@ -322,7 +323,7 @@ runner is `scripts/mcp-wait-probe.sh <label> <mode> <delaySec>`.
 - **So:** a blocking call through today's route must answer in **under 60 s**. One
   line in `writeMcpConfig`, a `timeout` on the run's server entry, lets it wait
   as long as that value. Nothing the app writes today sets one; `grep -rn
-  "MCP_TOOL_TIMEOUT\|IDLE_TIMEOUT" src/` finds nothing.
+  "MCP_TOOL_TIMEOUT\|CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT" src/` finds nothing.
 - **Codex (0.153.4)** waits **300 s** wall clock by default and is silent on
   stdout meanwhile. `timed out awaiting tools/call after 300s` at a 400 s delay;
   90, 150 and 270 s succeeded. `tool_timeout_sec` moves it (120 failed at 120;

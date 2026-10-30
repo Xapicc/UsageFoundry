@@ -77,8 +77,8 @@ window after Phase 1 ships.
 | | Threshold | If it fires |
 |---|---|---|
 | **B's floor** | Fewer than 2 `needs-review` endings in the window | The box is moot, not wrong. Leave it, and measure again in a quarter |
-| **B's kill criterion** | Of the first five decision-shaped `needs-review` endings, the operator answers **at most one** through the box and the rest by starting fresh runs | Revert Phase 1. A is the answer |
-| **C's trigger** | **Two or more** pick-ups refused in the window because another run took the worktree slot (`reopenRun`'s refusal at `src/lib/orchestrator.ts:15893`-`:15901`). Count 4xx `POST /api/runs/<id>/reopen` rows in `request_log`; the route is wrapped in `auditMutation` (`src/app/api/runs/[id]/reopen/route.ts:108`), which keeps the status and not the sentence, so read the reason on each run's page | Build Phase 4 |
+| **B's kill criterion** | Of the first five decision-shaped `needs-review` endings after Phase 1 ships, **however long they take to arrive** (about five weeks at October's rate, so this one is not on the four-week window), the operator answers **at most one** through the box | Revert Phase 1. A is the answer |
+| **C's trigger** | **Two or more** pick-ups in the window that `reopenRun` refused because another run took the worktree slot (`src/lib/orchestrator.ts:15893`-`:15901`). **The readout cannot count this.** The refusal sentence is returned in the 400 and shown once in the Resume form (`src/app/runs/[id]/page.tsx:1374`-`:1375`), and stored nowhere. `request_log` keeps only the status (`src/app/api/runs/[id]/reopen/route.ts:108`), and every reopen refusal is a 400. So the operator counts it, from the form | Build Phase 4 |
 | **D's trigger (the overturning fact)** | **Three or more** MODEL-ANSWERABLE questions across `needs-review` reasons, notes given through the box, and decision tasks runs filed, of which **two** are not one recurring cause that a sentence in `CLAUDE.md` or a notice would fix | Run §2, then build Phase 3 if it passes |
 | **D's floor, once built** | Fewer than 1 call per 50 runs over four weeks | Remove the tool. A channel found as rarely as `ask_operator` was is a standing tool cost for nothing |
 | **D's kill criterion, once built** | More than 1 call per 5 runs, **or** more than half of calls NOT A QUESTION under `rules.txt` | Remove the tool. The operator questions survey set "more than about one turn in five" as its own removal bar (*UsageFoundry Operator Questions Proposal*, vault, `confidence: low`, `status: archived`); a call that asks what the run could read is the habituation surface C10 names |
@@ -120,15 +120,19 @@ very text the channel replaces.
   - `--resume` composes.
 
   The base fold was re-run for this file.
-- Every code claim was read at the commit that adds this directory.
-  `node scripts/check-citations.mjs` resolves every `path:line`.
+- `node scripts/check-citations.mjs` resolves every `path:line` at the commit that
+  adds this directory, which proves only that the line exists. About 55 citations
+  the argument rests on were then read back for content by an independent check,
+  which found six that pointed at the wrong line or said less than claimed. Those
+  are corrected. The rest were not each re-read.
 
 **Assumed or not established.**
 
 - **Whether the operator would use the answer box.** Zero pick-up notes in the
   window is the only evidence, and it cuts both ways. §1 tests it.
 - **Whether a pick-up was ever refused for a taken slot.** Transcripts cannot show
-  a refused HTTP request; `request_log` keeps its status, and the run page its reason.
+  a refused HTTP request, and the app keeps the status of one and never its reason
+  (C's trigger in §3), so this one rests on the operator noticing.
 - **Codex mid-run input.** `codex queue` exists, but whether it reaches an `exec`
   turn is not established. The command that settles it is in
   [`02-what-already-asks.md`](02-what-already-asks.md) §7.

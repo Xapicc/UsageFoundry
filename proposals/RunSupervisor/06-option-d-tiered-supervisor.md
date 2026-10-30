@@ -58,6 +58,22 @@ the route's transport. Its prompt is composed by the server from:
 Nothing from any other run's questions or answers is ever in it. That is C6 rule
 1, and it removes the hub.
 
+**Why no read-only tools, which is the form the brief names.** A supervisor with
+`Read`, `Grep` and `Glob` is a second agent loop. It has three costs and no
+benefit:
+
+- **Latency.** Each tool round is a model request, so it would not fit under the
+  60 s a plain-JSON reply gets.
+- **Sources a payload can choose.** The question decides what gets read, so a
+  payload in it picks the files whose text ends up in the answer.
+- **Nothing the run lacks.** Every path it could read, the asking run can read
+  too, and a run that wanted a file read could have read it.
+
+What the run *cannot* easily reach is narrow: the operator's chat turns, and the
+recurring-failure index. The server can hand over both deterministically and log
+which it handed. So the supervisor's reads are the server's selection, and its
+sources are checkable because the server chose them.
+
 It answers JSON: `{answer, sources[], escalate}`. `escalate` routes to Tier 0's
 reply. The tool returns the answer with its sources, or the escalation sentence.
 
@@ -81,7 +97,7 @@ so these rows are owed.
 | **Injection** | Upward: the question can make Tier 1 *say* anything, and nothing more. Downward: the answer arrives as a tool result labelled with its sources. Across: none, because each call is stateless. The residual risk is a persuasive wrong answer, which is what sources are for |
 | **What the operator sees** | Every question and answer on the run page, its cost in the run's spend breakdown, and a count on the runs list. Nothing notifies, because nothing waits. In the morning: escalations are `needs-review` endings, as in B |
 | **Providers** | Codex gets the tool through the same token, and its client waits 300 s by default, well over the 45-second clock ([`02-what-already-asks.md`](02-what-already-asks.md) §7). A local run carries the tool's full schema on every request (`docs/agent/local-provider.md:9`) |
-| **Too much, too little** | The tool would be deferred and found rarely ([`02-what-already-asks.md`](02-what-already-asks.md) §3) unless the cycle's notices name it, which costs prefix on every run. Named, the Ask-or-Assume arm "asked once" on nearly every task. Floor and kill criterion: [`13-validation.md`](13-validation.md) §4 |
+| **Too much, too little** | The tool would be deferred and found rarely ([`02-what-already-asks.md`](02-what-already-asks.md) §3) unless the cycle's notices name it, which costs prefix on every run. Named, the Ask-or-Assume arm "asked once" on nearly every task. Floor and kill criterion: [`13-validation.md`](13-validation.md) §3 |
 
 ## 4. What it costs
 
@@ -89,7 +105,8 @@ so these rows are owed.
   - a tool;
   - Tier 0's matcher;
   - a composer;
-  - a sixth child kind that has to be argued against
+  - a fifth kind of agent child (the doc counts four, beside sign-in children
+    that start no agent), which has to be argued against
     `docs/agent/architecture/run-loop-and-child-processes.md:7`;
   - a table, an `installSpend` term, a page section;
   - tests for the matcher and the composer, which are pure and fail silently.
