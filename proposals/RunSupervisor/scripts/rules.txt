@@ -1,0 +1,57 @@
+CLASSIFICATION RULES (written before any instance was classified)
+
+Each instance is a point at which a run asked, or would have had to ask, somebody
+something. The unit is the question the run was stuck on, not the run's whole
+outcome. Every instance gets exactly one class.
+
+MODEL-ANSWERABLE
+  A supervisor that can read the repository, the taskboard (task bodies and
+  comments), earlier runs' transcripts and the operator's notes vault, and can
+  write nothing, could have given the answer from what was already there when the
+  question arose. The test is a pointer: name the CLAUDE.md line, doc, task
+  comment, earlier run or vault note the answer was in. If the answer needs the
+  supervisor to *choose* between options the sources leave open, it is not this
+  class. If the run had the source in its own context and applied it correctly,
+  that is NOT A QUESTION, not this class.
+
+OPERATOR-ONLY
+  The answer is something only the operator holds, one of:
+    decision    a choice between options whose cost lands on the operator
+                (security posture, deployment capability, scope, product taste,
+                what a word in the brief meant) and that the written sources
+                leave open;
+    permission  authority to do what the run is not allowed to do, or to relax a
+                done-condition the board holds the run to;
+    credential  a secret, account or login the run does not have;
+    physical    an action in the world the run cannot reach: the operator's
+                Mac or host shell, a VM, a device, installing something outside
+                the run's sandbox.
+
+NOT A QUESTION
+  The run dealt with it, or it was never open. The run proceeded correctly on
+  its own reading of the brief, followed an instruction it had been given
+  (for instance "do not push"), stated a fact or an assumption that cost nothing
+  to get wrong or to reverse, or the text only looks like a question. Asking
+  would have cost a turn and bought nothing.
+
+FALSE POSITIVE
+  The keyword matched text that is not what the pattern was written to find
+  (a quoted brief, a test name, code, a doc being read). Removed from the
+  denominators and counted separately.
+
+Tie-breaks, applied in this order:
+  1. If the run needed something physical or a credential, OPERATOR-ONLY, even
+     if a model could also have said "that is blocked".
+  2. If the sources answered it, MODEL-ANSWERABLE, even if the operator could
+     also have answered it.
+  3. If both OPERATOR-ONLY and NOT A QUESTION readings are fair (the run made a
+     call that a person might have wanted a say in), NOT A QUESTION unless a
+     wrong guess would be expensive or hard to reverse for the operator.
+  A report that lists several calls is labelled by its most operator-dependent
+  call that a wrong guess would have made costly; routine implementation choices
+  never lift a report out of NOT A QUESTION.
+
+Sampling: where an instance count exceeds 25, a seeded sample (random.Random(27)
+over the instances sorted by (timestamp, id)) of 25 is classified. Sample counts
+are not extrapolated to a population figure by these scripts; the reply states
+the sample share beside the exact keyword-match count.
