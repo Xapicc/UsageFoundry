@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { runVerify, type VerifyOutcome } from "./landGate";
+import { runVerify, verifyCommandFor, type VerifyOutcome } from "./landGate";
 import { openPullRequest, planDelivery, type DeliveryRequest } from "./delivery";
 import path from "node:path";
 import { addWorktree, git, headBranchOf } from "./git";
@@ -856,6 +856,26 @@ export function seedGlobsOf(run: RunRow): string[] {
     settings.isolationCopyGlobsByRepo,
     WORKSPACE_MOUNTS,
   ).globs;
+}
+
+/**
+ * The check Land and Deliver put in front of this run's branch: its repository's
+ * own entry in `landVerifyCommandByRepo`, else `landVerifyCommand`.
+ *
+ * Keyed on `repo_root ?? folder` as `seedGlobsOf` and the GitHub credential
+ * are, so one folder is one repository to all three. Read at each of the three
+ * places that gate on it, from the settings as they are then, never cached on
+ * the run: the operator's edit applies to the next press, as the install-wide
+ * command's always did.
+ */
+export function verifyCommandOf(run: RunRow): string {
+  const settings = getSettings();
+  return verifyCommandFor(
+    run.repo_root ?? run.folder,
+    settings.landVerifyCommand,
+    settings.landVerifyCommandByRepo,
+    WORKSPACE_MOUNTS,
+  ).command;
 }
 
 /**
@@ -1992,7 +2012,7 @@ export async function landRun(
     // for the command and restored before this returns, so the merge below
     // never sees the switch: it reads the operator's checkout, not the slot,
     // and everything that decides it is asked again from a fresh read.
-    const verifyCommand = getSettings().landVerifyCommand;
+    const verifyCommand = verifyCommandOf(run);
     let verified: string | undefined;
     if (verifyCommand.trim()) {
       const verify = await verifyRunBranch(run, verifyCommand, "land");
@@ -4200,7 +4220,7 @@ const NO_GATE_REFUSAL: VerifyGate = { refusal: null, switches: null };
  * `landState` had already made.
  */
 async function verifyGateOf(run: RunRow, slot: SlotState): Promise<VerifyGate> {
-  if (!getSettings().landVerifyCommand.trim()) return NO_GATE_REFUSAL;
+  if (!verifyCommandOf(run).trim()) return NO_GATE_REFUSAL;
   const tree = verifyTreeIn(run, slot);
   if (tree.ok) return NO_GATE_REFUSAL;
   const taken = takenOverBy(run, slot);
@@ -6927,7 +6947,7 @@ async function pushAndOpen(a: {
   // The run's own tree, for `verifyTreeVerdict`'s reason: the checkout this
   // pushes from is the operator's, standing on the target, and a check run
   // there would not see this branch's work at all.
-  const verifyCommand = getSettings().landVerifyCommand;
+  const verifyCommand = verifyCommandOf(run);
   let verified: string | undefined;
   if (verifyCommand.trim()) {
     const verify = await verifyRunBranch(run, verifyCommand, "deliver", signal);

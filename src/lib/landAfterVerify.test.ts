@@ -143,7 +143,7 @@ after(() => {
 
 beforeEach(() => {
   dbMod.db().prepare("DELETE FROM runs").run();
-  settings.saveSettings({ landVerifyCommand: "" });
+  settings.saveSettings({ landVerifyCommand: "", landVerifyCommandByRepo: {} });
 });
 
 interface Scene {
@@ -1184,5 +1184,68 @@ describe("landRun into a checkout another git process holds the index lock of", 
     const again = await land.landRun(s.runId, "squash");
     assert.equal(again.ok, true, again.ok ? "" : again.reason);
     assert.equal(fs.readFileSync(path.join(s.repo, "shared.txt"), "utf8"), "branch\n");
+  });
+});
+
+describe("a repository's own check outranks the install-wide one", () => {
+  const FAIL = () => path.join(root, "fail.js");
+  const own = (repo: string, command: string) =>
+    settings.saveSettings({ landVerifyCommandByRepo: { [repo]: command } });
+
+  it("gates a repository that the install-wide command leaves open", async () => {
+    // The vault's case: nothing is set install-wide, because the command that
+    // suits it would refuse every other repository.
+    const s = scene("own-only");
+    fs.writeFileSync(FAIL(), "process.exit(1);");
+    own(s.repo, `${process.execPath} ${FAIL()}`);
+
+    const refused = await land.landRun(s.runId, "merge");
+
+    assert.equal(refused.ok, false, "landed past the repository's own failing check");
+    assert.match(refused.ok ? "" : refused.reason, /The verify command exited 1/);
+    assert.equal(git(s.repo, "rev-parse", "main").trim(), s.base);
+
+    own(s.repo, `${process.execPath} ${probePath()} mark ${s.signals}`);
+    const landed = await land.landRun(s.runId, "merge");
+    assert.equal(landed.ok, true, landed.ok ? "" : landed.reason);
+    assert.ok(fs.existsSync(path.join(s.signals, "ran")), "the repository's own check never ran");
+  });
+
+  it("runs instead of the install-wide command, not as well as it", async () => {
+    const s = scene("own-instead");
+    const other = fs.mkdtempSync(path.join(root, "wide-"));
+    verifyWith("mark", other);
+    own(s.repo, `${process.execPath} ${probePath()} mark ${s.signals}`);
+
+    const landed = await land.landRun(s.runId, "merge");
+
+    assert.equal(landed.ok, true, landed.ok ? "" : landed.reason);
+    assert.ok(fs.existsSync(path.join(s.signals, "ran")), "the repository's own check never ran");
+    assert.equal(fs.existsSync(path.join(other, "ran")), false, "the install-wide command ran too");
+  });
+
+  it("falls back to the install-wide command when its entry is blank or names another repository", async () => {
+    const s = scene("own-fallback");
+    verifyWith("mark", s.signals);
+    settings.saveSettings({
+      landVerifyCommandByRepo: { [s.repo]: "  ", [path.join(root, MOUNT_DIR, "elsewhere")]: "false" },
+    });
+
+    const landed = await land.landRun(s.runId, "merge");
+
+    assert.equal(landed.ok, true, landed.ok ? "" : landed.reason);
+    assert.ok(fs.existsSync(path.join(s.signals, "ran")), "the install-wide command never ran");
+  });
+
+  it("refuses on an entry that is not argv, rather than falling back to a command that passes", async () => {
+    const s = scene("own-unparsable");
+    verifyWith("mark", s.signals);
+    own(s.repo, "npm test && npm run typecheck");
+
+    const refused = await land.landRun(s.runId, "merge");
+
+    assert.equal(refused.ok, false, "landed past a repository check that cannot run");
+    assert.match(refused.ok ? "" : refused.reason, /not runnable/);
+    assert.equal(fs.existsSync(path.join(s.signals, "ran")), false, "the install-wide command ran");
   });
 });

@@ -233,6 +233,31 @@ async function applySettingsPut(body: Record<string, unknown>): Promise<Response
   if ("landVerifyCommand" in body)
     patch.landVerifyCommand = String(body.landVerifyCommand ?? "").trim();
 
+  // The same hands-off stance as the line above, and a blank command is dropped
+  // rather than stored: it would read as "no check for this folder" when the
+  // rule is that it falls back to the install-wide one, and an entry that does
+  // nothing is how an operator comes to believe a gate is set.
+  if ("landVerifyCommandByRepo" in body) {
+    const raw = body.landVerifyCommandByRepo;
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new FieldRefusal(
+        `landVerifyCommandByRepo must be an object of folder to command; got ${JSON.stringify(raw)}.`,
+      );
+    }
+    const map: Record<string, string> = {};
+    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof value !== "string") {
+        throw new FieldRefusal(
+          `landVerifyCommandByRepo[${JSON.stringify(key)}] must be a string; got ${JSON.stringify(value)}.`,
+        );
+      }
+      const folder = key.trim().replace(/\/+$/, "");
+      const command = value.trim();
+      if (folder && command) map[folder] = command;
+    }
+    patch.landVerifyCommandByRepo = map;
+  }
+
   if ("sessionCostLimit" in body)
     patch.sessionCostLimit = optionalNumber("sessionCostLimit", body.sessionCostLimit, true);
   if ("weeklyCostLimit" in body)

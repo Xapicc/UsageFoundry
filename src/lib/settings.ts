@@ -535,6 +535,23 @@ export interface Settings {
    */
   landVerifyCommand: string;
   /**
+   * Per-repository checks, keyed by folder, beside `landVerifyCommand`.
+   *
+   * The install-wide command is one command for every repository, and the one
+   * check that is right for a knowledge vault (`python3 _Meta/qc.py`) is
+   * nonsense for a Next.js app and the reverse. Setting it for one therefore
+   * meant setting it for all, which is why a repository's own gate went unset.
+   *
+   * The longest matching key wins, over the install-wide command, with the
+   * same folder vocabulary as `isolationCopyGlobsByRepo` (absolute, or relative
+   * to any mount). A key whose command is blank is not an entry: it falls back
+   * to the install-wide command rather than meaning "no check here", because
+   * the narrowest thing an operator can write must not be the way to switch a
+   * gate off. Every rule of `landVerifyCommand` applies to a value: argv and
+   * never a shell line, a non-zero exit refuses, an unparsable one refuses.
+   */
+  landVerifyCommandByRepo: Record<string, string>;
+  /**
    * Gitignored files copied into a fresh checkout, newest-wins glob order.
    *
    * A worktree contains committed work only, so an isolated agent would
@@ -1130,6 +1147,7 @@ export const DEFAULTS: Settings = {
   resolveAllowedTools: [],
   resolutionBudgetUSD: 20,
   landVerifyCommand: "",
+  landVerifyCommandByRepo: {},
   isolationCopyGlobs: [".env", ".env.*", "!.env.example"],
   isolationCopyGlobsByRepo: {},
   isolationPreamble: DEFAULT_ISOLATION_PREAMBLE,
@@ -1271,9 +1289,10 @@ export function getSettings(): Settings {
  * future default has no way to say so, and if that turns out to matter the place
  * to answer it is a stored marker, never a return to writing the whole blob.
  *
- * Deep rather than `!==`, because five keys hold an object or an array
+ * Deep rather than `!==`, because six keys hold an object or an array
  * (`weeklyAnchor`, `isolationCopyGlobs`, `isolationCopyGlobsByRepo`,
- * `chatDefaultGuards`, and the nested `budget` inside it) and reference
+ * `landVerifyCommandByRepo`, `chatDefaultGuards`, and the nested `budget`
+ * inside it) and reference
  * inequality would keep every one of them forever, which is the bug this fixes
  * for the keys that matter most.
  */

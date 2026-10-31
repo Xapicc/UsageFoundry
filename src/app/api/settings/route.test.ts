@@ -80,6 +80,10 @@ const PROBES: Record<keyof Settings, Probe> = {
   sessionCostLimit: { send: 42.5 },
   // Trimmed on the way in, so what comes back is not what was sent.
   landVerifyCommand: { send: "  npm test  ", stored: "npm test" },
+  landVerifyCommandByRepo: {
+    send: { " /workspace2/ ": "  python3 _Meta/qc.py ", "acme/web": "   " },
+    stored: { "/workspace2": "python3 _Meta/qc.py" },
+  },
   weeklyCostLimit: { send: 300 },
   sessionTokenLimit: { send: 1_000_000 },
   weeklyTokenLimit: { send: 9_000_000 },
@@ -872,4 +876,21 @@ describe("PUT /api/settings and a model list that a restart merges the seed into
       "a non-empty stored list stopped receiving seeded additions at boot",
     );
   });
+});
+
+test("PUT /api/settings refuses a per-repository check that is not a folder-to-command object", async () => {
+  // Folded to `{}` it would answer 200 and quietly remove every repository's
+  // gate, which is the failure the field exists to prevent.
+  const { PUT } = await import("./route");
+  for (const bad of ["python3 _Meta/qc.py", ["a"], null, { "/workspace2": 5 }]) {
+    const res = await PUT(
+      new Request("http://localhost/api/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ landVerifyCommandByRepo: bad }),
+      }),
+    );
+    assert.equal(res.status, 400, `${JSON.stringify(bad)} was accepted`);
+    assert.match(((await res.json()) as { error: string }).error, /landVerifyCommandByRepo/);
+  }
 });

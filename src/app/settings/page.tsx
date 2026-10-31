@@ -386,6 +386,7 @@ const EDITABLE_PATHS = [
   "isolationCopyGlobsByRepo",
   "landStrategy",
   "landVerifyCommand",
+  "landVerifyCommandByRepo",
   "resolveAllowedTools",
   "resolutionBudgetUSD",
   "continuationPrompt",
@@ -441,6 +442,7 @@ const ISOLATED_RUN_KEYS = [
   "isolationCopyGlobsByRepo",
   "landStrategy",
   "landVerifyCommand",
+  "landVerifyCommandByRepo",
   "resolveAllowedTools",
   "resolutionBudgetUSD",
 ];
@@ -675,6 +677,30 @@ function githubScopeNote(summary: unknown): string {
 function formatGlobsByRepo(map: Record<string, string[]>): string {
   return Object.entries(map)
     .map(([folder, globs]) => `${folder}: ${globs.join(", ")}`)
+    .join("\n");
+}
+
+/**
+ * One `folder: command` line per repository. Split at the first colon, so a
+ * command with its own (`npm run test:unit`) survives; a line with a folder and
+ * no command is dropped, because a blank command falls back to the install-wide
+ * check and an entry that does nothing would read as a gate that is set.
+ */
+function parseVerifyByRepo(text: string): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const colon = line.indexOf(":");
+    if (colon === -1) continue;
+    const folder = line.slice(0, colon).trim().replace(/\/+$/, "");
+    const command = line.slice(colon + 1).trim();
+    if (folder && command) map[folder] = command;
+  }
+  return map;
+}
+
+function formatVerifyByRepo(map: Record<string, string>): string {
+  return Object.entries(map)
+    .map(([folder, command]) => `${folder}: ${command}`)
     .join("\n");
 }
 
@@ -2580,6 +2606,7 @@ export default function SettingsPage() {
   const [verifyToolsText, setVerifyToolsText] = useState<string | null>(null);
   /** The same, for the per-repository overrides beneath it. */
   const [copyGlobsByRepoText, setCopyGlobsByRepoText] = useState<string | null>(null);
+  const [verifyByRepoText, setVerifyByRepoText] = useState<string | null>(null);
   // The registry, and the definitions this app did not write. Both are needed
   // for one row: the picker offers the first, and the sentence beside it has to
   // declare the second, because `--agents` merges with what the CLI finds on
@@ -2837,8 +2864,11 @@ export default function SettingsPage() {
     if (verifyToolsText !== null) {
       out = { ...out, resolveAllowedTools: parseGlobs(verifyToolsText) };
     }
+    if (verifyByRepoText !== null) {
+      out = { ...out, landVerifyCommandByRepo: parseVerifyByRepo(verifyByRepoText) };
+    }
     return out;
-  }, [s, copyGlobsText, copyGlobsByRepoText, verifyToolsText]);
+  }, [s, copyGlobsText, copyGlobsByRepoText, verifyToolsText, verifyByRepoText]);
 
   // Blank is off rather than broken, so an empty field says nothing; anything
   // the gate's own parser refuses is said here, in the parser's words.
@@ -2847,6 +2877,17 @@ export default function SettingsPage() {
     if (!raw.trim()) return null;
     const parse = parseVerifyCommand(raw);
     return parse.ok ? null : parse.reason;
+  }, [effective]);
+
+  // The same, per folder, so a line the gate would refuse is named while it is
+  // being typed and not when a finished branch is waiting on it.
+  const landVerifyByRepoRefusals = useMemo(() => {
+    const out: string[] = [];
+    for (const [folder, command] of Object.entries(effective?.landVerifyCommandByRepo ?? {})) {
+      const parse = parseVerifyCommand(command);
+      if (!parse.ok) out.push(`${folder}: ${parse.reason}`);
+    }
+    return out;
   }, [effective]);
 
   const changed = useMemo(() => {
@@ -2958,6 +2999,7 @@ export default function SettingsPage() {
   function discard() {
     setS(savedS);
     setCopyGlobsText(null);
+    setVerifyByRepoText(null);
     setSaveError(null);
     setSaved(false);
   }
@@ -2991,6 +3033,7 @@ export default function SettingsPage() {
       // put it.
       if (Array.isArray(json.nonDefaultKeys)) setMovedKeys(json.nonDefaultKeys);
       setCopyGlobsText(null);
+      setVerifyByRepoText(null);
       setSaved(true);
       setSaveError(null);
       // The figures are a reading of whatever mount is now named, so a Save
@@ -4644,6 +4687,54 @@ export default function SettingsPage() {
                 {landVerifyParse !== null && (
                   <p className="mt-1.5 text-2xs text-danger">{landVerifyParse}</p>
                 )}
+              </div>
+            </SettingRow>
+
+            <SettingRow
+              htmlFor="landverifybyrepo"
+              edited={isEdited("landVerifyCommandByRepo")}
+              label="Per-repository checks"
+              description={
+                <>
+                  <span className="block">
+                    One <span className="mono">folder: command</span> line per
+                    repository, replacing the check above for every branch landed
+                    into that folder, a Dreaming night&rsquo;s included. Write the
+                    folder absolute (<span className="mono">/workspace2</span>) or
+                    relative to a mount (<span className="mono">acme/web</span>).
+                    A line with no command is not kept: that repository takes the
+                    check above
+                  </span>
+                  <span className="block text-2xs text-ink-muted">
+                    Same rules as the check above: argv, run in the branch&rsquo;s
+                    worktree, and a non-zero exit refuses the merge
+                  </span>
+                </>
+              }
+            >
+              <div className="w-72">
+                <Textarea
+                  id="landverifybyrepo"
+                  rows={3}
+                  placeholder={"/workspace2: python3 _Meta/qc.py\nacme/web: npm run typecheck"}
+                  value={
+                    verifyByRepoText ??
+                    formatVerifyByRepo(effective.landVerifyCommandByRepo)
+                  }
+                  onChange={(e) => setVerifyByRepoText(e.target.value)}
+                  onBlur={() => {
+                    if (verifyByRepoText === null) return;
+                    patch({
+                      landVerifyCommandByRepo: parseVerifyByRepo(verifyByRepoText),
+                    });
+                    setVerifyByRepoText(null);
+                  }}
+                />
+                {landVerifyByRepoRefusals.map((why) => (
+                  <p key={why} className="mt-1.5 text-2xs text-danger">
+                    {why}
+                  </p>
+                ))}
               </div>
             </SettingRow>
 
