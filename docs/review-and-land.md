@@ -103,6 +103,13 @@ and everything that principle protected is a check rather than a caveat:
 - Merge or squash, defaulted in Settings. Merging keeps the run's commits, so the
   diff above still means something afterwards; squashing gives your history one
   commit per run.
+- Every commit a run makes in its own worktree ends with trailers naming it —
+  `UF-Run: <run id>`, `UF-Task: <task id>` for each board task it was started
+  for, `UF-Night: <date>` on a Dreaming night, and `Model: <model id>` when the
+  run chose one — so `git log --grep 'UF-Run: <id>'` lists everything one run
+  wrote, however the branch landed. The author is left as configured. A run
+  working directly in your checkout is not labelled, because that would mean
+  rewriting your branch.
 - Every check above is about your *checkout*. **Check that must pass before Land
   merges**, in Settings under Runs → Isolated runs, is the one about the *work*: name a
   command there and a non-zero exit refuses the merge rather than warning about

@@ -34,6 +34,13 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - A review block's verify command is the one gate that switches a slot a later run took over; Land and Deliver refuse it.
 - Land is withheld on the gate's refusals that need no command run, and the card says why.
 
+## [Commit trailers: which run wrote this](isolation-and-landing/commit-trailers.md)
+
+- A commit names its run, tasks, night and model in its message, and never in its author.
+- The app's own commits take their trailers where they are made; the agent's are stamped by this server after each cycle, with `interpret-trailers` over `commit-tree`.
+- Not a hook, and not at land: a stamp changes SHAs, and a review's `head_sha`, a verify proof and `squashBase` all read one.
+- What is never rewritten, and every commit that goes unlabelled and what says so.
+
 ## [Another git process in the operator's checkout](isolation-and-landing/another-git-in-the-checkout.md)
 
 - A land that meets another git process's lock is asked again, from a fresh read, four times in all, and only over a checkout proved as it was.
