@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
 
-import { landVerdict, parseVerifyCommand, runVerify, verifyEnv } from "./landGate";
+import { landVerdict, parseVerifyCommand, runVerify, verifyCommandFor, verifyEnv } from "./landGate";
 import { verifyTreeVerdict } from "./land";
 
 /**
@@ -466,5 +466,69 @@ describe("verifyTreeVerdict answers the run's own tree or refuses", () => {
     });
     assert.equal(v.ok, false);
     assert.match(v.ok ? "" : v.reason, /could not read the status/);
+  });
+});
+
+/**
+ * Which command a repository gets, which decides whether the vault is gated by
+ * its own check or by none, or by a web app's. A wrong answer here throws
+ * nothing: the land runs a command, it is the wrong one, and the card says the
+ * branch was checked.
+ */
+describe("verifyCommandFor picks a repository's own check over the install-wide one", () => {
+  const mounts = [{ id: "ws", label: "Workspace", path: "/workspace" }];
+  const QC = "python3 _Meta/qc.py";
+
+  it("takes the repository's entry over the install-wide command", () => {
+    const got = verifyCommandFor("/workspace2", "npm test", { "/workspace2": QC }, mounts);
+    assert.deepEqual(got, { command: QC, key: "/workspace2" });
+  });
+
+  it("falls back to the install-wide command for a folder no entry names", () => {
+    const got = verifyCommandFor("/workspace/acme/web", "npm test", { "/workspace2": QC }, mounts);
+    assert.deepEqual(got, { command: "npm test", key: null });
+  });
+
+  it("returns a blank command when neither is set, which is no check", () => {
+    assert.deepEqual(verifyCommandFor("/workspace/acme", "", {}, mounts), { command: "", key: null });
+  });
+
+  it("treats a blank entry as no entry, not as 'no check here'", () => {
+    for (const blank of ["", "   "]) {
+      const got = verifyCommandFor("/workspace2", "npm test", { "/workspace2": blank }, mounts);
+      assert.deepEqual(got, { command: "npm test", key: null }, `blank ${JSON.stringify(blank)}`);
+    }
+  });
+
+  it("lets a blank entry fall through to a parent's non-blank one", () => {
+    const got = verifyCommandFor(
+      "/workspace/acme/web",
+      "npm test",
+      { acme: "make check", "acme/web": "" },
+      mounts,
+    );
+    assert.deepEqual(got, { command: "make check", key: "acme" });
+  });
+
+  it("matches the longest key, whether written absolute or relative to a mount", () => {
+    const byRepo = { acme: "make check", "/workspace/acme/web": "npm run typecheck" };
+    assert.equal(verifyCommandFor("/workspace/acme/web", "", byRepo, mounts).command, "npm run typecheck");
+    assert.equal(verifyCommandFor("/workspace/acme/api", "", byRepo, mounts).command, "make check");
+  });
+
+  it("does not match a sibling that merely shares a prefix", () => {
+    const got = verifyCommandFor("/workspace2-old", "npm test", { "/workspace2": QC }, mounts);
+    assert.deepEqual(got, { command: "npm test", key: null });
+  });
+
+  it("trims the entry, and returns the install-wide command as it was given", () => {
+    assert.equal(verifyCommandFor("/workspace2", "x", { "/workspace2": `  ${QC} \n` }, mounts).command, QC);
+    assert.equal(verifyCommandFor("/elsewhere", "  npm test  ", {}, mounts).command, "  npm test  ");
+  });
+
+  it("hands an entry the gate cannot parse through, so the land refuses rather than falls back", () => {
+    const got = verifyCommandFor("/workspace2", "npm test", { "/workspace2": "a && b" }, mounts);
+    assert.equal(got.command, "a && b");
+    assert.equal(parseVerifyCommand(got.command).ok, false);
   });
 });

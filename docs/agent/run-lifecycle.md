@@ -188,3 +188,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 
 - The tick reads what the window is *made of* as well as how full it is, and the two are not one measurement.
 - Winnow's window and this app's are the same measure from different anchors, and nothing may subtract one from the other.
+
+## [A cycle's commits are stamped with the run's trailers](isolation-and-landing/commit-trailers.md)
+
+- `stampCycleCommits` runs right after the child is gone and before anything reads the branch's tip, because the stamp changes SHAs; it never fails the run and says in the run's log when it did nothing.

@@ -21,6 +21,7 @@ import {
   type WorkspaceMount,
 } from "./config";
 import { addWorktree, git, gitFailureReason, gitSync, headBranchOf } from "./git";
+import { runTrailers, stampBranchCommits } from "./runTrailers";
 import { runningVerifyChildren } from "./landGate";
 import { withRepoAdmin } from "./repoLock";
 import { checkoutWriter, type CheckoutOwner } from "./checkoutClaim";
@@ -4262,6 +4263,52 @@ async function handoffSeededRefusal(run: RunRow, branch: string): Promise<string
     await seededOnBranch(run.folder, `refs/heads/${branch}`, target, run.worktree_base, globs, "land"),
     { branch, target, exit: "land" },
   );
+}
+
+/**
+ * Label the commits a finished cycle made with the run that made them
+ * (`runTrailers.ts`, which says why it is done here and not by a hook).
+ *
+ * Right after the child is gone and before anything reads the branch's tip:
+ * the stamp changes the SHAs, and a review's or a verify command's proof is
+ * one. Only an isolated run's branch is touched. A run working in the
+ * operator's own checkout commits onto the operator's branch, which no run may
+ * rewrite, and those commits go unlabelled.
+ *
+ * Never fails the run. A stamp that could not be made leaves the branch exactly
+ * as it was, and says so in the run's log, because commits without trailers are
+ * otherwise indistinguishable from a feature that was never on.
+ */
+async function stampCycleCommits(id: string, run: RunRow, workDir: string, model: string | null) {
+  if (run.isolation !== "worktree" || !run.worktree_branch) return;
+  try {
+    const branch = run.worktree_branch;
+    const target = run.worktree_base_branch;
+    if (!target) {
+      log(id, `Run trailers were not added to ${branch}: the branch it started from was not recorded.`);
+      return;
+    }
+    const head = await headBranchOf(workDir);
+    if (head.branch !== branch) {
+      log(id, `Run trailers were not added to ${branch}: its checkout is on ${head.branch ?? "no branch"}.`);
+      return;
+    }
+    // Tips an earlier run on this branch landed: `squashBase` needs each to
+    // stay an ancestor of the branch, so nothing at or below one is rewritten.
+    const landed = db()
+      .prepare("SELECT landed_tip AS tip FROM runs WHERE worktree_branch = ? AND landed_tip IS NOT NULL")
+      .all(branch) as Array<{ tip: string }>;
+    const outcome = await stampBranchCommits({
+      cwd: workDir,
+      branch,
+      target,
+      landedTips: landed.map((row) => row.tip),
+      trailers: runTrailers(run, { withModel: true, model }),
+    });
+    if (!outcome.ok) log(id, `Run trailers were not added to ${branch}: ${outcome.reason}.`);
+  } catch (err) {
+    log(id, `Run trailers were not added: ${err instanceof Error ? err.message : String(err)}.`);
+  }
 }
 
 /**
@@ -12983,6 +13030,7 @@ export async function startRun(id: string): Promise<void> {
 
       cyclesThisSegment += 1;
       lastExit = res.exitCode;
+      await stampCycleCommits(id, run, workDir, local ? local.model : run.model);
 
       // Settle the last boundary's fork here, where both facts are known: which
       // session this cycle was asked to resume, and whether it did any work.

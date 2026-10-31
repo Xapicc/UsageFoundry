@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 
+import { matchFolderKey, type WorkspaceMount } from "./config";
 import { childCredentials } from "./privsep";
 import { agentEnvironment } from "./stacks";
 import { parseVerifyCommand, type VerifyCommand } from "./verifyCommand";
@@ -47,6 +48,36 @@ import { parseVerifyCommand, type VerifyCommand } from "./verifyCommand";
  * dragging `node:child_process` into a client bundle.
  */
 export { parseVerifyCommand, type VerifyCommand } from "./verifyCommand";
+
+/**
+ * The check for one repository: its own entry if the operator wrote one, the
+ * install-wide command otherwise.
+ *
+ * Pure, and taking every input as an argument, because the failure it prevents
+ * is one nothing downstream can see: a repository handed another's command, or
+ * the install-wide one when it had its own, lands as "checked" under a gate
+ * that checked the wrong thing — or, for the vault, nothing at all.
+ *
+ * A blank entry is skipped before the match rather than after it, so it is not
+ * an entry: it neither switches the gate off for that folder (the narrowest
+ * thing an operator can write must not be the widest thing it does) nor shadows
+ * a non-blank key on a parent folder. The route never stores one, so this only
+ * matters for a value written some other way. The install-wide command is
+ * returned untouched, for callers that already trim and parse it as they did
+ * before this existed.
+ */
+export function verifyCommandFor(
+  repoRoot: string,
+  installWide: string,
+  byRepo: Record<string, string>,
+  mounts: WorkspaceMount[],
+): { command: string; key: string | null } {
+  const keys = Object.keys(byRepo).filter((k) => (byRepo[k] ?? "").trim() !== "");
+  const key = matchFolderKey(repoRoot, keys, mounts);
+  return key === null
+    ? { command: installWide, key: null }
+    : { command: byRepo[key].trim(), key };
+}
 
 export type VerifyOutcome = {
   ran: boolean;

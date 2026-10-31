@@ -262,6 +262,13 @@ describe("a conflict git left markers in", () => {
     assert.notEqual(tip, tipBefore);
     assert.equal(row?.resolved_commit, tip);
     assert.equal(git("show", "uf/text:a.txt"), "resolved");
+    // The run's own trailer, once, and no `# Conflicts:` comment lines: the
+    // merge's message is restated for the commit, since `--trailer` on top of
+    // MERGE_MSG wrote the block twice.
+    assert.equal(
+      git("log", "-1", "--format=%B", "uf/text"),
+      `Merge branch 'main' into uf/text\n\nUF-Run: ${runId}`,
+    );
     // `main` is now an ancestor, so the land that follows is a fast-forward.
     git("merge-base", "--is-ancestor", "main", "uf/text");
   });

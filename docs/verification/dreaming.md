@@ -83,6 +83,8 @@
   `stopped` the moment the server started, so those two states were set after
   boot with an `UPDATE` through a second connection.
 
+- **`python3 _Meta/qc.py` refuses only on errors (2026-10-31, vault `main` at `3af27e3`):** run with `-B` in `/workspace2`, `python3 -B _Meta/qc.py --quiet` printed `2335 notes checked — 0 errors, 401 warnings.` and exited 0. The script's own source (`main` returns `1 if errors else 0`) says the same, so a vault carrying about 400 warnings passes a gate of that command and only an ERROR-level finding refuses. Measured on `main`, not on a branch with a bad note; that a deliberately broken note makes it exit 1 is the source's word and was not run.
+
 ## Not yet verified by hand
 
 - **No real Dreaming night has landed through the merge queue**: the code that
@@ -129,3 +131,5 @@
   repointed. Rows still listing a hub afterwards belong to a run whose events
   retention has deleted, or whose report never listed the note first, and are
   the ones to `forgetNote` or fix by hand.
+
+- **The vault's per-repository check has not gated a real Dreaming night**: `landVerifyCommandByRepo` is built and tested against scratch repositories with a stub command, and the operator has not entered a value for the vault. Unseen: that `python3` resolves on the verify child's `PATH` (`agentEnvironment`'s) in the container, that `_Meta/qc.py` run with the night's slot as its working directory checks the slot's notes and not `/workspace2`'s (it reads `Path(__file__).parent.parent`, so it should), and how long it takes against 2,335 notes. Settle, after entering `/workspace2: python3 _Meta/qc.py` in Settings and a night's branch is queued: `SELECT status, message FROM merge_queue WHERE run_id = <the night's run> ORDER BY created_at DESC LIMIT 1`, where a pass shows the land and a refusal quotes qc's last output.

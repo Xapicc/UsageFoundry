@@ -4445,6 +4445,8 @@ export interface SettingsDTO {
   resolutionBudgetUSD: number | null;
   /** argv that must exit 0 before Land merges. Empty is no check, not a pass. */
   landVerifyCommand: string;
+  /** Folders whose check replaces the one above; a blank entry is not an entry. */
+  landVerifyCommandByRepo: Record<string, string>;
   isolationPreamble: string;
   /** What a run is told when it picks up the branch the run before it had. */
   continuedWorkPrompt: string;

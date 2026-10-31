@@ -29,9 +29,17 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 
 - The tool does now merge, and every protection the old "never merges" rule bought is a check in `land.ts` rather than a caveat. (was line 22)
 - The check in front of Land, and what an empty one means. (was lines 69–81)
+- The check is per repository first, and the install-wide one is only what a repository did not name; a Dreaming night's land goes through it.
 - Which tree the check runs in is the whole of whether it checks anything. (was lines 83–97)
 - A review block's verify command is the one gate that switches a slot a later run took over; Land and Deliver refuse it.
 - Land is withheld on the gate's refusals that need no command run, and the card says why.
+
+## [Commit trailers: which run wrote this](isolation-and-landing/commit-trailers.md)
+
+- A commit names its run, tasks, night and model in its message, and never in its author.
+- The app's own commits take their trailers where they are made; the agent's are stamped by this server after each cycle, with `interpret-trailers` over `commit-tree`.
+- Not a hook, and not at land: a stamp changes SHAs, and a review's `head_sha`, a verify proof and `squashBase` all read one.
+- What is never rewritten, and every commit that goes unlabelled and what says so.
 
 ## [Another git process in the operator's checkout](isolation-and-landing/another-git-in-the-checkout.md)
 
