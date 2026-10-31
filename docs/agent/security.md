@@ -81,6 +81,16 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - No credential is kept or shown.
 - What it does not cover.
 
+## [The knowledge vault's write boundary](security/vault-write-boundary.md)
+
+- The vault is read-only to every run whose workspace is not the vault, and the harness enforces that, not the skill.
+- Each deny closes only one half, so both are emitted, and dropping either one silently reopens that half.
+- `denyWrite` rides on the write set and is withheld wherever the write set is.
+- A run may write the vault only when its checkout or its repository is at or below the vault — `vaultWritableBy`.
+- The search writes nothing into the vault, so a read-only vault does not break it.
+- A vault whose path reads as a glob pattern gets no skill rather than a writable one.
+- What is still open.
+
 ## [Middleware, login and sessions](security/middleware-login-and-sessions.md)
 
 - A monitor must not be handed the credential that starts agents. (was line 27)

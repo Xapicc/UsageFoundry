@@ -433,10 +433,10 @@ const STATUSES = new Set(["seed", "growing", "evergreen"]);
  *
  * Each pick carries its date and its status, and a flag where the vault has
  * recorded a contradiction, beside the grade it already had, and the header
- * says which to trust when the repository disagrees. An agent given a retrieved
- * record defers to it over what it can observe — in one study more than 60% of
- * the time — and showing a record's age and status with a verify-first line is
- * the remedy with evidence behind it. A field the note does not have is left
+ * says which to trust when the repository disagrees. A model given a wrong
+ * retrieved document adopted it over its own correct answer 31% to 63% of the
+ * time in ClashEval, and showing a record's age and status with a
+ * verify-first line is the remedy with evidence behind it. A field the note does not have is left
  * out rather than printed as unknown, so the line stays as short as the note
  * allows. This text is the pointer arm's treatment, so a change to it is
  * recorded, with its date, in `docs/agent/run-lifecycle/vault-pointer.md`.

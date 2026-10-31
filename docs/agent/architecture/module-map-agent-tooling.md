@@ -111,8 +111,9 @@ vaultSkill.ts   the vault-lookup skill, delivered the same way and for the same
                 list, so a skill there is unreadable by the agent uid on exactly
                 the hardened install this is for. The vault also needs --add-dir
                 or the skill names a path the run may not read; measurement says
-                that flag grants **write**, so the skill's own text is the only
-                thing forbidding writes into the vault
+                that flag grants **write**, so a run whose workspace is not the
+                vault (vaultWritableBy) also gets an Edit deny and a sandbox
+                denyWrite for it — docs/agent/security/vault-write-boundary.md
 vaultPointer.ts the vault's notes named in a run's opening prompt rather than left
                 for the skill to be asked about, because the skill was asked in
                 6 of 592 runs. The vault's own search proposes and a Haiku call

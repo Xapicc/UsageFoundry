@@ -110,6 +110,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - The judge's prompt is the strict one, and it was chosen by measurement.
 - The query writer is told what the vault holds by the vault's own tags, and by nothing else.
 - What reaches the run is a pointer, never a note.
+- Since 2026-10-31 each pick says how fresh and how settled it is, and the block says to trust what the run observes — a change to the pointer arm's treatment.
 - Its slot is ahead of the prior-read pointer, on the session-less branch only.
 - It is resolved once per segment, before the loop, and only for a segment that opens a conversation.
 - Who is never considered, so is in neither arm.
