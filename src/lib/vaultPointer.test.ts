@@ -9,6 +9,7 @@ import {
   MAX_PICKS,
   mergeCandidates,
   noteShape,
+  pointerOutcome,
   querySystem,
   readJudgeVerdict,
   readSearchHits,
@@ -252,5 +253,18 @@ describe("querySystem", () => {
     assert.match(bare, /^You write search queries for a personal knowledge vault\.\n\nGiven a coding agent's task/);
     // No operator's subjects baked in: a vault about cooking is not told it holds LLM notes.
     assert.doesNotMatch(bare, /LLM|macOS|virtualisation/);
+  });
+});
+
+describe("pointerOutcome", () => {
+  it("tells a search that found nothing from a gate that declined, because the vault's abstention rate is the first", () => {
+    assert.equal(pointerOutcome({ candidates: [], picks: 0, failure: null }), "none-no-candidates");
+    assert.equal(pointerOutcome({ candidates: ["a.md", "b.md"], picks: 0, failure: null }), "none-declined");
+    assert.equal(pointerOutcome({ candidates: ["a.md"], picks: 1, failure: null }), "picked");
+  });
+
+  it("calls a failure a failure whatever it had got to", () => {
+    assert.equal(pointerOutcome({ candidates: null, picks: 0, failure: "search exited 2" }), "failed");
+    assert.equal(pointerOutcome({ candidates: ["a.md"], picks: 0, failure: "gate silent" }), "failed");
   });
 });

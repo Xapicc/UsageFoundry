@@ -11399,18 +11399,28 @@ async function vaultPointerFor(
   });
   const cost = `$${pointer.costUsd.toFixed(4)}`;
   const named = pointer.picks.map((p) => `“${p.title}”`).join(", ");
+  // Every outcome carries the same meta, so how often the vault says "nothing
+  // relevant" is a count of log rows as well as of the export's.
+  const meta = { vaultPointer: { arm: pointer.arm, outcome: pointer.outcome, candidates: pointer.candidates?.length ?? null } };
   if (pointer.failure !== null) {
     log(id, `No vault pointer for this run: ${pointer.failure}. It starts without one (${cost} spent asking).`, {
-      vaultPointer: { arm: pointer.arm, failure: pointer.failure },
+      vaultPointer: { ...meta.vaultPointer, failure: pointer.failure },
     });
+  } else if (pointer.outcome === "none-no-candidates") {
+    log(id, `The vault's search found no note to put before the gate, so the opening prompt names none (${cost}).`, meta);
   } else if (pointer.picks.length === 0) {
-    log(id, `No note in the vault bears on this task, so the opening prompt names none (${cost}).`);
+    log(
+      id,
+      `The gate read ${pointer.candidates?.length ?? 0} candidate notes and found none that bears on this task, so the opening prompt names none (${cost}).`,
+      meta,
+    );
   } else if (pointer.arm === "pointer") {
-    log(id, `The opening prompt names ${pointer.picks.length} vault ${pointer.picks.length === 1 ? "note" : "notes"} for this task: ${named} (${cost}).`);
+    log(id, `The opening prompt names ${pointer.picks.length} vault ${pointer.picks.length === 1 ? "note" : "notes"} for this task: ${named} (${cost}).`, meta);
   } else {
     log(
       id,
       `This run is in the vault pointer's holdout, so the opening prompt does not name the ${pointer.picks.length} ${pointer.picks.length === 1 ? "note" : "notes"} that bear on its task: ${named} (${cost}).`,
+      meta,
     );
   }
   return { ...pointer, vaultRoot: skill.vaultPath };
@@ -12529,7 +12539,15 @@ export async function startRun(id: string): Promise<void> {
           // was ranked from are swept, so it is written down here beside the
           // prompt it shaped.
           ...(sessionId === null && priorReads
-            ? { priorReads: { arm: priorReads.arm, paths: priorReads.paths.length } }
+            ? {
+                priorReads: {
+                  arm: priorReads.arm,
+                  // The count stays a count, so a row from before the list was
+                  // logged and one after read the same way; the list is beside it.
+                  paths: priorReads.paths.length,
+                  files: priorReads.paths,
+                },
+              }
             : {}),
           // The vault pointer's record, on the same cycles and for the same
           // reason. `paths` rather than a count, because whether a run then
@@ -12541,6 +12559,14 @@ export async function startRun(id: string): Promise<void> {
                   arm: vaultPointer.arm,
                   paths: vaultPointer.picks.map((p) => p.path),
                   costUsd: vaultPointer.costUsd,
+                  // What the gate was shown and why it named what it did: the
+                  // abstention rate is the share of runs whose outcome is one of
+                  // the `none-` kinds, and `root` is what a later `Read` is
+                  // tested against to say it went into the vault.
+                  candidates: vaultPointer.candidates,
+                  outcome: vaultPointer.outcome,
+                  failure: vaultPointer.failure,
+                  root: vaultPointer.vaultRoot,
                 },
               }
             : {}),

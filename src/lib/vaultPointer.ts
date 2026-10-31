@@ -137,6 +137,33 @@ export interface VaultPointer {
   costUsd: number;
   /** Why there are no picks, when the reason is a failure rather than the gate's answer. */
   failure: string | null;
+  /**
+   * The notes the gate was shown, in the order it was shown them, or null when
+   * the pointer failed before there was a list. Empty is a recorded "the search
+   * found nothing"; null is "unknown", and the abstention rate needs them apart.
+   */
+  candidates: string[] | null;
+  outcome: VaultOutcome;
+}
+
+/**
+ * Why a pointer named what it named.
+ *
+ * Three ways to name nothing, and the vault's research asks for the rate of the
+ * first two separately: a store that "has nothing relevant" is an abstention,
+ * while a gate that read twenty candidates and picked none is a judgement, and a
+ * failure is neither.
+ */
+export type VaultOutcome = "picked" | "none-no-candidates" | "none-declined" | "failed";
+
+export function pointerOutcome(o: {
+  candidates: readonly string[] | null;
+  picks: number;
+  failure: string | null;
+}): VaultOutcome {
+  if (o.failure !== null) return "failed";
+  if (o.picks > 0) return "picked";
+  return o.candidates !== null && o.candidates.length === 0 ? "none-no-candidates" : "none-declined";
 }
 
 /** Whether a run is held out of the pointer: half of all runs, by id alone. */
@@ -648,6 +675,17 @@ export async function resolveVaultPointer(o: {
 }): Promise<VaultPointer> {
   const arm = vaultPointerHoldout(o.runId) ? "holdout" : "pointer";
   let costUsd = 0;
+  // Kept outside the closure so that a gate that fails after the search still
+  // reports what it was shown.
+  let shown: string[] | null = null;
+  const answer = (picks: VaultPick[], failure: string | null): VaultPointer => ({
+    arm,
+    picks,
+    costUsd,
+    failure,
+    candidates: shown,
+    outcome: pointerOutcome({ candidates: shown, picks: picks.length, failure }),
+  });
   try {
     return await withGateSlot(async () => {
       const cwd = gateCwd();
@@ -664,7 +702,7 @@ export async function resolveVaultPointer(o: {
       ]
         .map((q) => oneLine(q, 200))
         .filter((q) => q !== "");
-      if (queries.length === 0) return { arm, picks: [], costUsd, failure: "no query could be written for this task" };
+      if (queries.length === 0) return answer([], "no query could be written for this task");
 
       const lists: Array<Awaited<ReturnType<typeof searchVault>>> = [];
       for (let at = 0; at < queries.length; at += SEARCH_PARALLEL) {
@@ -675,13 +713,14 @@ export async function resolveVaultPointer(o: {
         const shape = noteShape(o.vaultRoot, hit.path);
         return shape ? [{ ...hit, ...shape }] : [];
       });
-      if (candidates.length === 0) return { arm, picks: [], costUsd, failure: null };
+      shown = candidates.map((c) => c.path);
+      if (candidates.length === 0) return answer([], null);
 
       const judged = await askGate(JUDGE_SYSTEM, renderJudgePrompt(o.task, candidates), JUDGE_SCHEMA, cwd);
       costUsd += judged.costUsd;
-      return { arm, picks: readJudgeVerdict(judged.output, candidates), costUsd, failure: null };
+      return answer(readJudgeVerdict(judged.output, candidates), null);
     });
   } catch (err) {
-    return { arm, picks: [], costUsd, failure: err instanceof Error ? err.message : String(err) };
+    return answer([], err instanceof Error ? err.message : String(err));
   }
 }
