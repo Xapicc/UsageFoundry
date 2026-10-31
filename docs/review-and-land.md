@@ -110,7 +110,11 @@ and everything that principle protected is a check rather than a caveat:
   blank by default, which is no check rather than a check that passes. Open pull
   request runs the same one, because saying "not unless this passes" said nothing
   about which exit the work leaves by. It is argv and never a shell line: put
-  `a && b` in a script and name the script. A workflow can also check each
+  `a && b` in a script and name the script. **Per-repository checks**, just
+  beneath it, take a `folder: command` line per repository and replace that
+  check for every branch landed into the folder, a Dreaming night's included;
+  a line with no command is not kept, so that repository takes the check above.
+  A workflow can also check each
   branch before its merge, with a command saved on a review block rather than
   here — see *A block that reviews the work* in [Workflows](workflows.md). A
   branch that passed that one still has to pass this one to land.
