@@ -250,7 +250,7 @@ import {
   type CycleAdapter,
   type IterationResult,
 } from "./cycleInvocation";
-import { priorReadsFor } from "./priorReads";
+import { priorReadsFor, recordLiveSiblings } from "./priorReads";
 import { resolveVaultPointer, vaultPointerNotice, type VaultPointer } from "./vaultPointer";
 
 /**
@@ -11964,6 +11964,8 @@ export async function startRun(id: string): Promise<void> {
     // every path it names is proved to exist in the checkout this run will have.
     // A run with isolation off is checked against its repository, which is
     // what the paths are relative to whatever subfolder its cycles start in.
+    const repository = run.folder_repo ?? run.repo_root;
+    if (repository) recordLiveSiblings(id, repository);
     const priorReads = priorReadsFor({
       runId: id,
       createdAt: run.created_at,

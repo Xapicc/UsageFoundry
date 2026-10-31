@@ -224,6 +224,33 @@ export function priorReadsFor(o: {
 }
 
 /**
+ * Writes down which other runs are live on a run's repository as it starts.
+ *
+ * Realised concurrency is what the holdout's interference test is run against —
+ * a treated run can only change what a held-out one reads if they were working
+ * on the one repository at once — and rebuilding it later from
+ * `[started_at, finished_at]` counts a run parked for hours as live all the
+ * while. `running` is the status that holds a slot; a `paused` or `queued` run
+ * is doing nothing to the tree.
+ *
+ * Written once, at the start of the first segment, and never over a value: a run
+ * picked up again later has a different set of neighbours and the question is
+ * about the first.
+ */
+export function recordLiveSiblings(runId: string, repository: string): void {
+  const siblings = db()
+    .prepare(
+      `SELECT id FROM runs
+        WHERE status = 'running' AND COALESCE(folder_repo, repo_root) = ? AND id <> ?
+        ORDER BY created_at, id`,
+    )
+    .all(repository, runId) as Array<{ id: string }>;
+  db()
+    .prepare("UPDATE runs SET live_siblings = ? WHERE id = ? AND live_siblings IS NULL")
+    .run(JSON.stringify(siblings.map((r) => r.id)), runId);
+}
+
+/**
  * Whether the pointer considers a run, from the columns of its `runs` row alone.
  *
  * Its own function because the export has to ask the same question of a run

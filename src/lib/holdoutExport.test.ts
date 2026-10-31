@@ -368,3 +368,29 @@ describe("exporting before the sweep", () => {
     assert.equal(count("SELECT COUNT(*) AS n FROM holdout_tool_events WHERE run_id = 'unexported'"), 1);
   });
 });
+
+describe("the runs live when a run started", () => {
+  const OTHER = "/workspace/other";
+
+  it("records the running neighbours on the repository, once, and nothing for a parked or foreign run", async () => {
+    run({ id: "sib-a", createdAt: NOW - 3000, status: "running", repo: OTHER, finishedAt: null });
+    run({ id: "sib-b", createdAt: NOW - 2000, status: "running", repo: OTHER, finishedAt: null });
+    run({ id: "sib-parked", createdAt: NOW - 1000, status: "paused", repo: OTHER, finishedAt: null });
+    run({ id: "sib-foreign", createdAt: NOW - 500, status: "running", finishedAt: null });
+
+    priorReads.recordLiveSiblings("sib-a", OTHER);
+    run({ id: "sib-late", createdAt: NOW, status: "running", repo: OTHER, finishedAt: null });
+    priorReads.recordLiveSiblings("sib-a", OTHER);
+    priorReads.recordLiveSiblings("sib-late", OTHER);
+
+    const stored = (id: string) =>
+      (dbMod.db().prepare("SELECT live_siblings AS s FROM runs WHERE id = ?").get(id) as { s: string | null }).s;
+    assert.deepEqual(JSON.parse(stored("sib-a")!), ["sib-b"], "written once: the later arrival is not added");
+    assert.deepEqual(JSON.parse(stored("sib-late")!), ["sib-a", "sib-b"]);
+    assert.equal(stored("sib-b"), null, "a run nobody recorded for stays not-recorded, never an empty list");
+
+    await exportMod.exportHoldoutEvidence(NOW);
+    const exported = dbMod.db().prepare("SELECT live_siblings AS s FROM holdout_runs WHERE run_id = 'sib-late'").get() as { s: string };
+    assert.deepEqual(JSON.parse(exported.s), ["sib-a", "sib-b"]);
+  });
+});
