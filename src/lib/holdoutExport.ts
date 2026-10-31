@@ -47,8 +47,12 @@ const LAST_EXPORT_KEY = "holdout.lastExport";
  */
 const TOOL_NAMES = ["Read", "Grep", "Glob", "Edit", "Write"] as const;
 
-/** Runs between two yields to the event loop on a long pass. */
-const YIELD_EVERY = 20;
+/**
+ * Runs between two yields to the event loop on a long pass. Small because a run
+ * that has to be re-ranked reads a hundred runs' tool events, and the first pass
+ * after an upgrade has every run on the install to do.
+ */
+const YIELD_EVERY = 5;
 
 /* ------------------------------------------------------------------ */
 /* Pure parts                                                          */
@@ -409,8 +413,9 @@ export interface HoldoutExportSummary {
   /** Rows newly written this pass. */
   cycles: number;
   toolEvents: number;
-  /** Runs that threw. A pass with any must not be followed by a sweep of their events. */
+  /** Runs that threw. Their events are the only copy and the sweep must leave them. */
   failed: number;
+  failedRunIds: string[];
 }
 
 /** Runs worth exporting that are not already final, oldest first. */
@@ -710,11 +715,11 @@ function exportRun(id: string, now: number, vaultRootNow: string | null, counter
  * Yields to the event loop between batches: the first pass after an upgrade
  * reads every run the install has, and `liveGuardTick` must not wait on it. A
  * run that throws is counted and logged and the pass goes on, so one bad row
- * cannot hold back the rest — but `failed` is returned so that the caller can
- * refuse to sweep the events of a run it could not export.
+ * cannot hold back the rest — but the ids that failed are returned so that the
+ * caller can leave exactly those runs' events in place.
  */
 export async function exportHoldoutEvidence(now = Date.now()): Promise<HoldoutExportSummary> {
-  const summary: HoldoutExportSummary = { at: now, runs: 0, cycles: 0, toolEvents: 0, failed: 0 };
+  const summary: HoldoutExportSummary = { at: now, runs: 0, cycles: 0, toolEvents: 0, failed: 0, failedRunIds: [] };
   const vaultRootNow = currentVaultRoot();
   const pending = pendingRuns();
   for (let i = 0; i < pending.length; i++) {
@@ -724,6 +729,7 @@ export async function exportHoldoutEvidence(now = Date.now()): Promise<HoldoutEx
       summary.runs++;
     } catch (err) {
       summary.failed++;
+      summary.failedRunIds.push(pending[i].id);
       console.warn(
         `[usagefoundry] holdout export of run ${pending[i].id} failed: ${err instanceof Error ? err.message : String(err)}`,
       );

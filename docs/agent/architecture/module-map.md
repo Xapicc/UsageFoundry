@@ -154,7 +154,7 @@ health.ts       what /api/health answers with, and the one thing it is for:
                 being false when this server cannot do its job
 status.ts       what /api/status answers with — gauges for a monitor rather
                 than a person, behind a read-only credential of its own
-db.ts           SQLite: every table migrate() creates, and there are 44 —
+db.ts           SQLite: every table migrate() creates, and there are 48 —
                 runs, run_deps, run_events, run_reviews, run_templates,
                 fork_attempts, resume_probes, agents, settings,
                 chat_sessions, chat_messages, chat_proposals,
@@ -169,10 +169,11 @@ db.ts           SQLite: every table migrate() creates, and there are 44 —
                 login_attempts, tasks, task_comments, task_deps,
                 run_tasks, run_squashes, local_provider,
                 workflow_review_items, stack_requests,
-                stack_request_runs, validation_queue. The list is a
+                stack_request_runs, validation_queue, holdout_runs,
+                holdout_cycles, holdout_tool_events, prior_read_snapshots. The list is a
                 completeness claim, so
                 check it against
                 `grep -oE 'CREATE TABLE IF NOT EXISTS [a-z_]+'
                 src/lib/db.ts | sort -u | wc -l` when adding one — a plain
-                `grep -c` says 46 and counts two comments
+                `grep -c` says 50 and counts two comments
 ```

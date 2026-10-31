@@ -344,7 +344,21 @@ describe("exporting before the sweep", () => {
     assert.deepEqual(row, { e: 2, f: null });
   });
 
-  it("keeps a run's events when its export failed", async () => {
+  it("keeps only the events of a run whose own export failed, and bounds the log for the rest", async () => {
+    run({ id: "poisoned", createdAt: OLD });
+    dbMod.db().prepare("INSERT INTO run_events (run_id, ts, kind, payload) VALUES (?, ?, 'tool', ?)").run("poisoned", OLD, "{not json");
+    run({ id: "healthy", createdAt: OLD });
+    event("healthy", OLD, "tool", { name: "Read", input: { file_path: `${REPO}/src/a.ts` } });
+
+    const swept = await retention.runRetentionSweep(NOW);
+    assert.ok(swept.events > 0);
+    assert.equal(count("SELECT COUNT(*) AS n FROM run_events WHERE run_id = 'poisoned'"), 1, "the only copy survived");
+    assert.equal(count("SELECT COUNT(*) AS n FROM run_events WHERE run_id = 'healthy'"), 0, "one bad row did not stop the sweep");
+    assert.equal(count("SELECT COUNT(*) AS n FROM holdout_tool_events WHERE run_id = 'healthy'"), 1);
+    dbMod.db().prepare("DELETE FROM run_events WHERE run_id = 'poisoned'").run();
+  });
+
+  it("keeps every run's events when the export fails outright", async () => {
     run({ id: "unexported", createdAt: OLD });
     event("unexported", OLD, "tool", { name: "Read", input: { file_path: `${REPO}/src/a.ts` } });
 

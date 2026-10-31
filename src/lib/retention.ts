@@ -155,6 +155,10 @@ export function retentionCutoff(days: number | null, now: number): number | null
 /**
  * Drop the event payloads of settled runs past the horizon.
  *
+ * `keepEventsOf` names runs whose `run_events` stay, whatever their age: the
+ * runs the holdout export could not copy. Their telemetry and samples go on the
+ * horizon as ever — only the log is evidence the export is for.
+ *
  * Two tables, one horizon, because they are the same fact about the same run
  * seen from two sides: `run_events` is what this app recorded about a cycle and
  * `otlp_requests` is what the CLI reported about the requests inside it. Both
@@ -172,7 +176,10 @@ export function retentionCutoff(days: number | null, now: number): number | null
  * to do to a process that is also carrying live budget guards. The file's size
  * is reported instead, and `README.md` gives the command.
  */
-export function sweepRunEvents(now = Date.now()): {
+export function sweepRunEvents(
+  now = Date.now(),
+  keepEventsOf: readonly string[] = [],
+): {
   events: number;
   telemetry: number;
   samples: number;
@@ -188,9 +195,10 @@ export function sweepRunEvents(now = Date.now()): {
     .prepare(
       `DELETE FROM run_events
         WHERE ts < ?
-          AND run_id IN (SELECT id FROM runs WHERE status IN (${settled}))`,
+          AND run_id IN (SELECT id FROM runs WHERE status IN (${settled}))
+          AND run_id NOT IN (SELECT value FROM json_each(?))`,
     )
-    .run(cutoff, ...TERMINAL_STATUSES).changes;
+    .run(cutoff, ...TERMINAL_STATUSES, JSON.stringify(keepEventsOf)).changes;
 
   const telemetry = db()
     .prepare(
@@ -1287,10 +1295,12 @@ const timer = ((globalThis as unknown as {
 export async function runRetentionSweep(
   now = Date.now(),
 ): Promise<RetentionSweep> {
-  // The holdouts' evidence goes out first, and a failed export holds the event
-  // sweep back for this tick: the events it could not copy are the only copy,
-  // and the next tick, six hours on, has the same thirty-day horizon to spare.
-  // The other sweeps do not wait on it — they are about other stores.
+  // The holdouts' evidence goes out first. A run the export could not copy keeps
+  // its events — they are the only copy, and the next tick, six hours on, has the
+  // same thirty-day horizon to spare — but only that run's: one malformed row
+  // must not stop the log being bounded for every other run. An export that
+  // fails outright holds the whole event sweep back. The other sweeps do not
+  // wait on it — they are about other stores.
   let exported: HoldoutExportSummary | null = null;
   try {
     exported = await exportHoldoutEvidence(now);
@@ -1302,8 +1312,8 @@ export async function runRetentionSweep(
     );
   }
   const events =
-    exported !== null && exported.failed === 0
-      ? sweepRunEvents(now)
+    exported !== null
+      ? sweepRunEvents(now, exported.failedRunIds)
       : { events: 0, telemetry: 0, samples: 0, compositions: 0 };
   const checkouts = await sweepCheckouts(now);
   const transcripts = await sweepTranscripts(now);
