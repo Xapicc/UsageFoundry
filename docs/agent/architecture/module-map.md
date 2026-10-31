@@ -107,8 +107,13 @@ repoReading.ts  what runs on each repository keep reading, failing at and
                 never a guard, and no cost source
 priorReads.ts   the prior-read pointer: the files earlier runs on a repository
                 opened most, ranked ×0.9 per run back, proved to exist in the
-                run's tree, and inHoldout — the arm, by run id alone. Read once
-                per segment; writes nothing
+                run's tree, and the arm — a hash of the run id, or the parent's
+                for a continuation. Each repository's list is fixed the first
+                time a run asks (prior_read_snapshots)
+holdoutExport.ts  both pointer holdouts' evidence, copied out of run_events into
+                tables no sweep reaches, ahead of every event sweep; pure
+                readings of a prompt's blocks and of a call's path, then the
+                pass that keeps a row at least as good as it was
 fleet.ts        the three controls that act on the whole install — stop
                 everything, hold new work, pick several runs back up. It owns no
                 transition of its own: it composes stopInstance, stopRun,

@@ -39,6 +39,67 @@ and `docs/verification/metering-and-cost.md`. The decisions are in
 `docs/agent/run-lifecycle/prior-read-pointer.md` and
 `docs/agent/metering/run-spend-readings.md`.
 
+## Changes to the holdout, 2026-10-31
+
+Board task `392c2e89`, ahead of the first sweep of the holdout's logs on
+2026-11-16. **Each row below changes what the experiment is, from the first run
+started on a build that has it** — not from the day it was committed, which is
+the date in the heading. A run's own record says which side of each change it is
+on, and the analysis should split on that rather than on a date.
+
+| Change | What it does | How a run records which side it is on |
+|---|---|---|
+| Evidence export | `holdoutExport.ts` copies both pointers' evidence into `holdout_runs`, `holdout_cycles`, `holdout_tool_events`, which no sweep reaches. It runs first in every retention sweep (at boot, then every six hours) rather than as a separate nightly job, so it cannot fall behind the sweep it guards, and a failed export holds the event sweep back for that tick. | `holdout_runs.exported_at`; `holdout.lastExport` in `settings` |
+| Full list logged | The `iteration` event's `priorReads` gains `files: [{path, runs}]` beside `paths`, which stays a count so that older rows read the same way. | `files` present |
+| Fixed treatment | **Snapshot, not holdout-arm-only reads.** Each repository's top 60 is ranked once, from reads no pointer reached (runs created before `b748ac0d`, and runs recorded as held out), kept in `prior_read_snapshots`, and every run in both arms is shown the first 20 of it that exist. A repository with fewer than five such runs shows nothing in either arm until it has them. Before this, every run was shown a list re-ranked from the last 100 runs, treated ones included. | `priorReads.treatment`: `snapshot@<ms>` or `snapshot-pending`; absent on an older run, which the export reads as `rolling` |
+| Continuations inherit | A run with `continues_run` is dealt the arm of the nearest ancestor that recorded one, else the draw of the chain's head, instead of its own id's. The vault pointer's arm is untouched. | `priorReads.basis`: `parent` or `id`; absent on an older run, which is `id` |
+| Live siblings | `runs.live_siblings`: JSON ids of the other `running` runs on the repository when the run's first segment started. `paused` and `queued` runs are not live. | the column; NULL is "not recorded", `[]` is "alone" |
+| Vault pointer's abstention | The `iteration` event gains `candidates`, `outcome` (`picked`, `none-no-candidates`, `none-declined`, `failed`), `failure` and `root`; the run log says which of the two kinds of nothing it was. | `outcome` present |
+
+**Fields the vault note's "Fields to export" asks for that are not populated, and why.**
+
+- **The tool-use id.** A `tool` event's payload never carried it, only the
+  parent's. `holdout_tool_events.event_id` (`run_events.id`) is the row's
+  identity and is what a re-export keys on. Adding the id to the payload would
+  widen every tool event of every run; not done.
+- **Bytes read.** They live only in the session transcripts, which have the same
+  thirty-day horizon; the note makes them conditional on being wanted and nothing
+  here wanted them.
+- **The top-20 list of a run started before the full list was logged.** It is
+  rebuilt (`prior_read_ranking_source = 'recomputed'`) from the events that
+  survive at the time of the first export, as the proposal's ranking, without
+  the existence filter the run itself applied (its checkout is gone) and with
+  any events of its predecessors swept since missing. `prior_read_ranking_runs`
+  and `_reads` say how much it was built from. The list the run was actually
+  shown is in its prompt for the treated arm, whose block paths are exported
+  from the event; the held-out arm's is only this reconstruction.
+- **Anything older than the earliest surviving event.** The oldest `run_events`
+  row at the first export is the floor; `holdout_runs.first_event_ts` records
+  it per run. The pre-period (reads per run by repository before 2026-10-17) is
+  `holdout_tool_events` joined to `holdout_runs` for runs created before that
+  day, and reaches back only as far as the log did.
+- **The vault pointer's candidates and outcome split before this change.**
+  `vault_candidates` is NULL and `vault_outcome` is `none-unsplit` (or `failed`
+  where the run's log recorded the failure) for every cycle the old build wrote.
+- **A vault-considered run that never opened a conversation** (stopped while the
+  gate was answering, say) wrote no `iteration` event and has `vault_arm` NULL;
+  it cannot be told from a run the pointer never considered.
+- **`prior_read_arm` where the event is gone.** Marked `derived` and computed by
+  `holdoutArmFor`; for a continuation dealt by its own id before the change and
+  whose events were swept before the first export, that can name the other arm.
+  Every run since 2026-10-17 still has its event as of this writing.
+- **Overlap by `[started_at, finished_at]`** counts parked time as live. Only
+  `live_siblings` is the realised set, and only for runs started since it existed.
+
+The compliance join in `03-experiment-holdout.md` (lines 113 to 137) is
+reproduced over these tables for both arms by `src/lib/holdoutExport.test.ts`;
+it matches over the log and after the log is swept. It is token-wise where the
+proposal's `INSTR` is substring-wise, so a vocabulary path that is a prefix of
+another path in a prompt is scored by the proposal's query and not by this one.
+**Not run against this install's database**, which a work cycle cannot read:
+`docs/verification/retention.md` has the command that reads the first pass's
+result back.
+
 ## The recommendation
 
 **Build the readout — Option A, with Option F's contention card as its third

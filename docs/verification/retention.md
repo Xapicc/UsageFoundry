@@ -32,3 +32,13 @@
 
 - **A pruned transcript's run being reopened, against a real CLI.** Both
   halves are unit tested; the whole sequence has not run.
+
+- **The holdout export against this install's real database.** It was written and
+  tested against scratch databases only, because a work cycle cannot read
+  `/data`. After the first boot on the new build, `holdout.lastExport` in
+  `settings` holds the counts per arm and `oldestEventTs`; check that
+  `failed` is 0 and that `SELECT COUNT(*) FROM holdout_runs` is not zero, and
+  compare `MIN(first_event_ts)` with the oldest `run_events.ts`:
+  `sqlite3 "$DATA_DIR/usagefoundry.db" "SELECT value FROM settings WHERE key='holdout.lastExport'"`.
+  Also open the first pass's wall time, which was never measured: it reads every
+  considered run once.
