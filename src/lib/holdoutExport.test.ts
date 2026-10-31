@@ -394,3 +394,58 @@ describe("the runs live when a run started", () => {
     assert.deepEqual(JSON.parse(exported.s), ["sib-a", "sib-b"]);
   });
 });
+
+describe("a continuation's arm", () => {
+  /** An id whose own draw is the given arm, so that inheriting it is visible. */
+  const idDealt = (heldOut: boolean, tag: string) => {
+    for (let i = 0; ; i++) {
+      const id = `${tag}-${i}`;
+      if (priorReads.inHoldout(id) === heldOut) return id;
+    }
+  };
+  const link = (id: string, continuesRun: string | null) => {
+    run({ id, createdAt: NOW, repo: "/workspace/chain" });
+    dbMod.db().prepare("UPDATE runs SET continues_run = ? WHERE id = ?").run(continuesRun, id);
+  };
+  const log = (id: string, arm: string) =>
+    event(id, NOW, "iteration", { n: 1, prompt: "", resuming: null, priorReads: { arm, paths: 0 } });
+
+  it("is its own draw when it continues nothing", () => {
+    const solo = idDealt(true, "solo");
+    assert.deepEqual(priorReads.holdoutArmFor(solo, null), { arm: "holdout", basis: "id" });
+  });
+
+  it("is the arm its parent was dealt, not the one its own id would give", () => {
+    const parent = idDealt(true, "parent");
+    const child = idDealt(false, "child");
+    link(parent, null);
+    log(parent, "holdout");
+    assert.equal(priorReads.inHoldout(child), false);
+    assert.deepEqual(priorReads.holdoutArmFor(child, parent), { arm: "holdout", basis: "parent" });
+  });
+
+  it("inherits a parent's logged arm even when that parent was dealt by its own id before the rule existed", () => {
+    // Head hashes to held out; its continuation was dealt `pointer` by its own
+    // id under the old rule. A grandchild must follow the continuation it
+    // continues, not skip to the head and re-deal the middle of the chain.
+    const head = idDealt(true, "head");
+    const middle = idDealt(false, "middle");
+    link(head, null);
+    link(middle, head);
+    log(middle, "pointer");
+    assert.deepEqual(priorReads.holdoutArmFor("grandchild", middle), { arm: "pointer", basis: "parent" });
+  });
+
+  it("falls back to the head of an unrecorded chain, and stops on a cycle", () => {
+    const head = idDealt(true, "unrecorded-head");
+    const middle = idDealt(false, "unrecorded-middle");
+    link(head, null);
+    link(middle, head);
+    assert.deepEqual(priorReads.holdoutArmFor("tail", middle), { arm: "holdout", basis: "parent" });
+
+    link("loop-a", "loop-b");
+    link("loop-b", "loop-a");
+    const got = priorReads.holdoutArmFor("loop-c", "loop-a");
+    assert.equal(got.basis, "parent");
+  });
+});

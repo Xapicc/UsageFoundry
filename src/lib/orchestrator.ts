@@ -11973,6 +11973,7 @@ export async function startRun(id: string): Promise<void> {
       root: run.isolation === "worktree" && run.worktree_path ? workDir : run.folder_repo,
       provider: run.provider,
       originRef: run.origin_ref,
+      continuesRun: run.continues_run,
     });
 
     // The vault notes that bear on this run's task, and which arm of their
@@ -12548,6 +12549,9 @@ export async function startRun(id: string): Promise<void> {
                   // logged and one after read the same way; the list is beside it.
                   paths: priorReads.paths.length,
                   files: priorReads.paths,
+                  // Whether the arm is this run's own draw or its chain's: a
+                  // continuation is dealt the arm of the run it carries on.
+                  basis: priorReads.basis,
                 },
               }
             : {}),

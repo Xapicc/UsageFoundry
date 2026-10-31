@@ -179,8 +179,73 @@ export const HISTORY_RUNS = 100;
 
 export interface PriorReads {
   arm: "pointer" | "holdout";
+  /** `id` when the arm is a hash of the run's own id, `parent` when it was inherited down a chain. */
+  basis: ArmBasis;
   /** What the pointer arm is shown, and what the holdout arm would have been. */
   paths: RankedRead[];
+}
+
+export type ArmBasis = "id" | "parent";
+
+/** Links of a `continues_run` chain followed before giving up; a chain this long is data that is wrong. */
+const MAX_CHAIN = 50;
+
+/**
+ * The arm a run is dealt: its own id's, or the one its parent has.
+ *
+ * A run that continues another carries on its branch and its work, so a
+ * continuation dealt by its own id puts one stretch of one piece of work in
+ * both arms: the parent was shown the list and the child was not, or the
+ * reverse, and what the child reads is then a function of what the parent
+ * learned. Inheriting makes the unit of randomisation the chain.
+ *
+ * "The parent's arm" is the arm the parent was actually dealt — an iteration
+ * event or an exported row that logged it — and only when nothing recorded it
+ * the arm its own chain would deal. That order is what keeps a chain that
+ * straddles the change coherent: a parent dealt by its own id before this rule
+ * existed is inherited as that, not as the head of its chain. A `derived` export
+ * row is a hash and proves nothing, so it does not count as a record.
+ */
+export function holdoutArmFor(
+  runId: string,
+  continuesRun: string | null,
+): { arm: "pointer" | "holdout"; basis: ArmBasis } {
+  const dealt = (id: string) => (inHoldout(id) ? ("holdout" as const) : ("pointer" as const));
+  if (!continuesRun) return { arm: dealt(runId), basis: "id" };
+
+  // Up the chain to the nearest run that recorded its arm; with none, the arm
+  // the chain's head would deal. The same answer the nearest recorded ancestor
+  // gives, since a run in the middle of a chain is dealt its parent's.
+  const seen = new Set([runId]);
+  let head = continuesRun;
+  let current: string | null = continuesRun;
+  for (let link = 0; current && link < MAX_CHAIN && !seen.has(current); link++) {
+    seen.add(current);
+    const recorded = recordedArm(current);
+    if (recorded) return { arm: recorded, basis: "parent" };
+    head = current;
+    const row = db().prepare("SELECT continues_run FROM runs WHERE id = ?").get(current) as
+      | { continues_run: string | null }
+      | undefined;
+    current = row?.continues_run ?? null;
+  }
+  return { arm: dealt(head), basis: "parent" };
+}
+
+/** The arm a run was shown to have been dealt, from its export or its first iteration event. */
+function recordedArm(runId: string): "pointer" | "holdout" | null {
+  const exported = db()
+    .prepare("SELECT prior_read_arm AS arm FROM holdout_runs WHERE run_id = ? AND prior_read_arm_source = 'logged'")
+    .get(runId) as { arm: string | null } | undefined;
+  if (exported?.arm === "pointer" || exported?.arm === "holdout") return exported.arm;
+  const logged = db()
+    .prepare(
+      `SELECT json_extract(payload, '$.priorReads.arm') AS arm FROM run_events
+        WHERE run_id = ? AND kind = 'iteration' AND json_extract(payload, '$.priorReads.arm') IS NOT NULL
+        ORDER BY id LIMIT 1`,
+    )
+    .get(runId) as { arm: string | null } | undefined;
+  return logged?.arm === "pointer" || logged?.arm === "holdout" ? logged.arm : null;
 }
 
 /**
@@ -216,11 +281,13 @@ export function priorReadsFor(o: {
   root: string | null;
   provider: string | null;
   originRef: string | null;
+  /** `runs.continues_run`: a continuation is dealt its parent's arm, not one of its own. */
+  continuesRun: string | null;
 }): PriorReads | null {
   if (!o.root || !priorReadsConsidered(o)) return null;
-  const arm = inHoldout(o.runId) ? "holdout" : "pointer";
+  const { arm, basis } = holdoutArmFor(o.runId, o.continuesRun);
   const reads = historyReads(o.repository!, o.createdAt, o.runId);
-  return { arm, paths: priorReadRanking(reads, { keep: containedFileIn(o.root) }) };
+  return { arm, basis, paths: priorReadRanking(reads, { keep: containedFileIn(o.root) }) };
 }
 
 /**

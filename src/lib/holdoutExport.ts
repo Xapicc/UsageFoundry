@@ -5,6 +5,7 @@ import { TERMINAL_STATUSES } from "./orchestrator";
 import {
   HISTORY_RUNS,
   historyReads,
+  holdoutArmFor,
   inHoldout,
   priorReadRanking,
   priorReadsConsidered,
@@ -319,6 +320,7 @@ interface StoredRun {
   first_event_ts: number | null;
   prior_read_arm: string | null;
   prior_read_arm_source: string | null;
+  prior_read_arm_basis: string | null;
   prior_read_ranking: string | null;
   prior_read_ranking_source: string | null;
   preceding_runs: string | null;
@@ -349,14 +351,14 @@ function repositoryOf(run: Pick<RunColumns, "folder_repo" | "repo_root">): strin
  * pointer does not consider.
  */
 function armOf(
-  run: Pick<RunColumns, "id" | "folder_repo" | "repo_root" | "provider" | "origin_ref">,
+  run: Pick<RunColumns, "id" | "folder_repo" | "repo_root" | "provider" | "origin_ref" | "continues_run">,
   exported: Map<string, string | null>,
 ): string | null {
   if (exported.has(run.id)) return exported.get(run.id)!;
   if (!priorReadsConsidered({ repository: repositoryOf(run), provider: run.provider, originRef: run.origin_ref })) {
     return null;
   }
-  return inHoldout(run.id) ? "holdout" : "pointer";
+  return holdoutArmFor(run.id, run.continues_run).arm;
 }
 
 function armsOf(rows: RunColumns[]): ArmPair[] {
@@ -371,7 +373,7 @@ function armsOf(rows: RunColumns[]): ArmPair[] {
   return rows.map((r) => [r.id, armOf(r, exported)]);
 }
 
-const ARM_COLUMNS = "id, folder_repo, repo_root, provider, origin_ref";
+const ARM_COLUMNS = "id, folder_repo, repo_root, provider, origin_ref, continues_run";
 
 function precedingRuns(run: RunColumns, repository: string): ArmPair[] {
   const rows = db()
@@ -493,14 +495,19 @@ function exportRun(id: string, now: number, vaultRootNow: string | null, counter
   });
   let priorArm: string | null = null;
   let priorSource: string | null = null;
+  let priorBasis: string | null = null;
   if (loggedPrior) {
     priorArm = loggedPrior.arm;
     priorSource = "logged";
+    priorBasis = loggedPrior.basis ?? "id";
   } else if (stored?.prior_read_arm) {
     priorArm = stored.prior_read_arm;
     priorSource = stored.prior_read_arm_source;
+    priorBasis = stored.prior_read_arm_basis;
   } else if (considered) {
-    priorArm = inHoldout(id) ? "holdout" : "pointer";
+    const dealt = holdoutArmFor(id, run.continues_run);
+    priorArm = dealt.arm;
+    priorBasis = dealt.basis;
     priorSource = "derived";
   }
   const vaultArm = loggedVault ? loggedVault.arm : null;
@@ -638,7 +645,7 @@ function exportRun(id: string, now: number, vaultRootNow: string | null, counter
          reported_done = excluded.reported_done, continues_run = excluded.continues_run, origin_ref = excluded.origin_ref,
          isolation = excluded.isolation, prompt_chars = excluded.prompt_chars, live_siblings = excluded.live_siblings,
          prior_read_arm = excluded.prior_read_arm, prior_read_arm_source = excluded.prior_read_arm_source,
-         prior_read_arm_basis = COALESCE(excluded.prior_read_arm_basis, holdout_runs.prior_read_arm_basis),
+         prior_read_arm_basis = excluded.prior_read_arm_basis,
          prior_read_arm_by_id = excluded.prior_read_arm_by_id,
          prior_read_treatment = COALESCE(excluded.prior_read_treatment, holdout_runs.prior_read_treatment),
          prior_read_ranking = excluded.prior_read_ranking, prior_read_ranking_source = excluded.prior_read_ranking_source,
@@ -678,7 +685,7 @@ function exportRun(id: string, now: number, vaultRootNow: string | null, counter
       live_siblings: run.live_siblings,
       prior_read_arm: priorArm,
       prior_read_arm_source: priorSource,
-      prior_read_arm_basis: loggedPrior ? (loggedPrior.basis ?? "id") : null,
+      prior_read_arm_basis: priorBasis,
       prior_read_arm_by_id: considered ? (inHoldout(id) ? "holdout" : "pointer") : null,
       // 'rolling' is what every run got before a repository's list was fixed, so
       // an event that does not name a snapshot is that, not unknown.
