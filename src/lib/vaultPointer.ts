@@ -597,7 +597,10 @@ export function gateCost(result: Record<string, unknown>): number {
 async function searchVault(script: string, vaultRoot: string, query: string): Promise<Array<Omit<VaultCandidate, "tokens" | "headings">>> {
   // `python3` by name, as the skill tells an agent to run it, and from the
   // vault's root so that the script finds the vault the way it does for them.
-  const out = await runChild("python3", [script, "--json", "-n", String(PER_QUERY), query], vaultRoot, SEARCH_TIMEOUT_MS);
+  // `-B` as the skill has it: this child runs at the agents' uid outside any
+  // sandbox, and the bytecode of the module the script imports is the one
+  // thing it would otherwise write into the vault.
+  const out = await runChild("python3", ["-B", script, "--json", "-n", String(PER_QUERY), query], vaultRoot, SEARCH_TIMEOUT_MS);
   if (out.timedOut) throw new Error(`the vault's search gave no answer in ${SEARCH_TIMEOUT_MS / 1000}s`);
   if (out.code !== 0) throw new Error(`the vault's search exited ${out.code}: ${oneLine(out.stderr, 300)}`);
   return readSearchHits(out.stdout);

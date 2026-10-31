@@ -176,7 +176,7 @@ import {
   localCycleEnv,
   type LocalSignIn,
 } from "./localProvider";
-import { prepareVaultSkill, SEARCH_SCRIPT_CANDIDATES } from "./vaultSkill";
+import { prepareVaultSkill, SEARCH_SCRIPT_CANDIDATES, vaultWritableBy } from "./vaultSkill";
 import {
   noteLiveTick,
   noteLiveTickFailure,
@@ -12704,7 +12704,14 @@ export async function startRun(id: string): Promise<void> {
         permissionMode: budget.permissionMode ?? "acceptEdits",
         resumeSessionId: sessionId,
         pluginDirs: plugins.dirs,
-        vaultSkill: vaultSkill.kind === "ready" ? vaultSkill : null,
+        // Read-only unless this run's workspace is the vault: `vaultWritableBy`.
+        vaultSkill:
+          vaultSkill.kind === "ready"
+            ? {
+                ...vaultSkill,
+                writable: vaultWritableBy(vaultSkill.vaultPath, { workDir, repoRoot: run.repo_root }),
+              }
+            : null,
         readGuardDir: readGuard.kind === "ready" ? readGuard.pluginDir : null,
         // On every cycle including a resumed one, `--plugin-dir`'s rule: the
         // CLI restores no MCP config on `--resume`, so a version of this that

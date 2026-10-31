@@ -1,7 +1,12 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { findSearchScript, renderVaultSkill, SEARCH_SCRIPT_CANDIDATES } from "./vaultSkill";
+import {
+  findSearchScript,
+  renderVaultSkill,
+  SEARCH_SCRIPT_CANDIDATES,
+  vaultWritableBy,
+} from "./vaultSkill";
 
 /**
  * The generated vault-lookup skill.
@@ -71,9 +76,10 @@ test("tells the run to stop rather than answer from memory", () => {
 });
 
 test("forbids writing into the vault", () => {
-  // `--add-dir` was measured to add the directory to the session's *write* set,
-  // not a read-only one, so this sentence is the only thing standing between an
-  // agent and the operator's notes.
+  // `--add-dir` was measured to add the directory to the session's *write* set.
+  // `buildArgs` takes that back by mechanism now, but on an install with no
+  // managed sandbox nothing confines `Bash`, and there this sentence is still
+  // the only thing standing between an agent's shell and the operator's notes.
   assert.match(renderVaultSkill(ctx), /Never write to the vault/);
 });
 
@@ -107,9 +113,11 @@ test("uses the vault's ranked search when it has one", () => {
     searchScript: "/workspace/notes/Knowledge Vault/_Meta/vault_search.py",
   });
   // Quoted, because the only vault anybody has pointed this at lives under a
-  // path with a space in it and an unquoted argument would split.
+  // path with a space in it and an unquoted argument would split. `-B` so that
+  // a run the vault is read-only to does not try to write the bytecode of the
+  // module the script imports into it.
   assert.ok(
-    text.includes('python3 "/workspace/notes/Knowledge Vault/_Meta/vault_search.py"'),
+    text.includes('python3 -B "/workspace/notes/Knowledge Vault/_Meta/vault_search.py"'),
     "the ranked search must be named as a runnable, quoted command",
   );
   assert.match(text, /Believe the abstention/);
@@ -147,4 +155,29 @@ test("finds a search script in candidate order, under the vault root", () => {
     findSearchScript(root, () => false),
     null,
   );
+});
+
+test("lets a run write the vault only when the vault is its own workspace", () => {
+  // Both directions are silent. A reader that can write is the poisoning risk
+  // the deny exists for; a vault run that cannot is a night of Dreaming that
+  // records nothing and reports a tool error nobody reads.
+  const vault = "/workspace/notes/Knowledge Vault";
+  const writable = (workDir: string, repoRoot: string | null) =>
+    vaultWritableBy(vault, { workDir, repoRoot });
+
+  // The vault's own run, in the folder or in a worktree under its store.
+  assert.equal(writable(vault, vault), true);
+  assert.equal(writable(`${vault}/.uf-worktrees/Knowledge Vault-2`, vault), true);
+  // A vault below a mount root keeps its worktrees at the mount's store, outside
+  // the vault, and commits into the vault's own `.git`: the repository is what
+  // says this run is working on the vault.
+  assert.equal(writable("/workspace/notes/.uf-worktrees/Knowledge Vault-2", vault), true);
+
+  // Every other run reads it and no more — including one whose own name starts
+  // with the vault's, which a prefix test would have let write.
+  assert.equal(writable("/workspace/repo", "/workspace/repo"), false);
+  assert.equal(writable("/workspace/notes/Knowledge Vault 2", null), false);
+  // And one whose folder holds the vault: it can see the vault, it was not
+  // asked to change it.
+  assert.equal(writable("/workspace/notes", "/workspace/notes"), false);
 });

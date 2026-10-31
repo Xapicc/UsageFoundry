@@ -1412,12 +1412,27 @@ export function buildArgs(opts: {
    * The vault is not the run's workspace, and an isolated run's checkout is the
    * only directory it gets by default, so without this the skill would name a
    * path the run may not read — a skill that reads as available and fails on
-   * use, which is the failure this whole feature is built to avoid. Note what
-   * measurement showed the flag actually does: `--add-dir` lands the directory
-   * in the session's sandbox **write** set, not a read-only one, so it is the
-   * skill's own text that has to forbid writing into the vault.
+   * use, which is the failure this whole feature is built to avoid.
+   *
+   * **And it grants write, so unless `writable` says otherwise the write is
+   * taken back by mechanism.** `--add-dir` lands the vault in the session's
+   * sandbox write set and makes it a working directory the file tools edit
+   * without asking. Measured on 2.1.310 against a stub API, a run with only
+   * that flag created and edited notes through `Write` and `Edit` and had the
+   * vault bound read-write for `Bash`. Two things close it, and each closes
+   * only its own half: an `Edit(//<vault>/**)` deny refused `Write` and `Edit`
+   * under `acceptEdits` and `bypassPermissions` alike but left the `Bash`
+   * mount read-write; a `denyWrite` in the `--settings` overlay put a
+   * `--ro-bind` of the vault after the read-write one but left both file tools
+   * writing. So both are emitted. The second needs a write set to ride on, so
+   * an install with no managed sandbox gets the first alone, and there `Bash`
+   * can still write the vault — nothing on this argv confines `Bash` there.
+   *
+   * `writable` is for a run whose workspace *is* the vault, and only
+   * `vaultWritableBy` sets it. Absent is read-only, so a call site that forgets
+   * to decide gets the safe argv rather than the write.
    */
-  vaultSkill?: { pluginDir: string; vaultPath: string } | null;
+  vaultSkill?: { pluginDir: string; vaultPath: string; writable?: boolean } | null;
   /**
    * The generated read-guard plugin, when the operator has switched it on.
    *
@@ -1640,7 +1655,18 @@ export function buildArgs(opts: {
   // above: a second `--disallowedTools` is a replacement rather than an
   // addition, so a stack that got its own flag would silently take the
   // process-kill denial off every cycle on the install.
-  args.push("--disallowedTools", ...PROCESS_KILLERS, ...(opts.stackGrants?.deny ?? []));
+  //
+  // The vault's write deny rides it too, last so that an argv without the
+  // skill keeps every byte it had. `//` is the CLI's spelling of an absolute
+  // path in a rule, and `Edit` is the rule the file tools share: measured, it
+  // refused `Write` as well as `Edit`.
+  const vaultReadOnly = opts.vaultSkill && !opts.vaultSkill.writable ? opts.vaultSkill.vaultPath : null;
+  args.push(
+    "--disallowedTools",
+    ...PROCESS_KILLERS,
+    ...(opts.stackGrants?.deny ?? []),
+    ...(vaultReadOnly ? [`Edit(/${vaultReadOnly}/**)`] : []),
+  );
   // One flag carrying every notice, for the reason `--allowedTools` carries both
   // its lists: a second `--append-system-prompt` is a replacement, not an
   // addition, and losing one of them would be silent. The last three are
@@ -1727,10 +1753,23 @@ export function buildArgs(opts: {
   // these two entries. One flag for both halves, because the CLI keeps only the
   // last `--settings` it is given, so a second would drop the pins or the write
   // set without a word.
+  //
+  // The vault's `denyWrite` is withheld wherever the write set is, for
+  // `sandboxOverlay`'s reason with `denyRead`: a write config of any kind binds
+  // `/` read-only and rw-binds only what is allowed, so a deny with no allow
+  // beside it is a policy nobody has measured. It outranks the write grant
+  // `--add-dir` made — measured, the CLI hands bwrap the vault's `--bind` and
+  // then a `--ro-bind` of the same path.
   const overlay = {
     ...(opts.envPins ? { env: opts.envPins } : {}),
     ...(opts.writableRoots && opts.writableRoots.length > 0
-      ? { sandbox: { filesystem: { allowWrite: opts.writableRoots } } }
+      ? {
+          sandbox: {
+            filesystem: vaultReadOnly
+              ? { allowWrite: opts.writableRoots, denyWrite: [vaultReadOnly] }
+              : { allowWrite: opts.writableRoots },
+          },
+        }
       : {}),
   };
   if (Object.keys(overlay).length > 0) args.push("--settings", JSON.stringify(overlay));
@@ -1989,8 +2028,8 @@ export function buildCodexArgs(opts: Parameters<typeof buildArgs>[0]): string[] 
   //
   // **The vault is deliberately not among them**, though Claude Code gets it as
   // `--add-dir`. For Claude that flag is what lets the vault skill's path be
-  // read, and its write grant is the price, bounded only by the skill's own
-  // "never write to the vault". For Codex both halves are different: every
+  // read, and its write grant is taken back by an `Edit` deny and a sandbox
+  // `denyWrite` (see `vaultSkill`). For Codex both halves are different: every
   // sandbox mode here reads the whole filesystem already — measured: `ls` of the
   // vault works under `workspace-write` with no `--add-dir`, and `touch` in it
   // is refused read-only — and a Codex cycle gets no skill (`pluginDirs` is a
