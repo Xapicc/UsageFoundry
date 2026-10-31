@@ -38,7 +38,13 @@ import { getSettings } from "./settings";
 /** Settings key the last pass's summary is stored under, `retention.lastSweep`'s shape. */
 const LAST_EXPORT_KEY = "holdout.lastExport";
 
-/** The tool names whose calls are the holdout's outcome and its displacement. */
+/**
+ * The tool names whose calls are the holdout's outcome and its displacement.
+ *
+ * Any other call that names a `file_path` is kept too (`MultiEdit`, an MCP tool
+ * that opens a file): the compliance join counts a file as opened by whatever
+ * opened it, and an export narrower than that would score a different number.
+ */
 const TOOL_NAMES = ["Read", "Grep", "Glob", "Edit", "Write"] as const;
 
 /** Runs between two yields to the event loop on a long pass. */
@@ -145,21 +151,6 @@ export interface ToolEvent {
 
 function text(value: unknown): string | null {
   return typeof value === "string" && value !== "" ? value : null;
-}
-
-/** The five fields of a `tool` payload the holdout reads, or null for any other tool. */
-export function toolEventOf(payload: unknown): ToolEvent | null {
-  if (typeof payload !== "object" || payload === null) return null;
-  const p = payload as Record<string, unknown>;
-  if (!(TOOL_NAMES as readonly unknown[]).includes(p.name)) return null;
-  const input = typeof p.input === "object" && p.input !== null ? (p.input as Record<string, unknown>) : {};
-  return {
-    name: p.name as string,
-    path: text(input.file_path) ?? text(input.notebook_path) ?? text(input.path),
-    pattern: text(input.pattern),
-    glob: text(input.glob),
-    parentToolUseId: text(p.parentToolUseId),
-  };
 }
 
 /**
@@ -549,7 +540,9 @@ function exportRun(id: string, now: number, vaultRootNow: string | null, counter
               json_extract(payload, '$.parentToolUseId') AS parentToolUseId
          FROM run_events
         WHERE run_id = ? AND kind = 'tool'
-          AND json_extract(payload, '$.name') IN (${TOOL_NAMES.map(() => "?").join(",")})
+          AND json_extract(payload, '$.name') IS NOT NULL
+          AND (json_extract(payload, '$.name') IN (${TOOL_NAMES.map(() => "?").join(",")})
+               OR json_extract(payload, '$.input.file_path') IS NOT NULL)
         ORDER BY id`,
     )
     .all(id, ...TOOL_NAMES) as Array<{

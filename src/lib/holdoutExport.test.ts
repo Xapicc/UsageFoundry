@@ -124,19 +124,8 @@ describe("promptPaths", () => {
 });
 
 describe("tool events", () => {
-  it("reads the path from file_path, notebook_path or path, and refuses any other tool", () => {
-    assert.equal(exportMod.toolEventOf({ name: "Read", input: { file_path: "/a/b" } })?.path, "/a/b");
-    assert.equal(exportMod.toolEventOf({ name: "Grep", input: { pattern: "x", path: "/a" } })?.path, "/a");
-    assert.equal(exportMod.toolEventOf({ name: "Glob", input: { pattern: "*.md" } })?.path, null);
-    assert.equal(exportMod.toolEventOf({ name: "Bash", input: { command: "ls" } }), null);
-    assert.equal(
-      exportMod.toolEventOf({ name: "Read", input: { file_path: "/a" }, parentToolUseId: "toolu_1" })?.parentToolUseId,
-      "toolu_1",
-    );
-  });
-
   it("calls a path inside the vault inside and its prefix-sharing sibling outside", () => {
-    const call = (p: string | null, over: Partial<ReturnType<typeof exportMod.toolEventOf> & object> = {}) => ({
+    const call = (p: string | null, over: Partial<import("./holdoutExport").ToolEvent> = {}) => ({
       name: "Read", path: p, pattern: null, glob: null, parentToolUseId: null, ...over,
     });
     assert.equal(exportMod.insideVault(call("/vault/a/b.md"), VAULT), true);
@@ -520,5 +509,100 @@ describe("a repository's fixed list", () => {
     const got = considered({ repository: thin, root: thin });
     assert.deepEqual(got, { arm: got?.arm, basis: "id", treatment: "snapshot-pending", paths: [] });
     assert.equal(count("SELECT COUNT(*) AS n FROM prior_read_snapshots WHERE repository = ?", thin), 0);
+  });
+});
+
+describe("the compliance join, before and after the sweep", () => {
+  const COMPLIANCE_REPO = "/workspace/compliance";
+  const C0 = NOW - 60 * DAY;
+
+  // `03-experiment-holdout.md`'s query, read from `run_events` as it is while
+  // the events exist, grouped by the arm each cycle logged and limited to the
+  // fixture's repository. Left in the shape the proposal has it.
+  const FROM_EVENTS = `
+    WITH opens AS (
+      SELECT e.run_id, e.ts,
+             COALESCE(NULLIF(r.folder_repo,''), '(no repo)') AS repo,
+             REPLACE(json_extract(e.payload,'$.input.file_path'),
+                     COALESCE(NULLIF(r.worktree_path,''),NULLIF(r.work_dir,''),r.folder)||'/','') AS rel
+      FROM run_events e JOIN runs r ON r.id=e.run_id
+      WHERE e.kind='tool' AND json_extract(e.payload,'$.input.file_path') IS NOT NULL),
+    vocab AS (SELECT DISTINCT repo, rel FROM opens WHERE rel LIKE '%/%'),
+    cycles AS (
+      SELECT e.run_id, e.ts, json_extract(e.payload,'$.n') AS n,
+             json_extract(e.payload,'$.prompt') AS prompt,
+             json_extract(e.payload,'$.priorReads.arm') AS arm,
+             COALESCE(NULLIF(r.folder_repo,''),'(no repo)') AS repo
+      FROM run_events e JOIN runs r ON r.id=e.run_id WHERE e.kind='iteration'),
+    named AS (
+      SELECT c.run_id, c.n, c.ts, c.arm, v.rel,
+             CASE WHEN EXISTS (SELECT 1 FROM opens o
+                    WHERE o.run_id=c.run_id AND o.rel=v.rel AND o.ts>=c.ts)
+                  THEN 1 ELSE 0 END AS hit
+      FROM cycles c JOIN vocab v ON v.repo=c.repo AND INSTR(c.prompt, v.rel) > 0
+      WHERE c.repo = ?)
+    SELECT arm, COUNT(*) AS pairs, COUNT(DISTINCT run_id||'/'||n) AS cycles, SUM(hit) AS opened
+    FROM named GROUP BY arm ORDER BY arm`;
+
+  // The same question over the export, which holds the paths a prompt named
+  // rather than the prompt.
+  const FROM_EXPORT = `
+    WITH opens AS (
+      SELECT t.run_id, t.ts, h.repository AS repo,
+             REPLACE(t.path, COALESCE(NULLIF(r.worktree_path,''),NULLIF(r.work_dir,''),r.folder)||'/','') AS rel
+      FROM holdout_tool_events t
+      JOIN holdout_runs h ON h.run_id=t.run_id JOIN runs r ON r.id=t.run_id
+      WHERE t.path IS NOT NULL AND t.path LIKE '/%'),
+    vocab AS (SELECT DISTINCT repo, rel FROM opens WHERE rel LIKE '%/%'),
+    named AS (
+      SELECT c.run_id, c.n, c.ts, c.prior_read_arm AS arm, v.rel,
+             CASE WHEN EXISTS (SELECT 1 FROM opens o
+                    WHERE o.run_id=c.run_id AND o.rel=v.rel AND o.ts>=c.ts)
+                  THEN 1 ELSE 0 END AS hit
+      FROM holdout_cycles c JOIN holdout_runs h ON h.run_id=c.run_id
+      JOIN vocab v ON v.repo=h.repository
+      WHERE h.repository = ?
+        AND (v.rel IN (SELECT value FROM json_each(c.prompt_block_paths))
+          OR v.rel IN (SELECT value FROM json_each(c.prompt_brief_paths))))
+    SELECT arm, COUNT(*) AS pairs, COUNT(DISTINCT run_id||'/'||n) AS cycles, SUM(hit) AS opened
+    FROM named GROUP BY arm ORDER BY arm`;
+
+  before(() => {
+    const block = cycleInvocation.priorReadsNotice([
+      { path: "src/a.ts", runs: 4 },
+      { path: "src/b.ts", runs: 2 },
+    ]);
+    // Treated: the block names a and b, the brief names docs/x.md. It reads a
+    // after the cycle opens and docs/x.md only before it.
+    run({ id: "comp-pointer", createdAt: C0, repo: COMPLIANCE_REPO });
+    event("comp-pointer", C0 + 1, "tool", { name: "Read", input: { file_path: `${COMPLIANCE_REPO}/docs/x.md` } });
+    event("comp-pointer", C0 + 5, "iteration", {
+      n: 1, resuming: null, prompt: `${block}\n\nUpdate docs/x.md`, priorReads: { arm: "pointer", paths: 2 },
+    });
+    event("comp-pointer", C0 + 9, "tool", { name: "Read", input: { file_path: `${COMPLIANCE_REPO}/src/a.ts` } });
+    // Held out: the brief names src/a.ts and the run reads it, and a MultiEdit
+    // of src/b.ts counts as opening it, which is why the export keeps calls
+    // that carry a file_path whatever tool made them.
+    run({ id: "comp-holdout", createdAt: C0 + 2, repo: COMPLIANCE_REPO });
+    event("comp-holdout", C0 + 6, "iteration", {
+      n: 1, resuming: null, prompt: "Fix src/a.ts and src/b.ts", priorReads: { arm: "holdout", paths: 2 },
+    });
+    event("comp-holdout", C0 + 8, "tool", { name: "Read", input: { file_path: `${COMPLIANCE_REPO}/src/a.ts` } });
+    event("comp-holdout", C0 + 9, "tool", { name: "MultiEdit", input: { file_path: `${COMPLIANCE_REPO}/src/b.ts` } });
+  });
+
+  it("scores both arms the same from the export as from the log, and keeps doing so after the log is swept", async () => {
+    const before = dbMod.db().prepare(FROM_EVENTS).all(COMPLIANCE_REPO);
+    assert.deepEqual(before, [
+      { arm: "holdout", pairs: 2, cycles: 1, opened: 2 },
+      { arm: "pointer", pairs: 3, cycles: 1, opened: 1 },
+    ]);
+
+    await exportMod.exportHoldoutEvidence(NOW);
+    assert.deepEqual(dbMod.db().prepare(FROM_EXPORT).all(COMPLIANCE_REPO), before);
+
+    retention.sweepRunEvents(NOW);
+    assert.equal(count("SELECT COUNT(*) AS n FROM run_events WHERE run_id LIKE 'comp-%'"), 0);
+    assert.deepEqual(dbMod.db().prepare(FROM_EXPORT).all(COMPLIANCE_REPO), before);
   });
 });
