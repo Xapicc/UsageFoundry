@@ -18,6 +18,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - `runs.provider` is permanent, and the clause that matters is that no sweep may ever write to it.
 - `prune_decisions` was that decision taken the other way, and taken wrong.
 - A fourth table rides the event sweep, and which sweep it rides is the decision.
+- The holdouts' evidence is copied out ahead of this sweep, into tables it never reaches, and a run it could not copy keeps its events.
 - A fifth table rides it on the fourth's ticket, and one clause is its own.
 
 ## [Who may sweep, and the taskboard no sweep reaches](retention/sweeper-and-taskboard.md)

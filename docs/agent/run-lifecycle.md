@@ -97,10 +97,11 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 
 - A run's first prompt names the files earlier runs on its repository opened most, on half of all runs, as a fact rather than an instruction.
 - Its slot is the last orientation before the task, on the session-less branch only.
+- The list is one object per repository, taken once, and no pointer's reads are in it (2026-10-31).
 - It is resolved once per segment, synchronously, beside `githubTokenFor` and after `ensureWorktree`.
 - Who is never considered, so is in neither arm.
-- The arm is `inHoldout(runId)`, a function of the id and nothing else, and it must never change.
-- Every session-less cycle the pointer considered records `priorReads: { arm, paths }` on its `iteration` event, in both arms.
+- The arm is `inHoldout(id)` of the run's own id, or of its chain, and `inHoldout` must never change.
+- Every session-less cycle the pointer considered records `priorReads: { arm, paths, files, basis, treatment }` on its `iteration` event, in both arms.
 - There is no setting.
 
 ## [The vault pointer and its holdout](run-lifecycle/vault-pointer.md)
