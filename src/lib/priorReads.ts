@@ -175,7 +175,7 @@ export function holdoutOf(experiment: string, runId: string): boolean {
  * every run of history is that many more log rows to extract JSON from on the
  * path that starts a run.
  */
-const HISTORY_RUNS = 100;
+export const HISTORY_RUNS = 100;
 
 export interface PriorReads {
   arm: "pointer" | "holdout";
@@ -217,11 +217,38 @@ export function priorReadsFor(o: {
   provider: string | null;
   originRef: string | null;
 }): PriorReads | null {
-  if (!o.repository || !o.root) return null;
-  if (o.provider === "codex" || o.provider === "local") return null;
-  if (o.originRef?.startsWith("dreaming:")) return null;
-
+  if (!o.root || !priorReadsConsidered(o)) return null;
   const arm = inHoldout(o.runId) ? "holdout" : "pointer";
+  const reads = historyReads(o.repository!, o.createdAt, o.runId);
+  return { arm, paths: priorReadRanking(reads, { keep: containedFileIn(o.root) }) };
+}
+
+/**
+ * Whether the pointer considers a run, from the columns of its `runs` row alone.
+ *
+ * Its own function because the export has to ask the same question of a run
+ * whose events are already swept: `priorReadsFor` is the only place that decides
+ * who is in the experiment, and a second copy of the three clauses would drift
+ * from it with nothing failing. The one clause it cannot answer is `root` — the
+ * directory the paths are checked against — which needs the checkout on disk.
+ */
+export function priorReadsConsidered(o: {
+  repository: string | null;
+  provider: string | null;
+  originRef: string | null;
+}): boolean {
+  if (!o.repository) return false;
+  if (o.provider === "codex" || o.provider === "local") return false;
+  if (o.originRef?.startsWith("dreaming:")) return false;
+  return true;
+}
+
+/**
+ * The main-thread `Read` calls of the repository's most recent runs created
+ * before `createdAt`: what the ranking is built from, and so what the export
+ * rebuilds it from for a run whose own record of its list was never written.
+ */
+export function historyReads(repository: string, createdAt: number, runId: string): PriorReadRow[] {
   // Through `idx_run_events_run` rather than a scan: the run ids come from
   // `runs`, which is small, and the events are read run by run.
   const rows = db()
@@ -238,16 +265,15 @@ export function priorReadsFor(o: {
           AND json_extract(e.payload, '$.name') = 'Read'
           AND json_extract(e.payload, '$.parentToolUseId') IS NULL`,
     )
-    .all(o.repository, o.createdAt, o.runId) as Array<{
+    .all(repository, createdAt, runId) as Array<{
     runId: string;
     runCreatedAt: number;
     base: string | null;
     filePath: unknown;
   }>;
-  const reads = rows.flatMap((r) =>
+  return rows.flatMap((r) =>
     typeof r.filePath === "string" ? [{ ...r, filePath: r.filePath }] : [],
   );
-  return { arm, paths: priorReadRanking(reads, { keep: containedFileIn(o.root) }) };
 }
 
 /**

@@ -2131,6 +2131,145 @@ function migrate(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_prune_receipts_run ON prune_receipts(run_id, ts);
   `);
 
+  // The two pointer holdouts' evidence, kept where no sweep reaches it.
+  //
+  // `run_events` is where a holdout's outcome lives — what a run's prompt
+  // named, and what it then opened — and `sweepRunEvents` deletes it thirty days
+  // after it was written. The analysis needs the first month of the experiment
+  // at its end, so `holdoutExport.ts` copies the facts out before the sweep and
+  // these tables are on `prune_decisions`' ticket, not `context_samples`': they
+  // are never swept. A row is a settled fact about a permanent `runs` row, and a
+  // tool event keeps five short fields of the payload, not the payload.
+  //
+  // Plain `run_id` columns with no REFERENCES, on `prune_receipts`' reasoning: a
+  // cascade would describe a deletion that never happens, and the one thing
+  // these tables must not do is lose their rows with anything.
+  //
+  // JSON columns are arrays or objects written once and read whole
+  // (`json_each` reaches inside). A column that is NULL was never recorded; an
+  // empty array is a recorded "none". The two are different answers and the
+  // abstention rate is the difference.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS holdout_runs (
+      run_id                   TEXT PRIMARY KEY,
+      exported_at              INTEGER NOT NULL,
+      -- Set once the run was settled when it was last exported. A run with this
+      -- set is skipped until it is picked up again, so a pass made after its
+      -- events were swept cannot overwrite what an earlier one kept.
+      finalized_at             INTEGER,
+      -- The earliest event of this run that survived to the first export. Older
+      -- than created_at + the run's first cycle means the run was whole; later
+      -- means the sweep had already taken its head.
+      first_event_ts           INTEGER,
+      repository               TEXT,
+      folder                   TEXT NOT NULL,
+      folder_repo              TEXT,
+      repo_root                TEXT,
+      provider                 TEXT,
+      model                    TEXT,
+      status                   TEXT NOT NULL,
+      stop_reason              TEXT,
+      created_at               INTEGER NOT NULL,
+      started_at               INTEGER,
+      finished_at              INTEGER,
+      max_iterations           INTEGER NOT NULL,
+      iterations               INTEGER NOT NULL,
+      spent_usd                REAL NOT NULL,
+      spent_tokens             INTEGER NOT NULL,
+      reported_done            INTEGER NOT NULL,
+      continues_run            TEXT,
+      origin_ref               TEXT,
+      isolation                TEXT,
+      prompt_chars             INTEGER NOT NULL,
+      -- runs.live_siblings: the runs live on the repository when this one started.
+      live_siblings            TEXT,
+      -- The prior-read pointer. NULL arm means the run was not considered.
+      prior_read_arm           TEXT,
+      -- 'logged' when an iteration event said it, 'derived' when the arm was
+      -- recomputed from the id because the event is gone.
+      prior_read_arm_source    TEXT,
+      -- 'id' when the arm is a hash of this run's own id, 'parent' when it was
+      -- inherited down a continues_run chain. NULL on an event from before the
+      -- distinction existed, which is always 'id'.
+      prior_read_arm_basis     TEXT,
+      prior_read_arm_by_id     TEXT,
+      -- 'rolling' for the ranking that drifted with the last hundred runs,
+      -- 'snapshot@<ms>' for the fixed object each repository has been shown since.
+      prior_read_treatment     TEXT,
+      -- The top-20 as [{path, runs}], for both arms. 'logged' is what the run was
+      -- shown or held back from; 'recomputed' is rebuilt from the events that
+      -- survived, without the existence filter the run itself applied.
+      prior_read_ranking       TEXT,
+      prior_read_ranking_source TEXT,
+      prior_read_ranking_runs  INTEGER,
+      prior_read_ranking_reads INTEGER,
+      -- The vault pointer. NULL arm means no iteration event recorded one.
+      vault_arm                TEXT,
+      -- [[id, arm|null]] of the hundred preceding runs on the repository, and
+      -- [[id, arm|null]] of those whose [started_at, finished_at] overlapped.
+      preceding_runs           TEXT,
+      overlapping_runs         TEXT,
+      tool_error_count         INTEGER NOT NULL DEFAULT 0,
+      subagent_count           INTEGER NOT NULL DEFAULT 0,
+      -- [{ts, subtype, costUSD, numTurns, durationMs}] of the run's result events.
+      results                  TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_holdout_runs_repo ON holdout_runs(repository, created_at);
+
+    CREATE TABLE IF NOT EXISTS holdout_cycles (
+      -- run_events.id of the iteration event, which is what makes a re-export a no-op.
+      event_id                 INTEGER PRIMARY KEY,
+      run_id                   TEXT NOT NULL,
+      ts                       INTEGER NOT NULL,
+      n                        INTEGER,
+      resuming                 TEXT,
+      prompt_chars             INTEGER NOT NULL,
+      prior_read_arm           TEXT,
+      -- How many files the block named or would have named, and which, as [{path, runs}].
+      prior_read_count         INTEGER,
+      prior_read_files         TEXT,
+      prior_read_snapshot_at   INTEGER,
+      -- Repository-relative paths the prompt names: the pointer's own block, and
+      -- everything else in it, which is the brief's.
+      prompt_block_paths       TEXT,
+      prompt_brief_paths       TEXT,
+      vault_arm                TEXT,
+      vault_paths              TEXT,
+      vault_cost_usd           REAL,
+      -- The notes the gate was shown, [path], or NULL when the event did not say.
+      vault_candidates         TEXT,
+      -- 'picked', 'none-no-candidates', 'none-declined', 'none-unsplit' (an event
+      -- from before the two were told apart), 'failed' or NULL for no vault record.
+      vault_outcome            TEXT,
+      vault_failure            TEXT,
+      vault_root               TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_holdout_cycles_run ON holdout_cycles(run_id, ts);
+
+    CREATE TABLE IF NOT EXISTS holdout_tool_events (
+      event_id                 INTEGER PRIMARY KEY,
+      run_id                   TEXT NOT NULL,
+      ts                       INTEGER NOT NULL,
+      name                     TEXT NOT NULL,
+      -- file_path, notebook_path or path, as the call carried it: absolute.
+      path                     TEXT,
+      pattern                  TEXT,
+      glob                     TEXT,
+      -- NULL for the main thread; a sub-agent's call carries its Task call's id.
+      parent_tool_use_id       TEXT,
+      in_vault                 INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_holdout_tool_events_run ON holdout_tool_events(run_id, ts);
+  `);
+
+  // The runs live on the repository when this run started, as a JSON array of
+  // ids. NULL is "not recorded" (the run predates the column, or has no
+  // repository); '[]' is a recorded "none". Written once, by the run loop, at
+  // the start of the run's first segment: realised concurrency is the thing the
+  // holdout's interference test needs, and reconstructing it from
+  // [started_at, finished_at] afterwards counts a parked run as live.
+  addColumn(db, "runs", "live_siblings", "TEXT");
+
   // How full a live run's context was, sampled over the run's life.
   //
   // A run in flight had no readable answer to that at all: the reading was

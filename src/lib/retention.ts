@@ -5,6 +5,7 @@ import path from "node:path";
 import { BACKUP_DIR, DB_PATH, PROJECTS_DIR } from "./config";
 import { db, getJSON, setJSON } from "./db";
 import { git } from "./git";
+import { exportHoldoutEvidence, type HoldoutExportSummary } from "./holdoutExport";
 import { chainRuns, isLandedTip } from "./land";
 import {
   activeRuns,
@@ -1286,7 +1287,24 @@ const timer = ((globalThis as unknown as {
 export async function runRetentionSweep(
   now = Date.now(),
 ): Promise<RetentionSweep> {
-  const events = sweepRunEvents(now);
+  // The holdouts' evidence goes out first, and a failed export holds the event
+  // sweep back for this tick: the events it could not copy are the only copy,
+  // and the next tick, six hours on, has the same thirty-day horizon to spare.
+  // The other sweeps do not wait on it — they are about other stores.
+  let exported: HoldoutExportSummary | null = null;
+  try {
+    exported = await exportHoldoutEvidence(now);
+  } catch (err) {
+    console.warn(
+      `[usagefoundry] holdout export failed, event sweep skipped: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+  const events =
+    exported !== null && exported.failed === 0
+      ? sweepRunEvents(now)
+      : { events: 0, telemetry: 0, samples: 0, compositions: 0 };
   const checkouts = await sweepCheckouts(now);
   const transcripts = await sweepTranscripts(now);
   const ledger = await sweepLedger();
