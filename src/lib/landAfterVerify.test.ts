@@ -1249,3 +1249,83 @@ describe("a repository's own check outranks the install-wide one", () => {
     assert.equal(fs.existsSync(path.join(s.signals, "ran")), false, "the install-wide command ran");
   });
 });
+
+describe("the commits a land makes carry the run's trailers", () => {
+  const body = (repo: string, ref: string) => git(repo, "log", "-1", "--format=%B", ref);
+  const trailers = (repo: string, ref: string) =>
+    git(repo, "log", "-1", "--format=%(trailers:only,unfold)", ref).trim().split("\n");
+
+  /** The scene's run, given the model, board task and origin a real one carries. */
+  function describeRun(s: Scene, extra: { originRef?: string } = {}) {
+    dbMod
+      .db()
+      .prepare("UPDATE runs SET model = ?, origin_ref = ? WHERE id = ?")
+      .run("claude-test-model", extra.originRef ?? null, s.runId);
+    dbMod
+      .db()
+      .prepare("INSERT INTO run_tasks (run_id, task_id, position) VALUES (?, ?, 0)")
+      .run(s.runId, "task-board-1");
+  }
+
+  it("squash: the one commit names the run, its task and the model that wrote the work", async () => {
+    const s = scene("trailers-squash");
+    describeRun(s);
+
+    const landed = await land.landRun(s.runId, "squash");
+
+    assert.equal(landed.ok, true, landed.ok ? "" : landed.reason);
+    assert.deepEqual(trailers(s.repo, "main"), [
+      `UF-Run: ${s.runId}`,
+      "UF-Task: task-board-1",
+      "Model: claude-test-model",
+    ]);
+    assert.match(body(s.repo, "main"), /Squashed from uf\/trailers-squash/);
+  });
+
+  it("merge: a merge commit names the run and not a model, and the run's own commit is left as it was", async () => {
+    const s = scene("trailers-merge");
+    describeRun(s);
+    // The target moves, so the land is a real merge and not a fast-forward.
+    fs.writeFileSync(path.join(s.repo, "other.txt"), "main moved\n");
+    git(s.repo, "commit", "-qam", "main moved");
+
+    const landed = await land.landRun(s.runId, "merge");
+
+    assert.equal(landed.ok, true, landed.ok ? "" : landed.reason);
+    assert.deepEqual(trailers(s.repo, "main"), [`UF-Run: ${s.runId}`, "UF-Task: task-board-1"]);
+    assert.match(body(s.repo, "main"), /^Merge branch 'uf\/trailers-merge'/);
+    assert.doesNotMatch(body(s.repo, s.branch), /UF-Run/, "a land rewrote the run's own commit");
+  });
+
+  it("the Commit button's commit names the run, the task and the model", async () => {
+    const s = scene("trailers-commit");
+    describeRun(s);
+    fs.writeFileSync(path.join(s.slot, "late.txt"), "left uncommitted\n");
+
+    const committed = await land.commitPending(s.runId, "Add the late note");
+
+    assert.equal(committed.ok, true, committed.ok ? "" : committed.reason);
+    assert.deepEqual(trailers(s.slot, s.branch), [
+      `UF-Run: ${s.runId}`,
+      "UF-Task: task-board-1",
+      "Model: claude-test-model",
+    ]);
+    assert.match(body(s.slot, s.branch), /^Add the late note\n/);
+  });
+
+  it("a Dreaming night's commit also names the night", async () => {
+    const s = scene("trailers-night");
+    describeRun(s, { originRef: "dreaming:2026-10-31" });
+    fs.writeFileSync(path.join(s.slot, "note.md"), "a note\n");
+
+    const committed = await land.commitPending(s.runId, "Dream notes");
+
+    assert.equal(committed.ok, true, committed.ok ? "" : committed.reason);
+    assert.deepEqual(trailers(s.slot, s.branch), [
+      `UF-Run: ${s.runId}`,
+      "UF-Task: task-board-1",
+      "UF-Night: 2026-10-31",
+      "Model: claude-test-model",
+    ]);
+  });
+});

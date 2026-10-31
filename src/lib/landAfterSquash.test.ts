@@ -204,6 +204,12 @@ describe("landing a branch again after a squash", () => {
     assert.equal(git(c.repo, "rev-parse", "HEAD^2").trim(), tip, "not a merge of the branch");
     assert.equal(git(c.repo, "status", "--porcelain").trim(), "", "the checkout was left dirty");
     assert.equal((await land.landState(b))?.merged, true);
+    // The merge made past a squash is a commit of the app's own, restated by
+    // `commit` rather than written by `merge -m`, and still the run's.
+    assert.equal(
+      git(c.repo, "log", "-1", "--format=%B", "HEAD").trim(),
+      `Merge branch '${c.branch}'\n\nUF-Run: ${b}`,
+    );
   });
 
   it("refuses to land, and lands nothing, when the target has since conflicted with the new link", async () => {
@@ -436,6 +442,12 @@ describe("resolving a conflict past a squash", () => {
     assert.equal(started.ok, true, started.ok ? "" : started.reason);
     assert.equal((result as { status?: string } | undefined)?.status, "completed");
     assert.equal(git(c.repo, "merge-base", "--is-ancestor", "main", c.branch), "");
+    // The resolution's merge, opened past the squash and committed after the
+    // resolver, names the run once and carries no `# Conflicts:` comment.
+    assert.equal(
+      git(c.repo, "log", "-1", "--format=%B", c.branch).trim(),
+      `Merge branch 'main' into ${c.branch}\n\nUF-Run: ${b}`,
+    );
 
     const landed = await land.landRun(b, "squash");
     assert.equal(landed.ok, true, landed.ok ? "" : landed.reason);

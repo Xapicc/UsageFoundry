@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { runVerify, verifyCommandFor, type VerifyOutcome } from "./landGate";
+import { runTrailers, trailerFlags, trailerParagraph, type Trailer } from "./runTrailers";
 import { openPullRequest, planDelivery, type DeliveryRequest } from "./delivery";
 import path from "node:path";
 import { addWorktree, git, headBranchOf } from "./git";
@@ -2129,6 +2130,11 @@ async function mergeIntoCheckout(job: {
   asker: LandAsker | null;
 }): Promise<MergeAttempt> {
   const { run, runId, folder, target, branch, tip, strategy, asker } = job;
+  // Which run the commit this land makes belongs to (`runTrailers.ts`). The
+  // merge commit holds no work a model wrote, so it carries no `Model`; a
+  // squash is the run's whole diff as one commit and does. A fast-forward
+  // makes no commit, and the commits it brings carry their own.
+  const mergeTrailers = runTrailers(run, { withModel: false });
   // Worked out before the recheck below, because nothing may await between
   // that read and the first write into the checkout — and worked out in the
   // object store alone, so a conflict here refuses with the checkout never
@@ -2207,7 +2213,16 @@ async function mergeIntoCheckout(job: {
       ? await git(folder, ["merge", "--squash", "--no-overwrite-ignore", tip], NO_CLOCK)
       : await git(
           folder,
-          ["merge", "--no-edit", "--no-overwrite-ignore", "-m", mergeSubject(branch, target), tip],
+          [
+            "merge",
+            "--no-edit",
+            "--no-overwrite-ignore",
+            "-m",
+            mergeSubject(branch, target),
+            "-m",
+            trailerParagraph(mergeTrailers),
+            tip,
+          ],
           NO_CLOCK,
         );
 
@@ -2238,8 +2253,9 @@ async function mergeIntoCheckout(job: {
             taskSubject(run),
             "-m",
             `Squashed from ${branch} (UsageFoundry run ${run.id}).`,
+            ...trailerFlags(runTrailers(run, { withModel: true })),
           ]
-        : ["commit", "--no-edit"],
+        : ["commit", "--no-edit", ...trailerFlags(mergeTrailers)],
       NO_CLOCK,
     );
     if (!commit.ok) {
@@ -3219,9 +3235,26 @@ async function startResolution(
   // From where the chain was last squashed into the target, when it was: the
   // base the card's preview took, and so the conflicts it listed and no others.
   const squashedAt = await squashBase(repoRoot, target, chainRuns(run), tipBefore.stdout);
+  // The merge commits of a resolution belong to the run whose branch they are
+  // on, and carry no `Model`: the resolver's model is not the run's, and a
+  // clean merge was written by no model. `-m` restates the subject git would
+  // have written, because a message given to `merge` is the whole of it.
+  const resolutionTrailers = runTrailers(run, { withModel: false });
   const merge = squashedAt
-    ? await openMergePastSquash(repoRoot, checkout.path, squashedAt, target)
-    : await git(checkout.path, ["merge", "--no-edit", target], NO_CLOCK);
+    ? await openMergePastSquash(repoRoot, checkout.path, squashedAt, target, branch, resolutionTrailers)
+    : await git(
+        checkout.path,
+        [
+          "merge",
+          "--no-edit",
+          "-m",
+          mergeSubject(target, branch),
+          "-m",
+          trailerParagraph(resolutionTrailers),
+          target,
+        ],
+        NO_CLOCK,
+      );
   if (merge.ok) {
     // The preview was stale — the branches agree after all. The merge commit is
     // real and useful: landing is now a fast-forward.
@@ -3335,7 +3368,21 @@ async function startResolution(
         };
       }
 
-      const commit = await git(checkout.path, ["commit", "--no-edit"], NO_CLOCK);
+      // The message is restated, not taken from MERGE_MSG: a conflicted merge
+      // leaves that with `# Conflicts:` comment lines after the `-m` paragraph
+      // that already carries the trailers, so `--trailer` on top of it wrote
+      // them twice, the second block not being last in the message.
+      const commit = await git(
+        checkout.path,
+        [
+          "commit",
+          "-m",
+          mergeSubject(target, branch),
+          "-m",
+          trailerParagraph(resolutionTrailers),
+        ],
+        NO_CLOCK,
+      );
       if (!commit.ok) {
         const rollback = await rollBackResolution(repoRoot, checkout, branch, tipBefore.stdout);
         return {
@@ -3400,6 +3447,8 @@ async function openMergePastSquash(
   checkoutPath: string,
   squashedAt: string,
   target: string,
+  branch: string,
+  trailers: readonly Trailer[],
 ): Promise<{ ok: boolean; stdout: string; stderr: string }> {
   // `--no-ff`, or a branch the target already contains would be moved onto it.
   const record = await git(
@@ -3430,7 +3479,12 @@ async function openMergePastSquash(
   const written = await git(checkoutPath, ["read-tree", "-m", "-u", ours, merged.tree], NO_CLOCK);
   if (!written.ok) return written;
   if (merged.preview.outcome !== "conflict") {
-    return git(checkoutPath, ["commit", "--no-edit"], NO_CLOCK);
+    // Restated for the reason `resolveConflicts`' commit is: MERGE_MSG is git's.
+    return git(
+      checkoutPath,
+      ["commit", "-m", mergeSubject(target, branch), "-m", trailerParagraph(trailers)],
+      NO_CLOCK,
+    );
   }
 
   const staged = await git(checkoutPath, ["update-index", "-z", "--index-info"], {
@@ -4968,7 +5022,17 @@ async function commitClaimedSlot(
 
   const commit = await git(
     dir,
-    ["commit", "-m", message.trim(), "-m", `Committed from UsageFoundry run ${run.id}.`],
+    [
+      "commit",
+      "-m",
+      message.trim(),
+      "-m",
+      `Committed from UsageFoundry run ${run.id}.`,
+      // The uncommitted work is the run's agent's, so the model that wrote it
+      // is named. Dreaming's landing commit is this call (`dreamingLanding.ts`)
+      // and takes its night from the run's origin.
+      ...trailerFlags(runTrailers(run, { withModel: true })),
+    ],
     NO_CLOCK,
   );
   if (!commit.ok) {
