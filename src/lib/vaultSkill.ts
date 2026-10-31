@@ -201,11 +201,16 @@ function isFile(p: string): boolean {
  * vault an operator actually points this at.
  */
 export function renderVaultSkill(v: VaultSkillContext): string {
+  // `-B` because the script's one write is the bytecode of the module it
+  // imports, into the vault's own `_Meta/__pycache__`, and the vault is
+  // read-only to most runs that are handed this (`vaultWritableBy`). Python
+  // skips that write silently where it cannot make it, so this changes no
+  // output; it only stops the attempt where it could.
   const search = v.searchScript
     ? `1. **Ranked search first**, one command:
 
    \`\`\`bash
-   python3 ${JSON.stringify(v.searchScript)} "<the question, in the asker's own words>"
+   python3 -B ${JSON.stringify(v.searchScript)} "<the question, in the asker's own words>"
    \`\`\`
 
    Run it with \`--help\` if you need more than the ranked list. If the script
@@ -399,6 +404,52 @@ export function writeVaultSkill(v: VaultSkillContext): string {
 }
 
 /**
+ * Characters that make a path a pattern to the CLI rather than a path.
+ *
+ * `SANDBOX_GLOB_CHARS` in `orchestrator.ts`, for the same reason: a
+ * `sandbox.filesystem.denyWrite` entry carrying one is dropped on Linux with a
+ * debug line, and an `Edit(...)` rule carrying one matches some other set of
+ * files. Either way the vault would be offered with its write grant and
+ * without the deny that is supposed to take it back.
+ */
+const VAULT_GLOB_CHARS = /[*?[\]{}!]/;
+
+/**
+ * Whether a run may write the vault, which it may only when the vault is its
+ * own workspace.
+ *
+ * `--add-dir` is what lets a run read the vault, and it lands the vault in the
+ * run's write set too, so every other run has the write taken back by
+ * `buildArgs`. Which run is *not* one of those is decided by the paths the run
+ * loop already re-proved for the spawn: its checkout, and the repository behind
+ * it. Either one at or below the vault is a run working on the vault — the
+ * operator's own vault run, an isolated one in a worktree under the vault's
+ * `.uf-worktrees/`, Dreaming's writer — and the deny would take away the
+ * directory it was started to write, or, for a worktree of a vault that sits
+ * below a mount root, the `.git` it commits into.
+ *
+ * A run whose folder merely *contains* the vault is not one of them, and that
+ * is deliberate: the vault is part of what it can see, not what it was asked to
+ * change, and refusing it a write it should not need is the narrow direction.
+ *
+ * Lexical, on paths `resolveInMount` already resolved: both sides arrive
+ * absolute and real, so `..` and symlinks are not this function's to undo.
+ * Pure because both ways of being wrong are silent — a reader that can write is
+ * the poisoning risk this exists for, and a vault run that cannot is a night of
+ * Dreaming that records nothing and reports a tool error nobody reads.
+ */
+export function vaultWritableBy(
+  vaultPath: string,
+  workspace: { workDir: string; repoRoot: string | null },
+): boolean {
+  const within = (p: string) => {
+    const rel = path.relative(vaultPath, p);
+    return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+  };
+  return within(workspace.workDir) || (workspace.repoRoot !== null && within(workspace.repoRoot));
+}
+
+/**
  * What this cycle's spawn gets, resolved now rather than when the run started.
  *
  * Per cycle for `enabledPluginDirs`' reason: a run outlives the settings it
@@ -410,6 +461,15 @@ export function prepareVaultSkill(s: Settings = getSettings()): VaultSkillDelive
 
   const root = resolveKnowledgeRoot(s);
   if (!root.ok) return { kind: "unavailable", reason: root.reason };
+  // Refused rather than delivered with a write grant: the skill is a reader,
+  // and a reader that can write is what the deny in `buildArgs` exists to
+  // prevent. It costs a vault named with one of these characters its skill.
+  if (VAULT_GLOB_CHARS.test(root.root)) {
+    return {
+      kind: "unavailable",
+      reason: `the vault's path ${root.root} reads as a glob pattern to the CLI, so it cannot be offered read-only`,
+    };
+  }
 
   const searchScript = findSearchScript(root.root);
   const vaultLabel = root.subpath ? `${root.mountLabel} / ${root.subpath}` : root.mountLabel;

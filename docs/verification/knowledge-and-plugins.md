@@ -127,6 +127,37 @@
   `claude-haiku-5-5` runs (`modelUsage` names it) but the CLI warns
   `unrecognized_model` and reports $0.0018 for a call 2.1.310 reported at
   $0.0001, which is why `gateCost` prices tokens itself.
+- **A reader with the skill on could write the vault, and with the two denies
+  cannot, CLI 2.1.310, 2026-10-31, at `e6ed8e04`.** This was measured with
+  `scripts/sandbox-probe/vault-readonly-probe.mjs` against a stub API, inside an
+  agent's own sandbox under this container's managed policy, on a scratch vault
+  named with a space. With `--add-dir` alone, `Write`, `NotebookEdit` and a
+  sandboxed Bash `touch` all landed in the vault. With the `Edit(//<vault>/**)`
+  deny and the overlay's `denyWrite`, under `acceptEdits` and `bypassPermissions`,
+  `Read` and the search still answered. `Write` and `Edit` were refused
+  ("denied by your permission settings"), as was `NotebookEdit` ("Permission to
+  edit … has been denied"). Bash `touch`, `>`, `sed -i` and Python `open()` failed
+  `Read-only file system`, and the workspace controls landed. A run in a
+  worktree under the vault's `.uf-worktrees/`, given the writable argv, wrote
+  through `Write` and Bash. Caveat: nested, bwrap starts only when its child's
+  pid matches one this container's `/proc` shows, so each Bash step ran alone
+  in a fresh call (`PROBE_TURN`, `PROBE_ONLY`) and got through on its third or
+  sixth attempt.
+- **Each deny closes one half, same pin and day.** `Edit(//<vault>/**)` alone
+  refused `Write` and `Edit`, but bwrap still got the vault as `--bind`.
+  `denyWrite` alone gave bwrap `--bind` and then `--ro-bind` of the vault, but
+  `Write` and `Edit` still wrote. The argv bwrap got was read through a logging
+  shim on `PATH`.
+- **`vault_search.py` keeps no index and runs on a read-only vault,
+  2026-10-31.** Its only write is `_Meta/__pycache__/vaultlib.cpython-311.pyc`.
+  On a copy of `_Meta` and two notes made non-writable with `chmod -R a-w`, it
+  exited 0 with JSON byte-identical to a writable run's and to `-B`'s, and wrote
+  no bytecode. Python 3.11.2.
+- **The pointer's freshness facts on real notes, read-only, 2026-10-31.**
+  `noteShape` read `updated` as `2026-08-11` and `2026-10-31` on two notes, and
+  flagged `Test-Driven Development.md`, which carries `meta/contradiction`. At
+  bytes ÷ 4, the notice for one pick went from 986 to 1,126 characters, and for
+  three picks from 2,224 to 2,436.
 
 ## Not yet verified by hand
 
@@ -205,3 +236,14 @@
   metering path, and that a run's `iteration` event carries `vaultPointer`.
   Settled by one run with the vault skill on: its log line, its event and the
   first prompt in its *Prompt* fold.
+
+- **No work cycle the app spawned has been seen refused a vault write.** The
+  probe hands the CLI the argv shape `buildArgs` emits, but it was not run
+  unnested in the container or against the bind-mounted vault. Settled by
+  `docker compose cp scripts/sandbox-probe/vault-readonly-probe.mjs
+  usagefoundry:/tmp/p.mjs && docker compose exec -u 1000:1000 usagefoundry node
+  /tmp/p.mjs` exiting 0, and by one run with the skill on whose spawn argv
+  carries `Edit(//workspace2/**)` and `"denyWrite":["/workspace2"]`.
+- **No pointer-arm run has been seen shown the dated block.** Settled by the
+  first prompt of the next run whose log names a vault note: its pick line
+  should carry `status`, `updated` and, for a tagged note, `contradicted`.

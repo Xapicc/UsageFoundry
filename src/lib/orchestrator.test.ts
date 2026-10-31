@@ -3272,7 +3272,69 @@ describe("buildArgs", () => {
       const args = buildArgs({ ...base, isolated: false, vaultSkill });
       assert.equal(args.includes("--add-dir"), false);
       assert.equal(args.includes("--plugin-dir"), false);
+      // And no deny for a vault it was never offered: the argv it had before.
+      assert.deepEqual(disallowedToolValues(args), ["Bash(pkill:*)", "Bash(killall:*)"]);
     }
+  });
+
+  it("takes the vault's write grant back from a run that is not working on it", () => {
+    // `--add-dir` is what makes the vault readable and it grants write as well;
+    // measured on 2.1.310, a run with only that flag created and edited notes
+    // through `Write` and `Edit`. Each of the two denies closes only its own
+    // half — the `Edit` rule the file tools, the overlay's `denyWrite` the
+    // `Bash` mount — so losing either one is a reader that can write again,
+    // and nothing would say so. On a resumed cycle too: `--resume` restores
+    // neither flag.
+    const vaultPath = "/workspace/notes/Knowledge Vault";
+    for (const resumeSessionId of [null, "sess-1"]) {
+      const args = buildArgs({
+        ...base,
+        isolated: true,
+        resumeSessionId,
+        vaultSkill: { pluginDir: "/run/uf-skills/vault", vaultPath },
+        writableRoots: ["/w/repo", "/w/repo/.git"],
+      });
+      assert.equal(args[args.indexOf("--add-dir") + 1], vaultPath, "still readable");
+      assert.equal(disallowedToolValues(args).at(-1), "Edit(//workspace/notes/Knowledge Vault/**)");
+      assert.equal(args.filter((a) => a === "--disallowedTools").length, 1);
+      const overlay = JSON.parse(args[args.indexOf("--settings") + 1]);
+      assert.deepEqual(overlay.sandbox.filesystem, {
+        allowWrite: ["/w/repo", "/w/repo/.git"],
+        denyWrite: [vaultPath],
+      });
+    }
+  });
+
+  it("still denies the file tools where no sandbox confines Bash", () => {
+    // No write set is an install with no managed sandbox. The `denyWrite`
+    // needs one to ride on, so it goes; the `Edit` rule does not need one and
+    // must not go with it.
+    const args = buildArgs({
+      ...base,
+      isolated: false,
+      vaultSkill: { pluginDir: "/run/uf-skills/vault", vaultPath: "/vault" },
+      writableRoots: null,
+    });
+    assert.equal(disallowedToolValues(args).at(-1), "Edit(//vault/**)");
+    assert.equal(args.includes("--settings"), false);
+  });
+
+  it("leaves the vault writable to a run whose workspace it is", () => {
+    // The vault's own runs and Dreaming's writer: a deny here would take away
+    // the directory they were started to write, and a night of Dreaming would
+    // record nothing and report a tool error nobody reads.
+    const args = buildArgs({
+      ...base,
+      isolated: true,
+      vaultSkill: { pluginDir: "/run/uf-skills/vault", vaultPath: "/vault", writable: true },
+      writableRoots: ["/vault/.uf-worktrees/vault-1", "/vault/.git"],
+    });
+    assert.equal(args[args.indexOf("--add-dir") + 1], "/vault");
+    assert.deepEqual(disallowedToolValues(args), ["Bash(pkill:*)", "Bash(killall:*)"]);
+    const overlay = JSON.parse(args[args.indexOf("--settings") + 1]);
+    assert.deepEqual(overlay.sandbox.filesystem, {
+      allowWrite: ["/vault/.uf-worktrees/vault-1", "/vault/.git"],
+    });
   });
 
   it("names no plugin flag when none are enabled", () => {
