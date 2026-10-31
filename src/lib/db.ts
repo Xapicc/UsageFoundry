@@ -2262,6 +2262,21 @@ function migrate(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_holdout_tool_events_run ON holdout_tool_events(run_id, ts);
   `);
 
+  // The ranking the prior-read pointer shows a repository, fixed the first time
+  // a run on it asks. One row per repository and never swept: it is the
+  // experiment's treatment, and the analysis reads it beside the runs that were
+  // shown it. `taken_at` is the stated time; `source_runs`/`source_reads` say how
+  // much untreated history it was ranked from.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS prior_read_snapshots (
+      repository   TEXT PRIMARY KEY,
+      taken_at     INTEGER NOT NULL,
+      ranking      TEXT NOT NULL,
+      source_runs  INTEGER NOT NULL,
+      source_reads INTEGER NOT NULL
+    );
+  `);
+
   // The runs live on the repository when this run started, as a JSON array of
   // ids. NULL is "not recorded" (the run predates the column, or has no
   // repository); '[]' is a recorded "none". Written once, by the run loop, at

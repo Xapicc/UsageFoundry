@@ -162,13 +162,17 @@ describe("the iteration record", () => {
     const after = exportMod.iterationRecord(
       {
         n: 1, prompt: "x", resuming: null,
-        priorReads: { arm: "pointer", paths: 1, files: [{ path: "a.ts", runs: 2 }], snapshotAt: 5, basis: "parent" },
+        priorReads: { arm: "pointer", paths: 1, files: [{ path: "a.ts", runs: 2 }], treatment: "snapshot@5", basis: "parent" },
         vaultPointer: { arm: "pointer", paths: [], costUsd: 0.002, candidates: ["n.md"], outcome: "none-declined", root: VAULT },
       },
       REPO,
     );
     assert.deepEqual(after.priorReads?.files, [{ path: "a.ts", runs: 2 }]);
     assert.equal(after.priorReads?.basis, "parent");
+    assert.equal(after.priorReads?.treatment, "snapshot@5");
+    assert.equal(exportMod.snapshotAtOf("snapshot@5"), 5);
+    assert.equal(exportMod.snapshotAtOf("snapshot-pending"), null);
+    assert.equal(exportMod.snapshotAtOf(null), null);
     assert.deepEqual(after.vault?.candidates, ["n.md"]);
   });
 
@@ -447,5 +451,74 @@ describe("a continuation's arm", () => {
     link("loop-b", "loop-a");
     const got = priorReads.holdoutArmFor("loop-c", "loop-a");
     assert.equal(got.basis, "parent");
+  });
+});
+
+describe("a repository's fixed list", () => {
+  let SHIPPED: number;
+  let repo: string;
+
+  const reads = (runId: string, ts: number, ...files: string[]) => {
+    for (const f of files) event(runId, ts, "tool", { name: "Read", input: { file_path: `${repo}/${f}` } });
+  };
+  const considered = (over: Partial<Parameters<typeof priorReads.priorReadsFor>[0]> = {}) =>
+    priorReads.priorReadsFor({
+      runId: "asking-run", createdAt: SHIPPED + 5 * DAY, repository: repo, root: repo, provider: "claude",
+      originRef: null, continuesRun: null, now: SHIPPED + 10 * DAY, ...over,
+    });
+
+  before(() => {
+    SHIPPED = priorReads.PRIOR_READS_SHIPPED_AT;
+    repo = path.join(root, "snap-repo");
+    fs.mkdirSync(repo, { recursive: true });
+    for (const f of ["a.ts", "b.ts", "held.ts", "later.ts", "treated-only.ts"]) fs.writeFileSync(path.join(repo, f), "x");
+
+    for (let i = 0; i < 6; i++) {
+      run({ id: `snap-pre-${i}`, createdAt: SHIPPED - (i + 1) * DAY, repo });
+      reads(`snap-pre-${i}`, SHIPPED - (i + 1) * DAY, "a.ts", ...(i < 3 ? ["b.ts"] : []));
+    }
+    run({ id: "snap-treated", createdAt: SHIPPED + DAY, repo });
+    event("snap-treated", SHIPPED + DAY, "iteration", { n: 1, prompt: "", resuming: null, priorReads: { arm: "pointer", paths: 1 } });
+    reads("snap-treated", SHIPPED + DAY, "treated-only.ts", "treated-only.ts");
+    run({ id: "snap-held", createdAt: SHIPPED + 2 * DAY, repo });
+    event("snap-held", SHIPPED + 2 * DAY, "iteration", { n: 1, prompt: "", resuming: null, priorReads: { arm: "holdout", paths: 1 } });
+    reads("snap-held", SHIPPED + 2 * DAY, "held.ts");
+  });
+
+  it("is ranked from reads no pointer reached, and from nothing a treated run read", () => {
+    const got = considered();
+    assert.equal(got?.treatment, `snapshot@${SHIPPED + 10 * DAY}`);
+    assert.deepEqual(
+      got?.paths.map((p) => p.path),
+      ["a.ts", "b.ts", "held.ts"],
+    );
+    assert.equal(got?.paths[0].runs, 6, "a.ts was read by the six untreated runs");
+  });
+
+  it("is the same object for every later run, whatever has been read since", () => {
+    run({ id: "snap-later", createdAt: SHIPPED + 6 * DAY, repo });
+    reads("snap-later", SHIPPED + 6 * DAY, "later.ts", "later.ts", "later.ts");
+    const again = considered({ runId: "another-run", now: SHIPPED + 30 * DAY });
+    assert.equal(again?.treatment, `snapshot@${SHIPPED + 10 * DAY}`, "still the first snapshot");
+    assert.ok(!again?.paths.some((p) => p.path === "later.ts"));
+    assert.equal(count("SELECT COUNT(*) AS n FROM prior_read_snapshots WHERE repository = ?", repo), 1);
+  });
+
+  it("is the same list in both arms, with a vanished file costing only its own place", () => {
+    fs.rmSync(path.join(repo, "b.ts"));
+    const shown = considered({ runId: "pointer-run" });
+    const held = considered({ runId: "held-run" });
+    assert.deepEqual(shown?.paths.map((p) => p.path), ["a.ts", "held.ts"]);
+    assert.deepEqual(held?.paths, shown?.paths);
+  });
+
+  it("shows nothing, and writes nothing, for a repository with too little history to fix a list", () => {
+    const thin = path.join(root, "thin-repo");
+    fs.mkdirSync(thin, { recursive: true });
+    run({ id: "thin-1", createdAt: SHIPPED - DAY, repo: thin });
+    event("thin-1", SHIPPED - DAY, "tool", { name: "Read", input: { file_path: `${thin}/a.ts` } });
+    const got = considered({ repository: thin, root: thin });
+    assert.deepEqual(got, { arm: got?.arm, basis: "id", treatment: "snapshot-pending", paths: [] });
+    assert.equal(count("SELECT COUNT(*) AS n FROM prior_read_snapshots WHERE repository = ?", thin), 0);
   });
 });

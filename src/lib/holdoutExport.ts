@@ -188,7 +188,8 @@ export interface IterationRecord {
     arm: string;
     count: number;
     files: Array<{ path: string; runs: number }> | null;
-    snapshotAt: number | null;
+    /** `snapshot@<ms>`, `snapshot-pending`, or null on an event from before snapshots. */
+    treatment: string | null;
     basis: string | null;
   } | null;
   vault: {
@@ -202,6 +203,12 @@ export interface IterationRecord {
   } | null;
   blockPaths: string[];
   briefPaths: string[];
+}
+
+/** The instant a `snapshot@<ms>` treatment was taken, or null for any other. */
+export function snapshotAtOf(treatment: string | null | undefined): number | null {
+  const at = /^snapshot@(\d+)$/.exec(treatment ?? "")?.[1];
+  return at === undefined ? null : Number(at);
 }
 
 function strings(value: unknown): string[] | null {
@@ -235,7 +242,7 @@ export function iterationRecord(payload: unknown, base: string | null): Iteratio
       arm: pr.arm,
       count: files ? files.length : typeof pr.paths === "number" ? pr.paths : 0,
       files,
-      snapshotAt: typeof pr.snapshotAt === "number" ? pr.snapshotAt : null,
+      treatment: text(pr.treatment),
       basis: text(pr.basis),
     };
   }
@@ -591,7 +598,7 @@ function exportRun(id: string, now: number, vaultRootNow: string | null, counter
       counters.cycles += insertCycle.run(
         c.eventId, id, c.ts, r.n, r.resuming, r.promptChars,
         r.priorReads?.arm ?? null, r.priorReads?.count ?? null,
-        r.priorReads?.files ? JSON.stringify(r.priorReads.files) : null, r.priorReads?.snapshotAt ?? null,
+        r.priorReads?.files ? JSON.stringify(r.priorReads.files) : null, snapshotAtOf(r.priorReads?.treatment),
         JSON.stringify(r.blockPaths), JSON.stringify(r.briefPaths),
         r.vault?.arm ?? null, r.vault ? JSON.stringify(r.vault.paths) : null, r.vault?.costUsd ?? null,
         r.vault?.candidates ? JSON.stringify(r.vault.candidates) : null,
@@ -689,11 +696,7 @@ function exportRun(id: string, now: number, vaultRootNow: string | null, counter
       prior_read_arm_by_id: considered ? (inHoldout(id) ? "holdout" : "pointer") : null,
       // 'rolling' is what every run got before a repository's list was fixed, so
       // an event that does not name a snapshot is that, not unknown.
-      prior_read_treatment: loggedPrior
-        ? loggedPrior.snapshotAt === null
-          ? "rolling"
-          : `snapshot@${loggedPrior.snapshotAt}`
-        : null,
+      prior_read_treatment: loggedPrior ? (loggedPrior.treatment ?? "rolling") : null,
       prior_read_ranking: ranking,
       prior_read_ranking_source: rankingSource,
       prior_read_ranking_runs: rankingRuns,

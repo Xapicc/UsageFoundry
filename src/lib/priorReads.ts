@@ -16,9 +16,11 @@ import { WORKTREE_STORE_DIR } from "./worktreeStoreDir";
  * the repository measures it, so the pointer ships behind a holdout that makes
  * the question answerable: every run's arm is a function of its id alone.
  *
- * Nothing here writes. The pointer reads `run_events` and `runs`, which already
- * hold every path every run opened, so there is no store to keep, no second
- * author and no retention horizon of its own: it sees what the logs still hold.
+ * The ranking is built from `run_events` and `runs`, which already hold every
+ * path every run opened, and fixed per repository the first time it is asked for
+ * (`snapshotFor`): the one store this file keeps is that row, which is the
+ * treatment and so is never swept. What the experiment then recorded is
+ * `holdoutExport.ts`'s, copied out of the logs before the event sweep takes them.
  */
 
 /**
@@ -181,8 +183,43 @@ export interface PriorReads {
   arm: "pointer" | "holdout";
   /** `id` when the arm is a hash of the run's own id, `parent` when it was inherited down a chain. */
   basis: ArmBasis;
+  /**
+   * Which object the list came from: `snapshot@<ms>` for the repository's fixed
+   * ranking, taken at that instant, or `snapshot-pending` while the repository
+   * has too little history to fix one. A row logged before snapshots existed has
+   * neither, and the export reads that as `rolling`.
+   */
+  treatment: string;
   /** What the pointer arm is shown, and what the holdout arm would have been. */
   paths: RankedRead[];
+}
+
+/**
+ * When the holdout shipped (commit `b748ac0d`). A run created before it was
+ * shown nothing, whatever its id hashes to, so its reads are untreated and a
+ * snapshot may rank from them.
+ */
+export const PRIOR_READS_SHIPPED_AT = Date.UTC(2026, 9, 17, 20, 14, 46);
+
+/**
+ * Entries a snapshot keeps, against the 20 a run is shown: a file that has been
+ * deleted or moved since costs its place, and the next entry takes it. The
+ * snapshot is one fixed object, and the existence filter is the only thing that
+ * varies it from run to run.
+ */
+export const SNAPSHOT_ENTRIES = 60;
+
+/**
+ * Runs with reads a repository needs before its ranking is fixed. A snapshot is
+ * for the experiment's duration, so one taken from a single run's reads would be
+ * a poor list that every later run on the repository is then shown; below this
+ * the repository shows nothing, in both arms, until it has enough.
+ */
+export const SNAPSHOT_MIN_RUNS = 5;
+
+export interface PriorReadSnapshot {
+  takenAt: number;
+  ranking: RankedRead[];
 }
 
 export type ArmBasis = "id" | "parent";
@@ -283,11 +320,87 @@ export function priorReadsFor(o: {
   originRef: string | null;
   /** `runs.continues_run`: a continuation is dealt its parent's arm, not one of its own. */
   continuesRun: string | null;
+  /** For a test; the run loop leaves it. */
+  now?: number;
 }): PriorReads | null {
   if (!o.root || !priorReadsConsidered(o)) return null;
   const { arm, basis } = holdoutArmFor(o.runId, o.continuesRun);
-  const reads = historyReads(o.repository!, o.createdAt, o.runId);
-  return { arm, basis, paths: priorReadRanking(reads, { keep: containedFileIn(o.root) }) };
+  const snapshot = snapshotFor(o.repository!, o.now ?? Date.now());
+  if (snapshot === null) return { arm, basis, treatment: "snapshot-pending", paths: [] };
+  return {
+    arm,
+    basis,
+    treatment: `snapshot@${snapshot.takenAt}`,
+    paths: firstKept(snapshot.ranking, containedFileIn(o.root), LIST_LENGTH),
+  };
+}
+
+/** Files a run's block names. */
+const LIST_LENGTH = 20;
+
+function firstKept(ranking: readonly RankedRead[], keep: (rel: string) => boolean, limit: number): RankedRead[] {
+  const kept: RankedRead[] = [];
+  for (const entry of ranking) {
+    if (kept.length >= limit) break;
+    if (keep(entry.path)) kept.push(entry);
+  }
+  return kept;
+}
+
+/**
+ * The repository's fixed ranking, taken from untreated reads the first time it
+ * is asked for and the same object for every run after.
+ *
+ * **Why this and not a ranking that moves with the last hundred runs.** That
+ * treatment drifted: each run's list was built from the reads of runs the
+ * pointer had itself shaped, so an effect on one run's reading leaked into the
+ * next run's treatment, and "the treatment" was a different list per run with a
+ * hundred-run memory the analysis could not model. A fixed list per repository
+ * is one treatment, and built only from reads no pointer reached — runs created
+ * before the holdout shipped, and runs in the held-out arm — it cannot carry an
+ * effect forward. What it gives up is freshness: a file the repository stops
+ * touching stays on the list for the experiment's duration, and the existence
+ * filter in `firstKept` is the only thing that retires one. The choice and the
+ * day it took effect are recorded in `proposals/ContinuousImprovement/README.md`.
+ *
+ * A repository with fewer than `SNAPSHOT_MIN_RUNS` runs of untreated reads has
+ * none yet, which is `null` and is retried by the next run; nothing is written.
+ * Written with `INSERT OR IGNORE` and read back, so two callers cannot disagree
+ * about what it is.
+ */
+export function snapshotFor(repository: string, now: number): PriorReadSnapshot | null {
+  const stored = readSnapshot(repository);
+  if (stored) return stored;
+
+  const reads = historyReads(repository, now, "").filter((row) => untreated(row.runId, row.runCreatedAt));
+  const sourceRuns = new Set(reads.map((r) => r.runId)).size;
+  if (sourceRuns < SNAPSHOT_MIN_RUNS) return null;
+  const ranking = priorReadRanking(reads, { limit: SNAPSHOT_ENTRIES });
+  db()
+    .prepare(
+      `INSERT OR IGNORE INTO prior_read_snapshots (repository, taken_at, ranking, source_runs, source_reads)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .run(repository, now, JSON.stringify(ranking), sourceRuns, reads.length);
+  return readSnapshot(repository);
+}
+
+function readSnapshot(repository: string): PriorReadSnapshot | null {
+  const row = db()
+    .prepare("SELECT taken_at AS takenAt, ranking FROM prior_read_snapshots WHERE repository = ?")
+    .get(repository) as { takenAt: number; ranking: string } | undefined;
+  return row ? { takenAt: row.takenAt, ranking: JSON.parse(row.ranking) as RankedRead[] } : null;
+}
+
+/** Whether no pointer reached the run: recorded held out, or created before there was one. */
+function untreated(runId: string, createdAt: number): boolean {
+  const recorded = recordedArm(runId);
+  if (recorded) return recorded === "holdout";
+  if (createdAt < PRIOR_READS_SHIPPED_AT) return true;
+  const row = db().prepare("SELECT continues_run FROM runs WHERE id = ?").get(runId) as
+    | { continues_run: string | null }
+    | undefined;
+  return holdoutArmFor(runId, row?.continues_run ?? null).arm === "holdout";
 }
 
 /**

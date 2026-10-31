@@ -12552,6 +12552,8 @@ export async function startRun(id: string): Promise<void> {
                   // Whether the arm is this run's own draw or its chain's: a
                   // continuation is dealt the arm of the run it carries on.
                   basis: priorReads.basis,
+                  // Which fixed ranking the list came from, and when it was taken.
+                  treatment: priorReads.treatment,
                 },
               }
             : {}),
