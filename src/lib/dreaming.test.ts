@@ -196,7 +196,17 @@ describe("buildDreamingPrompt", () => {
   });
 
   it("asks it to grow an existing note rather than write a second one beside it", () => {
-    assert.match(prompt, /growing\s+the existing note in place|grow an existing note/i);
+    assert.match(prompt, /grow an existing note/i);
+  });
+
+  it("grows a note by appending and never licenses rewriting it in place", () => {
+    // The vault's CLAUDE.md §8 says "Append, do not restate". "In place" read
+    // as licence to reword what a note already claimed, so the prompt defers to
+    // §8 and says the two things a writer can do wrong without it.
+    assert.match(prompt, /§8/);
+    assert.match(prompt, /## Added/);
+    assert.match(prompt, /Superseded/);
+    assert.doesNotMatch(prompt, /in\s+place/i);
   });
 
   it("quotes the machine verbatim and names the days spanned", () => {

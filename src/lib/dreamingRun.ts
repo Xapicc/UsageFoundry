@@ -140,8 +140,13 @@ export function clearDreamingCursor(): void {
  *    string is what the machine said and is checkable. Why it happened is a
  *    reconstruction, and the operator's own vault records the working position
  *    that an unverified stated cause must never enter a store as a fact.
- * 3. **Grow an existing note rather than writing a second one beside it.** The
- *    vault's conventions name that as the failure mode they exist to prevent.
+ * 3. **Grow an existing note rather than writing a second one beside it, and
+ *    grow it by appending.** The vault's conventions name the second note as the
+ *    failure mode they exist to prevent, and its `CLAUDE.md` §8 ("Append, do not
+ *    restate") says how to grow one: a dated `## Added` section, and a claim the
+ *    new material overturns marked `Superseded` rather than deleted or reworded.
+ *    The prompt defers to §8 rather than restating it, so the two cannot drift
+ *    apart; it must never say "in place", which reads as licence to rewrite.
  * 4. **A signature is a string, not a cause.** Four `bwrap` denials at four
  *    paths are one cause; `Exit code N` is many. The run is told to say so
  *    rather than to resolve it, because resolving it is a judgement with no
@@ -184,8 +189,10 @@ export function buildDreamingPrompt(rollups: readonly SignatureRollup[], night: 
     `three outgoing wikilinks with a \`## Related\` section explaining each, sources`,
     `for every claim, and \`confidence\` that does not exceed what those sources`,
     `license. **Search the vault first.** Writing a second note on a topic beside`,
-    `an existing one is the failure mode the conventions exist to prevent; growing`,
-    `the existing note in place is what to do instead.`,
+    `an existing one is the failure mode the conventions exist to prevent; grow the`,
+    `existing note by appending to it, as \`CLAUDE.md\` §8 says ("Append, do not`,
+    `restate"): a dated \`## Added\` section, and a claim the new material overturns`,
+    `is marked \`Superseded\` rather than deleted or reworded.`,
     ``,
     // Both learned from the first night this ever ran: its notes passed the
     // vault's ERROR gate but tripped two warnings, and both are one line each.
@@ -219,8 +226,7 @@ export function buildDreamingPrompt(rollups: readonly SignatureRollup[], night: 
     ``,
     `NOTE <item number> created <path relative to this directory>`,
     ``,
-    `or, when you wrote no new note for the item and grew an existing one in`,
-    `place:`,
+    `or, when you wrote no new note for the item and added to an existing one:`,
     ``,
     `NOTE <item number> edited <path relative to this directory>`,
     ``,
