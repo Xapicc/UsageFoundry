@@ -5589,9 +5589,12 @@ export default function SettingsPage() {
         lede="Once a night, writes the failures seen on more than one day into the vault above."
       >
         <Notice tone="warn" quiet>
-          The vault is not a git repository and nothing marks a note as machine-written, so
-          the only way to retract a wrong note is the list of what this app wrote, on{" "}
-          <a href="/dreaming">Dreaming</a>. Read that page before turning this on.
+          Nothing in a note marks it as machine-written. Where the vault is a git repository
+          this app can branch, a night&rsquo;s notes are committed on a branch whose commits
+          say <code>UF-Night: &lt;date&gt;</code>, so <code>git log --grep</code> finds them
+          and a revert undoes them. Anywhere else the only way to find a wrong note to
+          retract is the list of what this app wrote, on <a href="/dreaming">Dreaming</a>.
+          Read that page before turning this on.
         </Notice>
 
         <ListGroup
