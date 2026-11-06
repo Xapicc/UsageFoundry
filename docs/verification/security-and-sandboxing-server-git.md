@@ -206,15 +206,26 @@
   git that reads its own repository's configuration, and neither pair reached
   it. Not measured on 2.39.5, and not through `git()`.
 
+- **The per-name hook switch holds on git 2.56.0 inside the booted image,
+  and is inert on its 2.39.5, 2026-11-06.** Board task `6b4dccf3`, `main` at
+  `84beb333`, image rebuilt from it with `docker compose up --build`. git
+  `v2.56.0` built with `NO_RUST=1` in a `node:22-bookworm-slim` container and
+  copied into the running one. `git.test.ts` and `gitFilterProbe.test.ts`, run
+  as root with `GIT_BIN` and the head of `PATH` at that build: the four
+  config-hook cases and their plain-git control passed, none skipped, and the
+  two gate cases passed. With the image's 2.39.5 the same files gave 56
+  passed, 0 failed and the 5 hook cases skipped. Caveat: the server process
+  itself still ran 2.39.5. Under 2.56.0 "Land's preview of a merge the blank
+  failed names the driver" failed, as it does on the host's 2.54.0 without
+  this change.
+
 ## Not yet verified by hand
 
-- **The per-name hook switch on git 2.55 or later, and in a booted image.**
-  Measured on Apple git 2.54.0 only (above); the image ships 2.39.5, where the
-  switches are inert. Settle by building git `v2.56.0` with `NO_RUST=1` under
-  `$TMPDIR`, setting `GIT_BIN` to it, and running `git.test.ts`: its
-  config-hook cases must pass rather than skip. Also open: a `gc --auto` that
-  fires `pre-auto-gc` from a probed `commit` or `fetch`, and a `push` that
-  recurses into a submodule.
+- **Hooks this app's git can start in a second git.** A `gc --auto` that fires
+  `pre-auto-gc` from a probed `commit` or `fetch`, and a `push` that recurses
+  into a submodule, were never triggered. Settle with git 2.54 or later as
+  `GIT_BIN`: a repository with `gc.auto=1` and a configured `pre-auto-gc`
+  hook, and `git()` running `commit`, then look for the marker.
 
 - **Whether a work cycle can race this app's git on `.git/config` in
   practice.** Board task `7d41bb25`. The race is shown above with a writer
