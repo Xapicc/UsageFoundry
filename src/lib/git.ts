@@ -665,6 +665,13 @@ function includeTargets(dir: string, records: ConfigRecord[]): string[] {
  * `--no-textconv` that `diff.ts` passes is the parent's option and does not
  * reach the child (measured). On the command line, each outranks the
  * repository's own value.
+ *
+ * Since `push` is probed it carries the first pin too, and that is what keeps a
+ * repository's `push.recurseSubmodules=on-demand` from making this app's push
+ * start a second one inside a submodule, to the submodule's own remote, which no
+ * door here checks: git reads both keys into one setting and the command line
+ * is read last (measured, Apple git 2.54.0). Without the pin that push went out
+ * and ran the submodule's `pre-push`.
  */
 const SUBMODULE_PINS = ["-c", "submodule.recurse=false", "-c", "diff.submodule=short"];
 

@@ -480,6 +480,65 @@ describe("the server's own git runs no hook a work cycle defined in .git/config"
 
   const skipped = "this git reads no hook defined in config, so there is nothing to switch off";
 
+  /**
+   * A repository where a `commit`'s automatic maintenance runs `gc --auto`,
+   * which fires `pre-auto-gc` in that second git rather than in the one this
+   * app spawned. git 2.54's default maintenance strategy runs no gc, so the
+   * plant also sets `maintenance.strategy=gc`, as a work cycle could; two packs
+   * against `gc.autoPackLimit=1` make the gc due without thousands of loose
+   * objects.
+   */
+  function autoGcRepo(): { repo: string; marker: string } {
+    const planted = repoWithHooks(["pre-auto-gc"]);
+    const { repo, marker } = planted;
+    plain(repo, ["repack", "-q"]);
+    plain(repo, ["commit", "-q", "--allow-empty", "-m", "second"]);
+    plain(repo, ["repack", "-q"]);
+    plain(repo, ["config", "maintenance.strategy", "gc"]);
+    plain(repo, ["config", "gc.autoPackLimit", "1"]);
+    plain(repo, ["config", "gc.autoDetach", "false"]);
+    plain(repo, ["config", "maintenance.autoDetach", "false"]);
+    fs.rmSync(marker, { force: true });
+    return planted;
+  }
+
+  /**
+   * A superproject whose `push.recurseSubmodules=on-demand` makes `push` start a
+   * second push inside its submodule, to the submodule's own remote, and whose
+   * submodule's own configuration defines a `pre-push` hook. The submodule has
+   * a commit its remote lacks, so the recursion has something to send.
+   */
+  function submodulePushRepo(): { repo: string; marker: string; subRemote: string } {
+    const base = path.join(root, `sm${count++}`);
+    fs.mkdirSync(base);
+    const subRemote = path.join(base, "sub-remote.git");
+    const superRemote = path.join(base, "super-remote.git");
+    plain(base, ["init", "-q", "--bare", "-b", "main", subRemote]);
+    plain(base, ["init", "-q", "--bare", "-b", "main", superRemote]);
+    const sub = path.join(base, "sub");
+    plain(base, ["init", "-q", "-b", "main", sub]);
+    plain(sub, ["-c", "user.email=a@b.c", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "s1"]);
+    plain(sub, ["push", "-q", subRemote, "main"]);
+
+    const repo = path.join(base, "super");
+    plain(base, ["init", "-q", "-b", "main", repo]);
+    plain(repo, ["config", "user.email", "a@b.c"]);
+    plain(repo, ["config", "user.name", "a"]);
+    plain(repo, ["-c", "protocol.file.allow=always", "submodule", "add", "-q", subRemote, "sm"]);
+    plain(repo, ["commit", "-q", "-m", "add"]);
+    plain(repo, ["remote", "add", "origin", superRemote]);
+    const sm = path.join(repo, "sm");
+    plain(sm, ["-c", "user.email=a@b.c", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "s2"]);
+    plain(repo, ["add", "sm"]);
+    plain(repo, ["commit", "-q", "-m", "bump"]);
+    plain(repo, ["config", "push.recurseSubmodules", "on-demand"]);
+
+    const marker = `${base}.ran`;
+    plain(sm, ["config", "hook.p.command", `echo "sm ran" >> '${marker}'`]);
+    plain(sm, ["config", "hook.p.event", "pre-push"]);
+    return { repo, marker, subRemote };
+  }
+
   it("`commit`: a pre-commit hook named in config runs under neither git() nor gitSync()", async (t) => {
     if (!configHooksRun) return t.skip(skipped);
     const { repo, marker } = repoWithHooks(["pre-commit", "commit-msg", "post-commit"]);
@@ -526,6 +585,35 @@ describe("the server's own git runs no hook a work cycle defined in .git/config"
     ranNothing(marker);
   });
 
+  it("a commit's automatic gc: no pre-auto-gc hook in the second git it starts", async (t) => {
+    // The switch travels to that child in `GIT_CONFIG_PARAMETERS` with the rest
+    // of the command line's configuration; before the change the hook ran there.
+    if (!configHooksRun) return t.skip(skipped);
+    const { repo, marker } = autoGcRepo();
+
+    const res = await git(repo, ["commit", "--allow-empty", "-m", "t"]);
+    assert.equal(res.ok, true, `commit failed: ${res.stderr}`);
+    ranNothing(marker);
+  });
+
+  it("a push the repository asks to recurse: the submodule is not pushed and its pre-push hook does not run", async (t) => {
+    // The recursion is a second push, to a remote no door here checked. Before
+    // the change `push` was not probed, carried no `submodule.recurse=false`, and
+    // pushed the submodule and ran its hook; from the command line that pin
+    // outranks the repository's `push.recurseSubmodules` (measured, 2.54.0).
+    if (!configHooksRun) return t.skip(skipped);
+    const { repo, marker, subRemote } = submodulePushRepo();
+
+    const pushed = await git(repo, ["push", "origin", "HEAD:refs/heads/pushed"]);
+    assert.equal(pushed.ok, true, `push failed: ${pushed.stderr}`);
+    ranNothing(marker);
+    assert.equal(
+      plain(subRemote, ["branch", "--list", "pushed"]).trim(),
+      "",
+      "the submodule was pushed to its own remote",
+    );
+  });
+
   it("control: the same plants fire under plain git", (t) => {
     if (!configHooksRun) return t.skip(skipped);
     const { repo, marker } = repoWithHooks(["pre-commit", "reference-transaction", "pre-push"], ["a=b"]);
@@ -542,5 +630,14 @@ describe("the server's own git runs no hook a work cycle defined in .git/config"
       plain(repo, args);
       assert.equal(fs.existsSync(marker), true, `the planted hook did not fire on ${args[0]}`);
     }
+
+    const gc = autoGcRepo();
+    plain(gc.repo, ["commit", "-q", "--allow-empty", "-m", "t"]);
+    assert.equal(fs.existsSync(gc.marker), true, "the planted pre-auto-gc hook did not fire");
+
+    const sm = submodulePushRepo();
+    plain(sm.repo, ["push", "-q", "origin", "HEAD:refs/heads/pushed"]);
+    assert.equal(fs.existsSync(sm.marker), true, "the submodule's planted pre-push hook did not fire");
+    assert.equal(plain(sm.subRemote, ["branch", "--list", "pushed"]).trim(), "pushed");
   });
 });

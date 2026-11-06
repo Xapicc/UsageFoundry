@@ -219,13 +219,22 @@
   failed names the driver" failed, as it does on the host's 2.54.0 without
   this change.
 
-## Not yet verified by hand
+- **A hook in a second git that this app's git starts does not run, on Apple
+  git 2.54.0 and on git 2.56.0 in the image, 2026-11-06.** Board task
+  `6b4dccf3`, `main` at `fb8f4239` plus the two cases. A `commit` whose
+  repository sets `maintenance.strategy=gc` and has two packs against
+  `gc.autoPackLimit=1` starts `git maintenance run --auto`, and that child
+  fired a configured `pre-auto-gc` three times under plain git. Under `git()`
+  it fired none, and gc still ran. With `push.recurseSubmodules=on-demand` and a
+  `pre-push` hook in the submodule's own config, plain git and git with only
+  `core.hooksPath=/dev/null` pushed the submodule to its own remote and ran the
+  hook. Adding the name switch stopped the hook, but the push still went out.
+  `submodule.recurse=false`, which a probed `push` carries, stopped the push
+  itself. `git.test.ts` holds both cases. Before the change they failed on
+  2.54.0, and after it they passed there and on 2.56.0. Caveat: `fetch`'s gc
+  was not driven.
 
-- **Hooks this app's git can start in a second git.** A `gc --auto` that fires
-  `pre-auto-gc` from a probed `commit` or `fetch`, and a `push` that recurses
-  into a submodule, were never triggered. Settle with git 2.54 or later as
-  `GIT_BIN`: a repository with `gc.auto=1` and a configured `pre-auto-gc`
-  hook, and `git()` running `commit`, then look for the marker.
+## Not yet verified by hand
 
 - **Whether a work cycle can race this app's git on `.git/config` in
   practice.** Board task `7d41bb25`. The race is shown above with a writer
