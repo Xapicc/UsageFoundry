@@ -419,3 +419,128 @@ describe("the server's own git refuses a command a work cycle planted in .git", 
     assert.equal(fs.existsSync(marker), true, "the planted clean filter did not fire on diff");
   });
 });
+
+/**
+ * git 2.54 added hooks defined in config (`hook.<name>.command` plus `.event`),
+ * which `core.hooksPath=/dev/null` does not reach: before board task 6b4dccf3 a
+ * pair a work cycle wrote into `.git/config` ran on this app's own `commit`,
+ * `update-ref`, `branch -D` and `push`. Each case plants one and drives `git()`
+ * through a call that fires its event, and asserts the marker never appears.
+ *
+ * A git that reads no `hook.*` key, the image's 2.39.5 among them, cannot run a
+ * plant whatever this app does, so every case is skipped there rather than
+ * passing having measured nothing. The control decides that, by planting the
+ * same hook and committing under plain git.
+ */
+describe("the server's own git runs no hook a work cycle defined in .git/config", () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-git-hook-")));
+  let configHooksRun = false;
+
+  const plainEnv = (): NodeJS.ProcessEnv => ({
+    ...process.env,
+    HOME: root,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+  });
+  const plain = (cwd: string, args: string[]) =>
+    execFileSync("git", args, { cwd, env: plainEnv(), encoding: "utf8" });
+
+  let count = 0;
+  function repoWithHooks(events: string[], names = ["planted"]): { repo: string; marker: string } {
+    const repo = path.join(root, `repo${count++}`);
+    fs.mkdirSync(repo);
+    plain(repo, ["init", "-q", "-b", "main"]);
+    plain(repo, ["config", "user.email", "a@b.c"]);
+    plain(repo, ["config", "user.name", "a"]);
+    plain(repo, ["commit", "-q", "--allow-empty", "-m", "init"]);
+    const marker = `${repo}.ran`;
+    for (const name of names) {
+      plain(repo, ["config", `hook.${name}.command`, `echo "${name} ran" >> '${marker}'`]);
+      for (const event of events) plain(repo, ["config", "--add", `hook.${name}.event`, event]);
+    }
+    return { repo, marker };
+  }
+
+  const ranNothing = (marker: string) =>
+    assert.equal(
+      fs.existsSync(marker),
+      false,
+      `a planted hook ran: ${fs.existsSync(marker) ? fs.readFileSync(marker, "utf8") : ""}`,
+    );
+
+  before(() => {
+    // As above: only `gitArgs`/`gitEnv` and the repository's config decide.
+    for (const k of Object.keys(process.env)) if (k.startsWith("GIT_")) delete process.env[k];
+    const { repo, marker } = repoWithHooks(["pre-commit"]);
+    plain(repo, ["commit", "-q", "--allow-empty", "-m", "probe"]);
+    configHooksRun = fs.existsSync(marker);
+  });
+
+  after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const skipped = "this git reads no hook defined in config, so there is nothing to switch off";
+
+  it("`commit`: a pre-commit hook named in config runs under neither git() nor gitSync()", async (t) => {
+    if (!configHooksRun) return t.skip(skipped);
+    const { repo, marker } = repoWithHooks(["pre-commit", "commit-msg", "post-commit"]);
+
+    const viaGit = await git(repo, ["commit", "--allow-empty", "-m", "t"]);
+    assert.equal(viaGit.ok, true, `commit failed: ${viaGit.stderr}`);
+    const viaSync = gitSync(repo, ["commit", "--allow-empty", "-m", "t2"]);
+    assert.equal(viaSync.ok, true, `commit failed: ${viaSync.stderr}`);
+    ranNothing(marker);
+  });
+
+  it("`update-ref` and `branch -D`: no reference-transaction hook, though neither moves content", async (t) => {
+    if (!configHooksRun) return t.skip(skipped);
+    const { repo, marker } = repoWithHooks(["reference-transaction"]);
+
+    const moved = await git(repo, ["update-ref", "refs/heads/moved", "HEAD"]);
+    assert.equal(moved.ok, true, `update-ref failed: ${moved.stderr}`);
+    const deleted = await git(repo, ["branch", "-D", "moved"]);
+    assert.equal(deleted.ok, true, `branch -D failed: ${deleted.stderr}`);
+    ranNothing(marker);
+  });
+
+  it("`push`: no pre-push hook", async (t) => {
+    if (!configHooksRun) return t.skip(skipped);
+    const { repo, marker } = repoWithHooks(["pre-push", "reference-transaction"]);
+    const remote = `${repo}-remote.git`;
+    plain(root, ["init", "-q", "--bare", remote]);
+    plain(repo, ["remote", "add", "origin", remote]);
+
+    const pushed = await git(repo, ["push", "origin", "HEAD:refs/heads/pushed"]);
+    assert.equal(pushed.ok, true, `push failed: ${pushed.stderr}`);
+    ranNothing(marker);
+  });
+
+  it("a hook's name is matched as git keeps it: dotted, mixed-case, spaced and holding `=`", async (t) => {
+    // git keeps a subsection's case and every byte of it, and splits a `-c` at
+    // its first `=`, so `-c hook.a=b.enabled=false` would set `hook.a` and
+    // leave `a=b` running.
+    if (!configHooksRun) return t.skip(skipped);
+    const { repo, marker } = repoWithHooks(["pre-commit"], ["a.b", "MiXed", "sp ace", "a=b"]);
+
+    const res = await git(repo, ["commit", "--allow-empty", "-m", "t"]);
+    assert.equal(res.ok, true, `commit failed: ${res.stderr}`);
+    ranNothing(marker);
+  });
+
+  it("control: the same plants fire under plain git", (t) => {
+    if (!configHooksRun) return t.skip(skipped);
+    const { repo, marker } = repoWithHooks(["pre-commit", "reference-transaction", "pre-push"], ["a=b"]);
+    const remote = `${repo}-remote.git`;
+    plain(root, ["init", "-q", "--bare", remote]);
+    plain(repo, ["remote", "add", "origin", remote]);
+
+    for (const args of [
+      ["commit", "-q", "--allow-empty", "-m", "t"],
+      ["update-ref", "refs/heads/moved", "HEAD"],
+      ["push", "-q", "origin", "HEAD:refs/heads/pushed"],
+    ]) {
+      if (fs.existsSync(marker)) fs.rmSync(marker);
+      plain(repo, args);
+      assert.equal(fs.existsSync(marker), true, `the planted hook did not fire on ${args[0]}`);
+    }
+  });
+});

@@ -139,8 +139,9 @@ export function gitEnv(): NodeJS.ProcessEnv {
  * On git 2.54 and later that covers only the hooks directory: a hook named in
  * config (`hook.<name>.command` plus `.event`) still runs, and git has no switch
  * that turns all of those off (measured on 2.54.0 and 2.56.0,
- * `docs/verification/security-and-sandboxing-server-git.md`). The image's 2.39
- * has no such hooks, which is the only reason that gap is not live.
+ * `docs/verification/security-and-sandboxing-server-git.md`). So those are
+ * switched off one name at a time, on every call that can fire one, by the probe
+ * and `neutralizers` below; a flat list here cannot name them.
  *
  * This is the git *this app* runs, and nothing here reaches the agent's own:
  * `buildArgs` passes no config at all, so a repository's `pre-commit` still runs
@@ -166,8 +167,9 @@ export function gitEnv(): NodeJS.ProcessEnv {
  * helper with it (measured for the chat's block, `chat-child-config-files.md`),
  * so those two belong to Deliver's own fetch/push env, not to every git child.
  *
- * `extraConfig` is where `git()`/`gitSync()` splice the submodule pins and the
- * driver blanks for the content-moving subcommands (see `prepareContentCall`);
+ * `extraConfig` is where `git()`/`gitSync()` splice the submodule pins, the
+ * driver blanks and the hook switches for every probed call (see
+ * `prepareContentCall` and `needsProbe`);
  * it precedes the subcommand because it is config, and defaults to none so a
  * read call is unchanged.
  */
@@ -199,6 +201,14 @@ export const gitArgs = (args: string[], extraConfig: string[] = []) => [
  * caller can hand a neutraliser a value.
  */
 const BLANK_VAR = "USAGEFOUNDRY_BLANK";
+
+/**
+ * The value a configured hook's switch takes, set beside `BLANK_VAR` and for its
+ * reasons. A second variable rather than that one because a driver's off value
+ * is empty and a hook's is a boolean, and `false` is the value measured to stop
+ * one.
+ */
+const FALSE_VAR = "USAGEFOUNDRY_FALSE";
 
 /**
  * Blanking the filter drivers is what the signing pins above cannot be: a flat
@@ -235,10 +245,23 @@ const BLANK_VAR = "USAGEFOUNDRY_BLANK";
  * filter already has. `merge.default` needs nothing of its own: it names a
  * driver, and a driver it names is defined by keys this blanks.
  *
+ * A hook defined in config (git 2.54 and later) is the third kind, and the only
+ * one whose off switch is not a blank: `hook.<name>.enabled=false`, which from
+ * the command line outranks the repository's own `enabled = true`. It is per
+ * name because git has no other: `core.hooksPath` moves only the hooks
+ * directory, and 2.55's per-event `hook.<event>.enabled` is undone by a
+ * repository that also defines a hook named after the event (both measured,
+ * `docs/verification/security-and-sandboxing-server-git.md`). git 2.39 reads no
+ * `hook.*` key at all, so on the image's git these switches are inert.
+ *
  * The driver name is the subsection, whose case git preserves and which the
  * override must match, so it is captured verbatim and never lower-cased.
  */
-function neutralizers(filters: Iterable<string>, merges: Iterable<string>): string[] {
+function neutralizers(
+  filters: Iterable<string>,
+  merges: Iterable<string>,
+  hooks: Iterable<string>,
+): string[] {
   const out: string[] = [];
   for (const name of filters) {
     for (const command of ["clean", "smudge", "process"]) {
@@ -246,6 +269,7 @@ function neutralizers(filters: Iterable<string>, merges: Iterable<string>): stri
     }
   }
   for (const name of merges) out.push(`--config-env=merge.${name}.driver=${BLANK_VAR}`);
+  for (const name of hooks) out.push(`--config-env=hook.${name}.enabled=${FALSE_VAR}`);
   return out;
 }
 
@@ -275,25 +299,38 @@ function configRecords(output: string): ConfigRecord[] {
   return records;
 }
 
-/** The filter and merge drivers the records define, by name. */
-function driverNames(records: ConfigRecord[]): { filters: string[]; merges: string[] } {
+/**
+ * The filter and merge drivers and the configured hooks the records define, by
+ * name.
+ *
+ * A hook is any variable of a `hook.<name>` section rather than only the
+ * `command`/`event` pair that makes one fire, because switching off a name that
+ * defines nothing costs nothing and the set of variables git reads there is
+ * still growing (`enabled` in 2.54; more after). The greedy capture keeps a
+ * dotted name whole, as the driver patterns do.
+ */
+function driverNames(records: ConfigRecord[]): { filters: string[]; merges: string[]; hooks: string[] } {
   const filters: string[] = [];
   const merges: string[] = [];
+  const hooks: string[] = [];
   for (const { key } of records) {
     const filter = /^filter\.(.+)\.(?:clean|smudge|process|required)$/i.exec(key);
     if (filter) filters.push(filter[1]);
     const merge = /^merge\.(.+)\.(?:driver|name|recursive)$/i.exec(key);
     if (merge) merges.push(merge[1]);
+    const hook = /^hook\.(.+)\.[^.]+$/i.exec(key);
+    if (hook) hooks.push(hook[1]);
   }
-  return { filters, merges };
+  return { filters, merges, hooks };
 }
 
 /**
- * Reads the repository's filter and merge drivers, without running any of them.
+ * Reads the repository's filter and merge drivers and its configured hooks,
+ * without running any of them.
  *
- * `config` is a read that runs nothing the repository chose, so it is never
- * itself a content subcommand and the enumeration never recurses. `--includes`
- * because a driver reached through an `include.path` would fire too. It exits 1
+ * `config` is a read that runs nothing the repository chose, so it is on
+ * `UNPROBED_SUBCOMMANDS` and the enumeration never recurses. `--includes`
+ * because a driver or hook reached through an `include.path` would fire too. It exits 1
  * with nothing on stdout when no driver and no include is defined, which is the
  * common case; `readFilterProbe` is where every other ending is told apart from
  * that one. The `merge` section also holds plain settings (`merge.ff`,
@@ -311,7 +348,7 @@ const FILTER_PROBE = [
   "--show-origin",
   "--includes",
   "--get-regexp",
-  "^(filter|merge|include|includeif)\\.",
+  "^(filter|merge|hook|include|includeif)\\.",
 ];
 
 /**
@@ -389,48 +426,71 @@ function readFilterProbe(
 }
 
 /**
- * The subcommands that convert content between the working tree and the object
- * store, and so consult a filter driver. Preparing one costs three git children
- * for each repository it reaches (see `prepareContentCall`), so it is paid only
- * here and not on the object-store reads
- * — `rev-parse`, `rev-list`, `merge-base`, `cat-file`, `ls-tree`, `log`,
- * `show` — that are the bulk of this app's git calls and never touch the
- * working tree. `status`, `update-index --refresh` and `diff` are on the list
- * because their stat-dirty check re-hashes a file through its clean filter:
- * `conflictedFiles`' `diff --name-only --diff-filter=U` ran one three times
- * mid-merge (measured, 2.39), though `--name-only` opens no blob for a diff
- * driver. `diff` is gated whole rather than only against the working tree,
- * since telling a range from a pathspec means parsing git's own grammar, and
- * the probe is small beside a diff. `merge-tree` writes no working tree and is
- * on the list for the merge drivers: Land's preview is a three-way content
- * merge, and a planted driver ran there before it was. The gate reads
- * `args[0]`, which every call site passes as the subcommand; this app never
- * puts a global flag before it.
+ * The subcommands spawned without the probe: object-store reads that convert no
+ * work-tree content and fire no hook. Every other subcommand is probed.
+ *
+ * Preparing a call costs three git children for each repository it reaches (see
+ * `prepareContentCall`), so it is not paid on these, which are the bulk of this
+ * app's git calls. The list is of what may skip the probe rather than of what
+ * needs it because a hook defined in config fires on more than the subcommands
+ * that move content: under `gitArgs`, `branch -D`, `update-ref`, `fetch` and
+ * `push` each fired `reference-transaction` and `push` fired `pre-push` too,
+ * while every subcommand here fired none of git's events (measured, Apple git
+ * 2.54.0, `docs/verification/security-and-sandboxing-server-git.md`). A call
+ * shape nobody has measured therefore pays for a probe rather than running a
+ * planted hook. Adding a subcommand here means measuring both halves: that it
+ * fires no hook, and that it never re-hashes a work-tree file through a clean
+ * filter or runs a merge driver.
+ *
+ * That second half is why `status`, `update-index` and `diff` are absent though
+ * they fired no hook here: their stat-dirty check re-hashes a file through its
+ * clean filter, and `conflictedFiles`' `diff --name-only --diff-filter=U` ran
+ * one three times mid-merge (measured, 2.39). `diff` is probed whole rather
+ * than only against the working tree, since telling a range from a pathspec
+ * means parsing git's own grammar, and the probe is small beside a diff.
+ * `merge-tree` writes no working tree and is absent for the merge drivers:
+ * Land's preview is a three-way content merge, and a planted driver ran there
+ * before it was probed.
+ *
+ * `remote` is not here because `remote rename` and `remote remove` rewrite
+ * refs; `needsProbe` lets its two read forms through.
  */
-const CONTENT_SUBCOMMANDS = new Set([
-  "add",
-  "commit",
-  "merge",
-  "merge-tree",
-  "checkout",
-  "switch",
-  "restore",
-  "worktree",
-  "reset",
-  "read-tree",
-  "checkout-index",
-  "update-index",
-  "stash",
-  "cherry-pick",
-  "revert",
-  "rebase",
-  "am",
-  "apply",
-  "pull",
-  "status",
-  "diff",
-  "sparse-checkout",
+const UNPROBED_SUBCOMMANDS = new Set([
+  "rev-parse",
+  "rev-list",
+  "merge-base",
+  "for-each-ref",
+  "ls-files",
+  "ls-tree",
+  "ls-remote",
+  "cat-file",
+  "log",
+  "show",
+  "diff-tree",
+  "config",
+  "commit-tree",
+  "check-ignore",
+  "interpret-trailers",
+  "--version",
 ]);
+
+/**
+ * Whether a call must be prepared by the probe before it is spawned.
+ *
+ * The subcommand is found past any leading `-c <pair>`, which two call sites put
+ * before it (`commit-tree` with an identity, `check-ignore` with
+ * `core.excludesFile`); reading `args[0]` would take `-c` for the subcommand.
+ * The functions the probe hands the call to still read `args[0]` for the
+ * `worktree`, `merge-tree` and `checkout` special cases, so a call of one of
+ * those must keep putting its subcommand first.
+ */
+function needsProbe(args: string[]): boolean {
+  let at = 0;
+  while (args[at] === "-c") at += 2;
+  const subcommand = args[at];
+  if (subcommand === "remote") return !(args.length === at + 1 || args[at + 1] === "get-url");
+  return !UNPROBED_SUBCOMMANDS.has(subcommand);
+}
 
 /**
  * The directories a content subcommand's probe runs in, or why the call is
@@ -660,6 +720,7 @@ function* prepareContentCall(
 
   const filters = new Set<string>();
   const merges = new Set<string>();
+  const hooks = new Set<string>();
   const watched = new Map<string, string>();
   const watch = (file: string) => {
     if (!watched.has(file)) watched.set(file, configFingerprint(file));
@@ -698,6 +759,7 @@ function* prepareContentCall(
     const names = driverNames(read.records);
     for (const name of names.filters) filters.add(name);
     for (const name of names.merges) merges.add(name);
+    for (const name of names.hooks) hooks.add(name);
     for (const file of includeTargets(dir, read.records)) watch(file);
 
     if (args[0] === "merge-tree") continue;
@@ -714,14 +776,14 @@ function* prepareContentCall(
         ok: false,
         reason:
           `${file} changed while the filter probe read it, so git ${args[0]} was not run in ${cwd}: ` +
-          "a driver written there then would have run unblanked.",
+          "a driver or hook written there then would have run unblanked.",
       };
     }
   }
   return {
     ok: true,
     args: QUIETED.has(args[0]) ? [args[0], "--quiet", ...args.slice(1)] : args,
-    extra: [...SUBMODULE_PINS, ...neutralizers(filters, merges)],
+    extra: [...SUBMODULE_PINS, ...neutralizers(filters, merges, hooks)],
     mergeDrivers: [...merges],
   };
 }
@@ -776,7 +838,7 @@ export const GIT_SYNC_TIMEOUT_MS = 20_000;
  */
 export function gitSync(cwd: string, args: string[]): GitResult {
   let call = { args, extra: [] as string[], mergeDrivers: [] as string[] };
-  if (CONTENT_SUBCOMMANDS.has(args[0])) {
+  if (needsProbe(args)) {
     const steps = prepareContentCall(cwd, args);
     let step = steps.next();
     while (!step.done) step = steps.next(stepSync(step.value));
@@ -816,7 +878,7 @@ function stepSync(step: PrepareStep): ProbeEnding {
 function spawnGitSync(cwd: string, args: string[], extra: string[], maxBuffer?: number) {
   return spawnSync(GIT_BIN, gitArgs(args, extra), {
     cwd,
-    env: { ...gitEnv(), [BLANK_VAR]: "" },
+    env: { ...gitEnv(), [BLANK_VAR]: "", [FALSE_VAR]: "false" },
     ...childCredentials(),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
@@ -911,7 +973,7 @@ export async function git(
   } = {},
 ): Promise<GitResult & { overflowed: boolean; timedOutAfterMs: number | null }> {
   let call = { args, extra: [] as string[], mergeDrivers: [] as string[] };
-  if (CONTENT_SUBCOMMANDS.has(args[0])) {
+  if (needsProbe(args)) {
     const steps = prepareContentCall(cwd, args);
     let step = steps.next();
     while (!step.done) {
@@ -1062,7 +1124,7 @@ function spawnGit(
     try {
       const options = {
         cwd,
-        env: { ...gitEnv(), ...opts.env, [BLANK_VAR]: "" },
+        env: { ...gitEnv(), ...opts.env, [BLANK_VAR]: "", [FALSE_VAR]: "false" },
         ...childCredentials(),
       };
       const child =

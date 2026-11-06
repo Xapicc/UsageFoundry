@@ -170,16 +170,51 @@
   and `fatal: failure to merge`, and exited 128. `merge --no-edit` printed the
   same first two lines, then `Merge with strategy ort failed.`
 
+- **Of this app's git call shapes, only the ref-moving and content-moving
+  ones fire a hook defined in config, 2026-11-06.** Board task `6b4dccf3`,
+  `main` at `100b9f24`. Apple git 2.54.0 (Apple Git-157) on the macOS host,
+  a scratch `HOME`, `GIT_CONFIG_NOSYSTEM=1`, `gitArgs`' first four pairs on
+  every call, and a repository with a configured hook for each of 18 events
+  in `githooks(5)`. `update-ref` (create, `--no-deref`, compare-and-swap,
+  `-d`), `branch -D` and `fetch` fired `reference-transaction`; `push` fired
+  `pre-push` and `reference-transaction`. `status`, `update-index --refresh`,
+  `add` and `read-tree -m -u` fired `post-index-change`; `commit`, `checkout`,
+  `merge --no-ff` and `reset --hard` fired their own events as well.
+  `rev-parse`, `rev-list`, `merge-base`, `for-each-ref`, `ls-files`, `log`,
+  `show`, `ls-tree`, `diff-tree`, `cat-file`, `config`, `commit-tree`,
+  `check-ignore`, `interpret-trailers`, bare `remote`, `remote get-url`,
+  `ls-remote`, `--version`, `diff A B` and `merge-tree --write-tree` fired
+  nothing. Caveat: `gc --auto` was never triggered, and `worktree add` and
+  `remove` failed in the harness and measured nothing.
+
+- **This app's `git()` and `gitSync()` run no hook defined in config on Apple
+  git 2.54.0, and ran four before the change, 2026-11-06.** Board task
+  `6b4dccf3`, `main` at `100b9f24` plus the per-name switch. `git.test.ts`'s
+  config-hook cases on the macOS host: `commit --allow-empty` through both,
+  `update-ref` and `branch -D` with a `reference-transaction` hook, `push` to
+  a local bare remote with `pre-push`, and hooks named `a.b`, `MiXed`, `sp
+  ace` and `a=b` on `commit`. No marker in any case, and the plain-git control
+  fired all of them. With `git.ts` at `100b9f24` the same build failed all
+  four with the marker present. Caveat: Apple's build only; not run on 2.55
+  or later.
+
+- **A push to a local-path remote runs that repository's receive hooks,
+  whatever this app's git is told, 2026-11-06.** Apple git 2.54.0, a bare
+  repository with a `hooks/pre-receive` and a configured `pre-receive` hook,
+  pushed to by path from `git -c core.hooksPath=/dev/null -c
+  hook.r.enabled=false push`: both hooks ran. The receiving side is a second
+  git that reads its own repository's configuration, and neither pair reached
+  it. Not measured on 2.39.5, and not through `git()`.
+
 ## Not yet verified by hand
 
-- **Any way to keep this app's git from running hooks defined in config.**
-  None is in the tree: git has no switch for it, and the choice between
-  disabling each listed name and refusing git 2.54 or later is the
-  operator's, on board task `6b4dccf3`. Settle once one lands: with a git of
-  2.54 or later, `GIT_BIN` pointing at it, run this app's `git()` as `commit
-  --allow-empty -m t` in a repository with `hook.x.command 'touch <marker>'`
-  and `hook.x.event pre-commit`. Expect no marker, and expect a plain `git
-  commit` there to create it.
+- **The per-name hook switch on git 2.55 or later, and in a booted image.**
+  Measured on Apple git 2.54.0 only (above); the image ships 2.39.5, where the
+  switches are inert. Settle by building git `v2.56.0` with `NO_RUST=1` under
+  `$TMPDIR`, setting `GIT_BIN` to it, and running `git.test.ts`: its
+  config-hook cases must pass rather than skip. Also open: a `gc --auto` that
+  fires `pre-auto-gc` from a probed `commit` or `fetch`, and a `push` that
+  recurses into a submodule.
 
 - **Whether a work cycle can race this app's git on `.git/config` in
   practice.** Board task `7d41bb25`. The race is shown above with a writer

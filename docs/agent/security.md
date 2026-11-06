@@ -20,7 +20,7 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - A conditional include is probed where the child git reads it.
 - A submodule is probed where its own child git reads it, and none the probe has not read is recursed into.
 - The probe and the call still read configuration separately; a fingerprint narrows the window between them and does not close it.
-- `core.hooksPath=/dev/null` does not switch off a hook defined in config on git 2.54 or later, and git has no switch that does.
+- A hook defined in config is switched off by name on every call that can fire one, because `core.hooksPath=/dev/null` does not reach it and git has no switch that does.
 - `gitArgs` also passes `safe.directory=*`, and the image sets it system-wide for the agent's own git. (was line 15)
 - `permissionMode` is narrowed against the four literals in `POST /api/runs` before it reaches `--permission-mode`. (was line 17)
 - `bypassPermissions` is offered in the new-run form with a warning; the default stays `acceptEdits`. (was line 35)

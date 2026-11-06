@@ -240,6 +240,58 @@ describe("a filter probe that failed does not read as 'no filters'", () => {
     assert.equal(viaSync.ok, true, viaSync.stderr);
   });
 
+  it("every ref-moving call asks the probe, since each can fire a hook defined in config", async () => {
+    // `branch -D`, `update-ref`, `fetch` and `push` each fired
+    // `reference-transaction` under `gitArgs` on git 2.54, and none of them
+    // moves content, so a gate listing only the content subcommands let them
+    // run with no hook switched off. A probe that fails is how the gate is seen
+    // on any git, the image's 2.39.5 included: asked, it fails the call.
+    const { repo } = plantedRepo();
+    plain(repo, ["branch", "doomed"]);
+    plain(repo, ["remote", "add", "origin", repo]);
+    setMode("refused");
+
+    const calls = [
+      ["branch", "-D", "doomed"],
+      ["update-ref", "refs/heads/moved", "HEAD"],
+      ["fetch", "--no-prune", "--recurse-submodules=no", "--end-of-options", "origin"],
+      ["push", "origin", "HEAD:refs/heads/pushed"],
+      ["remote", "rename", "origin", "renamed"],
+      // An unmeasured subcommand is probed rather than trusted.
+      ["tag", "t1"],
+    ];
+    for (const args of calls) {
+      const viaGit = await git(repo, args);
+      assert.equal(viaGit.ok, false, `git ${args.join(" ")} ran without the probe`);
+      assert.match(viaGit.stderr, /filter probe/i, `git ${args.join(" ")}: ${viaGit.stderr}`);
+      const viaSync = gitSync(repo, args);
+      assert.equal(viaSync.ok, false, `gitSync ${args.join(" ")} ran without the probe`);
+      assert.match(viaSync.stderr, /filter probe/i, `gitSync ${args.join(" ")}: ${viaSync.stderr}`);
+    }
+    assert.equal(plain(repo, ["branch", "--list", "doomed"]).trim(), "doomed", "branch -D ran");
+  });
+
+  it("a read behind a leading `-c` pair, and `remote`'s read forms, never ask the probe", async () => {
+    // The subcommand is found past the `-c` pairs `commit-tree` and
+    // `check-ignore` are called with; read off `args[0]`, both were taken for
+    // a subcommand nobody listed and every land's `commit-tree` paid a probe.
+    const { repo } = plantedRepo();
+    plain(repo, ["remote", "add", "origin", repo]);
+    setMode("refused");
+
+    const calls = [
+      ["-c", "user.name=U", "-c", "user.email=u@l", "commit-tree", "--no-gpg-sign", "HEAD^{tree}", "-m", "t"],
+      ["-c", "core.excludesFile=", "check-ignore", "-q", "--", "f.txt"],
+      ["remote"],
+      ["remote", "get-url", "--all", "--end-of-options", "origin"],
+    ];
+    for (const args of calls) {
+      const res = await git(repo, args);
+      assert.doesNotMatch(res.stderr, /filter probe/i, `git ${args.join(" ")} asked the probe`);
+    }
+    assert.equal((await git(repo, ["remote"])).stdout, "origin");
+  });
+
   it("a read that is not a content subcommand never asks the probe, so a broken probe cannot fail it", async () => {
     const { repo } = plantedRepo();
     setMode("refused");
