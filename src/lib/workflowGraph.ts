@@ -11,6 +11,7 @@ import {
 import { edgesExclude } from "./branchRival";
 import type { LandStrategy } from "./land";
 import {
+  instanceBudgetNumberRefusal,
   normalizeInstanceBudget,
   type InstanceBudgetPolicy,
 } from "./budget";
@@ -19,7 +20,7 @@ import {
   currentAgentKnowledge,
   type AgentKnowledge,
 } from "./agents";
-import { jsonKind, notStringRefusal } from "./http";
+import { jsonKind, notStringRefusal, optionalObjectField } from "./http";
 import { parseVerifyCommand } from "./verifyCommand";
 import { chatGuards } from "./settings";
 import { listTemplates } from "./templates";
@@ -918,13 +919,23 @@ export function normalizeWorkflowInput(
   const refusal = graphRefusal(nodes, edges, byId, known);
   if (refusal) return { ok: false, error: refusal };
 
-  // Total, never a refusal: `null`/`""`/`0` all mean off, and a fraction guard
-  // with no ceiling behind it is refused at *Run* rather than at Save. That is
-  // the one place this file's "refuse at save what instantiation refuses" rule
-  // does not apply, and deliberately: a ceiling is a Settings value that can be
-  // typed at any time, so a graph saved without one is not unstartable — it is
-  // unstartable *today*. The editor says so beside the field.
-  const instanceBudget = normalizeInstanceBudget(o.instanceBudget);
+  // `null`/`""`/`0` all mean off, and a fraction guard with no ceiling behind
+  // it is refused at *Run* rather than at Save. That is the one place this
+  // file's "refuse at save what instantiation refuses" rule does not apply, and
+  // deliberately: a ceiling is a Settings value that can be typed at any time,
+  // so a graph saved without one is not unstartable — it is unstartable
+  // *today*. The editor says so beside the field.
+  //
+  // What is refused is a limit that was typed and is not a number. Off is a
+  // value of its own, and `normalizeInstanceBudget` reads "5O", -5 and `true`
+  // as that one too — a press of Run with no instance limit, answered by a Save
+  // that said nothing. That function stays total because it runs again over the
+  // stored blob; this is the door with somebody to tell.
+  const budgetField = optionalObjectField(o, "instanceBudget");
+  if (!budgetField.ok) return { ok: false, error: budgetField.error };
+  const budgetRefusal = instanceBudgetNumberRefusal(budgetField.value ?? {});
+  if (budgetRefusal) return { ok: false, error: budgetRefusal };
+  const instanceBudget = normalizeInstanceBudget(budgetField.value);
 
   return {
     ok: true,

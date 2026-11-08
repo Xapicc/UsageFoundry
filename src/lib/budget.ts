@@ -838,6 +838,68 @@ export function evaluateBudget(
   return { allowed: true, meters };
 }
 
+/**
+ * Why a budget number off the wire is not one this app will store, or `null`
+ * when it is.
+ *
+ * `normalizePolicy` and `normalizeInstanceBudget` fold every value that is not
+ * a positive number to "off", and "off" is a run with no guard on it. That is
+ * right for a stored blob read back a second time and wrong for a person's
+ * typo: `"5O"`, `"$5"` and `-5` would each save a run, a template or a workflow
+ * with no spending limit and answer 200. So each door that has somebody to tell
+ * asks this first and refuses with the sentence it returns.
+ *
+ * What stays off, because the form says it that way: absent, `null`, `""` and
+ * `0`. Anything else that is not a finite, non-negative number or numeric string
+ * is refused — including `true`, which `Number()` reads as 1 and which would
+ * save as a $1 limit. Worded as `optionalNumber` words it in the settings route,
+ * which calls this for that reason: one sentence for one mistake.
+ */
+export function budgetNumberRefusal(field: string, value: unknown): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value !== "number" && typeof value !== "string") {
+    return `${field} must be a number or blank; got ${JSON.stringify(value)}.`;
+  }
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) {
+    return `${field} must be a non-negative number or blank; got ${JSON.stringify(value)}.`;
+  }
+  return null;
+}
+
+/** Every field of a run's policy that `normalizePolicy` reads through `num`. */
+const POLICY_NUMBER_FIELDS: ReadonlyArray<keyof BudgetPolicy> = [
+  "maxWeeklyFraction",
+  "maxSessionFraction",
+  "maxRunCostUSD",
+  "maxRunCostFactor",
+  "maxRunTokens",
+  "maxIterations",
+  "maxDurationMinutes",
+];
+
+/**
+ * The first number in a run's budget that `normalizePolicy` would fold to a
+ * different meaning than the one typed, as a sentence naming it — or `null`.
+ *
+ * `maxIterations` is on the list although it fails closed, to one cycle: `"5O"`
+ * is a person asking for five and being given one under a 200.
+ *
+ * `normalizePolicy` keeps its own lenience, for the reason its comment gives. A
+ * door calls this first, with the budget object it is about to normalise and
+ * the name its caller knows that object by.
+ */
+export function policyNumberRefusal(
+  rawBudget: Record<string, unknown>,
+  label = "budget",
+): string | null {
+  for (const key of POLICY_NUMBER_FIELDS) {
+    const refusal = budgetNumberRefusal(`${label}.${key}`, rawBudget[key]);
+    if (refusal) return refusal;
+  }
+  return null;
+}
+
 export function normalizePolicy(raw: unknown): BudgetPolicy {
   // A string or a number made the `in` test below throw. Read as no fields set
   // rather than refused, for the totality reason given below; refusing a wrong
@@ -1171,6 +1233,28 @@ export function normalizeInstanceBudget(raw: unknown): InstanceBudgetPolicy {
     maxSessionFraction: frac(o.maxSessionFraction),
     maxWeeklyFraction: frac(o.maxWeeklyFraction),
   };
+}
+
+const INSTANCE_NUMBER_FIELDS: ReadonlyArray<keyof InstanceBudgetPolicy> = [
+  "maxInstanceCostUSD",
+  "maxSessionFraction",
+  "maxWeeklyFraction",
+];
+
+/**
+ * `policyNumberRefusal` for an instance budget: the first of its three limits
+ * that `normalizeInstanceBudget` would fold to off although something was typed,
+ * as a sentence naming it — or `null`.
+ */
+export function instanceBudgetNumberRefusal(
+  rawBudget: Record<string, unknown>,
+  label = "instanceBudget",
+): string | null {
+  for (const key of INSTANCE_NUMBER_FIELDS) {
+    const refusal = budgetNumberRefusal(`${label}.${key}`, rawBudget[key]);
+    if (refusal) return refusal;
+  }
+  return null;
 }
 
 /* ------------------------------------------------------------------ */

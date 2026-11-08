@@ -40,3 +40,4 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - `maxDurationMinutes` caps the minutes a run *worked*, not the wall clock since it started — and it is still a terminus.
 - Three rules follow from the column rather than from the arithmetic, and each fails silently.
 - One guard can now be extended, by a bounded count, and nothing else about the terminus rule moves.
+- A number a person typed that is not a number is refused where there is somebody to tell, and "off" is only `null`, `""`, `0` and absent.

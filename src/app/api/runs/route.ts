@@ -46,6 +46,7 @@ import { resolveAgentForRun, runAgentDTO } from "../../../lib/agents";
 import {
   ENFORCEMENT_MODES,
   normalizePolicy,
+  policyNumberRefusal,
   providerTerminusRefusal,
   windowGuardRefusal,
 } from "../../../lib/budget";
@@ -381,6 +382,14 @@ async function postHandler(req: Request) {
         { status: 400 },
       );
     }
+  }
+
+  // Before the fold below, which reads "5O", "$5" and -5 as no limit and `true`
+  // as 1: this is the door with a person behind it, and a run started without
+  // the spending limit they typed is the one that bills.
+  const numberRefusal = policyNumberRefusal(rawBudget);
+  if (numberRefusal) {
+    return NextResponse.json({ error: numberRefusal }, { status: 400 });
   }
 
   // Normalised here so the rules below read the same values the run will. The

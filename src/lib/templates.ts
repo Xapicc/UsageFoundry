@@ -3,6 +3,7 @@ import { db } from "./db";
 import {
   ENFORCEMENT_MODES,
   normalizePolicy,
+  policyNumberRefusal,
   type BudgetPolicy,
 } from "./budget";
 import { PERMISSION_MODES, type PermissionMode } from "./settings";
@@ -245,6 +246,13 @@ export function normalizeTemplateInput(
       (rawBudget[key] as string).trim() === "",
   );
   if (blankLimit) return { ok: false, error: blankLimit[1] };
+
+  // After the blank box, which has a sentence of its own, and before anything
+  // reads a number: `normalizePolicy` folds "5O", "$5" and -5 to no limit and
+  // `true` to 1, so a template could be saved that spends without a guard its
+  // author typed. Off stays `null`, `0` and an absent key; this refuses the rest.
+  const numberRefusal = policyNumberRefusal(rawBudget);
+  if (numberRefusal) return { ok: false, error: numberRefusal };
 
   // The form sends a window guard as a 0–1 fraction, and `normalizePolicy`
   // reads anything above 1 as a percentage and divides it by a hundred — the
