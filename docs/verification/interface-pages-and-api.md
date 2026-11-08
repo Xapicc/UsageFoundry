@@ -145,12 +145,6 @@ The runs list, the run inspector and `/runs/live` are in
   `npm test` (1,660 tests / 245 suites / 0 failures) and the build at `a34e56b`.
   No page tests, jsdom or CI browser.
 
-- **The band picker has not run under `docker compose up --build` or drawn a
-  real winnow tree (2026-09-04).** Labels and repeats were seeded, the shortfall
-  sentence has not met a dropped tail, `aria-live` is unheard, and no new
-  reading has arrived under an open region. Settle: hold a region open on a
-  growing pruning run until a reading lands; rows swap, region and age hold.
-
 - **The dashboard's top row has not been seen as the real page**, with
   transcripts behind it: its composition, the ragged bottom edge under
   `items-start` at 1920 and the `lg`-to-`xl` band with content are unlooked-at.
@@ -160,8 +154,3 @@ The runs list, the run inspector and `/runs/live` are in
   its bottom edge beside the 16rem tile, and the phone case with a six-run list
   between the meters and everything below. Open `/` at 1920 and about 390 with
   a run in flight.
-
-- **The composition stack's hatched overflow strip has not been drawn at
-  390px.** It sits in the same `viewBox` as the bands, which is an argument,
-  not a measurement.
-

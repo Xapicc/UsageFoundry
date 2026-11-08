@@ -97,23 +97,4 @@
 
 ## Not yet verified by hand
 
-- **The intake-filter figures have no independent check and were never seen
-  in a browser.** `winnow savings --json` does not exist at `f9f8e4b`; checked
-  only against unit tests and the ledger recounted in Python. The windowed
-  `session`/`weekly` halves and the corrected path have typecheck and tests
-  only; check that the 5-hour figure is not permanently `—`.
-
-- **No response over 300 s has been seen to finish through the fixed filter.**
-  Run `b511c547` was told to write in sections when it was reopened, so it
-  shows the path works, not that a long silent generation now survives —
-  which needs the API to send pings for `read1` to pass. Settled by a run
-  event log with a main-thread gap over 300 s and no `api_retry` in it.
-
-- **The `ENABLE_TOOL_SEARCH=1` fix has not been through a rebuild.** Check
-  that a real run's first request lands near 30,800 rather than 48,000 and
-  that `WebSearch`/`WebFetch` still reach through `ToolSearch`. The 17,229
-  added tokens are not netted against the filter's saving anywhere.
-
-- **The intake-filter card has never been displayed.** No browser has shown it,
-  every DTO was hand-written, the throwaway harness is not in the tree, and
-  `readFilterSavings`' TTL and single-flight have not been raced.
+None open. The intake filter was removed on 2026-11-08 (see the note at the top of the index), so what was open here can no longer be measured.

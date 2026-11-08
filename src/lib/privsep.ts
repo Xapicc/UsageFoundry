@@ -283,9 +283,8 @@ export function childCredentials(): { uid?: number; gid?: number } {
  * which one is biggest.
  *
  * Carried by the children whose death costs one unit of work: a work cycle, a
- * review or merge-conflict resolution, a chat or orchestrator-block turn, and
- * the prune that executes a cut. Deliberately not by `git.ts`'s, by
- * `claudeAuth.ts`'s, or by the three winnow calls that only read — those are
+ * review or merge-conflict resolution, and a chat or orchestrator-block turn.
+ * Deliberately not by `git.ts`'s or by `claudeAuth.ts`'s — those are
  * megabytes and seconds, and preferring one of them is a kill that frees
  * nothing and is followed immediately by another.
  */

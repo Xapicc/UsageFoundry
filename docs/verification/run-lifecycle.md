@@ -143,6 +143,17 @@
   rule for any other uid, for `CLAUDE_CODE_TMPDIR`, and for a command the CLI
   runs unsandboxed rests on the binary's source and `tmpdirNotice.test.ts`.
 
+- **A real CLI reads the operand after `--` as the prompt, and the old shape
+  is refused, on 2.1.319, 2026-11-08.** The macOS build of 2.1.319, driven
+  against `proposals/CrossSessionCommunication/scripts/stub.mjs` with a dummy
+  key and a scratch `CLAUDE_CONFIG_DIR`: `claude -p --output-format stream-json
+  --verbose -- '- first bullet'` sent one main-loop request and ended `success`,
+  and so did `-- mcp`, a prompt that is exactly a subcommand's name. `claude -p
+  '- first bullet' --output-format stream-json --verbose` exited 1 with `error:
+  unknown option '- first bullet'` and sent nothing. Caveat: the darwin build,
+  not the linux one the image installs, and the argv was typed rather than
+  built by `promptArgs`.
+
 ## Not yet verified by hand
 
 - **No real `reopenRestartClosed` refusal has reached the restart notice.**
@@ -287,13 +298,3 @@
   compare. Whether the sentence removes the misspelled-prefix `Read` misses is
   the vault note's open question (*Reads of Paths That Do Not Exist*), settled by
   a recount of the transcripts weeks after it ships, not by anything here.
-
-- **No real CLI has been handed a prompt after `--`.** Every `claude` spawn now
-  ends its argv `-- <prompt>` (`promptArgs`, 2026-10-06) so a prompt beginning
-  with `-` is not read as an option. That `-p` with `--` reads the operand as the
-  prompt, and that the old shape exited `error: unknown option` before any API
-  call, were read off the pinned 2.1.280 bundle's commander `parseOptions`, not
-  run; `promptArgv.test.ts` holds a stub transcribing that parser. Settle: on a
-  machine allowed to spawn the CLI, `claude -p --output-format stream-json
-  --verbose -- '- say hi'` should answer, and `claude -p '- say hi'` should exit
-  1 naming `- say hi` as an unknown option.

@@ -67,7 +67,9 @@ nothing about it.
   conversation at zero height from the fifth reading on (run `5b967a08`).
   Found by a person looking; decidable from static markup and now asserted in
   `ContextOccupancy.test.tsx`. The cause was the parse flooring winnow's
-  residual at zero, which is tested in `contextPruning.test.ts`.
+  residual at zero, which was tested in `contextPruning.test.ts`. Obsolete: the
+  composition stack, the parse and that test were removed with winnow on
+  2026-11-08; the class record stands.
 - **2026-09-11, `87259bf` then `1cd7966`, class D.** The branches table's State
   column (`src/app/branches/page.tsx`, `UncommittedNote` in
   `src/components/BranchWork.tsx`) always wrapped the note to two lines: its

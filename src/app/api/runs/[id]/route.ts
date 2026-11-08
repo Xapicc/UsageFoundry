@@ -10,12 +10,7 @@ import {
   stopRun,
 } from "@/lib/orchestrator";
 import { telemetryForRun } from "@/lib/otlp";
-import {
-  contextOccupancy,
-  pruneActivity,
-  pruneSavings,
-  prunerState,
-} from "@/lib/contextPruning";
+import { contextOccupancy } from "@/lib/contextSamples";
 import { runAgentDTO } from "@/lib/agents";
 import { tasksLinkedToRun } from "@/lib/tasks";
 import { workflowOriginOf } from "@/lib/workflows";
@@ -59,12 +54,6 @@ export async function GET(req: Request, ctx: Ctx) {
   // they do. One place to default them, rather than every client defaulting
   // them and one client forgetting.
   const rawBudget = JSON.parse(run.budget) as Record<string, unknown>;
-
-  // Awaited before the response is assembled rather than inside it: it reads the
-  // transcript scan to count the turns a saving is measured over, and that scan
-  // is coalesced across callers, so a poll on an open run page joins the one the
-  // dashboard is already running rather than starting a second.
-  const pruned = await pruneSavings({ runId: id });
 
   // Only while the run waits, and only what it waits on: the card is the one
   // reader, and a request this run asked for and was answered on is in its log.
@@ -132,32 +121,12 @@ export async function GET(req: Request, ctx: Ctx) {
     // informative — telemetry counts requests the CLI's `result` event
     // never got to report.
     telemetry: telemetryForRun(id),
-    // A third independent reading, and like `telemetry` it is never merged into
-    // the row's spend: this is the value of an intervention, not money that
-    // moved. Undefined when this run has never been pruned, so the page can drop
-    // the section rather than render a row of zeroes — which would read as
-    // "pruning saved nothing here" when it means "pruning did not run".
-    pruning: pruned.prunes > 0 ? pruned : undefined,
-    // What is configured now and whether the tool behind it is here — the pair
-    // that turns the absence above from one blank into a sentence. Sent on
-    // every poll, and cheap: one settings read and one memoised stat.
-    pruner: prunerState(),
-    // How this run's cycle boundaries actually ended. Undefined when it reached
-    // none, on `pruning`'s rule — and with every boundary now writing a row,
-    // undefined here genuinely means nothing happened rather than standing in
-    // for four different things that did.
-    pruneActivity: pruneActivity({ runId: id }),
     // How full this run's context has been, on the poll the page already runs
     // rather than an endpoint of its own — this is the row's own state and it
-    // arrives with the rest of it. Two indexed reads bounded by
-    // `CONTEXT_SERIES_MAX_POINTS`, and undefined for a run that has neither
-    // samples nor prunes, so nothing is added to the payload of a run that
-    // predates the series or never went live.
-    //
-    // **Not spend, and never summed with anything above.** It is an occupancy
-    // reading in the API-visible currency; `pruning` beside it counts the
-    // transcript's own turns, and the two bases are tens of thousands of tokens
-    // apart in either direction.
+    // arrives with the rest of it. One indexed read bounded by
+    // `CONTEXT_SERIES_MAX_POINTS`, and undefined for a run with no samples, so
+    // nothing is added to the payload of a run that predates the series or
+    // never went live. **Not spend, and never summed with anything above.**
     context: contextOccupancy(id),
   });
 }

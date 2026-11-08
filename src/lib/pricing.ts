@@ -70,11 +70,9 @@ export interface ModelPrice extends FlatPrice {
 /**
  * The cache read multiplier in force for a price, default included.
  *
- * Every site that prices a cache read — this module's `costOf`, and the two
- * counterfactuals in `contextPruning.ts` and `intakeFilter.ts` that price a
- * read that did *not* happen — goes through here rather than reading the
- * constant, so a model that departs from it cannot be right in one place and
- * wrong in three.
+ * Every site that prices a cache read goes through here rather than reading
+ * the constant, so a model that departs from it cannot be right in one place
+ * and wrong in another.
  */
 export function cacheReadMultiplierOf(price: FlatPrice): number {
   return price.cacheReadMultiplier ?? CACHE_READ_MULTIPLIER;
@@ -325,8 +323,7 @@ const SONNET_5_5_BEFORE_CACHE_READ_CUT: ModelPrice = { input: 2, output: 10 };
  * speed and UTC day), so it returns the whole schedule — the object carries
  * `longPrompt` — and `costOf` chooses the tier from the tokens of the one
  * request it is pricing. A caller that has no single request to hand `costOf`
- * does not get a tier chosen for it: see `PromptBasis`, and `resolveFlatPrice`
- * for the callers that read a rate directly.
+ * does not get a tier chosen for it: see `PromptBasis`.
  */
 export function resolvePrice(
   model: string | undefined,
@@ -355,28 +352,6 @@ export function resolvePrice(
 
 export function isKnownModel(model: string | undefined): boolean {
   return resolvePrice(model) !== null;
-}
-
-/**
- * `resolvePrice`, but null for a model whose rate depends on prompt length.
- *
- * For the two counterfactuals — `netReceipt` in `contextPruning.ts` and
- * `netFilterSavings` in `intakeFilter.ts` — that read `price.input` to value a
- * *difference in tokens* spread over later turns whose prompts they never see.
- * With a tiered model there is no single rate to read: `price.input` is the
- * low tier, and valuing the savings on a context that may well be past 100,000
- * tokens at the cheap rate is a confident wrong number that looks like a
- * measurement. Those sites already have an answer for a model nothing can
- * price — report it unpriced and let the page say the figure covers fewer
- * results — and a tiered model takes it, rather than being given a tier it was
- * not told.
- */
-export function resolveFlatPrice(
-  model: string | undefined,
-  opts: { at?: number; speed?: string } = {},
-): ModelPrice | null {
-  const price = resolvePrice(model, opts);
-  return price && !price.longPrompt ? price : null;
 }
 
 /** Token counts broken out by how each class is billed. */

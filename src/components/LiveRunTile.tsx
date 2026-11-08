@@ -14,7 +14,6 @@ import {
 } from "@/lib/format";
 import { ContextOccupancy } from "@/components/ContextOccupancy";
 import { LiveRunFigures } from "@/components/LiveRunFigures";
-import { LiveRunPruning } from "@/components/LiveRunPruning";
 import { LiveSubagents } from "@/components/LiveSubagents";
 import { Meter } from "@/components/Meter";
 import { RunActivity } from "@/components/RunActivity";
@@ -25,9 +24,8 @@ import { Log, LogLine } from "@/components/ui/Log";
 const PINNED_PX = 40;
 
 /**
- * One running run on `/runs/live`: who it is, its money, its context, what
- * pruning has done for it, the sub-agents it has running and the tail of its
- * log.
+ * One running run on `/runs/live`: who it is, its money, its context, the
+ * sub-agents it has running and the tail of its log.
  *
  * The log half comes from the page's one stream and is here from the first
  * frame, and so does the sub-agent roster; the figures half is `run`, from the
@@ -149,13 +147,12 @@ export function LiveRunTile({
               // run with no context record at all.
               <Meter
                 size="compact"
-                label="Of the cycle ceiling"
+                label="Context"
                 fraction={null}
                 unknownHint="not measured yet"
               />
             )}
           </div>
-          <LiveRunPruning pruning={run.pruning} />
         </>
       )}
 

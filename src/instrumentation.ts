@@ -81,7 +81,7 @@ export async function register() {
     // parent's environment. `agentEnvironment` (`lib/stacks.ts`) is what hands
     // it to the agents, at every spawn that drops the uid. It used to be merged
     // in here, and this process is root, as is every child it spawns without
-    // dropping the uid — so a stack's `PYTHONPATH` reached winnow's interpreter
+    // dropping the uid — so a stack's `PYTHONPATH` reached root's interpreters
     // and its `HTTPS_PROXY` this server's own outbound calls (board task
     // `76b451aa`).
     //

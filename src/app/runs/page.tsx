@@ -25,7 +25,6 @@ import {
   endingLabel,
 } from "@/lib/format";
 import { jsonRequest, type JsonResult } from "@/lib/jsonRequest";
-import { prunedNetCell } from "@/lib/pruneStatement";
 import { startPoll } from "@/lib/poll";
 import { FleetControls } from "@/components/FleetControls";
 import { RestartClosed } from "@/components/RestartClosed";
@@ -618,13 +617,6 @@ function RunList({
             <Th scope="col" num className={`w-[92px] ${STICKY_HEAD}`}>
               Spent
             </Th>
-            {/* Beside `Spent` because that is where it is read — the two are
-                the same units on the same run — and never folded into it. What
-                this column holds is money that did not move, and a table that
-                netted the two would be reporting a counterfactual as spend. */}
-            <Th scope="col" num className={`w-[92px] ${STICKY_HEAD}`}>
-              Pruning
-            </Th>
             {kind === "history" && (
               <Th scope="col" num className={`w-[128px] ${STICKY_HEAD}`}>
                 Finished
@@ -789,8 +781,7 @@ function RunList({
                       )}
                     </Td>
                   )}
-                  {/* A dash for a provider that reports no money, on the same
-                      reading the Pruning column below spells out: the column is
+                  {/* A dash for a provider that reports no money: the column is
                       `0` for a Codex run because nothing ever added to it, and
                       `$0.00` down a list of runs is a measurement claim nobody
                       made. The run's own page says which provider and why; here
@@ -798,20 +789,6 @@ function RunList({
                       Tokens are real for both providers and stay printed. */}
                   <Td num label="Spent" className="whitespace-nowrap align-top">
                     {providerReportsSpend(r.provider) ? fmtUSD(r.spent_usd) : "—"}
-                  </Td>
-                  {/* Signed, via the helper that prints a U+2212 rather than a
-                      hyphen: an early end's invalidation can outrun what it
-                      saved, and this column has to cross zero without shifting
-                      by a pixel. A dash is "this run never pruned", which is
-                      not the same reading as `+$0.00` and is why the field is
-                      absent rather than zero on the wire; `?` is pruning whose
-                      money is unknown, and a marked figure is a bound. */}
-                  <Td
-                    num
-                    label="Pruning"
-                    className="whitespace-nowrap align-top text-ink-muted"
-                  >
-                    <PrunedNet row={r} />
                   </Td>
                   {kind === "history" && (
                     <Td
@@ -1443,17 +1420,3 @@ function RunsView() {
   );
 }
 
-/**
- * The Pruning cell. Its mark is a symbol because the column is 92px wide and
- * "at most" beside a signed figure is not, so the words go on the hover and
- * to a screen reader instead.
- */
-function PrunedNet({ row }: { row: RunListItemDTO }) {
-  const { text, meaning } = prunedNetCell(row);
-  return (
-    <>
-      <span title={meaning ?? undefined}>{text}</span>
-      {meaning && <span className="sr-only"> ({meaning})</span>}
-    </>
-  );
-}

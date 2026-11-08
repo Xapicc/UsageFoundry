@@ -374,39 +374,6 @@ describe("a run that asks for a stack", () => {
     assert.equal(kept.restart_closed, 0);
     stopRun(id);
   });
-
-  it("parks at a cycle the context ceiling cut, refunded once, without spawning another", async () => {
-    const id = start("asks-at-the-ceiling", [
-      {
-        ask: { name: "zig-ceiling", binaries: ["zig"] },
-        // What `checkContextCeilings` leaves for the boundary when the cycle
-        // that asked also crossed the ceiling. The ceiling ends cycles about
-        // fifty times for every two natural boundaries on this install, so this
-        // is the common way a request meets the end of its cycle.
-        during: () =>
-          interrupts.set(scriptedRun, {
-            kind: "prune",
-            reason: "This work cycle's context reached the ceiling.",
-            pause: false,
-            at: Date.now(),
-          }),
-        reply: "Asked for zig; stopping here until it is installed.",
-      },
-      { reply: "Carried on without zig, in a cycle that should never have been spawned." },
-    ]);
-
-    const parked = await settled(id);
-    assert.equal(parked.status, "waiting-for-stack", parked.stop_reason ?? "");
-    // The early end used to `continue` past the park: a second billed cycle,
-    // spent without the tool and refunded too, so invisible against the cap.
-    assert.equal(argvs.length, 1, "the run was spawned again before it parked");
-    // One cycle, one refund. Refunded by both rungs it reads -1, and charged
-    // it ends the resume on the default cap.
-    assert.equal(parked.iterations, 0);
-    assert.equal(parked.early_ends, 1);
-    assert.equal(parked.stack_waits, 1);
-    stopRun(id);
-  });
 });
 
 /**
@@ -1108,25 +1075,17 @@ describe("a task check left in flight by a park", () => {
   }
 
   /** How the first cycle ends besides claiming the task, and how the run is handed back. */
-  type Park = "stack" | "ceiling" | "guard";
+  type Park = "stack" | "guard";
 
   async function scenario(folder: string, park: Park, verdictDuringPark: boolean) {
     settings.saveSettings({ validateTaskCompletion: true, maxValidationCycles: 2 });
     let handles: { taskId: string; reviewId: string } | null = null;
-    const ask = park === "stack" || park === "ceiling" ? { name: `zig-${folder}`, binaries: ["zig"] } : undefined;
+    const ask = park === "stack" ? { name: `zig-${folder}`, binaries: ["zig"] } : undefined;
     const id = start(folder, [
       {
         ask,
         during: () => {
           handles = claimAndValidate(scriptedRun);
-          if (park === "ceiling") {
-            interrupts.set(scriptedRun, {
-              kind: "prune",
-              reason: "This work cycle's context reached the ceiling.",
-              pause: false,
-              at: Date.now(),
-            });
-          }
           if (park === "guard") {
             interrupts.set(scriptedRun, {
               kind: "guard",
@@ -1187,10 +1146,6 @@ describe("a task check left in flight by a park", () => {
 
   it("acts on a verdict that landed while the run waited for a stack", async () => {
     assertVerdictBoughtACycle(await scenario("verdict-during-stack-wait", "stack", true), 3);
-  });
-
-  it("acts on a verdict that landed while a ceiling-cut cycle's park waited", async () => {
-    assertVerdictBoughtACycle(await scenario("verdict-during-ceiling-park", "ceiling", true), 3);
   });
 
   it("acts on a verdict that landed while a guard had the run paused", async () => {

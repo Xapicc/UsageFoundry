@@ -2,7 +2,7 @@
 
 [← architecture index](../architecture.md)
 
-Read before editing `plugins.ts`, `vaultSkill.ts`, `readGuard.ts`, `fileCostNotice.ts`, `stacks.ts` or `scripts/apply-stacks.mjs`. The rest of the map, and the rule for adding, removing or re-purposing a module in `src/lib/`, are in [module-map.md](module-map.md).
+Read before editing `plugins.ts`, `vaultSkill.ts`, `readGuard.ts`, `tokenEconomizer.ts`, `fileCostNotice.ts`, `stacks.ts` or `scripts/apply-stacks.mjs`. The rest of the map, and the rule for adding, removing or re-purposing a module in `src/lib/`, are in [module-map.md](module-map.md).
 
 What an agent can run, and what is loaded into its cycle:
 
@@ -40,7 +40,7 @@ stacks.ts       the read-back over what apply-stacks.mjs installed, and the
                 the agent uid starts from: the server's environment with
                 `stackEnvironment`'s block under it, so the operator's value
                 wins, and `agentPath()` over it. Never `process.env` itself —
-                the server is root, and so is winnow under it. `chatPath`
+                the server is root. `chatPath`
                 narrows that `PATH` for the chat and block child to root's
                 directories and the toolbox, since it holds UF_CHAT_GID.
                 There is **no `stacks` table** and must not be: the receipts
@@ -138,6 +138,31 @@ readGuard.ts    the second *generated* directory on that same --plugin-dir list
                 attacks are measured and that refusing a read produces them is
                 not, and it is not confirmed that --plugin-dir registers a
                 plugin's hooks as well as its skills
+tokenEconomizer.ts
+                Microsoft's TokenEconomizer (Claude Code hooks over a stdlib
+                Python package), shipped in the image at /opt/tokeneconomizer
+                and loaded as one more --plugin-dir for plugins.ts' reason —
+                never installed into ~/.claude. Claude cycles only: a Codex
+                cycle is another CLI, and a local cycle would hand the plugin's
+                own model calls a local endpoint that has no `haiku`. The switch
+                is read off the segment's settings, not per cycle, because
+                toggling a plugin between cycles changes the system prompt (its
+                slash commands) and costs a cache rewrite; the flag rides every
+                cycle's argv, resumed ones included. Its settings go in as
+                TE_TOOLPRUNE / TE_MICROSKILLS / TE_LOOPGUARD, all three always
+                set, `off` included, because env outranks the plugin's config
+                files and those live in a state root every cycle can write —
+                a mechanism left unset would fall to a file a cycle planted, or
+                to the plugin's own default. TE_PYTHON names /usr/bin/python3
+                because the agent PATH puts the agent-writable pytools/bin
+                first. The loop guard ships `off`, unlike the plugin: its judge
+                is a `claude -p` call billed to the plan and written to no
+                transcript, so no meter or budget guard here sees it. Tool
+                pruning needs the loaded tool list, which a transcript does not
+                record, so `te toolprune refresh-catalog` runs once per server
+                process as the agent uid (a claude -p killed at its init event,
+                which bills nothing). Limits are in
+                docs/agent/security/token-economizer.md
 fileCostNotice.ts
                 what a Read of this repository's largest files costs, ranked on
                 tokens x how often this fleet has read each one, generated once

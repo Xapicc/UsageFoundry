@@ -20,7 +20,6 @@ import {
 import { mayWriteDataDir } from "./serverLock";
 import { getSettings } from "./settings";
 import { forgetDreamingFiles } from "./dreaming";
-import { sweepLedger } from "./intakeFilter";
 import { forgetTranscriptFiles } from "./transcripts";
 import { WEEK_MS } from "./windows";
 
@@ -61,15 +60,6 @@ import { WEEK_MS } from "./windows";
  *
  * Every horizon is `null`-able and `null` means keep for ever, the reading
  * every switchable rule in this app takes.
- *
- * **A fourth store joined them and breaks the second property, deliberately.**
- * winnow's intake ledger has no rows, no timestamps and no database to ask, so
- * its horizon is a byte ceiling rather than a decision a pure function makes —
- * `intakeFilter.ts` owns it, because the path, the line format and the process
- * that appends to it are all that module's, and this one only calls it on the
- * tick. It is also the one store here that another process writes while the
- * sweep runs; what that costs, and why a compaction copies before it truncates,
- * is written at `compactLedger`.
  */
 
 export const DAY_MS = 24 * 60 * 60 * 1000;
@@ -111,7 +101,8 @@ export interface RetentionSweep {
    * two it came from — a reader who needs the split has the tables.
    *
    * Absent on a sweep recorded before this table was swept at all, on
-   * `samples`' reasoning.
+   * `samples`' reasoning. Nothing writes these tables since the context pruner
+   * that filled them was removed; the sweep is what ages the old rows out.
    */
   compositions?: number;
   /** Isolated checkouts removed from the mounts' stores. */
@@ -120,15 +111,6 @@ export interface RetentionSweep {
   transcripts: number;
   /** Bytes those transcripts held. The one store whose figure is exact. */
   transcriptBytes: number;
-  /**
-   * Bytes cut off the head of winnow's intake ledger, absent when the ceiling
-   * was not reached — which is every tick but the one that crosses it.
-   *
-   * Absent rather than `0` on `samples`' rule, and here the two readings are
-   * further apart than anywhere else on this record: a sweep that predates the
-   * ceiling ran against a file nothing bounded at all.
-   */
-  ledgerBytes?: number;
 }
 
 export function lastSweep(): RetentionSweep | null {
@@ -211,11 +193,8 @@ export function sweepRunEvents(
 
   // The context occupancy series, on the same horizon and behind the same
   // `settled` test, because it is the same kind of thing: evidence for a picture
-  // drawn on the run's own page, beside the log it explains. Deliberately not
-  // `prune_receipts`' treatment — those answer a weekly KPI and must outlive the
-  // run, where a sample is read only while somebody is looking at that run, so a
-  // series that outlived its own log would be a graph with nothing to read it
-  // against. `context_samples` is capped per run on insert as well; this is what
+  // drawn on the run's own page, beside the log it explains. A series that
+  // outlived its own log would be a graph with nothing to read it against. `context_samples` is capped per run on insert as well; this is what
   // bounds the table across runs.
   const samples = db()
     .prepare(
@@ -224,18 +203,6 @@ export function sweepRunEvents(
           AND run_id IN (SELECT id FROM runs WHERE status IN (${settled}))`,
     )
     .run(cutoff, ...TERMINAL_STATUSES).changes;
-
-  // **`prune_decisions` is deliberately absent from this sweep**, and used to be
-  // in it on the samples clause above. That was the wrong reading of what the
-  // table is for: `/api/usage` reads it *span-scoped* and slices the result into
-  // the dashboard's session and weekly windows, so these rows answer a weekly
-  // KPI exactly as `prune_receipts` does and not a question about one run's
-  // page. On an install that shortened `eventRetentionDays` below 7 — the
-  // settings route clamps only at 1 — the weekly prune-activity counts would
-  // silently cover fewer days than the savings figure printed beside them, which
-  // reads as pruning having stopped happening. That is the failure
-  // `prune_receipts`' own schema comment says its table exists to avoid, and one
-  // row per cycle boundary is the same order of growth a receipt already has.
 
   // The composition series rides the samples clause, because it is the other
   // half of the same picture: it is drawn on the same axis, on the same card,
@@ -779,39 +746,6 @@ function resumableSessions(): Set<string> {
       .all() as Array<{ session_id: string | null }>,
   );
 
-  // A fork's source, for as long as the fork itself is being kept.
-  //
-  // `winnow fork` writes a new transcript whose stripped tool results are
-  // replaced by pointers, each carrying a `winnow recover <session> <id>`
-  // command that reads the original bytes back out of the **source** file. The
-  // source is never referenced by any run row once the run has adopted the
-  // fork, so it ages out on its own — and the day it does, every pointer in the
-  // live conversation silently stops being recoverable. Reversibility is the
-  // whole argument for replacing a result with a pointer rather than deleting
-  // it; a swept source turns a reversible loss into an irreversible one, with
-  // nothing anywhere saying so.
-  //
-  // One hop, not transitive closure: a fork of a fork would need its own edge,
-  // and nothing writes one today. Bounded deliberately rather than looped,
-  // because an unbounded walk over a table an operator can grow is a way to
-  // make a sweep hang.
-  try {
-    const forks = db()
-      .prepare(
-        `SELECT source_session_id, new_session_id FROM fork_attempts
-          WHERE written = 1 AND source_session_id IS NOT NULL`,
-      )
-      .all() as Array<{ source_session_id: string; new_session_id: string | null }>;
-    for (const f of forks) {
-      if (f.new_session_id && keep.has(f.new_session_id)) {
-        keep.add(f.source_session_id);
-      }
-    }
-  } catch {
-    // An install that has never forked has no such table on an older schema.
-    // Keeping fewer files is the sweep's ordinary job; failing it is not.
-  }
-
   return keep;
 }
 
@@ -1317,16 +1251,12 @@ export async function runRetentionSweep(
       : { events: 0, telemetry: 0, samples: 0, compositions: 0 };
   const checkouts = await sweepCheckouts(now);
   const transcripts = await sweepTranscripts(now);
-  const ledger = await sweepLedger();
   const result: RetentionSweep = {
     at: now,
     ...events,
     checkouts: checkouts.removed,
     transcripts: transcripts.removed,
     transcriptBytes: transcripts.bytes,
-    // Left off entirely on the ticks that found the ledger under its ceiling,
-    // which is what keeps "did not reach it" and "cut nothing off it" apart.
-    ...(ledger ? { ledgerBytes: ledger.before - ledger.after } : {}),
   };
   setJSON(LAST_SWEEP_KEY, result);
   return result;

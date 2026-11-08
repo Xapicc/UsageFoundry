@@ -13,10 +13,10 @@ import { createHash } from "node:crypto";
  * A **2.28x spread**, 30% coefficient of variation, and 2.39x on tokens. The
  * agent's own run-to-run behaviour is the dominant cost term in this loop.
  *
- * Set that beside the mechanisms this pair already instruments precisely, from
- * winnow's own README: the intake filter is worth **+3.76%** and the pruner
- * **+3.27%**. Both are real, and both are an order of magnitude smaller than
- * the noise they sit in. The money is not in the mean. It is in the tail.
+ * Set that beside the context pruner this app used to bundle, from its own
+ * README: its intake filter was worth **+3.76%** and its pruner **+3.27%**.
+ * Both were real, and both an order of magnitude smaller than the noise they
+ * sat in. The money is not in the mean. It is in the tail.
  *
  * ## So this guards the tail, and nothing else
  *

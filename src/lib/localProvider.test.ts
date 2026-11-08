@@ -9,7 +9,7 @@ import { after, before, describe, it } from "node:test";
  *
  * `localCycleEnv` is the one place a local cycle stops being a Claude cycle,
  * and both of its failures are silent. Leave `ANTHROPIC_BASE_URL` alone and the
- * cycle goes to winnow's proxy and on to Anthropic; leave an Anthropic
+ * cycle goes to Anthropic; leave an Anthropic
  * credential in place — or leave `ANTHROPIC_AUTH_TOKEN` unset, so the CLI falls
  * back to the OAuth login — and the operator's subscription credential is sent
  * to whatever server the base URL names. Neither throws, and the first looks
@@ -119,7 +119,7 @@ describe("localCycleEnv", () => {
     CLAUDE_CONFIG_DIR: "/home/node/.claude",
   };
 
-  it("points the cycle at the local server, past winnow's proxy", () => {
+  it("points the cycle at the local server, past any base URL the server carries", () => {
     const env = mod.localCycleEnv(
       claudeCycle,
       { baseUrl: "http://192.168.0.190:1234", token: "lm-studio", contextTokens: null },
@@ -146,7 +146,7 @@ describe("localCycleEnv", () => {
     }
   });
 
-  it("turns off the tool search winnow switched on, whose references a local server rejects", () => {
+  it("turns off a tool search the server's environment switched on, whose references a local server rejects", () => {
     const env = mod.localCycleEnv(
       { ...claudeCycle, ENABLE_TOOL_SEARCH: "1" },
       { baseUrl: "http://h", token: "t", contextTokens: null },

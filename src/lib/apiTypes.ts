@@ -360,139 +360,13 @@ export interface SandboxDTO {
 }
 
 /**
- * What context pruning was worth over a span — netted, never gross.
- *
- * **Not a cost source and never summed with a window's spend.** It is the value
- * of an intervention: `cacheSavedUSD` is re-reads that demonstrably did not
- * happen, and `invalidationUSD` is what buying that cost. Adding either to a
- * meter would be adding a counterfactual to a measurement.
- *
- * `tokensRemoved` counts only what was actually being sent — `message` content,
- * never the transcript's bytes. The two differ by about 3.4× here, because most
- * of what the tool removes is an envelope the CLI writes and never transmits.
- *
- * `pricedPrunes` below `prunes` means the money covers only part of what is
- * described: a run on a model with no price here contributes tokens and no
- * dollars, and rendering that gap is the difference between an incomplete total
- * and a wrong one.
- */
-export interface PruneSavingsDTO {
-  prunes: number;
-  pricedPrunes: number;
-  /**
-   * Priced prunes whose invalidation cost has not been settled yet.
-   *
-   * These contribute $0 to `invalidationUSD`, so a total carrying them is an
-   * **upper bound** on the net rather than a measurement of it. Render the count
-   * whenever it is non-zero: the alternative is a page reporting a saving it has
-   * not finished checking, which is exactly the failure the panel's own docblock
-   * accuses every other tool of.
-   */
-  unsettledPrunes: number;
-  /**
-   * Prunes whose removal has not been measured yet — a fork until the first
-   * billed turn of the cycle that resumes it, and for good after a rollback.
-   *
-   * These contribute 0 to `tokensRemoved` and to `cacheSavedUSD`, and there 0
-   * means **unknown**: the token count and the saving are floors, and the net
-   * is one too unless `unsettledPrunes` pulls it the other way. Rendered beside
-   * the figures for `unsettledPrunes`' reason, from the other direction — a
-   * fork nobody has measured must not read as one measured to remove nothing.
-   */
-  unmeasuredPrunes: number;
-  tokensRemoved: number;
-  /**
-   * Total turns the savings are measured over, summed across prunes.
-   *
-   * A total of turn-savings rather than a count of distinct turns — two prunes
-   * on one run each earned over their own tail, and the second's tail is inside
-   * the first's. Render it beside the money as what the measurement spans, never
-   * as "the run took this many turns".
-   */
-  turnsAfter: number;
-  cacheSavedUSD: number;
-  invalidationUSD: number;
-  netUSD: number;
-}
-
-/**
- * Which way a pruning net can still move — see `netBound` in
- * `pruneStatement.ts`, which is the one place it is decided.
- */
-export type NetBound = "exact" | "at most" | "at least" | "not final";
-
-/**
- * Which engine is configured, and whether the tool behind it is here.
- *
- * `FilterSavingsDTO`'s `running`/`ledger` split, one mechanism over. The pruner
- * half of the context-control card carried arithmetic and no state, so an image
- * built with `WINNOW_REF=` empty rendered a byte-identical dashboard while every
- * prune no-opped.
- *
- * Three readings and not a boolean, because one of them is the way an install
- * lies about itself: `unavailable` is pruning switched **on** with no tool
- * behind it, and it is the only one of the three drawn as a fault.
- *
- * `engine` is what is configured **now**, and it may never be printed as a
- * label on money. `pricedCuts` unions both engines' tables deliberately, so
- * every figure on these screens is a blend — naming one for the current setting
- * would attribute one engine's earnings to the other the moment the switch
- * moved.
- */
-export type PrunerStateDTO = "off" | "unavailable" | "ready";
-
-export interface ContextPrunerDTO {
-  state: PrunerStateDTO;
-  engine: "legacy" | "winnow";
-  /**
-   * The server's own sentence for `unavailable`, null otherwise.
-   *
-   * The server's and not the page's: it is the same string the run log carries,
-   * from the same constant, and a second copy authored in a component is a
-   * second thing to keep true.
-   */
-  detail: string | null;
-  /** Seconds of quiet the fork engine needs. Null under the edit-in-place engine. */
-  minColdAgeSeconds: number | null;
-}
-
-/**
- * What the pruner did at the cycle boundaries inside one span.
- *
- * **Event counts, never money, and never summed with anything on
- * `PruneSavingsDTO`.** They exist because five different outcomes at a boundary
- * — a cut, a payback decline, nothing worth removing, a fork refusal, a missing
- * tool — all rendered as the same absent section, which reads as "pruning never
- * ran" for a run winnow was spawned at every cycle of.
- *
- * The six outcome counts sum to `boundaries` exactly, and that is what makes the
- * sentence built from them checkable: a breakdown that did not add up would be a
- * filter dropping rows with nothing saying what it left out.
- *
- * An early end counts as a boundary, because it manufactures one.
- */
-export interface PruneActivityDTO {
-  boundaries: number;
-  cut: number;
-  nothing: number;
-  declined: number;
-  refused: number;
-  unavailable: number;
-  failed: number;
-  /** Newest non-cut `detail`, server-written; null when every boundary cut. */
-  lastDetail: string | null;
-}
-
-/**
  * Which measure a context sample was taken in.
  *
- * `api` is `apiContextTokens` — the whole prompt as the API was billed for it,
- * and the same basis the cycle ceiling acts on. `transcript` is the byte
- * estimate that reading falls back to when the conversation holds no usable
- * `usage` frame yet, which is a different quantity rather than a rougher one:
- * the two are tens of thousands of tokens apart **in either direction** on this
- * install, since the prompt carries a system prompt and tool list no transcript
- * holds while the intake filter drops tool results the transcript keeps.
+ * `api` is `apiContextTokens` — the whole prompt as the API was billed for it.
+ * `transcript` is the byte estimate that reading falls back to when the
+ * conversation holds no usable `usage` frame yet, which is a different quantity
+ * rather than a rougher one: the prompt carries a system prompt and tool list
+ * no transcript holds.
  *
  * On the wire so a consumer can see a basis change for what it is. A series that
  * silently mixed the two would draw a step where only the measure moved, and
@@ -553,110 +427,6 @@ export interface ContextCheckDTO {
 }
 
 /**
- * One node below a provenance — the tool or attachment class, then the artefact.
- *
- * The tree `winnow context --depth 3` draws, minus its top level, which is
- * `ContextCompositionSliceDTO`. **Not a band.** The stacked area is one band per
- * provenance and these are what one band is made of, for a detail view that
- * answers a different question of the same reading.
- */
-export interface ContextCompositionNodeDTO {
-  /**
-   * Winnow's own key. The `×N` it composes onto an artefact it saw more than
-   * once is **not** here — it is `repeat`, so that a view sorting by path is not
-   * sorting by how many times, and one that renders the label as a path is not
-   * printing a count inside it.
-   */
-  label: string;
-  tokens: number;
-  /** `exact` | `derived` | `estimated` | `residual`, as winnow reported it. */
-  kind: string;
-  /**
-   * How many times winnow saw this artefact, or null where it attached no count
-   * — which it does for every node above the artefact level and for an artefact
-   * seen once. Null is "winnow said nothing", never "once".
-   */
-  repeat: number | null;
-  /** The level below, empty at the deepest level the reading was taken at. */
-  children: ContextCompositionNodeDTO[];
-}
-
-/**
- * One provenance's share of one reading of the window — `winnow context`, depth 3.
- *
- * `kind` is winnow's own word for how the figure was reached and is carried
- * rather than dropped, because a stacked band cannot show it: `prefix` is a
- * subtraction of two exact readings, `tool traffic` is characters over a
- * constant, and `unattributed` is what nothing accounted for. A picture that
- * drew all three the same way would claim a precision only one of them has.
- */
-export interface ContextCompositionSliceDTO {
-  /** Winnow's own label, passed through — never mapped to a closed set here. */
-  label: string;
-  /** Signed on the residual and floored at zero on every provenance. */
-  tokens: number;
-  /** `exact` | `derived` | `estimated` | `residual`, as winnow reported it. */
-  kind: string;
-  /**
-   * What this provenance is made of, and **only on the newest reading** —
-   * `ContextOccupancyDTO.composition`'s last entry, and empty on every other.
-   *
-   * An older reading's empty `children` is not a statement that its window held
-   * no tool traffic. The tree is stored for one reading per run and replaced on
-   * each, because a tree per reading is a row per path per reading per run and
-   * nothing caps how many distinct files a run touches. Read it as "what is in
-   * this window now", which is the question it can answer, and never as a
-   * series — the bands above are the series.
-   */
-  children: ContextCompositionNodeDTO[];
-}
-
-/**
- * What one run's context was made of at one moment.
- *
- * **A second measure of the same window, and it may not be subtracted from the
- * samples.** `window` is winnow's own total, anchored on the last priced
- * request in the transcript whatever wrote it; `ContextSampleDTO.tokens` is
- * anchored on the last *main-thread* frame, sidechains excluded. The two agree
- * on an idle conversation and come apart for as long as a sub-agent runs — 22
- * minutes, measured on this install — so the slices are drawn against `window`
- * and against nothing else.
- *
- * `slices` sum to `window` by construction: the residual is one of them, and it
- * is **signed** — negative wherever the provenances over-explain the window,
- * which is a third of sessions by winnow's count and the ordinary state of a
- * run here once it carries tool traffic. A reader stacking these as heights
- * has to size its axis to the taller of the window and the positive bands, or
- * it clips whatever sits above the crossing; `CompositionStack` says what that
- * looked like. The residual is taken against the window here rather than
- * copied off winnow, which adds the shed back — `parseComposition` says why.
- * Their `children` do **not** sum to their parent, and are not meant to: a node
- * unreadable at the parse and a tail past the per-node cap are both dropped
- * rather than pooled into a manufactured bin, so a subtree that falls short is
- * saying so out loud.
- */
-export interface ContextCompositionDTO {
-  ts: number;
-  /** The work cycle in flight when it was taken, 1-based. */
-  iteration: number;
-  window: number;
-  slices: ContextCompositionSliceDTO[];
-}
-
-/** A cut, on the same axis as the samples, so a fall in context has a cause. */
-export interface ContextPruneMarkDTO {
-  ts: number;
-  /** `boundary` or `early-end`; only the second manufactured its own moment. */
-  trigger: string;
-  /**
-   * In `contextTokens`, which is **not** the samples' basis — see `tokens`.
-   * `null` for a fork whose removal has not been measured: the cut happened
-   * and belongs on the axis, and how much it took out is unknown, not none.
-   */
-  tokensRemoved: number | null;
-}
-
-/**
  * How full one run's context has been, over the run's life.
  *
  * **Not spend and not a meter.** It is an occupancy reading, sampled off the
@@ -667,33 +437,20 @@ export interface ContextPruneMarkDTO {
  * what `lastCheck` exists to say out loud: the tick's own cadence, carried
  * beside a series whose cadence is the conversation's.
  *
- * `ceilingTokens` travels with the series because the constant behind it has
- * already moved twice; a consumer computing a percentage against a hardcoded
- * 200,000 would go on drawing the old number after the next move, silently.
- *
- * `sampleCount` and `pruneCount` are the **stored** totals. Either one greater
- * than its array's length means the array is the newest tail of something
- * longer — a tail rather than a thinned series, because thinning needs a rule
- * about which points survive and a series thinned by a rule the reader cannot
- * see misstates its own peaks.
- *
- * `prunes[].tokensRemoved` is in `contextTokens` and `samples[].tokens` is in
- * `apiContextTokens`. **They may not be subtracted from one another** — the
- * marks say *when* a cut happened, never how far the series should fall.
+ * `sampleCount` is the **stored** total. Greater than `samples.length` means
+ * the array is the newest tail of something longer — a tail rather than a
+ * thinned series, because thinning needs a rule about which points survive and
+ * a series thinned by a rule the reader cannot see misstates its own peaks.
  */
 export interface ContextOccupancyDTO {
-  ceilingTokens: number;
   /**
-   * What `ceilingTokens` is. `cycle` is this app's own cycle ceiling — where a
-   * Claude cycle is ended when pruning is on. `window` is the model's whole
-   * context window as a Codex run's CLI reported it: no ceiling acts on a Codex
-   * cycle, so the line it is drawn against must not be labelled as one.
+   * The context window a Codex run's CLI reported, which the chart is drawn
+   * against. Null for a Claude run: nothing in this app knows a Claude model's
+   * window, and a line drawn at a guess would be read as a limit.
    */
-  ceilingKind: "cycle" | "window";
+  windowTokens: number | null;
   samples: ContextSampleDTO[];
   sampleCount: number;
-  prunes: ContextPruneMarkDTO[];
-  pruneCount: number;
   /**
    * When this run's transcript was last *read*, which is not when the series
    * last gained a point — see `ContextCheckDTO`. Render the age of this and the
@@ -701,177 +458,10 @@ export interface ContextOccupancyDTO {
    * long tool call reads as a poll that has died.
    */
   lastCheck: ContextCheckDTO | null;
-  /**
-   * What the window was made of, over the same span — oldest first, empty when
-   * nothing has read it.
-   *
-   * Its cadence is **not** the samples': a reading costs a winnow subprocess,
-   * so it is paced by the conversation's growth rather than by the tick, and it
-   * is taken only where context pruning is switched on — read-only is not the
-   * same as permitted, which is the rule `observePlan` already follows. So a
-   * dense sample series beside a sparse composition is the ordinary case, and
-   * an empty one is an operator who turned the feature off rather than a fault.
-   */
-  composition: ContextCompositionDTO[];
-  /**
-   * Stored readings, where `composition.length` is what was returned. Greater
-   * than it means the array is the newest tail — a tail rather than a thinning,
-   * on `sampleCount`'s rule.
-   */
-  compositionCount: number;
-  /**
-   * Why there is no composition, or null when there is one — `off` when context
-   * pruning is switched off and winnow is deliberately not spawned, `pending`
-   * when it is on and nothing has been read yet. Two blanks that look identical
-   * on the page and have opposite fixes. `provider` for a Codex run, whose
-   * session file winnow does not read at all.
-   */
-  compositionAbsence: "off" | "pending" | "provider" | null;
-}
-
-/**
- * The netted arithmetic over one span — the whole reading, or one of the two
- * windows inside it. Every field here answers "over this span"; the ones on
- * `FilterSavingsDTO` describe the reading itself and have no span.
- */
-export interface FilterWindowDTO {
-  /**
-   * Distinct results, never ledger lines. The filter is stateless and re-drops
-   * the same result on every request that still carries it — summing the lines
-   * overstated this install by 24.8×.
-   */
-  results: number;
-  /** How many of those the money covers; the rest ran on a model with no price here. */
-  pricedResults: number;
-  /**
-   * Results seen only as `deferred` and therefore excluded from every figure
-   * above. The filter moves the cache breakpoint in front of the newest match
-   * instead of replacing it, and that move fails silently when the request
-   * already holds the maximum number of breakpoints — so these are results this
-   * app cannot prove escaped the cache, which makes the total a floor.
-   */
-  deferredOnly: number;
-  /** How many were identified by `(session, tool, rule, bytes)` for want of a `tool_use_id`. */
-  fallbackKeyed: number;
-  tokensRemoved: number;
-  /** Turns the read saving is measured over, summed across results. */
-  turnsAfter: number;
-  cacheWriteAvoidedUSD: number;
-  uncachedSendUSD: number;
-  cacheReadAvoidedUSD: number;
-  netUSD: number;
-}
-
-/**
- * What winnow's intake filter kept off the wire — the second half of context
- * control, and the one that acts first.
- *
- * **Not a cost source and never summed with a meter**, on `PruneSavingsDTO`'s
- * rule: the meters are priced from `usage` frames, which are the API's report
- * of the request the filter had already rewritten, so this money is a
- * counterfactual — the same work without the filter — and is already absent
- * from every figure it sits next to.
- *
- * **It is added to `PruneSavingsDTO` in exactly one place**, the
- * context-control card, where the two are the halves of one intervention and
- * the question the card answers is what the intervention was worth. The sum
- * overstates, because the two overlap by construction: winnow's C1, C3 and B2
- * rules fire in both mechanisms, and the filter takes that mass first because
- * it sees the request before the transcript is written, so a prune that then
- * removes the same result counts tokens the API never held. Measured at 4.06%
- * of pruned tokens across this install's ten largest transcripts, and an upper
- * bound. Correcting it needs a `tool_use_id` on each ledger line that winnow
- * does not write yet, so until then the bound is carried by
- * `docs/verification.md`, `intakeFilter.ts` and `contextTokens`
- * (`contextPruning.ts`) — the card itself names it nowhere, on the operator's
- * decision — and nothing else adds them.
- *
- * The three money fields are the arithmetic rather than its result: `2.0·D`
- * saved on the cache write, `1.0·D` still paid to send it once uncached, and
- * `0.1·D·T` saved on reads that never happened. There is no invalidation term —
- * nothing is edited, so no prefix is thrown away.
- *
- * `running` and `ledger` are separate because they are separate facts. A filter
- * that is not running still has a history worth reading; a ledger that is there
- * and unreadable is not an empty one; and none of the four states is `$0.00`.
- */
-export interface FilterSavingsDTO extends FilterWindowDTO {
-  running: boolean;
-  ledger: "missing" | "unreadable" | "empty" | "read";
-  /**
-   * The same reading over the two windows the meters draw, so a window's
-   * saving can name the share of itself the filter is responsible for.
-   *
-   * A **floor by more than the total is**: the ledger has no clock, so a
-   * result is dated by the transcript turn its request joined to, and one that
-   * joined to nothing is left out of both windows rather than guessed into
-   * one. That is `unjoinedRequests`, which is most of them here.
-   */
-  session: FilterWindowDTO;
-  weekly: FilterWindowDTO;
-  requests: number;
-  /**
-   * Requests whose `request_id` matched no **main-thread** assistant turn: a
-   * sub-agent's, or one whose transcript has been swept. What they saved is
-   * missing from every figure here rather than counted as nothing, so the whole
-   * DTO is a floor while this is non-zero — 82 of 125 when this was written,
-   * because the filter's B2 rule fires hardest on exactly the tool-heavy
-   * sub-agent turns the join excludes.
-   */
-  unjoinedRequests: number;
-  /** Earliest instant the figures cover, or null when nothing bounded them. */
-  totalFrom: number | null;
 }
 
 export interface UsageResponse {
   snapshot: SnapshotDTO;
-  /**
-   * The intake filter's own reading. Its own key beside `pruning` and never
-   * inside it: the card adds the two, and one card adding them is a decision a
-   * later reader can see and undo. A shape that pre-added them on the wire
-   * would carry the overstatement into every later reader with nothing left to
-   * take apart — the halves each surface prints are what make the sum
-   * checkable, and they are the more load-bearing half now that the card
-   * carries no footnote.
-   */
-  intakeFilter: FilterSavingsDTO;
-  /**
-   * Pruning's value over the same two windows the meters draw, so the three are
-   * comparable, plus `total` — every receipt still priceable, which is the
-   * figure the tile leads with. Its own key for `install`'s reason and one more:
-   * it is not spend, and a field on `snapshot` is one somebody eventually adds
-   * up.
-   *
-   * `total` is a superset of both windows and a **floor**: it starts at
-   * `totalFrom`, the transcript horizon, because a receipt whose transcript has
-   * been swept prices at zero saving with its invalidation still charged and
-   * would drag the total below what pruning really earned. `totalFrom` is null
-   * when nothing bounded it — render "all time" for that and never a date.
-   */
-  pruning: {
-    session: PruneSavingsDTO;
-    weekly: PruneSavingsDTO;
-    total: PruneSavingsDTO;
-    totalFrom: number | null;
-    /**
-     * Not a span reading: what is configured now, and whether it can act.
-     *
-     * Shipped unconditionally, never behind a `pruningEnabled()` on the route —
-     * or the readout would go missing on exactly the installs whose operators
-     * need it, which is the failure it was added to end.
-     */
-    pruner: ContextPrunerDTO;
-    /**
-     * The same three spans as the savings above, from one read, so a span with
-     * no money can still say what happened in it — and so a card can never
-     * print a boundary count over one window beside a figure over another.
-     */
-    activity: {
-      session: PruneActivityDTO;
-      weekly: PruneActivityDTO;
-      total: PruneActivityDTO;
-    };
-  };
   /**
    * Spend cut into calendar buckets, all three granularities at once so the
    * toggle switches without a refetch.
@@ -1888,39 +1478,6 @@ export type RunListItemDTO = Omit<
    * one. The hover `title` on the list is therefore a prefix on a long task.
    */
   prompt: string;
-  /**
-   * What context pruning netted this run, in dollars.
-   *
-   * One number rather than the `PruneSavingsDTO` the run's own page is given,
-   * on the rule the three absent fields above were dropped for: seven fields a
-   * row over a hundred rows is not a figure this list carries. The breakdown —
-   * how many prunes, how many of them priced, over how many turns — stays on
-   * the route that answers about one run.
-   *
-   * **Absent means pruning never ran here**, which is why it is optional rather
-   * than 0: `/api/runs/[id]` drops its whole section on the same distinction.
-   * Signed, because an early end's invalidation can exceed what it saved.
-   *
-   * **Not spend, and never summed with `spent_usd`** — see `PruneSavingsDTO`
-   * for why adding it to a meter is adding a counterfactual to a measurement.
-   */
-  prunedNetUSD?: number;
-  /**
-   * What `prunedNetUSD` is when it is not simply the net; absent when it is.
-   *
-   * `unpriced` is no prune on the run having a price, where `prunedNetUSD` is
-   * not a figure at all — `sumPruneSavings` adds $0 for every unpriced
-   * receipt, and the column printed that as `+$0.00`, which reads as pruning
-   * that broke exactly even. The other three are `netBound`'s: a ceiling
-   * while a cost is unsettled, a floor while a removal is unmeasured, and
-   * neither with both. Prunes only partly priced are not marked, on
-   * `ContextControl`'s decision: no bound describes a coverage gap, and the
-   * run's own page prints the count.
-   *
-   * One optional string rather than the counts behind it, on the rule above:
-   * absent on every run whose net is final, which is most of a hundred rows.
-   */
-  prunedNetBound?: "unpriced" | Exclude<NetBound, "exact">;
 };
 
 /**
@@ -2010,26 +1567,11 @@ export interface LiveRunDTO {
    */
   cycleTelemetry: { requests: number; costUSD: number; tokens: number } | null;
   /**
-   * `contextOccupancy`'s answer cut to what a tile draws: the newest sample and
-   * no prunes or composition. The counts are left as they were, so they still
-   * say how much there is; a reader that wants the series asks
+   * `contextOccupancy`'s answer cut to what a tile draws: the newest sample.
+   * The count is left as it was, so it still says how much there is; a reader that wants the series asks
    * `/api/runs/[id]`. Null when the run has no context record yet.
    */
   context: ContextOccupancyDTO | null;
-  /**
-   * What context pruning has netted this run so far — the figure the run's own
-   * page and the runs list print for it, from the same `pruneSavingsByRun`.
-   *
-   * **Null when the run has not pruned**, never a zeroed DTO: that function
-   * leaves a run with no cut out of its map, and "pruning saved nothing here"
-   * is a different fact from "pruning did not run".
-   *
-   * **Not spend, and never summed with `spent_usd` or `cycleTelemetry`** — see
-   * `PruneSavingsDTO`. It grows as the run's later turns happen, so a figure on
-   * a live tile is never final, and `unsettledPrunes` / `pricedPrunes` say how
-   * far it is from complete.
-   */
-  pruning: PruneSavingsDTO | null;
 }
 
 /**
@@ -4411,14 +3953,17 @@ export interface AccountResponse {
 }
 
 /**
- * How much a context prune takes out.
- *
- * Winnow ships a third, `gentle`, which is deliberately not offered: its only
- * strategy that fires on an ordinary session is `metadata-strip`, and that one
- * deletes the `usage` frames every window and every budget guard here is
- * computed from. `contextPruning.ts`'s `PRUNE_TIERS` carries the full reason.
+ * TokenEconomizer's three mechanisms, as this app offers them. The values are
+ * the plugin's own (`tokeneconomizer/plugin/config.py`) except `on` for
+ * micro-skills, which `tokenEconomizer.ts` spells out as `envfacts+distiller`
+ * so the meaning cannot move with the plugin's own default for `on`.
  */
-export type PruneTier = "standard" | "aggressive";
+export const TOKENECONOMIZER_TOOLPRUNE = ["off", "propose", "auto"] as const;
+export type TokenEconomizerToolprune = (typeof TOKENECONOMIZER_TOOLPRUNE)[number];
+export const TOKENECONOMIZER_MICROSKILLS = ["off", "envfacts", "on"] as const;
+export type TokenEconomizerMicroskills = (typeof TOKENECONOMIZER_MICROSKILLS)[number];
+export const TOKENECONOMIZER_LOOPGUARD = ["off", "nudge"] as const;
+export type TokenEconomizerLoopguard = (typeof TOKENECONOMIZER_LOOPGUARD)[number];
 
 /**
  * A reasoning effort `claude --effort` accepts. The list is the pinned CLI's
@@ -4558,33 +4103,11 @@ export interface SettingsDTO {
    * whole field is inert while `readGuard` is off.
    */
   readGuardMaxTokens: number | null;
-  /**
-   * Prune the transcript at each cycle boundary, and end a cycle early once its
-   * context passes the ceiling. Off by default — and note that it is what
-   * replaced `--autocompact`, so an install with it off has nothing bounding a
-   * long cycle. See `settings.contextPruning`.
-   */
-  contextPruning: boolean;
-  /** How much a prune takes out. Inert while `contextPruning` is off. */
-  contextPruningStrictness: PruneTier;
-  /**
-   * Which of winnow's two engines does the cutting.
-   *
-   * `"legacy"` rewrites the conversation in place and keeps the session id;
-   * `"winnow"` writes a new conversation with the removed output replaced by
-   * recoverable pointers and moves the run onto it, leaving the original as the
-   * way back. Ships `"legacy"`.
-   */
-  contextPruningEngine: "legacy" | "winnow";
-  /**
-   * Seconds of quiet a conversation needs before the fork engine will cut it.
-   *
-   * Null uses winnow's own default of an hour — and a work-cycle boundary is
-   * seconds old, so at that value the fork engine never fires. Lowering it is a
-   * deliberate call, which is why it is a number an operator sets rather than a
-   * flag the app passes: the value is recorded against every fork attempt.
-   */
-  contextPruningForkMinColdAge: number | null;
+  /** Load TokenEconomizer into Claude work cycles. See `settings.tokenEconomizer`. */
+  tokenEconomizer: boolean;
+  tokenEconomizerToolprune: TokenEconomizerToolprune;
+  tokenEconomizerMicroskills: TokenEconomizerMicroskills;
+  tokenEconomizerLoopguard: TokenEconomizerLoopguard;
   /**
    * Open the next work cycle without `--resume` once the last one's context
    * passed this many tokens. Null is off, which is what every install does
@@ -4824,12 +4347,6 @@ export interface StorageReportDTO {
     checkouts: number;
     transcripts: number;
     transcriptBytes: number;
-    /**
-     * Bytes cut off the head of winnow's intake ledger. Absent on every sweep
-     * that found it under its ceiling, and on every sweep recorded before it
-     * had one.
-     */
-    ledgerBytes?: number;
   } | null;
 }
 

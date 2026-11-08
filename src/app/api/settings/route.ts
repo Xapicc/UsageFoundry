@@ -43,8 +43,18 @@ import { loginFailureSummary } from "../../../lib/loginAttempts";
 import { activeSessionCount } from "../../../lib/sessions";
 import { FIVE_HOURS_MS } from "../../../lib/windows";
 import { invalidatePlanUsage } from "../../../lib/planUsage";
-import { isPruneTier, PRUNE_TIERS } from "../../../lib/contextPruning";
 import { CLI_MAX_READ_TOKENS } from "../../../lib/readGuard";
+import {
+  isTokenEconomizerLoopguard,
+  isTokenEconomizerMicroskills,
+  isTokenEconomizerToolprune,
+  tokenEconomizerAvailable,
+} from "../../../lib/tokenEconomizer";
+import {
+  TOKENECONOMIZER_LOOPGUARD,
+  TOKENECONOMIZER_MICROSKILLS,
+  TOKENECONOMIZER_TOOLPRUNE,
+} from "../../../lib/apiTypes";
 import { auditMutation } from "../../../lib/requestLog";
 
 export const runtime = "nodejs";
@@ -158,6 +168,9 @@ export async function GET(req: Request) {
       // anywhere recorded that anybody had ever guessed at the token, which is
       // half of what made an unbounded login route hard to notice.
       signIn: loginFailureSummary(),
+      // Whether the image carries the plugin the TokenEconomizer switch loads,
+      // so the switch can say so rather than read as on and do nothing.
+      tokenEconomizerAvailable: tokenEconomizerAvailable(),
     },
   });
 }
@@ -575,66 +588,40 @@ async function applySettingsPut(body: Record<string, unknown>): Promise<Response
     patch.readGuard = Boolean(body.readGuard);
   }
 
-  if ("contextPruning" in body) {
-    patch.contextPruning = Boolean(body.contextPruning);
+  if ("tokenEconomizer" in body) {
+    patch.tokenEconomizer = Boolean(body.tokenEconomizer);
   }
 
-  if ("contextPruningStrictness" in body) {
-    // Refused rather than coerced, and unlike most of this file that matters:
-    // the value reaches `winnow ... -rx <tier>` on a child's argv, and a tier
-    // the tool does not know makes it fall back to a lighter prescription
-    // silently rather than fail. A typo would then read as configured and prune
-    // less than the operator asked for, every cycle, with nothing saying so.
-    if (!isPruneTier(body.contextPruningStrictness)) {
+  // The three modes are refused rather than coerced: each value reaches a
+  // child's environment as `TE_<MECHANISM>`, and the plugin ignores a value it
+  // does not know with a warning nobody reads, falling back to its own default
+  // — which for the loop guard is the one that makes unmetered model calls.
+  if ("tokenEconomizerToolprune" in body) {
+    if (!isTokenEconomizerToolprune(body.tokenEconomizerToolprune)) {
       return NextResponse.json(
-        { error: `contextPruningStrictness must be one of ${PRUNE_TIERS.join(", ")}` },
+        { error: `tokenEconomizerToolprune must be one of ${TOKENECONOMIZER_TOOLPRUNE.join(", ")}` },
         { status: 400 },
       );
     }
-    patch.contextPruningStrictness = body.contextPruningStrictness;
+    patch.tokenEconomizerToolprune = body.tokenEconomizerToolprune;
   }
-
-  if ("contextPruningEngine" in body) {
-    // Refused rather than coerced, for the same reason as the tier above and
-    // one more: an unrecognised value falling back to "legacy" would leave an
-    // operator who typed it believing the fork engine was on, watching a run
-    // that never forks and concluding the feature does not work.
-    if (body.contextPruningEngine !== "legacy" && body.contextPruningEngine !== "winnow") {
+  if ("tokenEconomizerMicroskills" in body) {
+    if (!isTokenEconomizerMicroskills(body.tokenEconomizerMicroskills)) {
       return NextResponse.json(
-        { error: "contextPruningEngine must be one of legacy, winnow" },
+        { error: `tokenEconomizerMicroskills must be one of ${TOKENECONOMIZER_MICROSKILLS.join(", ")}` },
         { status: 400 },
       );
     }
-    patch.contextPruningEngine = body.contextPruningEngine;
+    patch.tokenEconomizerMicroskills = body.tokenEconomizerMicroskills;
   }
-
-  if ("contextPruningForkMinColdAge" in body) {
-    // Deliberately not `optionalNumber`. The helper folds 0 to `null` where a
-    // field may — for a limit above it that fold is right: a cost ceiling of 0
-    // and no cost ceiling are the same request, so folding them together loses
-    // nothing. Here they are opposites: 0 is the shipped default and the only
-    // value that ever forks, while null hands the decision to winnow's own
-    // hour, which at a cycle boundary refuses every time. Sending this key
-    // through that fold meant an operator could type 0, get a 200 and a saved
-    // settings page, and have the value arrive as null with the engine still
-    // off.
-    //
-    // It also made the 400 below unreachable: a negative or unparseable value
-    // came back as null and was stored as "blank" rather than refused.
-    const raw = body.contextPruningForkMinColdAge;
-    const n =
-      raw === null || raw === undefined || raw === "" ? null : Number(raw);
-    if (n !== null && (!Number.isFinite(n) || n < 0)) {
+  if ("tokenEconomizerLoopguard" in body) {
+    if (!isTokenEconomizerLoopguard(body.tokenEconomizerLoopguard)) {
       return NextResponse.json(
-        { error: "contextPruningForkMinColdAge must be a non-negative number of seconds, or blank" },
+        { error: `tokenEconomizerLoopguard must be one of ${TOKENECONOMIZER_LOOPGUARD.join(", ")}` },
         { status: 400 },
       );
     }
-    // Stored as given, including 0. Zero means "cut whatever the age", which is
-    // the whole of winnow's economic guard switched off — a thing an operator
-    // may legitimately want for an experiment and must never arrive at by
-    // accident, so it is neither clamped away nor defaulted to.
-    patch.contextPruningForkMinColdAge = n === null ? null : Math.floor(n);
+    patch.tokenEconomizerLoopguard = body.tokenEconomizerLoopguard;
   }
 
   if ("readGuardMaxTokens" in body) {

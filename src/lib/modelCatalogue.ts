@@ -117,8 +117,10 @@ const MODEL_LABELS: Record<string, string> = {
  * The `[1m]` ids, and the price-table key each sits under.
  *
  * MEASURED rather than reasoned: these are exactly the nine `claude-…[1m]`
- * strings the pinned CLI carries (2.1.310, the `CLAUDE_CLI_VERSION` in
- * `Dockerfile`), read out of `@anthropic-ai/claude-code-linux-arm64`'s binary.
+ * strings the pinned CLI carries, read out of 2.1.310's
+ * `@anthropic-ai/claude-code-linux-arm64` binary and re-read unchanged out of
+ * 2.1.319's macOS build when the pin (`CLAUDE_CLI_VERSION` in `Dockerfile`)
+ * moved there on 2026-11-08.
  * The suffix is a request for the 1M-context deployment of that model, so the
  * list is the CLI's to grow and not this build's to guess —
  * `claude-fable-5-1[1m]` looks like it should exist and the pinned CLI does not

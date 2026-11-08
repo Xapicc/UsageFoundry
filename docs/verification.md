@@ -15,6 +15,8 @@ topic file is added, split or renamed. The long-form write-ups these entries
 were condensed from, including how each thing was found, are
 `git show df8626c:docs/verification.md`.
 
+**2026-11-08: winnow was removed** (the context pruner and the HTTP intake filter, `github.com/Xapicc/winnow`), and Microsoft's TokenEconomizer added in its place as an off-by-default plugin. Every *Verified* entry below that names winnow, pruning, the intake filter, the context ceiling or the composition series is dated history of code that no longer exists, kept because the measurements it records (cache costs, compaction, the `--autocompact` natural experiment) still bear on decisions; those areas' *Not yet verified by hand* lists were cut to what can still be measured. TokenEconomizer's open items are under *Knowledge and plugins* and *Container and environment*.
+
 `npm run typecheck` plus a `docker compose up --build` smoke test is the real
 verification loop. What `npm test` covers, and why each test earned its place,
 is `docs/agent/testing.md`; interface defects and their classes are
@@ -37,9 +39,9 @@ measurement under *Verified* and cut the item down to what is still open.
 | Run lifecycle | [run-lifecycle-live-activity.md](verification/run-lifecycle-live-activity.md) — what a running cycle is inside: the open-call strip and the `/runs/live` sub-agent roster |
 | Run lifecycle | [run-lifecycle-resume-and-transcripts.md](verification/run-lifecycle-resume-and-transcripts.md) — what a resume finds in the session transcript: the 30-day sweep, a transcript gone, one truncated mid-turn, and a cycle the API refused |
 | Run lifecycle | [run-lifecycle-hooks-and-endings.md](verification/run-lifecycle-hooks-and-endings.md) — what a cycle reports about its hooks, the prompt fold on a cycle's row, the prior-read pointer and its holdout, and `runs.ending_code` |
-| Context control | [context-control-pruning.md](verification/context-control-pruning.md) — pruning, compaction and the context ceiling |
-| Context control | [context-control-intake-filter.md](verification/context-control-intake-filter.md) — the intake filter and its ledger |
-| Context control | [context-control-occupancy-and-composition.md](verification/context-control-occupancy-and-composition.md) — the occupancy and composition series |
+| Context control | [context-control-pruning.md](verification/context-control-pruning.md) — pruning, compaction and the context ceiling (pruning and the ceiling removed 2026-11-08; compaction still live) |
+| Context control | [context-control-intake-filter.md](verification/context-control-intake-filter.md) — the intake filter and its ledger (removed 2026-11-08; history only) |
+| Context control | [context-control-occupancy-and-composition.md](verification/context-control-occupancy-and-composition.md) — the occupancy and composition series (composition removed 2026-11-08; occupancy still live) |
 | Orchestrator chat | [orchestrator-chat.md](verification/orchestrator-chat.md) |
 | Taskboard | [taskboard-board-and-tools.md](verification/taskboard-board-and-tools.md) — the board, its MCP tools and validation |
 | Taskboard | [taskboard-comments.md](verification/taskboard-comments.md) — task comments and threads |
@@ -73,7 +75,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Security and sandboxing | [security-and-sandboxing-chat-config.md](verification/security-and-sandboxing-chat-config.md) — what the chat child loads from files a work cycle writes |
 | Security and sandboxing | [security-and-sandboxing-server-git.md](verification/security-and-sandboxing-server-git.md): what this app's own git runs from a repository a work cycle wrote |
 | Security and sandboxing | [security-and-sandboxing-telemetry-token.md](verification/security-and-sandboxing-telemetry-token.md): who can read a work cycle's telemetry ingest token, the headers helper, and binding ingest to the CLI's process |
-| Container and environment | [container-and-environment-resources.md](verification/container-and-environment-resources.md) — memory, CPU, cgroup limits, OOM and the filter launcher |
+| Container and environment | [container-and-environment-resources.md](verification/container-and-environment-resources.md) — memory, CPU, cgroup limits, OOM and the (removed) filter launcher |
 | Container and environment | [container-and-environment-stacks.md](verification/container-and-environment-stacks.md) — the stacks carrier, its installs, receipts and invocation counts |
 | Container and environment | [container-and-environment-deployment.md](verification/container-and-environment-deployment.md) — the image, network, volumes, backup and health |
 | Build and release | [build-and-release.md](verification/build-and-release.md) |

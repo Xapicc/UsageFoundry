@@ -1940,12 +1940,6 @@ export default function NewRunPage() {
                 after that needs another review.
               </p>
               <p>
-                <strong>Winnow is out of the path.</strong> Its intake filter and
-                pruner do not see this run, so nothing trims its context but
-                Claude Code&rsquo;s own compaction, which assumes a Claude-sized
-                window.
-              </p>
-              <p>
                 <strong>Spend reads as unknown, not $0,</strong> and nothing
                 reaches the usage windows, so this run needs a work-cycle limit
                 or a time limit.

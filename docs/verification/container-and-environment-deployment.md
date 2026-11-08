@@ -89,6 +89,20 @@
   seccomp filters). No rename was tried, so which of `EROFS` and `EBUSY` a
   `mv` meets first is not measured; a cycle with `UF_SANDBOX` off was not read.
 
+- **The image builds on the 2.1.319 pin with TokenEconomizer and without
+  winnow, 2026-11-08.** `docker compose build` on OrbStack from the
+  `remove-winnow-tokeneconomizer` working tree (uncommitted, over `af503878`):
+  TokenEconomizer fetched at `cb42207`, the build-time hook import passed, and
+  `npm install -g @anthropic-ai/claude-code@2.1.319` ran. Recreated with `up
+  -d` with no run live, the container went healthy. It reports `claude
+  --version` 2.1.319 and has no winnow process, no `/opt/winnow` and no
+  `/var/lib/winnow`. `ANTHROPIC_BASE_URL` is unset, so the API is reached
+  directly. The plugin's manifest and bootstrap are root-owned 0644. The new
+  `usagefoundry-tokeneconomizer` volume came up `1000:1000` 0755, writable as
+  uid 1000 (`UF_AGENT_UID`), and the hook module imports as that uid.
+  `sandboxMountPoints.test.ts` passed 21 of 21 inside the container against
+  its linux 2.1.319 binary. Caveat: no work cycle has run on this image.
+
 ## Not yet verified by hand
 
 - **That a rename from a namespace where the mount is absent goes through**
@@ -226,3 +240,19 @@
   # in auto upload, inside a run:
   npx vitest run src/lib/browser src/lib/adapters/fansly.test.ts   # launches Chromium; was 50 failures
   ```
+
+- **The entrypoint's `chown` of `usagefoundry-tokeneconomizer` has not run.**
+  The volume a fresh install creates inherits `node` from the image (entry
+  above), so the guard's branch for a volume owned by another uid has never
+  been taken. Settle: `docker run --rm -v usagefoundry_usagefoundry-tokeneconomizer:/v
+  alpine chown -R 0:0 /v`, restart, and read `stat -c %u:%g
+  /home/node/.tokeneconomizer` in the container.
+
+- **No work cycle has run on the 2.1.319 pin (moved 2026-11-08 from
+  2.1.310).** The image is built and the pin-bump checks passed (entries
+  under *Security*, *Run lifecycle* and *Agents, templates and models*). Not
+  checked: any `stream-json` line beyond `init` and `result`, an OTLP record,
+  a compaction boundary, a hook event, a background task, and TokenEconomizer,
+  whose README tests it on 2.1.300 to 2.1.310 only. Chosen as npm's `latest`;
+  `stable` was 2.1.311. Settle: one real cycle with TokenEconomizer on, then
+  its run page and its telemetry card.

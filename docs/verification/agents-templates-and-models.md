@@ -202,6 +202,14 @@
   Docker Desktop for macOS. Caveat: a fetch from the container, not a chat
   turn; OrbStack and Linux Docker Engine were not tried.
 
+- **The `[1m]` model ids are the same nine on 2.1.319, 2026-11-08.** `strings`
+  over the macOS build of 2.1.319 (322 MB) and `grep -oE
+  'claude-[a-z0-9-]+\[1m\]'`: exactly the nine `ONE_MEGA_VARIANTS` holds, so
+  the catalogue did not change with the pin. The binary names no current-
+  generation `claude-…` id the catalogue or price table lacks; the five it
+  names that they do not are Claude 3.x and 4.0 strings. Caveat: the darwin
+  build rather than the linux-arm64 package the image installs.
+
 ## Not yet verified by hand
 
 - **No real `/v1/models` listing has been read, with either credential.**

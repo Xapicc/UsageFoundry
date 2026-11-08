@@ -1,7 +1,7 @@
 import { activeRuns, describeFolder, type RunRow } from "@/lib/orchestrator";
 import { telemetrySpendSince } from "@/lib/otlp";
 import { readCodexCycle } from "@/lib/codexRollout";
-import { contextOccupancy, pruneSavingsByRun } from "@/lib/contextPruning";
+import { contextOccupancy } from "@/lib/contextSamples";
 import { contextForTile } from "@/lib/liveStream";
 import { jsonMaybeGzipped } from "@/lib/http";
 import { parseRunAgent } from "@/lib/agents";
@@ -11,7 +11,6 @@ import {
   clipListPrompt,
   type LiveRunDTO,
   type LiveRunsDTO,
-  type PruneSavingsDTO,
 } from "@/lib/apiTypes";
 
 export const runtime = "nodejs";
@@ -32,32 +31,16 @@ export const dynamic = "force-dynamic";
  * `otlp_requests` (the query the live-guard tick already makes for that run),
  * and `contextOccupancy`'s indexed reads, which scan no transcript.
  *
- * What it costs once per poll, however many runs are running: what pruning has
- * netted each of them, from `pruneSavingsByRun` over all of them at once. That
- * is the function the runs list calls, so a tile prints the number the run's
- * own page does; reading the receipts here instead would be the disagreement it
- * exists to prevent. Two indexed reads (`prune_receipts` and `fork_attempts`),
- * and then a transcript scan **only if one of these runs has pruned**, because
- * pricing counts the turns after each cut out of it. A poll with no pruned run
- * reads no transcript. The scan is the one the run loop makes before every
- * cycle and the runs list makes on its own poll: callers that overlap share
- * it, and one that finds no transcript grown answers from a memo. It is
- * called once for the page and not once per run, which is what keeps this
- * poll's cost from growing with the number of running runs.
- *
  * With nothing running it reads one small table and nothing else, and the page
  * does not poll it then.
  */
 export async function GET(req: Request) {
   const runs = activeRuns().filter((r) => r.status === "running");
-  const pruned = await pruneSavingsByRun(runs.map((r) => r.id));
-  const body: LiveRunsDTO = {
-    runs: runs.map((r) => liveRun(r, pruned.get(r.id) ?? null)),
-  };
+  const body: LiveRunsDTO = { runs: runs.map(liveRun) };
   return jsonMaybeGzipped(req, body);
 }
 
-function liveRun(r: RunRow, pruning: PruneSavingsDTO | null): LiveRunDTO {
+function liveRun(r: RunRow): LiveRunDTO {
   const { mountLabel, relPath } = describeFolder(r.folder);
   // The cycle in flight's own start, never the run's: the cycles before it have
   // already reported their cost into `spent_usd`, and reading from the run's
@@ -98,6 +81,5 @@ function liveRun(r: RunRow, pruning: PruneSavingsDTO | null): LiveRunDTO {
     // no telemetry at all unless a setting or a mid-cycle guard asks for it.
     cycleTelemetry: spend !== null && spend.requests > 0 ? spend : null,
     context: context ? contextForTile(context) : null,
-    pruning,
   };
 }

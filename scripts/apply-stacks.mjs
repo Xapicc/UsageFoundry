@@ -293,8 +293,8 @@ const CLAUDE_HOME = "/home/node/.claude";
  * - `node`, which `docker-entrypoint.sh` starts this script, the Discord relay
  *   and the server by, and which `npm`'s `#!/usr/bin/env node` looks up.
  * - `TOOLS`' names, and the rest of what `docker-entrypoint.sh` runs as root
- *   while `UF_AGENT_UID` is set, read off it on 2026-10-04; `ps`, which winnow
- *   runs as root on every prune; and `curl`, which the `HEALTHCHECK` ran by name.
+ *   while `UF_AGENT_UID` is set, read off it on 2026-10-04; `ps`, which a root
+ *   process shells out to by name; and `curl`, which the `HEALTHCHECK` ran by name.
  *
  * What the entrypoint runs as root only when `UF_AGENT_UID` is unset — `env`,
  * `gh`, `python` — is not here: in that arrangement every agent is root

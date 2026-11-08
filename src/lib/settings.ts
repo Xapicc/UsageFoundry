@@ -10,7 +10,13 @@ import {
   type ModelCatalogueEntry,
 } from "./modelCatalogue";
 import type { LimitConfig, WeeklyAnchor } from "./windows";
-import type { CodexEffortLevel, EffortLevel, PruneTier } from "./apiTypes";
+import type {
+  CodexEffortLevel,
+  EffortLevel,
+  TokenEconomizerLoopguard,
+  TokenEconomizerMicroskills,
+  TokenEconomizerToolprune,
+} from "./apiTypes";
 
 /**
  * User-editable preferences.
@@ -284,94 +290,34 @@ export interface Settings {
    */
   readGuardMaxTokens: number | null;
   /**
-   * Prune a work cycle's transcript at each cycle boundary, and end a cycle
-   * early once its context passes `CYCLE_CONTEXT_CEILING_TOKENS`.
+   * Load Microsoft's TokenEconomizer plugin into every Claude Code work cycle.
    *
-   * **This is the only thing bounding a cycle's context.** It replaced
-   * `--autocompact 200000`, which is no longer on any cycle's argv, so an
-   * install with this off runs a long cycle to the model's whole window. That is
-   * a deliberate swap and not an accident of defaults — `contextPruning.ts`
-   * carries what it cost, and `docs/verification.md` records the measurement
-   * that was given up.
-   *
-   * It ships **off** all the same, on the rule its two neighbours ship off
-   * under: what is measured here is where the money goes, not that any of these
-   * three moves it. The difference is that switching this one on also changes
-   * what stops a runaway cycle, so the settings copy says so rather than
-   * offering it as a third way of spending less.
+   * `tokenEconomizer.ts` carries what it does and what it is given. **Off**,
+   * for two reasons that are facts rather than caution: its tool pruning writes
+   * `.claude/settings.local.json` into the repositories the runs work in, and
+   * the 18–31% saving it reports was measured on SWE-Bench rather than on this
+   * fleet. Claude runs only — a Codex or local-model cycle never loads it.
    */
-  contextPruning: boolean;
+  tokenEconomizer: boolean;
   /**
-   * How much a prune takes out. Inert while `contextPruning` is off.
-   *
-   * Two positions, not winnow's three: `gentle` is excluded here because it
-   * provably removes nothing under any configuration this app would accept.
-   * `contextPruning.ts`'s `PRUNE_TIERS` carries the reason, which is a fact
-   * about the tool rather than a preference.
+   * TokenEconomizer's tool pruning: `auto` writes a deny list for the tools a
+   * repository's sessions never use once the evidence forms, `propose` only
+   * proposes it. Makes no model call. Inert while `tokenEconomizer` is off.
    */
-  contextPruningStrictness: PruneTier;
+  tokenEconomizerToolprune: TokenEconomizerToolprune;
   /**
-   * Which of winnow's two rule engines does the pruning.
-   *
-   * `"legacy"` is `winnow treat`, the inherited pruner: about twenty strategies
-   * under `src/winnow/legacy/`, editing the transcript in place and keeping the
-   * session id. It is what this app has always run and stays the default.
-   *
-   * `"winnow"` is `winnow fork`, SPEC section 4's six rules at tier CB. It does
-   * not edit anything — it writes a **new** transcript under a new session id
-   * and the run switches onto it, with the original left untouched as the
-   * recovery path.
-   *
-   * **Off by default and meant to be switched on deliberately, for a while, to
-   * find something out.** Three things are true of the fork path that are not
-   * true of the pruner, and an operator turning it on should know all three.
-   * Its 100-fork resume guardrail has not been run, so no fork has been proven
-   * resumable against a real `claude --resume` — this app verifies each one and
-   * rolls back, which contains the risk and is also how the evidence gets
-   * collected. Its own cold-age guard cannot be satisfied at a cycle boundary
-   * at all, so `contextPruningForkMinColdAge` ships at 0 and the reasoning for
-   * that is on the setting itself.
-   * And while both transcripts are on disk they carry the same message ids, so
-   * session-scoped attribution downstream picks one of the two.
+   * TokenEconomizer's micro-skills — short repository facts injected at session
+   * start. `envfacts` learns only from repeated failures and makes no model
+   * call; `on` adds the proposer, which does. Off by default, its own default.
    */
-  contextPruningEngine: "legacy" | "winnow";
+  tokenEconomizerMicroskills: TokenEconomizerMicroskills;
   /**
-   * Seconds of quiet a transcript needs before the fork engine will cut it.
-   * **Zero, and that is the decision this docblock exists to record.**
-   *
-   * Winnow's own default is 3,600 and its reason is the whole economic argument
-   * for the tool: a resume past the cache TTL pays a write it was going to pay
-   * anyway, so the deletion is free in the only sense that matters.
-   *
-   * The proxy does not survive contact with an orchestrator. This app forks
-   * seconds after a child exits — that is the *design*, not a race: the cut has
-   * to land before the next `--resume` reads the file. So the transcript's last
-   * request is always ~0s old at the only moment a fork can happen, the guard
-   * can never be satisfied here however long anyone waits, and at 3,600 the
-   * engine does not misfire — it never fires at all. A guard whose pass
-   * condition is unreachable is not a safety property, it is an off switch.
-   *
-   * What the hour is a proxy *for* is the general claim in SPEC section 7: that
-   * there is one moment where the edit is free, the work-cycle handover, where
-   * the suffix is rewritten anyway. A boundary here is literally that moment.
-   * This is the same reasoning that turns off the break-even gate at the same
-   * two call sites (`BOUNDARY_BREAK_EVEN_BUDGET`), and it stands or falls with
-   * it — one hypothesis, applied consistently, rather than armed in one guard
-   * and disarmed in the other.
-   *
-   * **What would overturn it**, and it is measured rather than argued:
-   * `resume_probes` and `classifyResume` are reading whether a *clean* boundary
-   * resume — one with no prune before it — comes back warm. Warm means the
-   * prefix was still cached, the handover is not free, and this number should go
-   * back up along with every figure that prices a boundary invalidation at zero.
-   * Until then the honest value is the one that lets the engine run, because an
-   * engine that cannot fire collects no evidence either way.
-   *
-   * Set on purpose by an operator who disagrees; the effective value is recorded
-   * on every fork attempt, so what was in force is always readable off the row.
-   * Null defers to winnow's own default, which in this app means never firing.
+   * TokenEconomizer's loop guard. **Off here although `nudge` is the plugin's
+   * own default**, because the judge it asks is a `claude -p` call with
+   * `--no-session-persistence`: billed to the same subscription, and written to
+   * no transcript, so no meter or budget guard in this app can see it.
    */
-  contextPruningForkMinColdAge: number | null;
+  tokenEconomizerLoopguard: TokenEconomizerLoopguard;
   /**
    * Start the next work cycle fresh, rather than resuming, once the last one's
    * context passed this many tokens. Null is off and is today's behaviour.
@@ -1136,10 +1082,10 @@ export const DEFAULTS: Settings = {
   runEffort: null,
   readGuard: false,
   readGuardMaxTokens: null,
-  contextPruning: false,
-  contextPruningStrictness: "standard",
-  contextPruningEngine: "legacy",
-  contextPruningForkMinColdAge: 0,
+  tokenEconomizer: false,
+  tokenEconomizerToolprune: "auto",
+  tokenEconomizerMicroskills: "off",
+  tokenEconomizerLoopguard: "off",
   freshStartContextTokens: null,
   maxConcurrentRuns: 4,
   maxConcurrentAssists: 2,
@@ -1250,7 +1196,20 @@ export function getSettings(): Settings {
   // Destructured rather than left in place so `GET /api/settings` stops
   // answering the dead key; the blob loses it the next time anything saves,
   // because `saveSettings` rebuilds it from `SETTINGS_KEYS`.
-  const { resolveVerifyTools, ...rest } = stored;
+  const {
+    resolveVerifyTools,
+    // The context pruner's four keys, removed with it. Dropped here for
+    // `resolveVerifyTools`' reason: otherwise `GET /api/settings` answers them
+    // until the next save rebuilds the blob.
+    contextPruning: _contextPruning,
+    contextPruningStrictness: _contextPruningStrictness,
+    contextPruningEngine: _contextPruningEngine,
+    contextPruningForkMinColdAge: _contextPruningForkMinColdAge,
+    ...rest
+  } = stored as typeof stored & Record<
+    "contextPruning" | "contextPruningStrictness" | "contextPruningEngine" | "contextPruningForkMinColdAge",
+    unknown
+  >;
   if (resolveVerifyTools !== undefined && rest.resolveAllowedTools === undefined) {
     rest.resolveAllowedTools = resolveVerifyTools;
   }

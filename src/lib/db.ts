@@ -2086,6 +2086,16 @@ function migrate(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_ok ON webhook_deliveries(ok, id);
   `);
 
+  // **The context pruner's tables, kept for their history only.** `winnow` was
+  // removed on 2026-11-08. Nothing writes or reads `prune_receipts`,
+  // `context_compositions`, `context_composition_children`, `resume_probes`,
+  // `fork_attempts` or `prune_decisions` since, except the
+  // retention sweep that ages the composition rows out. Their statements stay
+  // because this function is idempotent DDL over an existing store: dropping
+  // the tables would delete measurements `docs/verification/` cites, and that
+  // is the operator's call, not a migration's. The comments below describe
+  // what was written while the pruner ran.
+  //
   // What a context prune took out, per prune.
   //
   // Its own table rather than a `run_events` row, and the reason is retention:

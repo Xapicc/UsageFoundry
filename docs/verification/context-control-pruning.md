@@ -193,55 +193,12 @@
 
 ## Not yet verified by hand
 
-- **The mark clears in `pruneAtBoundary` and the fresh-start branch have not
-  met a real run**; `contextCeilingRace.test.ts` drives only the tick's reset.
-  Settled by a fork-engine run that declines at the ceiling, forks at a natural
-  boundary and crosses again: `prune_decisions` should hold an `early-end` row
-  at its first `context_samples` reading over 200,000 after the fork, not
-  25,000 past the pre-fork decline.
-
-- **No netted prune figure has been read against a real run.** The KPI
-  arithmetic rests on unit tests and a clean `npm run build`; the
-  `ContextControlAside` tile's six states were rendered only as markup from
-  hand-written DTOs. Also unchecked: the corrected invalidation against a fifth
-  prune, and whether `readAppended`'s `rotated` test catches a prune's rewrite.
-
-- **Lowering the ceiling from 300,000 to 200,000 was a judgement, 2026-08-25.**
-  No `prune_receipts` or `netReceipt` comparison was taken across the two.
-  Never seen in the running app: a crossing at the current ceiling, the new
-  prune log line, and the per-tick cost of reading every live run's
-  transcript with no size gate.
-
 - **The compaction summariser's call is billed and in no ledger, 2026-08-22.**
   All 42 `isCompactSummary` records carry no usage: roughly 168,000 in and
   6,300 out, order $0.24 to $1.84 per compaction, invisible to `scanUsage()`.
   Also unmeasured: whether 200,000 is optimal (one arm, no dose-response; one
   Docker run logging `effectiveWindow` would show the operating point) and
   whether the firing arithmetic holds for another model.
-
-- **The `Pruning` column has not been read on a real install or an aged
-  run.** Seeded receipts prove plumbing, not worth; a run whose transcripts
-  were swept should drift to a small negative, unobserved.
-
-- **Why a fork's edit misses the wire is assumed**: the resumed CLI rebuilding
-  tool results from the untouched `toolUseResult` is the likeliest cause.
-
-- **No fork has been written since the API-basis measurement was added**, so
-  `apiContextSample`'s `api` basis at the fork site and `firstContextTokens`
-  skipping a `<synthetic>` zero are unconfirmed. Settle: fork engine to a
-  natural boundary; the row needs `api_context_before` and `api_context_after`.
-  `pruneAtBoundary`'s clear is argued from code; the stack's age line is unseen.
-
-- **No 2026-08-28 cycle or prune change has met a real boundary**: no agent
-  spawned since `cycleInvocation.ts` split out, no `prune_decisions` row, no
-  early-end prune; settle with a `maxIterations >= 2` run outlasting cycle 1.
-  `treatRemovedTokens` over-claims `D` by ~a quarter (unmeasured), making the
-  gate permissive; winnow's `unavailable` branch has never been rendered.
-
-- **The tile's total span is unmeasured.** Every prune receipt here was written
-  inside one session, none older than a window; the superset clamp (`Math.min`
-  against `snapshot.weekly.startsAt`) is read, not run; a swept-transcript
-  receipt's exclusion is unseen; the single-read path is untimed.
 
 - **No compaction notice has been seen on a run log, and its field names hold
   only on CLI `2.1.226`.** `preTokens`, `postTokens`, `durationMs`, `trigger`
@@ -259,10 +216,3 @@
   browser**; its graph and workflow-list "after" bytes are computed. Unseen:
   the file-cost notice on a real argv, or byte-identical on cycles 1 and 2; any
   page from that build.
-
-- **The pruning block on a `/runs/live` tile has not met a real running run,
-  2026-10-05.** Every receipt behind it was a row written by hand. Settles it:
-  `docker compose up --build`, run a task long enough to cross the context
-  ceiling with `contextPruningEngine` set to `winnow` and again to `legacy`,
-  open `/runs/live`, and compare each tile's Saved, Lost and Net with that
-  run's own page.

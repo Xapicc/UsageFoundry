@@ -13,12 +13,10 @@ src/lib/
                    size of the result that answered them, denominated in
                    characters because a `tool_result` carries no usage block;
                    its own dedupe key and rollup, never a cost source
-  intakeFilter.ts  what winnow's intake filter kept off the wire, read from its
-                   own ledger — the one file here nothing in this app writes.
-                   A counterfactual, never a cost source: the meters are priced
-                   from `usage` frames, which report the request the filter had
-                   already rewritten, so this money is already absent from every
-                   figure beside it
+  contextSamples.ts  how full a live run's context is, sampled off its own
+                   transcript (or a Codex rollout) and kept as a series for
+                   the run page's chart. It measures and records; nothing acts
+                   on it
   pricing.ts       per-model rates, cache-TTL multipliers, fast mode
   modelCatalogue.ts  which model ids this install may start work on: the
                    operator's list, seeded from the table above so there is
@@ -67,6 +65,10 @@ src/lib/
                    refuses a whole re-read and caps one read, delivered on the
                    same `--plugin-dir` list; root-owned code, agent-writable
                    ledger beside it
+  tokenEconomizer.ts  Microsoft's TokenEconomizer (Claude Code hooks over a
+                   Python package baked into the image), loaded as one more
+                   `--plugin-dir` on Claude cycles when its Settings switch is
+                   on; state on its own named volume. Off by default
   notify.ts        the outbound webhook: one signed, vendor-neutral, six-field
                    JSON body per ending that needs a person, fire-and-forget
                    beside `logLifecycle` and never awaited; off unless the

@@ -17,8 +17,6 @@ import {
   type DependencyEdge,
   type RunDependencyInput,
 } from "../../../lib/orchestrator";
-import { pruneSavingsByRun } from "../../../lib/contextPruning";
-import { prunedNetFields } from "../../../lib/pruneStatement";
 import { recentOpsEvents } from "../../../lib/ops";
 import {
   jsonMaybeGzipped,
@@ -118,14 +116,6 @@ export async function GET(req: Request) {
   });
   const rows = page.rows;
   const deps = dependenciesOf(rows.map((r) => r.id));
-  // Priced for the whole page in one pass. Unbounded in time, unlike the
-  // dashboard's spans: that one is a total over a window and had to drop
-  // receipts it could no longer price, because an unbounded sum of them sinks
-  // towards negative as transcripts age. A row here is *this run's* figure and
-  // has to be the same number the run's own page prints, which asks the same
-  // question with no bound on it. Two surfaces disagreeing about one run would
-  // be the worse failure.
-  const pruned = await pruneSavingsByRun(rows.map((r) => r.id));
   // One walk for the page. It is over every active run whatever this page holds,
   // and it is the only thing that knows a queued run is short of a slot rather
   // than short of its folder.
@@ -169,9 +159,6 @@ export async function GET(req: Request) {
       dependsOn: deps.get(r.id) ?? [],
       queuePosition: r.status === "queued" ? queuePosition(r.id) : undefined,
       queueBlocker: r.status === "queued" ? blockers.get(r.id) : undefined,
-      // Absent for a run that never pruned rather than 0 — a receipt is what
-      // puts a run in the map, so the lookup carries that distinction already.
-      ...prunedNetFields(pruned.get(r.id)),
     };
   });
   // Beside the runs rather than on a route of its own: it is the explanation

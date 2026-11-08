@@ -16,7 +16,7 @@ This page is the index. The bar every test is held to comes first, each of its p
 
 `npm run typecheck` plus a `docker compose up --build` smoke test is still the real verification loop, and `docs/verification.md` records what was checked by hand — including its "Not yet verified" list, which must stay honest.
 
-Twenty-three are renderings rather than functions — every `*.test.tsx` in the tree, which is the whole of that class and is countable as `find src -name '*.test.tsx' | wc -l`.
+Nineteen are renderings rather than functions — every `*.test.tsx` in the tree, which is the whole of that class and is countable as `find src -name '*.test.tsx' | wc -l`.
 
 ## [Run queue and admission](testing/run-queue-and-admission.md)
 
@@ -29,7 +29,7 @@ Twenty-three are renderings rather than functions — every `*.test.tsx` in the 
 | `diff.test.ts` |  |
 | `land.test.ts` | [landing], [merge-queue], [harnesses], [contention] |
 | `mountRootIsolation.test.ts` |  |
-| `orchestrator.test.ts` | [cycle], [argv], [ceiling], [pruning], [parsers], [codex-cycle], [budgets], [pricing], [landing], [merge-queue], [sandbox], [harnesses] |
+| `orchestrator.test.ts` | [cycle], [argv], [samples], [parsers], [codex-cycle], [budgets], [pricing], [landing], [merge-queue], [sandbox], [harnesses] |
 | `patch.test.ts` |  |
 | `planUsage.test.ts` |  |
 | `queueOrder.test.ts` |  |
@@ -45,7 +45,6 @@ Twenty-three are renderings rather than functions — every `*.test.tsx` in the 
 | `backgroundWork.test.ts` |  |
 | `cycleDeadline.test.ts` |  |
 | `priorReads.test.ts` |  |
-| `resumeControl.test.ts` |  |
 | `resumeMissingTranscript.test.ts` |  |
 
 ## [Fleet stop and hold](testing/fleet-stop-and-hold.md)
@@ -123,6 +122,7 @@ Twenty-three are renderings rather than functions — every `*.test.tsx` in the 
 | `snapshotCoalesce.test.ts` |  |
 | `transcriptCache.test.ts` |  |
 | `transcriptCompaction.test.ts` |  |
+| `transcriptForkDedupe.test.ts` |  |
 | `transcriptDedupe.test.ts` |  |
 | `transcriptPromptTier.test.ts` | [pricing] |
 | `transcripts.test.ts` | [argv] |
@@ -130,29 +130,11 @@ Twenty-three are renderings rather than functions — every `*.test.tsx` in the 
 | `transcriptScanMemo.test.ts` |  |
 | `transcriptWalk.test.ts` |  |
 
-## [Context pruning, winnow's intake filter and pruned transcripts](testing/context-pruning.md)
+## [Context samples and the live tick](testing/context-samples.md)
 
 | Test file | Also in |
 |---|---|
-| `contextPruning.test.ts` | [ceiling], [stacks], [pricing] |
-| `intakeFilter.test.ts` |  |
-| `pruneStatement.test.ts` |  |
-| `pruneTranscript.test.ts` |  |
-| `transcriptOwnership.test.ts` |  |
-
-## [Forked conversations and prune money](testing/forked-conversations-and-prune-money.md)
-
-| Test file | Also in |
-|---|---|
-| `contextPruningReporting.test.ts` |  |
-| `forkAttempts.test.ts` |  |
-| `transcriptForkDedupe.test.ts` |  |
-
-## [Context samples, the live tick and the context ceiling](testing/context-samples-and-ceiling.md)
-
-| Test file | Also in |
-|---|---|
-| `contextCeilingRace.test.ts` |  |
+| `contextReading.test.ts` |  |
 | `contextSamples.test.ts` |  |
 
 ## [Workflow instances, blocks and schedules](testing/workflow-instances.md)
@@ -517,7 +499,7 @@ Units that are about no test file in the tree:
 |---|---|
 | `BranchWork.test.tsx` |  |
 | `CodexWindows.test.tsx` |  |
-| `ContextOccupancy.test.tsx` | [ceiling] |
+| `ContextOccupancy.test.tsx` | [samples] |
 | `InstallSpendCard.test.tsx` |  |
 | `LiveRunFigures.test.tsx` |  |
 | `OpenTasksChart.test.tsx` |  |
@@ -525,15 +507,6 @@ Units that are about no test file in the tree:
 | `RunHandoff.test.tsx` |  |
 | `UsagePeriods.test.tsx` | [ui-kit] |
 | `windowCardNotes.test.ts` |  |
-
-## [Components: what pruning saved](testing/components-pruning-money.md)
-
-| Test file | Also in |
-|---|---|
-| `ContextControl.test.tsx` |  |
-| `LiveRunPruning.test.tsx` |  |
-| `PruneSavings.test.tsx` |  |
-| `RunPruning.test.tsx` |  |
 
 ## [Stacks, the tool inventory and the end of the function list](testing/stacks-and-tool-inventory.md)
 
@@ -549,6 +522,12 @@ Units that are about no test file in the tree:
 | `stacks.test.ts` |  |
 | `toolInventory.test.ts` |  |
 | `unsavedWork.test.ts` |  |
+
+## [TokenEconomizer: availability, env pins and the catalogue refresh](testing/token-economizer.md)
+
+| Test file | Also in |
+|---|---|
+| `tokenEconomizer.test.ts` | [argv], [deployment] |
 
 ## [Test harnesses: which tests open a database, and how this page is checked](testing/test-harnesses.md)
 
@@ -583,8 +562,7 @@ It prints nothing as this is written. Whoever owns a file it names owes that fil
 [pricing]: testing/pricing-and-models.md
 [catalogue]: testing/model-catalogue-and-discovery.md
 [transcripts]: testing/transcripts-and-snapshot.md
-[pruning]: testing/context-pruning.md
-[ceiling]: testing/context-samples-and-ceiling.md
+[samples]: testing/context-samples.md
 [workflows]: testing/workflow-instances.md
 [schedule-routes]: testing/workflow-schedules-and-routes.md
 [loops]: testing/workflow-loops.md

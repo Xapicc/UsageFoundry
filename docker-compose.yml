@@ -3,19 +3,20 @@ services:
     build:
       context: .
       args:
-        # Which winnow the image bundles. Build arguments rather than
+        # Which TokenEconomizer the image bundles. Build arguments rather than
         # environment: they are consumed by the Dockerfile and nothing in the
         # container reads them, so putting them under `environment:` would be a
         # variable every child carries and nothing consumes.
         #
         # Both default in the Dockerfile, so `docker compose up --build` is
-        # unchanged for anyone who sets neither. `WINNOW_REF=` (empty) builds
-        # without winnow, and context pruning then reports itself unavailable
-        # instead of quietly pruning nothing — which is the escape hatch for a
-        # build host that cannot reach GitHub, and the reason this is reachable
-        # from `.env` at all rather than only by editing the Dockerfile.
-        WINNOW_REPO: "${WINNOW_REPO:-https://github.com/Xapicc/winnow.git}"
-        WINNOW_REF: "${WINNOW_REF-4b1b7b1fe9fb813afe1fe456e1476e104925ada2}"
+        # unchanged for anyone who sets neither. `TOKENECONOMIZER_REF=` (empty)
+        # builds without it, and the app then reports it unavailable instead of
+        # passing a plugin directory that is not there — which is the escape
+        # hatch for a build host that cannot reach GitHub, and the reason this
+        # is reachable from `.env` at all rather than only by editing the
+        # Dockerfile.
+        TOKENECONOMIZER_REPO: "${TOKENECONOMIZER_REPO:-https://github.com/microsoft/TokenEconomizer.git}"
+        TOKENECONOMIZER_REF: "${TOKENECONOMIZER_REF-cb42207e3e0937f191bf1ca4897a54b07a23a92c}"
     # All three default to today's values, so `docker compose up` is unchanged.
     # Overriding them lets a second instance run alongside the first — to
     # compare two branches against the same transcripts, for example. Pair them
@@ -147,31 +148,6 @@ services:
       # hooks shell out to a Python command work: the image has no pip, and a
       # hook whose command is missing exits 0 having done nothing.
       UF_PY_TOOLS: "${UF_PY_TOOLS:-}"
-      # Optional: winnow's intake filter. "1" makes docker-entrypoint.sh start a
-      # loopback proxy inside this container and point every agent at it with
-      # ANTHROPIC_BASE_URL, so a tool result a rule marks as spent is dropped
-      # before the API ever writes it to the prompt cache. Blank is off and is
-      # the shipped state.
-      #
-      # One variable rather than two on purpose: ANTHROPIC_BASE_URL is exported
-      # by the entrypoint, not set here, so an operator cannot end up with the
-      # URL pointed at a proxy that was never started — which fails every agent
-      # request with a connection refused inside a tool call.
-      #
-      # Read by the entrypoint and by nothing in the app, the same arrangement
-      # UF_GH_EXTENSIONS and UF_SANDBOX_ENFORCEMENT have.
-      WINNOW_FILTER: "${WINNOW_FILTER:-}"
-      # Where the winnow checkout is, as this container sees it. Only consulted
-      # when the switch above is on, and there is no default here: blank lets
-      # the entrypoint choose, in this order — /workspace/winnow if that is a
-      # checkout, else the winnow this image vendors at /opt/winnow/src. An
-      # operator who cloned it beside their other projects sets nothing, and one
-      # tracking a different ref sets this and outranks both.
-      WINNOW_FILTER_PATH: "${WINNOW_FILTER_PATH:-}"
-      # Loopback port for the filter. Not 8787: the Discord relay binds that
-      # inside this same container, and the second process to want a port gets
-      # nothing rather than a degraded service.
-      WINNOW_FILTER_PORT: "${WINNOW_FILTER_PORT:-8789}"
       # The CLI's own sandbox around the commands an agent runs. Blank is off
       # and is the shipped state: nothing is written, nothing is confined, and
       # this install behaves exactly as it did before the switch existed. "1"
@@ -526,40 +502,16 @@ services:
       # exits 0 having done nothing, on every session start.
       - usagefoundry-pytools:/home/node/pytools
 
-      # winnow's intake filter ledger and its off switch, when WINNOW_FILTER is
-      # on. A named volume for the reason the three above are — the default
-      # location is the writable layer — but with a loss that is not a cache's:
-      # the ledger is the record of which bytes a transcript still holds and the
-      # API never received, so a discarded one is not a slower next boot, it is
-      # a correction that can never be made again. That is measured: a restart
-      # while it lived in the writable layer took 52 lines with it.
-      #
-      # Not inside /data, where it was until the filter stopped running as root.
-      # /data is root-owned 0700 to keep the agents out of the database and the
-      # guards' settings, and the filter now runs at UF_AGENT_UID — so it is a
-      # volume of its own, root-owned 0755, with `docker-entrypoint.sh` handing
-      # the one file the filter writes to that uid by name.
-      - usagefoundry-winnow:/var/lib/winnow
-
-      # The virtualenv that same filter runs in, when it is pointed at an
-      # operator's own checkout rather than the tree this image vendors.
-      # `docker-entrypoint.sh` names it as UV_PROJECT_ENVIRONMENT, which is
-      # load-bearing there for a reason that has nothing to do with this line:
-      # without it `uv sync` would delete and rebuild the `.venv` inside the
-      # bind-mounted checkout, which is the one the operator works in.
-      #
+      # TokenEconomizer's state, `TOKENECONOMIZER_HOME`: what its hooks learn.
       # A named volume for the reason the ones above are — the default location
-      # is the writable layer — and the cost of losing it is the ninety seconds
-      # the entrypoint's own comment budgets for building it, paid on every
-      # `up --build`, with the filter absent for that whole window and every
-      # request going unfiltered. The image ships nothing at this path, so the
-      # volume starts empty on a fresh install exactly as the writable layer did.
+      # is the writable layer, which `docker compose up --build` discards. The
+      # hooks run as UF_AGENT_UID and write here, and the image ships the
+      # directory owned by `node`, so a fresh volume inherits that ownership.
       #
-      # `down -v` destroys it, which is the correct treatment of a cache and is
-      # also the way out of a venv that has gone wrong: `uv sync --frozen` is
-      # declarative against the checkout's lock, so an ordinary boot reconciles
-      # one built for a different ref rather than needing to start over.
-      - usagefoundry-winnow-venv:/home/node/.winnow-venv
+      # The code is not here: it is root-owned under /opt/tokeneconomizer in the
+      # image, deliberately outside every volume, so a rebuild is the only thing
+      # that can change it.
+      - usagefoundry-tokeneconomizer:/home/node/.tokeneconomizer
 
       # Local-model runs' Claude Code home, `LOCAL_CLAUDE_CONFIG_DIR`: the
       # sessions a picked-up local run resumes. A named volume for the reason
@@ -896,8 +848,7 @@ volumes:
   usagefoundry-gocache:
   usagefoundry-gh:
   usagefoundry-pytools:
-  usagefoundry-winnow:
-  usagefoundry-winnow-venv:
+  usagefoundry-tokeneconomizer:
   usagefoundry-claude-local:
   usagefoundry-codex:
   usagefoundry-stacks:

@@ -45,11 +45,11 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - Playwright and one Chromium are in the image, and nothing configures them. (was line 41)
 - The Codex CLI is in the image, and this app spawns it as `CODEX_BIN`. (was line 43)
 
-## [Tools installed at boot or build: Go, gh extensions, winnow and Python tools](environment/boot-installed-tools.md)
+## [Tools installed at boot or build: Go, gh extensions, TokenEconomizer and Python tools](environment/boot-installed-tools.md)
 
 - The image no longer carries Go — it moved to `stacks/go/stack.json` on 2026-09-12, an `archive` step fetching the same `dl.google.com/go/` release against the same published digest, linked into the… (was line 32)
 - `UF_GH_EXTENSIONS` names the `gh` extensions an install wants, and `docker-entrypoint.sh` installs them at boot into `usagefoundry-gh`, the **third named volume** — mounted at… (was line 36)
-- `WINNOW_REF` and `WINNOW_REPO` are **build arguments, not environment variables**, and that is the whole difference between them and `UF_PY_TOOLS` beside them. (was line 37)
+- `TOKENECONOMIZER_REF` and `TOKENECONOMIZER_REPO` are **build arguments, not environment variables**, and its state is a named volume rather than image content.
 - `UF_PY_TOOLS` is that mechanism a second time, for Python, and the reason it exists is a *plugin* rather than an agent. (was line 39)
 
 ## [The Discord relay's variables](environment/discord-relay.md)

@@ -844,7 +844,7 @@ export const GIT_BIN = env("GIT_BIN", "/usr/bin/git");
  *
  * The image puts the stacks' `bin/` and the agent-owned `UF_PY_TOOLS` launchers
  * ahead of its own directories in `UF_AGENT_PATH` and nowhere else, so that
- * root — this server, the entrypoint before it, winnow's children after it —
+ * root — this server, the entrypoint before it, the children it spawns as root —
  * never looks a name up in a directory something other than root can write. The
  * agents need both, so every environment built for a dropped child sets `PATH`
  * to this, except the chat and block child's, which holds `UF_CHAT_GID` and

@@ -281,7 +281,7 @@ exported.__ufStackEnv ??= { value: null };
  * exports under `base`, and the agents' `PATH` over both.
  *
  * **Never this process's own.** The server is root, and so is every child it
- * spawns without dropping the uid — winnow's `pruneEnv` among them — so a
+ * spawns without dropping the uid, so a
  * stack's `PYTHONPATH` or `HTTPS_PROXY` merged into `process.env` was a stack
  * reaching root's interpreters and root's outbound calls, and `PATH` there would
  * be root looking names up where an agent writes. Only the builders for dropped
@@ -432,8 +432,7 @@ export interface StackFault {
  * **Per stack and never per step.** `ops_events` is capped at 500 rows and the
  * cap was sized for *"boot-frequency writes"* (`db.ts:136-137`); a row per step
  * per boot on an install with a few stacks would evict the rest of the table,
- * which is the trap `contextPruning.ts:2919-2922` records for a repeating
- * fault. One stack that will not install is one row however many steps it has.
+ * which is the trap a repeating fault sets for any capped table. One stack that will not install is one row however many steps it has.
  *
  * The reason is the applier's own text, clipped: a receipt can carry 4 KB of
  * somebody's stderr and this row is an index into the detail page, not a

@@ -37,7 +37,6 @@ import type Database from "better-sqlite3";
 let retention: typeof import("./retention");
 let dbMod: typeof import("./db");
 let settings: typeof import("./settings");
-let pruning: typeof import("./contextPruning");
 let orchestrator: typeof import("./orchestrator");
 let root: string;
 
@@ -71,7 +70,6 @@ before(async () => {
   retention = await import("./retention");
   dbMod = await import("./db");
   settings = await import("./settings");
-  pruning = await import("./contextPruning");
   orchestrator = await import("./orchestrator");
 });
 
@@ -212,77 +210,6 @@ describe("run_events retention", () => {
     assert.equal(result.at, NOW);
     assert.equal(result.events, 4, "the run seeded under a blank horizon");
     assert.deepEqual(retention.lastSweep(), result);
-
-    // The one store this sweep reaches that a test cannot point somewhere
-    // harmless: `LEDGER_PATH` is a literal in `intakeFilter.ts`, copied from
-    // `docker-entrypoint.sh`, and everything else here runs against a temporary
-    // `DATA_DIR` and `CLAUDE_HOME`. A uid that may not open that file, and a
-    // machine where it is not there, both answer `undefined` — so this
-    // assertion is what turns "the suite quietly compacted a live ledger" from
-    // something nobody would notice into a red test.
-    assert.equal(
-      result.ledgerBytes,
-      undefined,
-      "this test just cut bytes off a real winnow ledger",
-    );
-  });
-});
-
-/**
- * The one store on the read side of this sweep that is not run-scoped.
- *
- * `prune_decisions` is read by `/api/usage` over a span and sliced into the
- * dashboard's session and weekly windows, so it answers a weekly KPI exactly as
- * `prune_receipts` does. It rode the `run_events` horizon anyway, which made the
- * weekly boundary count a figure whose evidence a shorter horizon could delete
- * out from under it — and there is nothing on the card that would say so. The
- * failure is a *smaller number*, beside a savings figure over the full week,
- * reading as pruning having stopped happening.
- */
-describe("prune_decisions is not on the run-log horizon", () => {
-  before(() => {
-    // Accepted by the settings route, which clamps at `Math.max(1, …)`.
-    settings.saveSettings({ eventRetentionDays: 1 });
-    dbMod
-      .db()
-      .prepare(
-        `INSERT INTO runs (id, folder, prompt, status, budget, created_at)
-         VALUES ('pruned-run', '/workspace/repo', 'task', 'completed', '{}', ?)`,
-      )
-      .run(NOW - 90 * DAY);
-    const decision = dbMod
-      .db()
-      .prepare(
-        `INSERT INTO prune_decisions (ts, run_id, trigger, engine, outcome)
-         VALUES (?, 'pruned-run', 'boundary', 'legacy', 'cut')`,
-      );
-    // One a day across the window the card prints, so all but the newest are
-    // past a one-day horizon.
-    for (let day = 0; day < 7; day++) decision.run(NOW - day * DAY);
-  });
-
-  it("keeps a week of boundaries under a one-day horizon", () => {
-    retention.sweepRunEvents(NOW);
-
-    const weekly = pruning.pruneActivity({ from: NOW - 7 * DAY, to: NOW });
-    assert.equal(
-      weekly?.boundaries,
-      7,
-      "the weekly count now covers fewer days than the savings figure beside it",
-    );
-    assert.equal(weekly?.cut, 7);
-  });
-
-  it("does not report a count for a store it no longer sweeps", () => {
-    // Deep-equal for the reason the blank-horizon case above uses one: a store
-    // added back to this sweep has to be named here, and a `decisions` key
-    // reappearing is this table being put back on the run-log horizon.
-    assert.deepEqual(Object.keys(retention.sweepRunEvents(NOW)).sort(), [
-      "compositions",
-      "events",
-      "samples",
-      "telemetry",
-    ]);
   });
 });
 

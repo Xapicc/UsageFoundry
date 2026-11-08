@@ -318,7 +318,7 @@ ENV UV_TOOL_DIR=/home/node/pytools/tools \
 # image's are written by something other than root — this one by whatever a
 # stack's author shipped, the pytools one above by any agent, on a volume that
 # outlives `up --build` — and everything that runs as root here looks its tools
-# up by name: the entrypoint, `exec "$@"`'s `node`, winnow's `ps` and `lsof`, and
+# up by name: the entrypoint, `exec "$@"`'s `node`, `ps`, and
 # the `docker compose exec usagefoundry node scripts/backup-db.mjs` an operator
 # puts in cron. So the image's PATH stays the base image's, which is root's, and
 # the server hands this one to every child it drops to UF_AGENT_UID (`agentPath`
@@ -329,118 +329,58 @@ ENV UV_TOOL_DIR=/home/node/pytools/tools \
 # what they can resolve, with nothing saying so.
 ENV UF_AGENT_PATH="/var/lib/uf-stacks/bin:/home/node/pytools/bin:${PATH}"
 
-# winnow, bundled rather than installed at boot.
+# TokenEconomizer, bundled rather than installed at boot.
 #
-# The reason this is in the image and not behind `UF_PY_TOOLS` is that it is no
-# longer a third-party plugin an operator might want: with `--autocompact` gone
-# it is the *only* thing bounding a work cycle's context, so an install where it
-# failed to arrive is an install whose long cycles run to the model's whole
-# window. `UF_PY_TOOLS` installs best-effort at boot and says so in a log line
-# nobody reads; a `RUN` that fails fails the build, which is the right direction
-# for something the run loop now depends on.
+# The run loop passes `--plugin-dir /opt/tokeneconomizer/plugin` on every cycle,
+# so an install where it failed to arrive is an install whose cycles silently run
+# without it. `UF_PY_TOOLS` installs best-effort at boot and says so in a log
+# line nobody reads; a `RUN` that fails fails the build, which is the right
+# direction for something the run loop depends on.
 #
-# Pinned to a commit rather than a branch on the `CLAUDE_CLI_VERSION` argument:
-# the run loop parses this tool's `--json` receipt and prices it, so an
-# unpinned rebuild would move that contract with no announcement. Set
-# `WINNOW_REF=` (empty) to build without it — `contextPruning.ts` then reports
-# the feature unavailable rather than silently pruning nothing.
+# Pinned to a commit rather than a branch, as `CLAUDE_CLI_VERSION` is: its hooks
+# run inside every cycle, so an unpinned rebuild would move what they do with no
+# announcement. Set `TOKENECONOMIZER_REF=` (empty) to build without it —
+# `tokenEconomizer.ts` then reports the plugin unavailable rather than passing a
+# `--plugin-dir` that is not there.
 #
-# Its own virtualenv under /opt rather than a `uv tool install` into
-# `/home/node/pytools`, and that is the whole reason it survives: that path is a
-# named volume, and a volume takes its contents from the image exactly once, at
-# creation. An install written there during a build is masked by whatever the
-# existing volume already holds — which is precisely the "installed by hand,
-# lost on rebuild" failure this is meant to end. /opt is in the image layer, so
-# a rebuild is the only thing that can change it.
+# The whole repository is checked out at one root and not only `plugin/`:
+# `plugin/lib/tokeneconomizer` is a symlink to `../../tokeneconomizer`, which is
+# how the hooks find their package, and it dangles if the two are split. The
+# package is stdlib-only, so there is no virtualenv to build and nothing for uv
+# to install; the hooks run under the image's own `/usr/bin/python3`.
 #
-# Root-owned and 0755: every agent uid reads it, none writes it. A tool the run
-# loop shells out to on every cycle boundary, sitting in a directory a sibling
-# agent could rewrite, would be a way for one run to put its own code on every
-# other run's transcript.
-# Moved 2026-08-26 from 79dd165. That commit predates `winnow safe run`'s
-# ability to dispatch this repository's own commands at all: `run_under_mode`
-# handed argv to the inherited CLI, where `plan` and `fork` are not
-# subcommands, so the two commands the argv gate deliberately allows mid-cycle
-# were the two the dispatcher could not run. `contextPruning.ts`'s `planCut`
-# and `forkTranscript` both need them, and on 79dd165 both fail as unknown
-# commands — the observation table stays empty and the fork engine never fires,
-# with nothing saying why.
+# Under /opt rather than a volume, for the reason every other image-borne path
+# is: a named volume takes its contents from the image exactly once, so a copy
+# written there is masked by whatever an existing volume already holds. Its
+# *state* is the part that lives on a volume, `/home/node/.tokeneconomizer`.
 #
-# It also predates `fork --write` being classified by that gate: before
-# `WINNOW_SUBCOMMANDS`, `subcommand_of` matched only inherited names, so every
-# command this repository added fell through `refusal_for` as unclassified and
-# therefore allowed.
+# Root-owned and world-readable, never writable: the hooks execute inside every
+# agent's cycle, so code a sibling agent could rewrite would be a way for one
+# run to put its own code into every other run (see the note on `/app` below).
 #
-# Moved 2026-08-28 from fb49802, which worked through the recommendation list in
-# that repository's `proposals/IntakeFilter/`. Five of the thirteen items were
-# defects. Only one of them can reach this copy — `inspect`'s ledger reader
-# counted one removal once per surviving request and so overstated its
-# correction by 8.6x on that corpus and 27.2x on a real ledger, and the figure
-# it feeds clamps at zero, so a large enough overcount silently produced a
-# denominator of nothing. The rest are the intake filter's, which this image
-# does not run: the filter comes from the bind-mounted checkout at
-# WINNOW_FILTER_PATH, not from here.
-#
-# What `contextPruning.ts` reads is unchanged. `parsePlan` takes
-# `selection.tier`, `results.tool_calls`, `results.stripped`, `bytes.*` and
-# `arithmetic.*`; the new work only adds keys beside them, and the shares that
-# changed base do so only when `--filter-ledger` is passed, which this app does
-# not pass. Checked against a real transcript on both the direct and the
-# `safe run --` path before this pin moved.
-#
-# Moved 2026-09-04 from 0384486, for `winnow context` — the readout the run
-# page's composition stack is drawn from, which does not exist at the old pin
-# and fails there as an unknown command. That failure is `contextComposition`'s
-# null, so an image built on the old ref draws no stack and says nothing, which
-# is why the pin is part of the feature rather than a follow-up to it.
-#
-# Forty-three commits, so all four subcommands this app spawns were re-checked
-# against a real 8.7 MB transcript on the `safe run --` path rather than only
-# the new one: `treat -rx aggressive`'s dry run still prints the `Before` and
-# `Saved` lines `parseTreatEstimate` matches, in binary units and with the token
-# column still pinned at zero; `plan --tier CB --json` still carries all eight
-# fields `parsePlan` reads; `fork --tier CB --json` still carries `written`,
-# `new_session_id`, `out`, `cold_age`, `refusals` and `plan`. `context` is
-# beside `inspect` in that tree — no write path at all — so orchestrator-safe
-# mode allows it while a session is live, which is the whole reason it can be
-# asked on the guard tick.
-#
-# Moved 2026-09-11 from 0421da5, for the intake filter's relay. It read the
-# upstream response with `read(8192)`, which on a chunked body keeps reading
-# until 8 KB have arrived, so a sparse stream reached the agent in 8 KB lumps
-# or not at all — and Claude Code 2.1.260 aborts a response after 300 s with
-# no event. A long generation behind the filter therefore died at 300 s on
-# every retry: run b511c547 lost one turn that way twelve times across two
-# processes. The filter runs from this copy whenever no operator checkout is
-# mounted (the entrypoint's fallback postdates the 2026-08-28 note above), so
-# the pin is how a stock install gets the fix.
-#
-# Nothing `contextPruning.ts` parses moved: beside the relay, the only src/
-# change in the six commits is one number in `context`'s help text.
-ARG WINNOW_REPO=https://github.com/Xapicc/winnow.git
-ARG WINNOW_REF=4b1b7b1fe9fb813afe1fe456e1476e104925ada2
+# The import check proves the symlink resolves and the hook module loads under
+# this image's interpreter. It must not run the `te` CLI: that creates its state
+# directory, and a build-time one would be root's.
+ARG TOKENECONOMIZER_REPO=https://github.com/microsoft/TokenEconomizer.git
+ARG TOKENECONOMIZER_REF=cb42207e3e0937f191bf1ca4897a54b07a23a92c
 RUN set -eux; \
-    if [ -z "${WINNOW_REF}" ]; then \
-      echo "WINNOW_REF empty — building without winnow; context pruning will report unavailable"; \
+    if [ -z "${TOKENECONOMIZER_REF}" ]; then \
+      echo "TOKENECONOMIZER_REF empty — building without TokenEconomizer; the app will report it unavailable"; \
     else \
-      git init -q /opt/winnow/src; \
-      git -C /opt/winnow/src remote add origin "${WINNOW_REPO}"; \
-      if ! GIT_TERMINAL_PROMPT=0 git -C /opt/winnow/src fetch -q --depth 1 origin "${WINNOW_REF}"; then \
+      git init -q /opt/tokeneconomizer; \
+      git -C /opt/tokeneconomizer remote add origin "${TOKENECONOMIZER_REPO}"; \
+      if ! GIT_TERMINAL_PROMPT=0 git -C /opt/tokeneconomizer fetch -q --depth 1 origin "${TOKENECONOMIZER_REF}"; then \
         echo "" >&2; \
-        echo "Could not fetch ${WINNOW_REF} from ${WINNOW_REPO}." >&2; \
+        echo "Could not fetch ${TOKENECONOMIZER_REF} from ${TOKENECONOMIZER_REPO}." >&2; \
         echo "This build has no credentials, so the repository must be public." >&2; \
-        echo "To build without winnow, set WINNOW_REF to an empty value:" >&2; \
-        echo "    WINNOW_REF= docker compose up --build" >&2; \
-        echo "Context pruning then reports itself unavailable, and note that it" >&2; \
-        echo "is the only thing bounding a work cycle's context." >&2; \
+        echo "To build without TokenEconomizer, set TOKENECONOMIZER_REF to an empty value:" >&2; \
+        echo "    TOKENECONOMIZER_REF= docker compose up --build" >&2; \
         exit 1; \
       fi; \
-      git -C /opt/winnow/src checkout --detach FETCH_HEAD; \
-      rm -rf /opt/winnow/src/.git; \
-      uv venv --python 3.11 /opt/winnow/venv; \
-      VIRTUAL_ENV=/opt/winnow/venv uv pip install --python /opt/winnow/venv/bin/python /opt/winnow/src; \
-      chmod -R a+rX /opt/winnow; \
-      /opt/winnow/venv/bin/python -m winnow safe env >/dev/null; \
+      git -C /opt/tokeneconomizer checkout --detach FETCH_HEAD; \
+      rm -rf /opt/tokeneconomizer/.git; \
+      chmod -R a+rX /opt/tokeneconomizer; \
+      PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -c "import sys; sys.path.insert(0, '/opt/tokeneconomizer/plugin/lib'); import tokeneconomizer.plugin.hook"; \
     fi
 
 # The agent runs inside this container, so Claude Code has to be in the image.
@@ -450,7 +390,7 @@ RUN set -eux; \
 # from a specification. An unpinned rebuild would move that contract silently:
 # an unparsed line degrades to a log entry and a missing `result` event
 # understates spend, so the failure would not announce itself.
-ARG CLAUDE_CLI_VERSION=2.1.310
+ARG CLAUDE_CLI_VERSION=2.1.319
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CLI_VERSION}" && npm cache clean --force
 
 # The third dependency of that same sandbox, and the only one that is not apt.
@@ -711,13 +651,10 @@ COPY scripts/apply-stacks.mjs ./scripts/
 # on an install that never set UF_AGENT_UID is root, leaving the agents unable
 # to upgrade or remove what they run.
 #
-# `/var/lib/winnow` is the fifth, and the only one that is neither /data's
-# arrangement nor the children's: the intake filter runs as UF_AGENT_UID and
-# appends its ledger there, so the directory is root's while one file inside it
-# is handed to that uid by name. It is created here, outside every path the
-# `chown -R` below covers, so a fresh volume takes root's 0755 rather than the
-# agents' ownership — `docker-entrypoint.sh` re-asserts both, because a volume
-# an older release created keeps what it was made with.
+# `/home/node/.tokeneconomizer` is the fifth, on the same terms: TokenEconomizer's
+# hooks run as the agent uid inside every cycle and write what they learn there,
+# so it ships owned by `node` and a fresh volume inherits that. The code itself
+# is root's, under /opt, and is not made here.
 #
 # `/home/node/.claude-local` is the children's once more, as gh's and pytools'
 # are: local-model work cycles run Claude Code with it as their config
@@ -758,7 +695,7 @@ COPY scripts/apply-stacks.mjs ./scripts/
 RUN mkdir -p /data /workspace /workspace2 /workspace3 /workspace4 /home/node/.claude \
       /home/node/go/build-cache /home/node/.local/share/gh/extensions \
       /home/node/pytools/tools /home/node/pytools/bin /home/node/pytools/python \
-      /var/lib/winnow /home/node/.claude-local /home/node/.codex \
+      /home/node/.tokeneconomizer /home/node/.claude-local /home/node/.codex \
  && chown -R node:node /workspace /workspace2 /workspace3 /workspace4 /home/node \
  && chown root:node /home/node/.codex \
  && chmod 1770 /home/node/.codex \
