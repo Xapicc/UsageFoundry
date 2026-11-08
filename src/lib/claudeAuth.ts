@@ -4,8 +4,10 @@ import {
   type SpawnOptions,
 } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import type { ConfigProblemDTO } from "./apiTypes";
 import { CLAUDE_BIN, spawnCommand } from "./config";
 import { cycleEnvPins } from "./cycleInvocation";
+import { loginExpiry, loginExpiryMessage } from "./loginExpiry";
 import { childCredentials } from "./privsep";
 import { agentEnvironment } from "./stacks";
 
@@ -59,6 +61,16 @@ export interface ClaudeAuthStatus {
    * subscription would name a credential no run uses.
    */
   apiKeySource: string | null;
+  /**
+   * When the stored claude.ai sign-in ends, epoch ms, from `loginExpiresAt`.
+   *
+   * Null is unknown and never an error: the CLI reports the key as null, and
+   * measured on 2.1.319 it does so for an API key, an `apiKeyHelper`,
+   * `CLAUDE_CODE_OAUTH_TOKEN` and a signed-out container, even with a stored
+   * login behind them. Only the credential a cycle would use is dated, which is
+   * the one whose lapse stops runs.
+   */
+  loginExpiresAt: number | null;
 }
 
 export type ClaudeAuthResult<T> =
@@ -108,6 +120,7 @@ interface PendingLogin {
 const store = globalThis as typeof globalThis & {
   __ufClaudeLogin?: PendingLogin | null;
   __ufClaudeAuthRead?: Promise<ClaudeAuthResult<ClaudeAuthStatus>> | null;
+  __ufClaudeLoginEndsAt?: { endsAt: number | null; triedAt: number } | null;
 };
 
 /**
@@ -209,8 +222,22 @@ export function parseAuthStatus(raw: string): ClaudeAuthResult<ClaudeAuthStatus>
       organization: str(o.orgName),
       plan: str(o.subscriptionType),
       apiKeySource: str(o.apiKeySource),
+      loginExpiresAt: instant(o.loginExpiresAt),
     },
   };
+}
+
+/**
+ * An ISO timestamp as epoch ms, or null for anything else.
+ *
+ * Deliberately not a parse failure when it is malformed: the date is an
+ * addition to a status the panel needs whole, and a CLI that changes this one
+ * field's shape must not turn "signed in" into "unreadable".
+ */
+function instant(v: unknown): number | null {
+  if (typeof v !== "string" || v === "") return null;
+  const ms = Date.parse(v);
+  return Number.isNaN(ms) ? null : ms;
 }
 
 function str(v: unknown): string | null {
@@ -474,7 +501,52 @@ async function statusOnce(): Promise<ClaudeAuthResult<ClaudeAuthStatus>> {
       error: `Could not run \`${CLAUDE_BIN}\`: ${res.spawnError}`,
     };
   }
-  return parseAuthStatus(res.output);
+  const parsed = parseAuthStatus(res.output);
+  // Every status read feeds the dashboard's copy of the date, so a read the
+  // Settings panel or a sign-in just made is not followed by a second spawn.
+  if (parsed.ok) {
+    store.__ufClaudeLoginEndsAt = {
+      endsAt: parsed.value.loginExpiresAt,
+      triedAt: Date.now(),
+    };
+  }
+  return parsed;
+}
+
+/** A sign-in's end moves in days, so a day-scale answer is as good as a fresh one. */
+const LOGIN_ENDS_AT_TTL_MS = 10 * 60_000;
+
+/**
+ * The stored sign-in's end as last read, for a caller that must not wait for a
+ * spawn — the dashboard's poll, which is the page's heartbeat.
+ *
+ * Stale-while-revalidate: it answers from what is held and starts a read when
+ * that is older than the TTL or absent, so the first poll after a boot shows
+ * nothing and a later one shows the date. `triedAt` is stamped when the read
+ * *starts*, so a CLI that cannot answer is asked once per TTL rather than once
+ * per poll. The floating read cannot reject: `runAuth` never throws and a
+ * failure comes back as a value.
+ */
+function heldLoginEndsAt(now: number): number | null {
+  const held = store.__ufClaudeLoginEndsAt ?? null;
+  if (held === null || now - held.triedAt >= LOGIN_ENDS_AT_TTL_MS) {
+    store.__ufClaudeLoginEndsAt = { endsAt: held?.endsAt ?? null, triedAt: now };
+    void readAuthStatus();
+  }
+  return held?.endsAt ?? null;
+}
+
+/**
+ * The dashboard notice for a sign-in that is ending or has ended, in the shape
+ * the dashboard already renders `configProblems` in — the one install-wide
+ * banner — and empty while the date is unknown or comfortably far.
+ *
+ * `variable` is the Settings row's own label, the thing to go and look at.
+ */
+export function loginExpiryProblems(now: number): ConfigProblemDTO[] {
+  const expiry = loginExpiry(heldLoginEndsAt(now), now);
+  const message = expiry && loginExpiryMessage(expiry);
+  return message ? [{ severity: "warn", variable: "Claude account", message }] : [];
 }
 
 /** Is a login waiting for its code right now? */

@@ -203,12 +203,49 @@
   variant`, and both of its values restrict. Caveat: fake tokens, a stub
   issuer, one run per cell.
 
+- **`claude auth status --json` dates only a stored claude.ai login, and the
+  app reads, shows and warns on that date, on 2.1.319, 2026-11-08.** `claude
+  --version` 2.1.319 under `env -i`, a scratch `CLAUDE_CONFIG_DIR` and `HOME`
+  under `$TMPDIR`, `HTTPS_PROXY` at a closed loopback port, made-up credentials
+  throughout. `loginExpiresAt` is in every answer, signed out included, as an
+  ISO-8601 UTC string with milliseconds or `null`. A stored
+  `claudeAiOauth` with a `refreshToken` and `refreshTokenExpiresAt` at +30 d,
+  +5 d and -2 d reported that instant each time, so a lapsed login is dated and
+  not nulled; with no `refreshTokenExpiresAt`, with no `refreshToken`, or at
+  +4000 d (the binary rejects one more than ten years out) it was `null`. Bare,
+  a fake `ANTHROPIC_API_KEY`, a user-file `apiKeyHelper` and a fake
+  `CLAUDE_CODE_OAUTH_TOKEN` each answered `null`, alone and with a stored login
+  at +5 d behind them (`authMethod` `api_key`, `api_key_helper`, `oauth_token`),
+  as did a signed-out container. The app's own read (`readAuthStatus()` from the
+  compiled `claudeAuth.js`, which adds the pins and `apiKeyHelper: ""`) answered
+  `loginExpiresAt` for the stored login at +30 d, +5 d and -2 d, `null` under
+  the key, the OAuth variable and no credential, and, because the pins drop a
+  user-file helper, the stored login's date under that helper too. With
+  `CLAUDE_BIN` at a stub answering `status`, the standalone build's
+  `/api/claude-auth` carried it, `/api/usage` carried one `Claude account`
+  entry in `meta.configProblems` at +5 d, and `/settings` at 1280px and `/` at
+  390px showed the badge and the notice. Caveat: one run per case and fake
+  credentials, so what a real sign-in stores in `refreshTokenExpiresAt`, and how
+  long before it requests actually fail, is not measured; the "up to 3 days
+  sooner" window is read from the shipped binary's code (`earliest` is the date
+  less three days), not observed; the `claude -p` field `credential_expires_at`
+  and its stderr warning were not run; the build was not under `docker compose`
+  and ran with auth off.
+
 ## Not yet verified by hand
 
 - **That the bearer budget survives a dev-server reload of `middleware.ts`.**
   It is on `globalThis` for that reason, but `next dev` was not run here.
   Settle with `npm run dev` and `UF_AUTH_TOKEN` set: send 100 wrong bearers to
   `/api/runs`, touch `src/middleware.ts`, send the right bearer, and expect 429.
+
+- **What a real claude.ai sign-in stores in `refreshTokenExpiresAt`, and how
+  long before `loginExpiresAt` requests really stop authenticating.** Every
+  date above came from a credential file written by hand. Settle in a signed-in
+  container: read `claudeAiOauth.refreshTokenExpiresAt` from
+  `$CLAUDE_CONFIG_DIR/.credentials.json`, compare it with `claude auth status
+  --json`'s `loginExpiresAt`, and note both against the first
+  `Not logged in` after that date.
 
 - **A real sign-in, sign-out and status read through the Settings page with
   the flags on.** Every measurement above stopped at a refused CONNECT or a
