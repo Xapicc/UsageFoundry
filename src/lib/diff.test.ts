@@ -18,6 +18,7 @@ import {
   truncatePatch,
   type RunDiff,
 } from "./diff";
+import { patchRows } from "./patch";
 
 /**
  * Covers the parsing, the budgeting and where the diff is measured from.
@@ -459,6 +460,38 @@ describe("truncatePatch", () => {
   it("leaves a patch inside the limit exactly as it was", () => {
     const cut = truncatePatch("a\nb", 2);
     assert.deepEqual(cut, { text: "a\nb", truncated: false });
+  });
+
+  it("does not count git's trailing newline as a line", () => {
+    // `splitPatches` leaves it on the last file's chunk only, so a patch of
+    // exactly the limit was reported as one line over: "Only the first part of
+    // this file's change is shown" over a change that was shown whole.
+    const whole = "a\nb\n";
+    assert.deepEqual(truncatePatch(whole, 2), { text: whole, truncated: false });
+
+    const cut = truncatePatch("a\nb\nc\nd\n", 2);
+    assert.equal(cut.truncated, true);
+    assert.match(cut.text, /2 more lines not shown/);
+  });
+
+  it("writes a marker the gutter does not number", () => {
+    // The marker rides inside the patch text, and a line in a hunk that starts
+    // with none of `+`, `-` or `\` is a context line to `patchRows` — which gave
+    // it the next line number, as if the file had a line saying so.
+    const hunk = ["diff --git a/x b/x", "--- a/x", "+++ b/x", "@@ -1,9 +1,9 @@"];
+    const context = Array.from({ length: 9 }, (_, i) => ` line ${i + 1}`);
+    const cut = truncatePatch([...hunk, ...context].join("\n"), 8);
+    assert.equal(cut.truncated, true);
+
+    const marker = patchRows(cut.text).at(-1);
+    assert.deepEqual(marker, {
+      kind: "note",
+      oldLine: null,
+      newLine: null,
+      text: "… 5 more lines not shown",
+    });
+    // And the lines it follows keep the numbers git gave them.
+    assert.equal(patchRows(cut.text).at(-2)?.newLine, 4);
   });
 });
 

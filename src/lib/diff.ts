@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { git, headBranchOf } from "./git";
+import { patchTruncationMarker } from "./patch";
 import {
   describeFolder,
   getRun,
@@ -343,12 +344,13 @@ export function truncatePatch(
   maxLines = MAX_FILE_PATCH_LINES,
 ): { text: string; truncated: boolean } {
   const lines = patch.split("\n");
-  if (lines.length <= maxLines) return { text: patch, truncated: false };
-  const dropped = lines.length - maxLines;
+  // git ends its output with a newline and `splitPatches` leaves it on the last
+  // file's chunk only, so that file's split has an empty tail that is not a
+  // line: counted, a patch of exactly `maxLines` read as one over.
+  const lineCount = lines[lines.length - 1] === "" ? lines.length - 1 : lines.length;
+  if (lineCount <= maxLines) return { text: patch, truncated: false };
   return {
-    text:
-      lines.slice(0, maxLines).join("\n") +
-      `\n… ${dropped} more line${dropped === 1 ? "" : "s"} not shown`,
+    text: `${lines.slice(0, maxLines).join("\n")}\n${patchTruncationMarker(lineCount - maxLines)}`,
     truncated: true,
   };
 }

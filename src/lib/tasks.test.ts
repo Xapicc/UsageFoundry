@@ -897,6 +897,39 @@ test("the board orders by priority before recency, whatever the write order", ()
   assert.equal(listTasks({ mountId: MOUNT, folder: path.join(ws, "sub") }).total, 0);
 });
 
+test("a subtree listing never counts a folder that differs from it only in case", () => {
+  // SQLite's `LIKE` folds ASCII case and `=` does not, so the subtree half
+  // answered for `.../CaseTree` with `.../casetree/sub` as well: a different
+  // project on a case-sensitive mount, whose open tasks a loop counting this
+  // one would wait on forever. Names no other case writes, for the shared
+  // database's sake.
+  const upper = searchFolder("CaseTree");
+  const lower = searchFolder("casetree");
+  const upperSub = path.join(upper, "sub");
+  const lowerSub = path.join(lower, "sub");
+  fs.mkdirSync(upperSub);
+  fs.mkdirSync(lowerSub);
+  const own = file({ mountId: MOUNT, folder: upper, title: "case own" });
+  const ownSub = file({ mountId: MOUNT, folder: upperSub, title: "case own sub" });
+  file({ mountId: MOUNT, folder: lower, title: "case other" });
+  file({ mountId: MOUNT, folder: lowerSub, title: "case other sub" });
+
+  const page = listTasks({ mountId: MOUNT, folder: upper, includeSubfolders: true });
+  assert.deepEqual(page.tasks.map((t: Task) => t.id).sort(), [own.id, ownSub.id].sort());
+  assert.equal(page.total, 2, "the total counts what the page lists");
+});
+
+test("a subtree listing takes a folder's own % and _ as ordinary characters", () => {
+  // The property the case above must not lose when the prefix stops being a
+  // `LIKE` pattern: `a_b` still must not count `axb`'s tasks.
+  const under = searchFolder("sub_tree");
+  const lookalike = searchFolder("subXtree");
+  const own = file({ mountId: MOUNT, folder: under, title: "underscore own" });
+  file({ mountId: MOUNT, folder: lookalike, title: "underscore lookalike" });
+  const page = listTasks({ mountId: MOUNT, folder: under, includeSubfolders: true });
+  assert.deepEqual(page.tasks.map((t: Task) => t.id), [own.id]);
+});
+
 test("the listing clips the brief and the detail DTO does not", () => {
   const long = file({ body: "x".repeat(500) });
   const whole = taskDTO(getTask(long.id)!);

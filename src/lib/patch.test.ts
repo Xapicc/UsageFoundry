@@ -136,6 +136,28 @@ test("the trailing newline is not a context line", () => {
   assert.equal(rows[1].oldLine, 1);
 });
 
+test("a truncation marker is a note, and a context line that resembles it is not", () => {
+  // `truncatePatch` appends the marker to the text it keeps, so it is the one
+  // line in a hunk with no prefix git wrote. Numbered as context it named a
+  // line the file does not have, in the column that says where to open it.
+  const marker = "… 3 more lines not shown";
+  assert.deepEqual(
+    patchRows(["@@ -1,1 +1,1 @@", " one", marker].join("\n")).map((r) => [r.kind, r.oldLine, r.newLine]),
+    [
+      ["hunk", null, null],
+      ["context", 1, 1],
+      ["note", null, null],
+    ],
+  );
+
+  // git's own context line carries its leading space, so a line of the file
+  // that reads like the marker is still a line of the file.
+  assert.deepEqual(
+    patchRows(["@@ -1,2 +1,2 @@", ` ${marker}`, " two"].join("\n")).map((r) => r.kind),
+    ["hunk", "context", "context"],
+  );
+});
+
 test("the gutter is sized by the widest number, and is nothing without one", () => {
   assert.equal(gutterDigits(patchRows("@@ -998,2 +1200,2 @@\n a\n b\n")), 4);
   assert.equal(gutterDigits(patchRows("diff --git a/x b/x\nBinary files differ\n")), 0);

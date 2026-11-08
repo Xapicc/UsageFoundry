@@ -792,8 +792,10 @@ export function findPastProposals(o: {
     // A folder matches itself and what is under it, because "work on acme/web"
     // proposed against `acme/web/api` is still work on that repository.
     if (folder) {
-      where.push("(p.folder = ? OR p.folder LIKE ? ESCAPE '\\')");
-      args.push(folder, `${escape(folder)}/%`);
+      // `substr`, not `LIKE`, which folds ASCII case: `Acme/Web`'s subtree
+      // must not take in `acme/web/api`.
+      where.push("(p.folder = ? OR substr(p.folder, 1, length(?)) = ?)");
+      args.push(folder, `${folder}/`, `${folder}/`);
     }
   }
   const q = (o.q ?? "").trim();
