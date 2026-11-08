@@ -85,7 +85,8 @@ const STORE_CEILINGS = WORKSPACE_MOUNTS.map((m) => path.join(m.path, WORKTREE_ST
  * into that checkout that starts while one of those holds the lock is refused
  * by git, and the land with it. With it off a `status` reads the same and
  * writes nothing; the cost is that a stat-dirty file is re-hashed on every read
- * until something else refreshes the index. It covers `status` and not
+ * until something else refreshes the index, which `core.checkStat=minimal` in
+ * `gitArgs` keeps from being every file after the Docker VM reboots. It covers `status` and not
  * `git diff` against the working tree, which on 2.39 still writes a refreshed
  * index — measured — so it holds only while every diff this app runs is between
  * commits, as each one is but `conflictedFiles`, which runs inside the land it
@@ -167,6 +168,20 @@ export function gitEnv(): NodeJS.ProcessEnv {
  * helper with it (measured for the chat's block, `chat-child-config-files.md`),
  * so those two belong to Deliver's own fetch/push env, not to every git child.
  *
+ * `core.checkStat=minimal` is a cost pin, not a security one, and it is owed to
+ * `GIT_OPTIONAL_LOCKS=0` (see `gitEnv`): a `status` this app runs never writes
+ * back what it re-hashed. OrbStack's virtiofs gives a bind-mounted checkout new
+ * inode numbers each time its VM boots (a container restart keeps them), so
+ * afterwards every entry of every slot's index was stat-dirty and stayed that
+ * way until an agent next worked there. Every
+ * Branches page load then re-hashed every tracked file of every idle slot:
+ * about 7 GB through the page cache and 17–22 s a request, for 11 slots of
+ * ~620 MiB (measured 2026-11-08). `minimal` leaves the inode, owner and
+ * sub-second times out of the comparison and keeps whole-second mtime, ctime
+ * and size, so an edit since the index was written still reads as one. On one
+ * of those slots it took the stat-dirty entries from 2,499 to 0 and the status
+ * from 1,000 ms to 26 ms. The agent's own git does not carry it.
+ *
  * `extraConfig` is where `git()`/`gitSync()` splice the submodule pins, the
  * driver blanks and the hook switches for every probed call (see
  * `prepareContentCall` and `needsProbe`);
@@ -188,6 +203,8 @@ export const gitArgs = (args: string[], extraConfig: string[] = []) => [
   "gpg.x509.program=gpgsm",
   "-c",
   "gpg.ssh.program=ssh-keygen",
+  "-c",
+  "core.checkStat=minimal",
   ...extraConfig,
   ...args,
 ];

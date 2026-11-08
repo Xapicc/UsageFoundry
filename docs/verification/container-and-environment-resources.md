@@ -133,6 +133,22 @@
   - This install now sets `UF_NODE_HEAP_MB=1024`, `UF_MEM_LIMIT=6g` and
     `maxConcurrentRuns` 2; the shipped defaults are unchanged.
 
+- **A Branches page load hashed every idle checkout slot, 2026-11-08.** On this
+  install's container (git 2.39.5, OrbStack), one `GET /api/branches` took
+  17–22 s. With the page cache cold it took the cgroup from 2.0 GB to 8.0 GB: `file`
+  went from 1.6 to 7.6 GB, `anon` from 449 to 491 MiB. The time was `git status
+  --porcelain -z` in the slots, run one after another by `checkoutStores`, about 2 s
+  for each of the 11 Dockrac slots of ~620 MiB. Every index entry of every slot was
+  stat-dirty. The index recorded inode 15340318 where the file read 80444, with
+  mtime, ctime and size equal. The index was written at 14:25 UTC, before the VM
+  booted at about 15:25. A later container restart left the file at inode 80444, so
+  the VM boot renumbers and a container restart does not. The host's own inode is a
+  third number, 57166783. Because of `GIT_OPTIONAL_LOCKS=0` nothing wrote the
+  refreshed index back. With `-c core.checkStat=minimal` one slot's stat-dirty
+  entries went from 2,499 to 0 and its status from 1,000 ms to 26 ms, and `gitArgs`
+  now carries it. On the rebuilt image the same request took 1.5 s, then 1.0 s; the
+  cgroup peaked at 421 MB and `file` went from 27 to 66 MB.
+
 ## Not yet verified by hand
 
 - **Whether a long-lived server's glibc arenas respond to `MALLOC_*`.** The reading the

@@ -43,6 +43,8 @@ describe("gitArgs", () => {
       "gpg.x509.program=gpgsm",
       "-c",
       "gpg.ssh.program=ssh-keygen",
+      "-c",
+      "core.checkStat=minimal",
       "worktree",
       "add",
       "/tmp/x",
@@ -67,6 +69,8 @@ describe("gitArgs", () => {
       "gpg.x509.program=gpgsm",
       "-c",
       "gpg.ssh.program=ssh-keygen",
+      "-c",
+      "core.checkStat=minimal",
     ]);
   });
 
@@ -88,6 +92,8 @@ describe("gitArgs", () => {
       "gpg.x509.program=gpgsm",
       "-c",
       "gpg.ssh.program=ssh-keygen",
+      "-c",
+      "core.checkStat=minimal",
       "-c",
       "filter.x.clean=",
       "add",
@@ -192,6 +198,56 @@ describe("git status through git()", () => {
       // enough for the assertion above to have measured something.
       plain("status", "--porcelain");
       assert.equal(fs.readFileSync(index).equals(before), false, "the fixture was not stat-dirty");
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("does not count a file whose inode alone changed as modified", async () => {
+    // What a reboot of OrbStack's VM does to every bind-mounted checkout: new
+    // inode numbers, same times and sizes. Because this app's `status` never
+    // writes back what it re-hashes, each of those entries was re-hashed on
+    // every read, and the Branches page hashed ~7 GB of idle slots per load.
+    const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-git-checkstat-")));
+    const plainEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      GIT_AUTHOR_NAME: "t",
+      GIT_AUTHOR_EMAIL: "t@example.com",
+      GIT_COMMITTER_NAME: "t",
+      GIT_COMMITTER_EMAIL: "t@example.com",
+    };
+    const plain = (...args: string[]) =>
+      execFileSync("git", args, { cwd: repo, encoding: "utf8", env: plainEnv });
+    const file = path.join(repo, "f.txt");
+    // Long before the index is written, so the entry is not racily clean and git
+    // decides by stat alone rather than by reading the content.
+    const past = new Date("2001-01-01T00:00:00Z");
+    try {
+      plain("init", "-q", "-b", "main");
+      // Replacing the file below moves its ctime, which virtiofs did not; this
+      // leaves the inode as the only field that differs, as it was there.
+      plain("config", "core.trustctime", "false");
+      fs.writeFileSync(file, "same\n");
+      fs.utimesSync(file, past, past);
+      plain("add", "f.txt");
+      plain("commit", "-q", "-m", "base");
+
+      const inodeBefore = fs.statSync(file).ino;
+      fs.copyFileSync(file, `${file}.tmp`);
+      fs.renameSync(`${file}.tmp`, file);
+      fs.utimesSync(file, past, past);
+      assert.notEqual(fs.statSync(file).ino, inodeBefore, "the fixture kept its inode");
+
+      // `diff-files` compares stat data and never reads content, so it is the
+      // call that shows what `status` would have had to re-hash.
+      const res = await git(repo, ["diff-files", "--name-only"]);
+
+      assert.equal(res.ok, true, res.stderr);
+      assert.equal(res.stdout, "");
+
+      // The control: git's default comparison does see the entry as changed, so
+      // the fixture measured something.
+      assert.equal(plain("diff-files", "--name-only").trim(), "f.txt");
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }
