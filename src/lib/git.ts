@@ -731,6 +731,51 @@ function refsBehindHead(head: string, gitDir: string, commonDir: string): string
 }
 
 /**
+ * The files a reftable repository keeps its refs in: each stack's `tables.list`
+ * and the tables it names. HEAD, and every branch an `onbranch:` condition
+ * follows from it, is in one of these stacks and not in the files
+ * `refsBehindHead` reads, where `$GIT_DIR/HEAD` is the stub `ref:
+ * refs/heads/.invalid`, so `symbolic-ref HEAD refs/heads/uf/x` moved no file
+ * the fingerprint watched and ran the driver (board task 4c645539, measured on
+ * git 2.56.0).
+ *
+ * Every ref update rewrites `tables.list`, a commit's among them, so unlike
+ * `symrefFingerprint` this cannot tell a branch that moved from a branch that
+ * was renamed onto another: a call that overlaps any ref update in a reftable
+ * repository is refused. Chosen over refusing every call in one because the
+ * refusal is rare and says what happened, and over asking git for HEAD
+ * (`symbolic-ref HEAD` follows the chain as the condition does) because a
+ * value read is the same after a flip and a flip back, and a flip back
+ * straddling the probe is what a writer in a loop does. The tables are watched
+ * too since a table edited in place leaves `tables.list` alone.
+ *
+ * The stacks of the other worktrees are read only where the common stack
+ * exists, so a repository on the files backend costs two failed stats and no
+ * directory read; a stack that appears later is a change, since a file that is
+ * not there is a state too. Absent from a files repository, all of these read
+ * the same at both ends.
+ */
+function reftableFiles(gitDir: string, commonDir: string): string[] {
+  const stacks = new Set([path.join(commonDir, "reftable"), path.join(gitDir, "reftable")]);
+  if (fs.existsSync(path.join(commonDir, "reftable", "tables.list"))) {
+    try {
+      for (const id of fs.readdirSync(path.join(commonDir, "worktrees"))) {
+        stacks.add(path.join(commonDir, "worktrees", id, "reftable"));
+      }
+    } catch {}
+  }
+  return [...stacks].flatMap((stack) => {
+    let tables: string[] = [];
+    try {
+      tables = fs.readFileSync(path.join(stack, "tables.list"), "utf8").split("\n").filter((name) => name !== "");
+    } catch {}
+    return [path.join(stack, "tables.list"), ...tables.map((name) => path.join(stack, name))];
+  });
+}
+
+const isReftableFile = (file: string) => path.basename(path.dirname(file)) === "reftable";
+
+/**
  * What a `.git` entry or a git directory is, as a string that changes when it
  * is pointed elsewhere, since which git directory git finds is what a
  * `gitdir:` condition reads: a worktree's `.git` file rewritten to name a
@@ -923,6 +968,7 @@ function* prepareContentCall(
     const top = path.resolve(dir, cdup);
     for (const file of [config, worktreeConfig, head]) watch(file);
     for (const ref of refsBehindHead(head, gitDir, commonDir)) watch(ref, symrefFingerprint);
+    for (const file of reftableFiles(gitDir, commonDir)) watch(file);
     for (const entry of [...discoveryEntries(dir, top), gitDir]) watch(entry, locationFingerprint);
 
     const probe = yield { dir, args: FILTER_PROBE };
@@ -959,7 +1005,8 @@ function* prepareContentCall(
         ok: false,
         reason:
           `${file} changed while the filter probe read it, so git ${args[0]} was not run in ${cwd}: ` +
-          "a driver or hook the change brought into its configuration would have run unblanked.",
+          "a driver or hook the change brought into its configuration would have run unblanked." +
+          (isReftableFile(file) ? " (A ref update in a reftable repository changes this file, so the call may be repeated.)" : ""),
       };
     }
   }

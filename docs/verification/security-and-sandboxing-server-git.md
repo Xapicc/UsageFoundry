@@ -199,6 +199,52 @@
   Land's own `mergeRefusal` reading that exit 1 as a conflict is read from the
   code, not run.
 
+- **In a reftable repository `$GIT_DIR/HEAD` is a stub, a flip of an
+  `onbranch:` include through `git()` ran the driver, and `tables.list` is what
+  moves, 2026-11-08.** Board task `4c645539`, branch at `23c38d50`, git 2.56.0
+  (a sibling run's `NO_RUST=1` build of the `v2.56.0` tag, as `GIT_BIN` and
+  first on `PATH`). `git init --ref-format=reftable` wrote `HEAD` as `ref:
+  refs/heads/.invalid`, `config` with `extensions.refStorage = reftable`, and
+  `reftable/` with `tables.list` and one `.ref` table; `branch`, `commit` and
+  `symbolic-ref` each rewrote `tables.list` (its ctime moved) and left `HEAD`
+  as it was. A linked worktree has a stack of its own at
+  `worktrees/<id>/reftable/`: `symbolic-ref HEAD refs/heads/uf/x` there moved
+  that `tables.list`'s ctime and not the common one's, a commit moved both.
+  `symbolic-ref HEAD` printed `refs/heads/uf/x` once `main` was made a symbolic
+  ref to it. Through the compiled `git()` and `gitSync()`, with filter `x` only
+  behind `includeIf "onbranch:uf/**"` and the stub flipping HEAD while the
+  index was listed, `gitFilterProbe.test.ts`' reftable case ran the planted
+  program at `23c38d50`, so the fingerprint of the files backend's `HEAD` and
+  loose refs watched nothing that moved; the same plant ran under plain git.
+  Also: `extensions.refStorage = reftable` with `repositoryformatversion = 1`
+  written by hand into a files repository, with no `reftable/` directory and
+  again with an empty `reftable/tables.list`, did not stop git 2.56.0: `status
+  --short` exited 0, `symbolic-ref -q HEAD` exited 1 and `rev-parse HEAD`
+  exited 128, so a write to `.git/config` alone makes the newer git read an
+  empty ref store. With each `tables.list` and the tables it names
+  fingerprinted by stat, the main, linked-worktree and branch-made-symbolic
+  flips were refused (`reftable/tables.list changed while the filter probe read
+  it`) and removing the fingerprints failed them again; `gitFilterProbe.test.ts`
+  ran 60 of 60 on 2.56.0 and 53 with 7 skipped (the six reftable cases, the
+  hook case) on 2.39.5, and `npm test` on 2.39.5 ran 5451 of 5465 with 14
+  skipped and none failing. Caveat: only 2.56.0 was built, so the 2.45 to 2.55
+  reftable is inferred; a table edited in place, and a flip back straddling
+  the probe which makes `symbolic-ref HEAD` a worse fingerprint than the
+  stat, are reasoned and not driven.
+
+- **Watching the reftable stacks refuses about one call per ref update, and
+  only in a reftable repository, 2026-11-08.** Board task `4c645539`, same
+  build and branch. Back-to-back `git()` and `gitSync()` `status --short` calls
+  (about 3 ms each) in a repository beside a linked worktree committing
+  `--allow-empty` in a shell loop: files backend, no gap, 0 of 400 refused;
+  reftable, no gap 396 of 400, a 100 ms gap 4 of 400, 250 ms 20 of 2000
+  (about 20 commits), 1000 ms 9 of 4000 (about 12 commits), and every refusal
+  named a `tables.list`. A refusal says that a ref update in a reftable
+  repository changes the file. Caveat: calls were issued back to back, so the rate
+  per call is the worst case, about one refusal per ref update; a poll every
+  few seconds meets far fewer. A reftable repository with several runs
+  committing is the case that pays, and none was driven.
+
 - **Of this app's git call shapes, only the ref-moving and content-moving
   ones fire a hook defined in config, 2026-11-06.** Board task `6b4dccf3`,
   `main` at `100b9f24`. Apple git 2.54.0 (Apple Git-157) on the macOS host,

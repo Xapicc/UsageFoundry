@@ -67,6 +67,8 @@ fs.writeFileSync(
     `      plant-include) printf '[filter "x"]\\n\\tclean = %s\\n' "$(cat '${plantFile}')" > "$(cat '${writeTarget}')" ;;`,
     `      flip-head) '${realGit}' symbolic-ref HEAD refs/heads/uf/x ;;`,
     `      rewrite) cat '${rewriteContent}' > "$(cat '${writeTarget}')" ;;`,
+    // Real git with the arguments in a file, for a write that is not a file's: a ref update in a reftable.
+    `      run-git) '${realGit}' $(cat '${root}/run-git-args') ;;`,
     "    esac",
     "  fi",
     "done",
@@ -1036,6 +1038,140 @@ describe("a driver written between the probe and the call is refused", () => {
     );
     plain(viaInclude.repo, ["add", "-A"]);
     assert.equal(fs.existsSync(viaInclude.marker), true, "the planted included driver did not fire");
+  });
+});
+
+/**
+ * In a reftable repository `$GIT_DIR/HEAD` is a stub (`ref: refs/heads/.invalid`)
+ * and the real HEAD is in `reftable/`, so a fingerprint of the files backend's
+ * HEAD sees nothing move when `symbolic-ref` flips an `onbranch:` include
+ * (board task 4c645539). Needs a git of 2.45 or later; the image's 2.39.5 cannot
+ * open such a repository, so the cases skip there.
+ */
+describe("an onbranch: include flipped in a reftable repository", () => {
+  const makesReftable = (() => {
+    const dir = fs.mkdtempSync(path.join(root, "reftable-probe-"));
+    try {
+      execFileSync(realGit, ["init", "-q", "--ref-format=reftable"], { cwd: dir, env: plainEnv(), stdio: "ignore" });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  const noReftable = "this git cannot make a reftable repository, so there is no stub HEAD to watch";
+
+  function reftableRepo(): { repo: string; marker: string } {
+    const name = `repo${count++}`;
+    const repo = path.join(root, name);
+    fs.mkdirSync(repo);
+    plain(repo, ["init", "-q", "-b", "main", "--ref-format=reftable"]);
+    plain(repo, ["config", "user.email", "a@b.c"]);
+    plain(repo, ["config", "user.name", "a"]);
+    fs.writeFileSync(path.join(repo, "f.txt"), "one\n");
+    plain(repo, ["add", "-A"]);
+    plain(repo, ["commit", "-q", "-m", "init"]);
+    plain(repo, ["branch", "uf/x"]);
+    const { prog, marker } = plantProgram(name);
+    fs.writeFileSync(path.join(repo, ".git", "evil.inc"), `[filter "x"]\n\tclean = ${prog}\n`);
+    plain(repo, ["config", "includeIf.onbranch:uf/**.path", "evil.inc"]);
+    fs.mkdirSync(path.join(repo, ".git", "info"), { recursive: true });
+    fs.writeFileSync(path.join(repo, ".git", "info", "attributes"), "* filter=x\n");
+    fs.writeFileSync(path.join(repo, "f.txt"), "two\n");
+    return { repo, marker };
+  }
+
+  after(() => setMode("pass"));
+
+  it("control: HEAD is a stub and the flip runs the driver under plain git", (t) => {
+    if (!makesReftable) return t.skip(noReftable);
+    const { repo, marker } = reftableRepo();
+    assert.equal(fs.readFileSync(path.join(repo, ".git", "HEAD"), "utf8").trim(), "ref: refs/heads/.invalid");
+    plain(repo, ["add", "-A"]);
+    assert.equal(fs.existsSync(marker), false, "the onbranch: include held before HEAD moved");
+    plain(repo, ["symbolic-ref", "HEAD", "refs/heads/uf/x"]);
+    fs.writeFileSync(path.join(repo, "f.txt"), "three\n");
+    plain(repo, ["add", "-A"]);
+    assert.equal(fs.existsSync(marker), true, "HEAD on uf/x did not run the driver");
+  });
+
+  const add = async (repo: string, viaSync: boolean) =>
+    viaSync ? gitSync(repo, ["add", "-A"]) : await git(repo, ["add", "-A"]);
+
+  it("git() and gitSync(): HEAD moved onto a branch an onbranch: include matches refuses the call", async (t) => {
+    if (!makesReftable) return t.skip(noReftable);
+    for (const viaSync of [false, true]) {
+      const { repo, marker } = reftableRepo();
+      setMode("flip-head");
+      const res = await add(repo, viaSync);
+      setMode("pass");
+
+      ranNothing(marker);
+      assert.equal(res.ok, false, `${viaSync ? "gitSync" : "git"}() ran the call`);
+      assert.match(res.stderr, /reftable\/tables\.list changed while the filter probe read it/);
+    }
+  });
+
+  // A linked worktree's HEAD is in a stack of its own, `worktrees/<id>/reftable`,
+  // which the flip changes and the common stack does not (measured, 2.56.0).
+  it("git() and gitSync(): a linked worktree's HEAD moved onto a branch an onbranch: include matches refuses the call", async (t) => {
+    if (!makesReftable) return t.skip(noReftable);
+    for (const viaSync of [false, true]) {
+      const { repo, marker } = reftableRepo();
+      const tree = `${repo}-w`;
+      plain(repo, ["worktree", "add", "-q", "-b", "wb", tree]);
+      fs.writeFileSync(path.join(tree, "f.txt"), "three\n");
+      setMode("flip-head");
+      const res = await add(tree, viaSync);
+      setMode("pass");
+
+      ranNothing(marker);
+      assert.equal(res.ok, false, `${viaSync ? "gitSync" : "git"}() ran the call`);
+      assert.match(res.stderr, /worktrees\/[^/]+\/reftable\/tables\.list changed while the filter probe read it/);
+    }
+  });
+
+  it("git() and gitSync(): the branch HEAD names made a symbolic ref to one onbranch: matches refuses the call", async (t) => {
+    if (!makesReftable) return t.skip(noReftable);
+    for (const viaSync of [false, true]) {
+      const { repo, marker } = reftableRepo();
+      fs.writeFileSync(path.join(root, "run-git-args"), "symbolic-ref refs/heads/main refs/heads/uf/x");
+      setMode("run-git");
+      const res = await add(repo, viaSync);
+      setMode("pass");
+
+      ranNothing(marker);
+      assert.equal(res.ok, false, `${viaSync ? "gitSync" : "git"}() ran the call`);
+      assert.match(res.stderr, /reftable\/tables\.list changed while the filter probe read it/);
+    }
+  });
+
+  // The cost of watching `tables.list` and not HEAD: nothing in a reftable says
+  // which ref an update was to, so a commit refuses the call it overlaps. Said
+  // here so that a change that lifts it is made knowing what it must still stop.
+  it("git() and gitSync(): a commit between the probe and the call refuses it, and says a ref update did", async (t) => {
+    if (!makesReftable) return t.skip(noReftable);
+    for (const viaSync of [false, true]) {
+      const { repo, marker } = reftableRepo();
+      fs.writeFileSync(path.join(root, "run-git-args"), "commit -q --allow-empty -m x");
+      setMode("run-git");
+      const res = await add(repo, viaSync);
+      setMode("pass");
+
+      ranNothing(marker);
+      assert.equal(res.ok, false, `${viaSync ? "gitSync" : "git"}() ran the call`);
+      assert.match(res.stderr, /A ref update in a reftable repository changes this file/);
+    }
+  });
+
+  it("git() and gitSync(): a call that overlaps no ref update runs", async (t) => {
+    if (!makesReftable) return t.skip(noReftable);
+    for (const viaSync of [false, true]) {
+      const { repo, marker } = reftableRepo();
+      const res = await add(repo, viaSync);
+
+      assert.equal(res.ok, true, res.stderr);
+      ranNothing(marker);
+    }
   });
 });
 
