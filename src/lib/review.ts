@@ -1407,7 +1407,15 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
  * included. Chosen over `--setting-sources user`, which would also drop the
  * repository's permissions and agents. It costs the operator's own user-scope
  * and plugin hooks, which no longer run in an assist either, as in the chat.
- * It does not stop a project `apiKeyHelper` (measured: it still ran).
+ *
+ * And no `apiKeyHelper`, because hooks off did not stop a checkout's: measured
+ * on 2.1.310 through `startAssist`, a helper in `settings.local.json`,
+ * `settings.json` or the user file ran in the validator's environment, and on
+ * an OAuth login its key replaced the operator's on the request outright. `""`
+ * here stopped it in all three scopes and left the environment's key, OAuth
+ * token or stored login on the request. `null` did not (the helper still ran),
+ * and a command such as `true` sent an empty `Bearer` beside the key. The cost
+ * is an operator's own user-scope helper, which no longer runs in an assist.
  *
  * Always emitted, a stock install's argv included: the write set is withheld
  * where no managed sandbox exists, but a stock install's checkout redirects the
@@ -1420,7 +1428,12 @@ export function assistSettingsArgs(
 ): string[] {
   return [
     "--settings",
-    JSON.stringify({ env: cycleEnvPins(spawnEnv), ...sandbox, disableAllHooks: true }),
+    JSON.stringify({
+      env: cycleEnvPins(spawnEnv),
+      ...sandbox,
+      disableAllHooks: true,
+      apiKeyHelper: "",
+    }),
   ];
 }
 

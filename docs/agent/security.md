@@ -68,6 +68,7 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - The cycle's own `--settings` outranks every one of those files, so the endpoint variables are pinned there and project settings stay loaded.
 - No credential is pinned, and none may be.
 - An assist runs no hooks, because its checkout's hooks speak to its model.
+- An assist runs no `apiKeyHelper` either, because hooks off did not stop a checkout's.
 - What is still open.
 
 ## [What a run left in its repository's git directory](security/run-git-dir-watch.md)
