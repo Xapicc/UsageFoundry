@@ -172,6 +172,33 @@
   reviewer and resolver share its spawn), fake credentials, not as root with a
   uid drop, not under `UF_SANDBOX`, not through winnow.
 
+- **A work cycle ran a checkout's or the user file's `apiKeyHelper` and, on an
+  OAuth login, sent the helper's key instead of the operator's;
+  `"apiKeyHelper": ""` in the cycle's one `--settings` stopped it, on 2.1.310,
+  2026-11-08.** Board task `9d7770b6`. The compiled modules in a scratch
+  process under `env -i` (scratch `DATA_DIR`, `CLAUDE_CONFIG_DIR` and `HOME`),
+  `runIteration` over a `runs` row, its argv from `selectCycleAdapter(null)`'s
+  `buildArgs` with `envPins` read off `cycleEnv({}, null)` as the run loop
+  passes them, a `CLAUDE_BIN` wrapper that exec'd 2.1.310 with one fake
+  credential, and a loopback stub logging `x-api-key` and `authorization`. A
+  helper that wrote a marker and printed a fake key was named in the cwd's
+  `.claude/settings.local.json`, its `.claude/settings.json`, or
+  `$CLAUDE_CONFIG_DIR/settings.json`. Before the pin it ran in all six planted
+  cases. Beside a fake `ANTHROPIC_API_KEY` its key was in `authorization` next
+  to the environment's in `x-api-key`; with a fake `CLAUDE_CODE_OAUTH_TOKEN`,
+  and with a fake stored `.credentials.json`, it was in both headers and the
+  operator's token in neither. With the project's `settings.json` and the user
+  file both naming one, only the project's ran. Unplanted, each credential
+  arrived alone. Rebuilt with `buildArgs` emitting `""`, the same cases and
+  the user file under the stored login (seven planted in all) wrote no marker
+  and sent the operator's credential alone, and every cycle exited 0. The new
+  case in `orchestrator.test.ts` failed on the unpinned source with two of the
+  assertions it replaced (476 of 479 passing) and passed after (479 of 479).
+  Caveat: fake credentials; no write set and `isolated: false`, so the overlay
+  was the pins and the helper only; not under `UF_SANDBOX`; not as root with a
+  uid drop; not through winnow; which key the real API honours was not
+  measured.
+
 - **A route handler can learn its request's peer port, but only through
   `diagnostics_channel`, on Next 15.5.24, 2026-10-25.** Board task
   `ef579cdc`. `NextRequestAdapter.fromNodeNextRequest` builds the handler's

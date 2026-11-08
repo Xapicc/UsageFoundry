@@ -189,6 +189,31 @@ The rules these entries back are `docs/agent/security/chat-child-config-files.md
   binary gives a denied directory (`--tmpfs`, read from the binary). Caveat:
   `unshare`, not the CLI's own bwrap flags.
 
+- **A user-file `apiKeyHelper` ran in a chat turn and replaced the operator's
+  OAuth credential; `"apiKeyHelper": ""` in the chat's one `--settings`
+  stopped it, on 2.1.310, 2026-11-08.** Board task `59fd8643`. The compiled
+  modules in a scratch process under `env -i` (scratch `DATA_DIR`,
+  `CLAUDE_CONFIG_DIR` and `HOME`), `createChat` and `sendChatMessage`, a
+  `CLAUDE_BIN` wrapper that exec'd the 2.1.310 binary with one fake
+  credential, and a loopback stub logging `x-api-key` and `authorization` on
+  each `/v1/messages`. `$CLAUDE_CONFIG_DIR/settings.json` named
+  `{"apiKeyHelper":"sh helper.sh"}`, the script appending to a marker and
+  printing a fake key. Before the pin: with a fake `ANTHROPIC_API_KEY` the
+  marker was written and the helper's key sat in `authorization` beside the
+  environment's in `x-api-key`; with a fake `CLAUDE_CODE_OAUTH_TOKEN`, and
+  again with a fake stored `.credentials.json`, the helper's key was in both
+  headers and the operator's token in neither. Without the file, each
+  credential arrived alone. Rebuilt with `chatSettingsArgs` emitting `""`, the
+  same three cases wrote no marker and sent only the operator's credential,
+  and every turn ended `idle`. The new case in `cliPath.test.ts` failed
+  (26 of 27 passing) on the unpinned tree and passed (27 of 27) after.
+  Caveat: fake credentials; no chat group, so `HOME` was the scratch one and
+  not `/run/uf-chat-home`; not under `UF_SANDBOX`; not as root with a uid
+  drop. `null` and `"true"` were measured through an assist, not the chat
+  (`security-and-sandboxing-telemetry-token.md`). A helper in the cwd's
+  settings files was not planted: `--setting-sources user` is taken to drop
+  them, as it does for hooks.
+
 ## Not yet verified by hand
 
 - **No booted image has run a chat turn with its own `HOME`.** Unmeasured:
