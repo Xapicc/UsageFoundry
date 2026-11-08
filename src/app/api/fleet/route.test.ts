@@ -19,13 +19,24 @@ import { after, before, describe, it } from "node:test";
  * Its own file with `DATA_DIR` named before the first import, for
  * `runOrigin.test.ts`'s reason: `config.ts` is read at module load. The fleet is
  * paused, so a run a regression lets through is never promoted to a spawn.
+ *
+ * The last describe is the door's fraction-guard refusal, which was missing: this
+ * door never asked `windowGuardRefusal`, and the pre-cycle guard no longer ends a
+ * run over a guard with nothing to read, so a run picked up here with
+ * `maxWeeklyFraction` in its stored blob spawned its cycle with that guard
+ * unread — measured 2026-11-08 through a stubbed CLI: 200, one spawn,
+ * `enforceable: false`. The page's sheet sends neither fraction, so the stored
+ * blob is the way in, and it is the case worth pinning.
  */
 
 const STORED = { maxIterations: 1, maxRunCostUSD: 5 };
 
 let root: string;
 let pickUp: (body: Record<string, unknown>) => Promise<{ status: number; body: Record<string, unknown> }>;
-let newStoppedRun: () => string;
+let newStoppedRun: (
+  budget?: Record<string, unknown>,
+  provider?: "claude" | "codex",
+) => string;
 let statusOf: (runId: string) => string;
 let storedBudget: (runId: string) => Record<string, unknown>;
 
@@ -35,6 +46,9 @@ before(async () => {
   process.env.DATA_DIR = path.join(root, "data");
   process.env.CLAUDE_HOME = path.join(root, "claude");
   process.env.CLAUDE_CONFIG_DIR = path.join(root, "claude");
+  // An empty home, so a Codex run has no sign-in and therefore no reading,
+  // whatever this machine's own `~/.codex` holds.
+  process.env.CODEX_HOME = path.join(root, "codex");
   process.env.WORKSPACE_ROOTS = `Scratch=${path.join(root, "workspace")}`;
   process.env.CLAUDE_BIN = path.join(root, "no-such-claude");
 
@@ -50,14 +64,22 @@ before(async () => {
   const { POST } = await import("./route");
 
   let serial = 0;
-  newStoppedRun = () => {
+  newStoppedRun = (budget = STORED, provider = "claude") => {
     const id = `run-fleet-${serial++}`;
     db()
       .prepare(
-        "INSERT INTO runs (id, folder, prompt, status, budget, created_at)" +
-          " VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO runs (id, folder, prompt, status, budget, created_at, provider)" +
+          " VALUES (?, ?, ?, ?, ?, ?, ?)",
       )
-      .run(id, path.join(root, "workspace"), "task", "stopped", JSON.stringify(STORED), Date.now());
+      .run(
+        id,
+        path.join(root, "workspace"),
+        "task",
+        "stopped",
+        JSON.stringify(budget),
+        Date.now(),
+        provider,
+      );
     return id;
   };
   statusOf = (runId) =>
@@ -154,5 +176,111 @@ describe("POST /api/fleet reopen — the rest of the budget object", () => {
     assert.equal(answer.body.error, "Unknown enforcement mode: live-stpo");
     assert.equal(statusOf(runId), "stopped");
     assert.deepEqual(storedBudget(runId), STORED);
+  });
+});
+
+describe("POST /api/fleet reopen — a fraction guard with nothing to read", () => {
+  // `reopenRun` carries a stored fraction forward without asking whether the
+  // window can be read, so the door has to: `POST /api/runs/[id]/reopen` does,
+  // and a pick-up that reaches the loop with the guard unread runs its cycle
+  // with nothing watching the window.
+  const FRACTION = { maxIterations: 1, maxRunCostUSD: 5 };
+
+  it("refuses a run whose stored budget carries a weekly fraction and leaves it stopped", async () => {
+    const stored = { ...FRACTION, maxWeeklyFraction: 0.5 };
+    const runId = newStoppedRun(stored);
+    const answer = await pickUp({
+      action: "reopen",
+      runIds: [runId],
+      budget: { moreIterations: 2 },
+    });
+    const reason = `answered ${answer.status} ${JSON.stringify(answer.body)}`;
+    assert.equal(answer.status, 400, reason);
+    const report = answer.body.report as { reopened: string[]; refused: Array<{ id: string; reason: string }> };
+    assert.deepEqual(report.reopened, [], reason);
+    assert.equal(report.refused.length, 1, reason);
+    assert.equal(report.refused[0].id, runId, reason);
+    assert.match(report.refused[0].reason, /^A weekly-fraction guard is set but that window has no reading/, reason);
+    assert.equal(statusOf(runId), "stopped", `${reason}: the run was picked up with its guard unread`);
+    assert.deepEqual(storedBudget(runId), stored, `${reason}: the stored budget changed`);
+  });
+
+  it("refuses a stored session fraction the same way, in the session window's words", async () => {
+    const stored = { ...FRACTION, maxSessionFraction: 0.5 };
+    const runId = newStoppedRun(stored);
+    const answer = await pickUp({ action: "reopen", runIds: [runId], budget: { moreIterations: 2 } });
+    const reason = `answered ${answer.status} ${JSON.stringify(answer.body)}`;
+    assert.equal(answer.status, 400, reason);
+    assert.match(String(answer.body.error), /A session-fraction guard is set but the 5-hour window has no reading/, reason);
+    assert.equal(statusOf(runId), "stopped", reason);
+  });
+
+  it("refuses a fraction that arrives on the wire onto a run that stored none", async () => {
+    const runId = newStoppedRun(FRACTION);
+    const answer = await pickUp({
+      action: "reopen",
+      runIds: [runId],
+      budget: { moreIterations: 2, maxWeeklyFraction: 0.5 },
+    });
+    const reason = `answered ${answer.status} ${JSON.stringify(answer.body)}`;
+    assert.equal(answer.status, 400, reason);
+    assert.equal(statusOf(runId), "stopped", reason);
+    assert.deepEqual(storedBudget(runId), FRACTION, reason);
+  });
+
+  it("does not refuse the run whose stored fraction the wire switched off", async () => {
+    const runId = newStoppedRun({ ...FRACTION, maxWeeklyFraction: 0.5 });
+    const answer = await pickUp({
+      action: "reopen",
+      runIds: [runId],
+      budget: { moreIterations: 2, maxWeeklyFraction: null },
+    });
+    assert.equal(answer.status, 200, JSON.stringify(answer.body));
+    assert.equal(storedBudget(runId).maxWeeklyFraction, null);
+  });
+
+  it("picks up the runs with nothing to read and names the one it refused", async () => {
+    const guarded = newStoppedRun({ ...FRACTION, maxWeeklyFraction: 0.5 });
+    const plain = newStoppedRun();
+    const answer = await pickUp({ action: "reopen", runIds: [guarded, plain], budget: { moreIterations: 2 } });
+    const reason = `answered ${answer.status} ${JSON.stringify(answer.body)}`;
+    assert.equal(answer.status, 200, reason);
+    const report = answer.body.report as { reopened: string[]; refused: Array<{ id: string }> };
+    assert.deepEqual(report.reopened, [plain], reason);
+    assert.deepEqual(report.refused.map((r) => r.id), [guarded], reason);
+    assert.equal(statusOf(guarded), "stopped", reason);
+    // Held in `waiting` while the fleet is paused; what matters is that it left `stopped`.
+    assert.notEqual(statusOf(plain), "stopped", reason);
+  });
+
+  it("picks a run up once its window has a reading", async () => {
+    const { saveSettings } = await import("../../../lib/settings");
+    saveSettings({ weeklyCostLimit: 100 });
+    try {
+      const runId = newStoppedRun({ ...FRACTION, maxWeeklyFraction: 0.5 });
+      const answer = await pickUp({ action: "reopen", runIds: [runId], budget: { moreIterations: 2 } });
+      assert.equal(answer.status, 200, JSON.stringify(answer.body));
+      assert.notEqual(statusOf(runId), "stopped");
+      assert.equal(storedBudget(runId).maxWeeklyFraction, 0.5);
+    } finally {
+      saveSettings({ weeklyCostLimit: null });
+    }
+  });
+
+  it("reads a Codex run against Codex's windows, not the Claude reading beside them", async () => {
+    const { saveSettings } = await import("../../../lib/settings");
+    // A reading for Claude's week and none for Codex's: a door that asked only
+    // `currentSnapshot()` would admit this run.
+    saveSettings({ weeklyCostLimit: 100 });
+    try {
+      const runId = newStoppedRun({ ...FRACTION, maxWeeklyFraction: 0.5 }, "codex");
+      const answer = await pickUp({ action: "reopen", runIds: [runId], budget: { moreIterations: 2 } });
+      const reason = `answered ${answer.status} ${JSON.stringify(answer.body)}`;
+      assert.equal(answer.status, 400, reason);
+      assert.match(String(answer.body.error), /Codex's weekly window has no reading/, reason);
+      assert.equal(statusOf(runId), "stopped", reason);
+    } finally {
+      saveSettings({ weeklyCostLimit: null });
+    }
   });
 });
