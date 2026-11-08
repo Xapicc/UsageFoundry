@@ -305,6 +305,57 @@ describe("a filter probe that failed does not read as 'no filters'", () => {
     assert.equal((await git(repo, ["remote"])).stdout, "origin");
   });
 
+  it("a read behind a leading `--git-dir=` never asks the probe, so a broken probe cannot fail it", async () => {
+    // `readGitDir`'s listing, as `gitDirRead.ts` makes it: read off `args[0]`,
+    // the flag was taken for an unlisted subcommand and every reading paid the
+    // probe, and failed with it.
+    const { repo } = plantedRepo();
+    const gitDir = path.join(repo, ".git");
+    setMode("refused");
+
+    const args = [`--git-dir=${gitDir}`, "config", "--list", "--show-scope", "--show-origin", "-z", "--includes"];
+    const viaGit = await git(gitDir, args, { trim: false });
+    const viaSync = gitSync(gitDir, args);
+    setMode("pass");
+    for (const [via, res] of [["git", viaGit], ["gitSync", viaSync]] as const) {
+      assert.equal(res.ok, true, `${via}(): ${res.stderr}`);
+      assert.match(res.stdout, /(?:^|\0)local\0file:[^\0]*\.git\/config\0filter\.x\.clean\n/, `${via}(): ${res.stdout}`);
+    }
+  });
+
+  it("a content subcommand behind a leading `--git-dir=` is probed in that git directory, not cwd's", async () => {
+    // The call reads the repository the flag names, so a probe of the one cwd
+    // finds blanked nothing that repository defines.
+    for (const viaSync of [false, true]) {
+      const { repo, marker } = plantedRepo();
+      const elsewhere = path.join(root, `repo${count++}`);
+      committedRepo(elsewhere);
+      fs.writeFileSync(path.join(elsewhere, "s.txt"), "two\n");
+      const args = [`--git-dir=${path.join(repo, ".git")}`, "add", "-A"];
+
+      setMode("pass");
+      const res = viaSync ? gitSync(elsewhere, args) : await git(elsewhere, args);
+      ranNothing(marker);
+      assert.equal(res.ok, true, `${viaSync ? "gitSync" : "git"}(): ${res.stderr}`);
+
+      setMode("refused");
+      const refused = viaSync ? gitSync(elsewhere, args) : await git(elsewhere, args);
+      setMode("pass");
+      ranNothing(marker);
+      assert.equal(refused.ok, false, `${viaSync ? "gitSync" : "git"}() ran without the probe`);
+      assert.match(refused.stderr, /filter probe failed in .*, so git add was not run/, refused.stderr);
+    }
+  });
+
+  it("control: under plain git, a content subcommand behind `--git-dir=` runs that git directory's driver", () => {
+    const { repo, marker } = plantedRepo();
+    const elsewhere = path.join(root, `repo${count++}`);
+    committedRepo(elsewhere);
+    fs.writeFileSync(path.join(elsewhere, "s.txt"), "two\n");
+    plain(elsewhere, [`--git-dir=${path.join(repo, ".git")}`, "add", "-A"]);
+    assert.equal(fs.existsSync(marker), true, "the named git directory's driver did not run");
+  });
+
   it("a read that is not a content subcommand never asks the probe, so a broken probe cannot fail it", async () => {
     const { repo } = plantedRepo();
     setMode("refused");
