@@ -252,8 +252,8 @@ last commit (`918fbf2a`) no line the run added mentions it and the README it wro
 says "the halt never commits". The evidence supports `partial` at most (one
 requirement checked, not the whole task). Row 36 was checked the same way and its
 named deliverables are present (`scripts/validator-spike/RESULT.md`, *What it did
-with the seven `unjudgeable` rows*, has the list and the one clause left
-unsettled). Effect on what follows, none of it re-derived here: §4's label table
+with the seven `unjudgeable` rows*, has the list and the one clause that
+had nothing to attach to at that commit). Effect on what follows, none of it re-derived here: §4's label table
 reads `finished` 32, `partial` 1, `not-done` 2, `unjudgeable` 5; the `DONE` row
 reads 30 of 31 judgeable with the work in full and one `partial`, not "31 for 31";
 and "`partial = 0`" in the cautions is no longer true. §5's five unjudgeable rows

@@ -95,7 +95,7 @@ the one chain `uf/usagefoundry-1-dd927763` in `/workspace/UsageFoundry`, case 8
   the evidence supports `partial` at most. I checked this one requirement and
   not the rest of the task. The `prompt.md` run's `finished` is the miss; the
   shipped judge's `not-finished` named exactly this requirement.
-- **Case 36: `finished` holds, with one clause unsettled.** At `86ab12bf` the
+- **Case 36: `finished` holds.** At `86ab12bf` the
   task's named deliverables are in the tree: `maxInstanceCostUSD`,
   `maxSessionFraction` and `maxWeeklyFraction` in `InstanceBudgetDTO` and
   `budget.ts`, nullable with `null`/blank/`0` all off (`normalizeInstanceBudget`);
@@ -104,17 +104,20 @@ the one chain `uf/usagefoundry-1-dd927763` in `/workspace/UsageFoundry`, case 8
   from `startRun`'s pre-cycle guard and tripping through
   `stopInstance(…, { kind: "guard", … })`; the telemetry door widened by
   `instanceSpend` and written down in `CLAUDE.md`; no live mode, said in the
-  README, and in the editor as "checked … never during one"; the limits settable only in the workflow editor,
-  with `POST /api/workflows/[id]/run` reading no body; the monotone-terminus
+  README, and in the editor as "checked … never during one"; the limits settable
+  only in the workflow editor, with `POST /api/workflows/[id]/run` reading no body; the monotone-terminus
   answer in `CLAUDE.md`; the hatched meter for an unknown figure; and
   `budget.test.ts` carries a test for each of the six scenarios the task lists
   (under the cap, at the cap exactly, in flight, a fraction with no ceiling, a
   window falling back under the guard, an estimate-only instance). Read from the
-  source, not run. The clause I could not settle is *"plus any orchestrator-block
-  turns it is responsible for"*: `instanceSpend` sums only the rows joined through
-  `workflow_instance_runs`, and `WorkflowNode` has no kind but a run, so it is
-  either vacuous at that commit or unmet. The shipped judge flagged the same
-  clause as not visible.
+  source, not run. One clause of the task has nothing to attach to at that commit:
+  *"plus any orchestrator-block turns it is responsible for"*. `instanceSpend` sums only
+  the rows joined through `workflow_instance_runs`, and `workflow_instance_blocks`,
+  the table orchestrator blocks write their cost to, is absent at `86ab12bf` (a
+  commit outside that chain adds it, `41b4302de`). At today's head `instanceSpend` does add
+  those blocks' `cost_usd` and `cost_usd_est`. So the clause was unmeetable on that
+  chain and is met once the work joined, and it does not count against the row.
+  The shipped judge flagged the same clause as not visible.
 
 **The labels are left exactly as the measurement run wrote them** and both rows are
 still counted as misses above. The "36/37" this section used to quote does not
@@ -263,6 +266,12 @@ reasons are the judge model and the sampling. Case 20 flipped under the same
 prompt on a second sample, so a single verdict there is a coin the size of the
 doubt. This is n = 3 with one or two samples each: it bounds nothing, and it does
 not show the preamble is neutral, only that these 40 do not show it is not.
+
+**Repeated since.** `repeat-report-shipped.md` judged all 40 shipped-preamble requests
+two more times (80 judges, same model): 38 of 40 cases kept one verdict across the
+three samples, held-out agreement was 32, 31 and 32 of 37, and the two cases that moved
+(7 and 17, `finished` ↔ `unjudgeable`) both have a shortened patch. Across the
+three samples `32/37` moved by one case; the report also says what that does not cover.
 
 **What the 40 do show about the preamble's intent.** `VERDICT_PREFERENCE` routes
 unsupported doubt to `unjudgeable`, and where a verdict moved in either run it
