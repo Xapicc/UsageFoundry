@@ -250,6 +250,27 @@
   submodule commit, through `git()` and through plain git. Caveat: local bare
   remotes only, parent and submodule both.
 
+- **Neither push door spawns a push to a local path, so no receiving hook
+  runs, on git 2.39.5, 2026-11-08.** Board task `474d09dd`, branch at
+  `d8e52114`, `git --version` 2.39.5 (the image's). `deliverRun.test.ts` and
+  `projectPush.test.ts`, each with a bare repository holding an executable
+  `hooks/pre-receive` that writes a marker: a plain `git push` to it wrote the
+  marker (the control). With `origin` a path, a `file://` URL, a `pushurl` to a
+  path, a `pushInsteadOf` to it and an `insteadOf` to it, Deliver's card and
+  press and Projects' button and press each refused (`is not a GitHub remote`,
+  `not-github`) with no marker and nothing reaching the path. With the
+  `https://` test in `planDelivery` and in `githubDestination` replaced by a
+  constant in the compiled modules, all ten cases failed on the marker, so
+  through this app's `git()` on 2.39.5 a push to a path did run the receiving
+  repository's `pre-receive`. The harnesses never push to a path: their
+  remotes are `https://github.com/acme/<name>.git`, carried to bare
+  repositories by a stand-in `git-remote-https` on `GIT_EXEC_PATH`, which is
+  how `originPushUrls` accepts them. Also, `remote.origin.mirror=true` with
+  Deliver's explicit refspec failed closed (`--mirror can't be combined with
+  refspecs`). Caveat: a configured hook on the receiving side (git 2.54 and
+  later) was not driven; the image has no such git, and the refusal comes
+  before the spawn whatever the version.
+
 ## Not yet verified by hand
 
 - **Whether a work cycle can race this app's git on `.git/config` in

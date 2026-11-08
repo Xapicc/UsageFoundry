@@ -447,6 +447,82 @@ describe("Push sends what was shown, as a fast-forward, and nothing else", () =>
   });
 });
 
+/**
+ * A push to a path is not a push to a remote: git starts `receive-pack` on the
+ * far side as a second git, which reads the receiving repository's own config
+ * and runs its own `hooks/`, and nothing `gitArgs` passes reaches it. So Push
+ * must spawn no push at all when any push URL, after git's rewrites, is a path.
+ * Each row is a spelling of that in `.git/config`, which a work cycle can
+ * write; the bare repository it points at has a `pre-receive` hook that leaves
+ * a marker, so a push that went out is seen whatever else the refusal says.
+ */
+describe("Push spawns no push to a local path, whose receiving repository would run its hooks", () => {
+  /**
+   * A bare repository whose `pre-receive` hook records that it ran, holding
+   * `main` at `base` when given one. Seeded because the press asks the remote
+   * where `main` is before it pushes (`upstream-gone` otherwise), so an empty
+   * one would be refused for that and not for being a path. The hook goes in
+   * after the seed, which would otherwise leave a marker of its own.
+   */
+  function hooked(name: string, seed?: { repo: string; base: string }): { dir: string; marker: string } {
+    const dir = path.join(root, "hooked", `${name}.git`);
+    const marker = path.join(root, "hooked", `${name}.ran`);
+    git(root, "init", "-q", "--bare", dir);
+    if (seed) git(seed.repo, "push", "-q", dir, `${seed.base}:refs/heads/main`);
+    fs.writeFileSync(path.join(dir, "hooks", "pre-receive"), `#!/bin/sh\nprintf ran > ${marker}\n`, {
+      mode: 0o755,
+    });
+    return { dir, marker };
+  }
+
+  it("control: git itself runs that hook on a push to the path", () => {
+    // Without this, every marker below being absent could be the harness (a
+    // temporary directory mounted noexec, say) and not the refusal.
+    const s = scene("hook-control");
+    const { dir, marker } = hooked("hook-control");
+
+    git(s.repo, "push", "-q", dir, "HEAD:refs/heads/probe");
+
+    assert.equal(fs.existsSync(marker), true, "the hook did not run, so no case here can tell");
+  });
+
+  const spellings: Array<[string, (repo: string, away: string, github: string) => void]> = [
+    ["a path as origin", (repo, away) => git(repo, "remote", "set-url", "origin", away)],
+    ["a file:// URL as origin", (repo, away) => git(repo, "remote", "set-url", "origin", `file://${away}`)],
+    ["a pushurl to a path", (repo, away) => git(repo, "remote", "set-url", "--push", "origin", away)],
+    [
+      "a pushInsteadOf to a path",
+      (repo, away, github) => git(repo, "config", `url.${away}.pushInsteadOf`, github),
+    ],
+    ["an insteadOf to a path", (repo, away, github) => git(repo, "config", `url.${away}.insteadOf`, github)],
+  ];
+
+  for (const [spelling, configure] of spellings) {
+    it(`refuses ${spelling}, as the button and at the press, with no hook run`, async () => {
+      const name = `hook-${spelling.replace(/\W+/g, "-")}`;
+      const s = scene(name);
+      const base = head(s);
+      const sha = commit(s.repo, "h.txt", "h\n");
+      const { dir, marker } = hooked(name, { repo: s.repo, base });
+      configure(s.repo, dir, urlOf(name));
+
+      const row = await project(s);
+      const pushed = await projects.pushProject(s.ref, shownAt(sha));
+
+      assert.equal(fs.existsSync(marker), false, "the receiving repository's hook ran");
+      assert.equal(row.push.possible, false, "the button was offered");
+      assert.equal(row.push.code, "not-github");
+      assert.equal((pushed as { code: string }).code, "not-github");
+      assert.equal(
+        git(dir, "for-each-ref", "--format=%(refname) %(objectname)"),
+        `refs/heads/main ${base}`,
+        "something reached the path",
+      );
+      assert.notEqual(remoteMain(s), sha);
+    });
+  }
+});
+
 describe("the inventory lists every git folder and every unmerged branch", () => {
   it("lists a folder whose git fails with its error, beside the ones that read", async () => {
     const s = scene("healthy");
