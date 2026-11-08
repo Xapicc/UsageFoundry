@@ -347,6 +347,15 @@ type AuthSubcommand = "login" | "status" | "logout";
  * read off the `env` the child is spawned with, never a second call, because
  * `agentEnvironment`'s cached stack exports can refresh between two.
  *
+ * And an empty `apiKeyHelper` beside the pins, because a work cycle no longer
+ * runs one and a status read that honoured a user-file helper answered for a
+ * credential no cycle gets: on 2.1.310, with only a helper in that file, the
+ * pins-only `--settings` reported `loggedIn: true` as `api_key_helper` without
+ * running it. The sign-in's own proof below reads the same status.
+ * `null` does not stop a helper and a command such as `true` sends an empty
+ * `Bearer`, so it is `""`, in the one `--settings`, because the CLI keeps only
+ * the last.
+ *
  * Both cost the operator a gateway or proxy configured only in the user
  * settings file, as they do for cycles: `cycle-settings-env.md`.
  */
@@ -357,7 +366,7 @@ function authArgv(
 ): string[] {
   const settings =
     subcommand === "status"
-      ? ["--settings", JSON.stringify({ env: cycleEnvPins(env) })]
+      ? ["--settings", JSON.stringify({ env: cycleEnvPins(env), apiKeyHelper: "" })]
       : ["--setting-sources", ""];
   return [...settings, "auth", subcommand, ...rest];
 }

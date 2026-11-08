@@ -316,13 +316,14 @@ async function driveUntilSettled<T>(promise: Promise<T>): Promise<T> {
  * the one Codex child a planted `$CODEX_HOME/config.toml` was measured to
  * steer: `codexAccount.ts`'s app server, which sent the stored ChatGPT bearer
  * wherever the file's `chatgpt_base_url`, `openai_base_url` or
- * `model_provider` pointed. Drop an override and every read still works and
+ * `model_provider` pointed, and started `git` against the host a planted
+ * `[marketplaces.*]` named. Drop an override and every read still works and
  * the stub's output is the same, so only the argv shows it. The exact array is
  * asserted because each value is the one measured to send the child where the
  * unplanted CLI sends it, and a changed value is a new measurement.
  */
 describe("the config overrides the app-server child starts with", () => {
-  it("pins every endpoint key a planted config.toml was measured to move", async () => {
+  it("pins every key a planted config.toml was measured to move traffic with", async () => {
     fs.mkdirSync(config.CODEX_HOME, { recursive: true });
     fs.writeFileSync(path.join(config.CODEX_HOME, "auth.json"), "{}");
     fs.rmSync(argvLog, { force: true });
@@ -352,6 +353,8 @@ describe("the config overrides the app-server child starts with", () => {
         'otel.trace_exporter="none"',
         "-c",
         'otel.metrics_exporter="none"',
+        "-c",
+        "features.plugins=false",
       ],
     ]);
   });
