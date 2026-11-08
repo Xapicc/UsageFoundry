@@ -1501,6 +1501,27 @@ export function buildArgs(opts: {
    */
   envPins?: Readonly<Record<string, string>> | null;
   /**
+   * The temporary directory, made a working directory of this cycle so that
+   * the file tools may still write scratch there once every write outside the
+   * working directories is refused (`blockWritesOutsideWorkingDirectories` in
+   * the overlay below). Ignored by `buildCodexArgs`, whose sandbox grants its
+   * temporary directory itself.
+   *
+   * Without it the setting breaks a path runs use: over this container's
+   * transcripts from 2026-10-10 to 2026-11-08, 283 of 3,576 file-tool writes,
+   * in 164 of the 561 sessions that wrote at all, went to `/tmp`, nearly all
+   * of them under the `$TMPDIR` a sandboxed Bash command is given.
+   *
+   * It is `permissions.additionalDirectories` in the overlay and **never
+   * `--add-dir`**, though both make a working directory. Measured on 2.1.319:
+   * an `--add-dir` loads the skills and agents in that directory's
+   * `.claude/`, and the temporary directory is shared by every run on the
+   * install, so one run could plant a skill into every other's context. The
+   * same planted files through `additionalDirectories` reached no request.
+   * Null or absent leaves the setting on with no scratch directory.
+   */
+  scratchDir?: string | null;
+  /**
    * Where the CLI should write this cycle's last message, for a CLI that offers
    * it. Ignored by `buildArgs`; `buildCodexArgs` turns it into
    * `--output-last-message`, and `runIteration` reads the file back off the
@@ -1742,9 +1763,24 @@ export function buildArgs(opts: {
   // `Bearer`. Not tied to `envPins`, so a caller that omits them is not the one
   // that leaves it open. The cost is an operator's own user-scope helper, which
   // no longer runs in a work cycle.
+  //
+  // And `blockWritesOutsideWorkingDirectories`, always, sandbox or none,
+  // because the sandbox's write set confines `Bash` and nothing else: without
+  // it `Write`, `Edit` and `NotebookEdit` reached the main checkout from an
+  // isolated run's worktree, and any other repository the agent uid can write.
+  // Measured on 2.1.319 against a stub API under `bypassPermissions` and
+  // `acceptEdits`: honoured from this overlay, `true` here outranks a `false`
+  // in the checkout's own settings, and the refusal came back to the model as
+  // a tool error naming the working directories. It is the file tools' only:
+  // the vault reader's deny stays, because `--add-dir` makes the vault a
+  // working directory, and `Bash` is still confined by the write set alone.
   const overlay = {
     ...(opts.envPins ? { env: opts.envPins } : {}),
     apiKeyHelper: "",
+    permissions: {
+      blockWritesOutsideWorkingDirectories: true,
+      ...(opts.scratchDir ? { additionalDirectories: [opts.scratchDir] } : {}),
+    },
     ...(opts.writableRoots && opts.writableRoots.length > 0
       ? {
           sandbox: {
