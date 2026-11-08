@@ -14,6 +14,12 @@ import { after, before, describe, it } from "node:test";
  * door here with somebody to tell — `normalizePolicy` runs a second time over
  * the stored blob and has to stay total.
  *
+ * The last describe is the other half of the same door: a fraction guard with
+ * nothing to read is refused here and nowhere after, because the pre-cycle guard
+ * records it and carries on (`RUN_ENFORCEABLE_CODES`). Only `budget.test.ts`
+ * tested `windowGuardRefusal`, and that is the pure function; deleting this
+ * route's call to it broke nothing, and the run would have spawned unwatched.
+ *
  * Its own file with `DATA_DIR` named before the first import, for
  * `runOrigin.test.ts`'s reason: `config.ts` is read at module load.
  */
@@ -122,4 +128,24 @@ describe("POST /api/runs — a budget number", () => {
     assert.equal(stored.maxRunCostFactor, null);
     assert.equal(stored.maxSessionFraction, null);
   });
+});
+
+describe("POST /api/runs — a fraction guard with nothing to read", () => {
+  // No weekly ceiling, no 5-hour ceiling, `planUsageFromApi` off and an empty
+  // CLAUDE_HOME: nothing for either window to be measured against. The value is
+  // a valid fraction, so `policyNumberRefusal` lets it through and the only
+  // thing standing between it and `createRun` is `windowGuardRefusal`.
+  for (const [key, sentence] of [
+    ["maxWeeklyFraction", /^A weekly-fraction guard is set but that window has no reading/],
+    ["maxSessionFraction", /^A session-fraction guard is set but the 5-hour window has no reading/],
+  ] as const) {
+    it(`refuses ${key} and starts no run`, async () => {
+      const before = runCount();
+      const answer = await post(formBody({ maxIterations: 1, [key]: 0.5 }));
+      const reason = `${key} was answered ${answer.status} ${JSON.stringify(answer.body)}`;
+      assert.equal(answer.status, 400, reason);
+      assert.match(String(answer.body.error), sentence, reason);
+      assert.equal(runCount(), before, `${reason}: a refused guard still created a run`);
+    });
+  }
 });

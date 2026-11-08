@@ -14,6 +14,11 @@ import { after, before, describe, it } from "node:test";
  * right; the only symptom is a bill. `runs/route.test.ts` pins the same refusal
  * for the start door off the same value table.
  *
+ * The last describe is the fraction guard with nothing to read, which this door
+ * refuses and nothing after it does (`RUN_ENFORCEABLE_CODES`). Only
+ * `budget.test.ts` tested `windowGuardRefusal`, the pure function, so deleting
+ * this route's call to it broke nothing and the run went back to work unwatched.
+ *
  * Its own file with `DATA_DIR` named before the first import, for
  * `runOrigin.test.ts`'s reason: `config.ts` is read at module load. The fleet is
  * paused, so a run a regression lets through is never promoted to a spawn.
@@ -21,7 +26,7 @@ import { after, before, describe, it } from "node:test";
 
 let root: string;
 let reopen: (runId: string, body: unknown) => Promise<{ status: number; body: Record<string, unknown> }>;
-let newStoppedRun: () => string;
+let newStoppedRun: (provider?: "claude" | "codex") => string;
 let statusOf: (runId: string) => string;
 let storedBudget: (runId: string) => Record<string, unknown>;
 
@@ -31,6 +36,9 @@ before(async () => {
   process.env.DATA_DIR = path.join(root, "data");
   process.env.CLAUDE_HOME = path.join(root, "claude");
   process.env.CLAUDE_CONFIG_DIR = path.join(root, "claude");
+  // An empty home, so a Codex run has no sign-in and therefore no reading,
+  // whatever this machine's own `~/.codex` holds.
+  process.env.CODEX_HOME = path.join(root, "codex");
   process.env.WORKSPACE_ROOTS = `Scratch=${path.join(root, "workspace")}`;
   process.env.CLAUDE_BIN = path.join(root, "no-such-claude");
 
@@ -46,14 +54,14 @@ before(async () => {
   const { POST } = await import("./route");
 
   let serial = 0;
-  newStoppedRun = () => {
+  newStoppedRun = (provider = "claude") => {
     const id = `run-reopen-${serial++}`;
     db()
       .prepare(
-        "INSERT INTO runs (id, folder, prompt, status, budget, created_at)" +
-          " VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO runs (id, folder, prompt, status, budget, created_at, provider)" +
+          " VALUES (?, ?, ?, ?, ?, ?, ?)",
       )
-      .run(id, path.join(root, "workspace"), "task", "stopped", "{}", Date.now());
+      .run(id, path.join(root, "workspace"), "task", "stopped", "{}", Date.now(), provider);
     return id;
   };
   statusOf = (runId) =>
@@ -118,5 +126,43 @@ describe("POST /api/runs/[id]/reopen — a budget number", () => {
     assert.equal(stored.maxRunCostUSD, null);
     assert.equal(stored.maxRunTokens, null);
     assert.equal(stored.maxRunCostFactor, null);
+  });
+});
+
+describe("POST /api/runs/[id]/reopen — a fraction guard with nothing to read", () => {
+  // No weekly ceiling, no 5-hour ceiling and an empty CLAUDE_HOME: nothing for
+  // either window to be measured against. The value is a valid fraction, so
+  // `policyNumberRefusal` lets it through and the only thing standing between
+  // it and `reopenRun` is `windowGuardRefusal`.
+  for (const [key, sentence] of [
+    ["maxWeeklyFraction", /^A weekly-fraction guard is set but that window has no reading/],
+    ["maxSessionFraction", /^A session-fraction guard is set but the 5-hour window has no reading/],
+  ] as const) {
+    it(`refuses ${key} and leaves the run stopped`, async () => {
+      const runId = newStoppedRun();
+      const answer = await reopen(runId, { budget: { maxIterations: 1, [key]: 0.5 } });
+      const reason = `${key} was answered ${answer.status} ${JSON.stringify(answer.body)}`;
+      assert.equal(answer.status, 400, reason);
+      assert.match(String(answer.body.error), sentence, reason);
+      assert.equal(statusOf(runId), "stopped", `${reason}: the run was reopened with its guard unread`);
+      assert.deepEqual(storedBudget(runId), {}, `${reason}: the stored budget changed`);
+    });
+  }
+
+  it("reads a Codex run against Codex's windows and answers in the Codex sentence", async () => {
+    const { saveSettings } = await import("../../../../../lib/settings");
+    // A reading for Claude's week and none for Codex's: a door that asked only
+    // `currentSnapshot()` would admit this run.
+    saveSettings({ weeklyCostLimit: 100 });
+    try {
+      const runId = newStoppedRun("codex");
+      const answer = await reopen(runId, { budget: { maxIterations: 1, maxWeeklyFraction: 0.5 } });
+      const reason = `answered ${answer.status} ${JSON.stringify(answer.body)}`;
+      assert.equal(answer.status, 400, reason);
+      assert.match(String(answer.body.error), /Codex's weekly window has no reading/, reason);
+      assert.equal(statusOf(runId), "stopped", reason);
+    } finally {
+      saveSettings({ weeklyCostLimit: null });
+    }
   });
 });
