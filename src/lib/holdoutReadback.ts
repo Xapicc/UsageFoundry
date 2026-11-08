@@ -2,6 +2,7 @@ import type {
   HoldoutArmDTO,
   HoldoutComplianceArmDTO,
   HoldoutContrastDTO,
+  HoldoutInterferenceDTO,
   HoldoutLeftOutReason,
   HoldoutMeanDTO,
   HoldoutReadbackDTO,
@@ -9,7 +10,16 @@ import type {
 } from "./apiTypes";
 import { db } from "./db";
 import { lastHoldoutExport } from "./holdoutExport";
-import { repoRelative } from "./priorReads";
+import {
+  type InferenceRun,
+  type InterferenceSubject,
+  Z_95,
+  interferenceOf,
+  permutationTest,
+  sequentialOf,
+  stratifiedDifference,
+} from "./holdoutInference";
+import { inHoldout, repoRelative } from "./priorReads";
 import { EDIT_TOOLS } from "./repoReading";
 
 /**
@@ -51,9 +61,6 @@ import { EDIT_TOOLS } from "./repoReading";
  */
 
 const ARMS: readonly HoldoutArmDTO[] = ["pointer", "holdout"];
-
-/** The two-sided 95% point of the normal curve; the intervals are approximate. */
-const Z_95 = 1.96;
 
 /* ------------------------------------------------------------------ */
 /* Who is counted                                                      */
@@ -319,7 +326,8 @@ export function meanOf(values: readonly number[]): HoldoutMeanDTO {
  * the sample sizes the card waits for: the plan's simulation held its size from
  * sixty runs an arm at this outcome's skew, and the card says nothing is
  * significant before the proposal's own targets, all of which are past that.
- * Unadjusted: the plan's regression-adjusted estimate is not computed here.
+ * Unadjusted: the repository-stratified estimate the plan's primary is read
+ * from is `holdoutInference.ts`'s.
  */
 export function contrastOf(pointer: readonly number[], holdout: readonly number[]): HoldoutContrastDTO {
   const a = meanOf(pointer);
@@ -438,6 +446,71 @@ export function listedPaths(
 }
 
 /* ------------------------------------------------------------------ */
+/* Who was around a run                                                */
+/* ------------------------------------------------------------------ */
+
+/** `[[id, arm | null]]`, as `preceding_runs` and `overlapping_runs` hold it. */
+function armPairs(json: string | null): Array<[string, string | null]> | null {
+  const parsed = parseJson(json);
+  if (!Array.isArray(parsed)) return null;
+  return parsed.flatMap((pair) =>
+    Array.isArray(pair) && typeof pair[0] === "string"
+      ? [[pair[0], typeof pair[1] === "string" ? pair[1] : null] as [string, string | null]]
+      : [],
+  );
+}
+
+/**
+ * The runs around a held-out run under each definition of "around": the hundred
+ * before it on the repository, those whose lifetime overlapped it, and the
+ * ones live when it started. A set that was never recorded is null, which is
+ * not the same answer as an empty one.
+ */
+export function neighbourSets(row: {
+  precedingRuns: string | null;
+  overlappingRuns: string | null;
+  liveSiblings: string | null;
+}): Record<HoldoutInterferenceDTO["exposure"], string[] | null> {
+  const ids = (json: string | null) => armPairs(json)?.map(([id]) => id) ?? null;
+  const live = parseJson(row.liveSiblings);
+  return {
+    preceding: ids(row.precedingRuns),
+    overlapping: ids(row.overlappingRuns),
+    live: Array.isArray(live) ? live.filter((id): id is string => typeof id === "string") : null,
+  };
+}
+
+/**
+ * Re-deals independent arms by the real rule, `inHoldout`, applied to a new id
+ * made from the replicate and the run's own: every replicate is a fresh draw of
+ * the whole neighbourhood and one set of rows always gives one set of figures.
+ */
+export function redeal(replicate: number, id: string): HoldoutArmDTO {
+  return inHoldout(`${replicate}:${id}`) ? "holdout" : "pointer";
+}
+
+/**
+ * Draws behind each interference p-value. Each is one hash per neighbouring run
+ * (about a microsecond), and the three exposures share the draws, so this is
+ * what the readback costs: roughly 0.6 s for fifteen hundred runs on a
+ * repository, and the reason it is not larger.
+ */
+const INTERFERENCE_DRAWS = 400;
+
+/** `redeal` with each run's draws made once, so the three exposures do not each pay for them. */
+function sharedRedeal(draws: number): (replicate: number, id: string) => HoldoutArmDTO {
+  const dealt = new Map<string, Uint8Array>();
+  return (replicate, id) => {
+    let row = dealt.get(id);
+    if (!row) {
+      row = Uint8Array.from({ length: draws }, (_, b) => (redeal(b, id) === "holdout" ? 1 : 0));
+      dealt.set(id, row);
+    }
+    return row[replicate] === 1 ? "holdout" : "pointer";
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /* The edge                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -455,6 +528,11 @@ interface RunRow {
   endingCode: string | null;
   worktreePath: string | null;
   paths: number;
+  repository: string | null;
+  finishedAt: number | null;
+  precedingRuns: string | null;
+  overlappingRuns: string | null;
+  liveSiblings: string | null;
 }
 
 interface ToolRow {
@@ -513,7 +591,9 @@ export function holdoutReadback(now = Date.now()): HoldoutReadbackDTO {
       `SELECT h.run_id AS runId, h.prior_read_arm AS arm, h.prior_read_arm_source AS armSource,
               h.prior_read_treatment AS treatment, h.continues_run AS continuesRun,
               h.finalized_at AS finalizedAt, h.iterations, h.spent_usd AS spentUsd,
-              h.isolation, h.folder_repo AS folderRepo,
+              h.isolation, h.folder_repo AS folderRepo, h.repository, h.finished_at AS finishedAt,
+              h.preceding_runs AS precedingRuns, h.overlapping_runs AS overlappingRuns,
+              h.live_siblings AS liveSiblings,
               r.ending_code AS endingCode, r.worktree_path AS worktreePath,
               COALESCE((SELECT MAX(c.prior_read_count) FROM holdout_cycles c
                          WHERE c.run_id = h.run_id AND c.prior_read_arm IS NOT NULL), 0) AS paths
@@ -629,6 +709,44 @@ export function holdoutReadback(now = Date.now()): HoldoutReadbackDTO {
     pointer: measured.filter((m) => m.arm === "pointer").length,
     holdout: measured.filter((m) => m.arm === "holdout").length,
   };
+
+  // Every run the pointer considered has a repository, so one without is not
+  // given a stratum: it is left out of the inference rather than invented one.
+  const inferenceRuns: InferenceRun[] = [];
+  const subjects = new Map<HoldoutInterferenceDTO["exposure"], InterferenceSubject[]>([
+    ["preceding", []],
+    ["overlapping", []],
+    ["live", []],
+  ]);
+  for (const r of population.read) {
+    const row = byId.get(r.runId)!;
+    const stratum = row.repository ?? row.folderRepo;
+    if (stratum === null) continue;
+    const y = reading.get(r.runId)!.wholeRun;
+    // A read run is settled, so `finalized_at` is always there to order it by if
+    // the run has no `finished_at`.
+    inferenceRuns.push({ runId: r.runId, arm: r.arm, stratum, y, settledAt: row.finishedAt ?? row.finalizedAt! });
+    if (r.arm !== "holdout") continue;
+    const sets = neighbourSets(row);
+    for (const [exposure, list] of subjects) list.push({ stratum, y, neighbours: sets[exposure] });
+  }
+  // The arm of every run the pointer considered, and of any neighbour a list
+  // names that the table does not hold; a neighbour with no arm is not a draw.
+  const knownArms = new Map<string, HoldoutArmDTO>();
+  for (const row of byId.values()) knownArms.set(row.runId, row.arm);
+  for (const row of byId.values()) {
+    for (const json of [row.precedingRuns, row.overlappingRuns]) {
+      for (const [id, arm] of armPairs(json) ?? []) {
+        const known = arm === null ? null : asArm(arm);
+        if (known !== null && !knownArms.has(id)) knownArms.set(id, known);
+      }
+    }
+  }
+  const redealt = sharedRedeal(INTERFERENCE_DRAWS);
+  const interference: HoldoutInterferenceDTO[] = [...subjects].map(([exposure, list]) => ({
+    exposure,
+    ...interferenceOf(list, knownArms, redealt, INTERFERENCE_DRAWS),
+  }));
   const contrast = (measure: (run: MeasuredRun) => number) =>
     contrastOf(
       measured.filter((m) => m.arm === "pointer").map(measure),
@@ -665,7 +783,13 @@ export function holdoutReadback(now = Date.now()): HoldoutReadbackDTO {
       wholeRun: contrast((r) => r.reading.wholeRun),
       neverEdited: { pointer: neverEdited("pointer"), holdout: neverEdited("holdout") },
       targets: reachedTargets(READING_TARGETS, armSizes),
+      primary: {
+        estimate: stratifiedDifference(inferenceRuns),
+        permutation: permutationTest(inferenceRuns),
+        ...sequentialOf(inferenceRuns),
+      },
     },
+    interference,
     outcome: {
       secondCycle: contrast((r) => (r.iterations >= 2 ? 1 : 0)),
       secondCycleTargets: reachedTargets(SECOND_CYCLE_TARGETS, armSizes),

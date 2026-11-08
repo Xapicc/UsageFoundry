@@ -174,6 +174,37 @@ describe("what a run read", () => {
   });
 });
 
+describe("who was around a run", () => {
+  it("reads each neighbour set, and keeps 'never recorded' apart from 'none'", () => {
+    assert.deepEqual(
+      readback.neighbourSets({
+        precedingRuns: '[["a","pointer"],["b",null],[7,"holdout"]]',
+        overlappingRuns: "[]",
+        liveSiblings: '["x","y"]',
+      }),
+      { preceding: ["a", "b"], overlapping: [], live: ["x", "y"] },
+    );
+    assert.deepEqual(readback.neighbourSets({ precedingRuns: null, overlappingRuns: "{", liveSiblings: null }), {
+      preceding: null,
+      overlapping: null,
+      live: null,
+    });
+  });
+
+  it("re-deals by the real assignment rule on a new id, differently each time and about half each way", () => {
+    const ids = Array.from({ length: 1000 }, (_, i) => `run-${i}`);
+    const dealt = (replicate: number) => ids.map((id) => readback.redeal(replicate, id));
+    assert.deepEqual(dealt(0), dealt(0));
+    assert.notDeepEqual(dealt(0), dealt(1));
+    const third = dealt(3);
+    for (const [i, id] of ids.slice(0, 6).entries()) {
+      assert.equal(third[i], priorReads.inHoldout(`3:${id}`) ? "holdout" : "pointer");
+    }
+    const held = dealt(0).filter((arm) => arm === "holdout").length;
+    assert.ok(held > 450 && held < 550, `expected about 500 held out of 1000, got ${held}`);
+  });
+});
+
 describe("compliance", () => {
   const cycle = (over: Partial<import("./holdoutReadback").ComplianceCycle> = {}) => ({
     runId: "r1",
@@ -419,6 +450,8 @@ describe("the readback over a scratch export, before and after the log is swept"
   });
 
   const strip = (r: import("./apiTypes").HoldoutReadbackDTO) => ({ ...r, queryMs: 0 });
+  const near = (actual: number | null, expected: number) =>
+    assert.ok(actual !== null && Math.abs(actual - expected) < 1e-6, `expected ${expected}, got ${actual}`);
 
   it("reads the three questions separately, per arm, over only the runs with a list", async () => {
     await exportMod.exportHoldoutEvidence(NOW);
@@ -458,6 +491,38 @@ describe("the readback over a scratch export, before and after the log is swept"
       { code: "cycle_cap", pointer: 1, holdout: 0 },
       { code: null, pointer: 0, holdout: 1 },
     ]);
+  });
+
+  it("adds the plan's primary, its two looks and its interference check over the same runs", () => {
+    const { primary } = readback.holdoutReadback(NOW).displacement;
+    // Whole-run reading: pointer 3 and 1, held out 3 and 2, one repository.
+    // Difference 2 - 2.5 = -0.5; variances 2 and 0.5, so 2/2 + 0.5/2 = 1.25.
+    near(primary.estimate.difference, -0.5);
+    near(primary.estimate.z, -0.5 / Math.sqrt(1.25));
+    assert.deepEqual(primary.estimate.runs, { pointer: 2, holdout: 2 });
+    assert.equal(primary.estimate.setAside, 0);
+    assert.equal(primary.permutation.exact, true);
+    assert.equal(primary.permutation.assignments, 6);
+    // Neither look is reached with two runs an arm, and nothing is called.
+    assert.deepEqual(primary.looks.map((l) => l.reachedAt), [null, null]);
+    assert.equal(primary.verdict, "before-interim");
+  });
+
+  it("reads the interference check from the neighbours the export recorded", () => {
+    const { interference } = readback.holdoutReadback(NOW);
+    assert.deepEqual(interference.map((i) => i.exposure), ["preceding", "overlapping", "live"]);
+    const [preceding, overlapping, live] = interference;
+    // h1 has p1 and p2 before it, both dealt the pointer: share 1. h2 has h1, p2
+    // and p1: share 2/3. Centred x 1/6, -1/6 against y (3, 2) -> 0.5, -0.5: slope
+    // (1/12 + 1/12) / (2/36) = 3.
+    assert.equal(preceding.runs, 2);
+    near(preceding.slope, 3);
+    // Both held-out runs have one pointer and one held-out neighbour alive with
+    // them, so the exposure does not vary and there is nothing to regress on.
+    assert.equal(overlapping.runs, 2);
+    assert.equal(overlapping.slope, null);
+    // `live_siblings` was never written for these runs: not recorded, not empty.
+    assert.deepEqual([live.runs, live.setAside, live.slope], [0, 2, null]);
   });
 
   it("answers the same after the sweep has emptied the log", () => {
