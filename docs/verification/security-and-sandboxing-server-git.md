@@ -485,6 +485,28 @@
   the file's change; and the git directory the probe found is not watched
   for ceasing to be one.
 
+- **On git 2.56.0 Land's real merge of a file a blanked driver failed read as a
+  conflict in that file, and now gives the driver's sentence, 2026-11-08.**
+  Board task `716f904b`, branch at `00299ab3`. Through this app's compiled
+  `git()` with `GIT_BIN` at the `v2.56.0` build above, two branches changing
+  different lines of `f.txt` under `merge.evil.driver` and `* merge=evil`:
+  `merge --no-edit --no-overwrite-ignore side` and `merge --squash
+  --no-overwrite-ignore side` each exited 1 with CONFLICT for `f.txt` on
+  stdout, stderr only git's `cannot run :` line carrying the sentence,
+  `UU f.txt`, MERGE_HEAD for the merge and none for the squash, and the
+  driver did not run; `conflictedFiles` returned `["f.txt"]` and `unwind`
+  returned `restored` with an empty status for both. On the image's 2.39.5
+  both exited 2 over a clean checkout with nothing unmerged. The unfixed
+  `mergeRefusal`, exported for the test, gave "The merge conflicted and was
+  rolled back — your checkout is untouched. Conflicting: f.txt" for the
+  2.56.0 shape; with the change, `land.test.ts`' five cases on those
+  captured shapes pass, and on the 2.56.0 repositories above the reason for
+  each was "git refused the merge, and your checkout is as it was:" and
+  that line. With the two blanked checks taken out of the compiled module,
+  three of the five fail. Caveat: `landRun` and `resolveConflicts` were not
+  driven whole on 2.56.0, and that `unresolvableMerge` keeps a resolver from
+  starting is read from the code.
+
 ## Not yet verified by hand
 
 - **Whether a work cycle can race this app's git on `.git/config` in
