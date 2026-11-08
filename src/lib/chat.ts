@@ -727,7 +727,11 @@ export function appendMessage(
 export function listProposals(chatId: string): ChatProposalRow[] {
   return db()
     .prepare(
-      "SELECT * FROM chat_proposals WHERE chat_id = ? ORDER BY created_at, id",
+      // `rowid` rather than `id`, `listQuestions`' correction on the next table
+      // over: `id` is a random UUID, so cards proposed inside one millisecond —
+      // a model's parallel tool calls are handled back to back — would come back
+      // in UUID order instead of the order the model proposed them in.
+      "SELECT * FROM chat_proposals WHERE chat_id = ? ORDER BY created_at, rowid",
     )
     .all(chatId) as ChatProposalRow[];
 }
@@ -813,11 +817,17 @@ export function findPastProposals(o: {
       .prepare(`SELECT COUNT(*) AS n FROM chat_proposals p${clause}`)
       .get(...args) as { n: number }
   ).n;
+  // `rowid` rather than `id` breaks a tie on the decision instant: `id` is a
+  // random UUID, and a plan approved in one click decides its proposals inside
+  // one synchronous pass, so `LIMIT` would keep a random few of them as "the
+  // newest". Creation order stands in for decision order within a tie: not the
+  // order they were decided in, but the order they were proposed in, which a
+  // UUID is neither.
   const proposals = db()
     .prepare(
       `SELECT p.*, s.title AS chat_title
          FROM chat_proposals p JOIN chat_sessions s ON s.id = p.chat_id${clause}
-        ORDER BY COALESCE(p.decided_at, p.created_at) DESC, p.id
+        ORDER BY COALESCE(p.decided_at, p.created_at) DESC, p.rowid DESC
         LIMIT ?`,
     )
     .all(...args, limit) as PastProposalRow[];
@@ -2174,10 +2184,11 @@ export function approveRunBatch(
     if (batched.has(p.id) || !p.spec_id) continue;
     // A replaced card does not hold its label: the replacement inherits it, and
     // a dependent naming it means the one that is still waiting. Ordering alone
-    // would nearly always do this — the replacement is newer — but "nearly" is
-    // a coin toss on the `created_at, id` tiebreak when a supersede lands in the
-    // same millisecond as the card it replaces, and losing it turns a live
-    // dependency into "superseded and never became a run".
+    // would nearly always do this — the replacement is newer — but "nearly" was
+    // a coin toss on the `id` tiebreak `listProposals` used to carry, when a
+    // supersede lands in the same millisecond as the card it replaces, and
+    // losing it turns a live dependency into "superseded and never became a run".
+    // `rowid` settles that order now; the check stays so this loop does not rest on it.
     if (p.status === "superseded" && outside.has(p.spec_id)) continue;
     outside.set(p.spec_id, { kind: p.kind, status: p.status, runId: p.run_id });
   }

@@ -207,7 +207,12 @@ every emission would grow with the install to answer a question about at most
 once, because the board polls every ten seconds and the per-row read it replaces
 is an N+1 on a timer. Its id list is capped at `MAX_TASK_RUN_LINKS` and its count
 is not, on the rule a shortened diff follows: a row showing three of eleven runs
-and saying nothing reports a task worked eleven times as one worked three.
+and saying nothing reports a task worked eleven times as one worked three. The
+list is newest first, and a tie on `created_at` breaks on `runs.rowid`, never on
+`id`: an emission creates every run it names in one synchronous pass, so runs for
+one task routinely share a millisecond, and a random UUID would list them — and
+cut the cap — in an order nobody wrote (`taskComments.ts` breaks its ties the
+same way, `comments.md` gives the reason).
 
 **A run whose task has been deleted still names it, and that is a third answer
 rather than a missing one.** Neither `chat_proposals.task_ids` nor `run_tasks`

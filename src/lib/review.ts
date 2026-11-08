@@ -205,6 +205,8 @@ export function reviewPaths(row: Pick<ReviewRow, "resolved_paths">): string[] {
 }
 
 export function listReviews(runId: string, kind?: AssistKind): ReviewRow[] {
+  // `created_at` alone is enough in practice: a second assist of a kind is refused
+  // while one runs (`assistRunning`), and the kinds are started by separate presses.
   return kind
     ? (db()
         .prepare(

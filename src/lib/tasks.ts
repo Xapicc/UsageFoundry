@@ -2257,12 +2257,17 @@ export function runLinksForTasks(
   if (taskIds.length === 0) return links;
 
   const placeholders = taskIds.map(() => "?").join(", ");
+  // `rowid` rather than `id` breaks a tie on `created_at`: `id` is a random UUID,
+  // and an orchestrator's `emit_runs` writes every run it names in one
+  // synchronous pass, so several runs for one task share a millisecond and would
+  // list — and be capped at `MAX_TASK_RUN_LINKS` — in UUID order instead of the
+  // order they were created in. `taskComments.ts` breaks its ties the same way.
   const rows = db()
     .prepare(
       `SELECT r.id AS id, rt.task_id AS task_id
          FROM run_tasks rt JOIN runs r ON r.id = rt.run_id
         WHERE rt.task_id IN (${placeholders})
-        ORDER BY r.created_at DESC, r.id`,
+        ORDER BY r.created_at DESC, r.rowid DESC`,
     )
     .all(...taskIds) as Array<{ id: string; task_id: string }>;
 

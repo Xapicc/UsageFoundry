@@ -20,7 +20,7 @@ The status it carries is the other half — `null` is nobody answered and a numb
 
 `src/app/api/chat/[id]/route.test.ts`, which opens the database, names a throwaway `DATA_DIR` and calls the handler, because what it pins is a *payload key*: the chat page polls that one route, so a list left out of its answer is frozen on screen until a reload, which is exactly what it did for as long as a comment claimed otherwise.
 
-`chatOrder.test.ts`, which opens the database too, is in the SQL itself: a thread ordered by a random UUID puts a denial note above the reply it is a footnote to, which reverses what the operator is being told.
+`chatOrder.test.ts`, which opens the database too, is in the SQL itself: a thread ordered by a random UUID puts a denial note above the reply it is a footnote to, which reverses what the operator is being told. Its last describe is the same defect on `chat_proposals` (board task `d46e4ab3`): eight cards proposed under a held clock must list in the order proposed, and eight rejected under one must come back newest-proposed first with a limit of three keeping `past 7, 6, 5`. Both failed with the tiebreak on `id` (2026-11-08); eight rows make a chance pass 1 in 40,320.
 
 `chatTurn.test.ts`, which opens the database too, drives `sendChatMessage` through a failed pre-spawn setup, because what it pins is a *state transition* rather than a return value (a chat thread stranded at `thinking` for ever by one failed `writeFileSync`, unusable until the server restarts).
 

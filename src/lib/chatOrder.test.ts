@@ -7,7 +7,8 @@ import { after, before, describe, it } from "node:test";
 import type Database from "better-sqlite3";
 
 /**
- * Covers the order `listMessages` returns a thread in, and only that.
+ * Covers the order `listMessages` returns a thread in, and the order the two
+ * proposal reads return cards in (the last describe), and nothing else.
  *
  * It earns a test on the same grounds as the rest of this suite: it is wrong in
  * a way that throws nothing, typechecks, and changes what the operator is told.
@@ -137,5 +138,58 @@ describe("chat thread order", () => {
       chat.listMessages(id).map((m) => m.text),
       ["first", "second", "third", "fourth"],
     );
+  });
+});
+
+describe("proposal order", () => {
+  const proposal = (title: string) => ({
+    templateId: null,
+    title,
+    task: "do the thing",
+    promptOverride: null,
+    mountId: null,
+    folder: null,
+  });
+
+  // Eight, because `id` is a random UUID: a tiebreak on it hands back a batch
+  // in UUID order, and eight make a chance pass 1 in 40,320 per assertion. A
+  // model's parallel `propose_run` calls are handled back to back, so the cards
+  // of one turn can share a millisecond; the thread is meant to show them in the
+  // order they were proposed in.
+  it("lists cards proposed in one millisecond in the order they were proposed", () => {
+    const chatId = chat.createChat().id;
+    const titles = Array.from({ length: 8 }, (_, n) => `card ${n}`);
+    atFixedClock(1_900_000_000_000, () => {
+      for (const title of titles) chat.createProposal(chatId, proposal(title));
+    });
+
+    assert.deepEqual(
+      chat.listProposals(chatId).map((p) => p.title),
+      titles,
+    );
+  });
+
+  it("keeps the newest decisions of other chats when a tie meets the limit", () => {
+    const authoring = chat.createChat().id;
+    const titles = Array.from({ length: 8 }, (_, n) => `past ${n}`);
+    const ids = atFixedClock(1_900_000_100_000, () =>
+      titles.map((title) => chat.createProposal(authoring, proposal(title)).id),
+    );
+    // One click that rejects the lot, which is what puts them on one `decided_at`.
+    atFixedClock(1_900_000_200_000, () => {
+      for (const id of ids) assert.ok(chat.rejectProposal(id));
+    });
+
+    const viewing = chat.createChat().id;
+    const read = (limit: number) =>
+      chat
+        .findPastProposals({ excludeChatId: viewing, status: "rejected", limit })
+        .proposals.map((p) => p.title);
+
+    // Newest first, so a tie reads back last-proposed first, and the limit
+    // keeps the head of that: without a tiebreak that knows the write order,
+    // "the newest three" is any three of the eight.
+    assert.deepEqual(read(8), [...titles].reverse());
+    assert.deepEqual(read(3), ["past 7", "past 6", "past 5"]);
   });
 });
