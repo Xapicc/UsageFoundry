@@ -157,6 +157,7 @@ This page is the second half of the index at [testing.md](testing.md), which hol
 [samples]: testing/context-samples.md
 [run-page]: testing/run-page-panels-and-file-maps.md
 [argv]: testing/spawn-argv-and-child-env.md
+[deployment]: testing/container-and-deployment.md
 [sign-in]: testing/sign-in-limits.md
 [ui-kit]: testing/components-meter-markdown-and-kit.md
 [cards]: testing/components-usage-and-run-cards.md
