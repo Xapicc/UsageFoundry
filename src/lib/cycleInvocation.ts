@@ -1223,10 +1223,17 @@ export function cycleBudgetIsHeadroom(
  * the install's spend meters. The repository is content an agent's `Bash`
  * can write for the next cycle, and a clone can ship.
  *
- * `--settings` outranks both project scopes, so `cycleEnvPins` puts each of
- * these back to the value the cycle was spawned with. Pinning rather than
- * dropping project settings (`--setting-sources`) keeps the rest of a
- * repository's settings working, and agent discovery unchanged (`agents.ts`).
+ * `--settings` outranks every settings scope: both project files and the
+ * operator's own user scope, `$CLAUDE_CONFIG_DIR/settings.json`. So
+ * `cycleEnvPins` puts each of these back to the value the cycle was spawned
+ * with, and an `env` the operator set for one of them only in that user file is
+ * overridden with the rest, not honoured. That is deliberate, because the user
+ * file is the one a work cycle can write unless `UF_LOCK_CLAUDE_HOME` is on, and
+ * honouring it would hand the pins to whatever a cycle planted there. The place
+ * to set such a variable is the server's environment
+ * (`docs/agent/security/cycle-settings-env.md`). Pinning rather than dropping
+ * project settings (`--setting-sources`) keeps the rest of a repository's
+ * settings working, and agent discovery unchanged (`agents.ts`).
  *
  * Not here, on purpose: the credentials themselves. A project
  * `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` is the project's own key sent
@@ -1270,7 +1277,8 @@ export const PINNED_CYCLE_ENV = [
  * environment the cycle is spawned with.
  *
  * A variable the environment does not set is pinned to `""`, never left out:
- * left out, the project's value is the only one and wins. `""` reads as unset
+ * left out, the project's value is the only one and wins; pinned to `""`, a
+ * value set only in the operator's user-scope file is dropped as well. `""` reads as unset
  * to the CLI — with `ANTHROPIC_BASE_URL: ""` over a project URL, every
  * connection went to `api.anthropic.com:443` — and to the node, python, curl
  * and git a cycle's `Bash` starts, which inherit it.

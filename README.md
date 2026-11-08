@@ -154,6 +154,16 @@ carefully: a blank `UF_ALLOW_NO_AUTH` or `UF_COOKIE_SECURE` is *taken as the
 default*, not reported, and nothing at boot distinguishes it from a value that
 arrived.
 
+**Set a proxy, a gateway (`ANTHROPIC_BASE_URL`) or a provider switch
+(`CLAUDE_CODE_USE_BEDROCK` and the like) in `.env`, not in the `env` of
+`~/.claude/settings.json`.** Every work cycle, reviewer, resolver, validator
+and chat turn is started with those variables pinned to the values the server
+gave it (blank where the server gave none), and a pin outranks the settings
+file. One kept only there is silently ignored: requests go straight to
+`api.anthropic.com`, or fail where direct egress is closed. Which variables are
+pinned and why:
+[docs/agent/security/cycle-settings-env.md](docs/agent/security/cycle-settings-env.md).
+
 The full table is in [docs/install.md](docs/install.md#required-environment).
 
 ---
