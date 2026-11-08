@@ -4670,9 +4670,18 @@ const CHAT_GIT_CONFIG: ReadonlyArray<readonly [string, string]> = [
  * measured on 2.1.310 its `ANTHROPIC_BASE_URL` took this child's request and
  * credential to the host it named, and a `--settings` `env` overrode it. So
  * `PINNED_CYCLE_ENV` goes into the `--settings` below at the values in
- * `spawnEnv`, which must be the environment the child is spawned with. What the
- * user scope can still do — `apiKeyHelper`, permission rules, and every `env`
- * key not on that list — is closed by the lock and by nothing here.
+ * `spawnEnv`, which must be the environment the child is spawned with.
+ *
+ * And no `apiKeyHelper`, because the user scope that file belongs to is kept:
+ * measured on 2.1.310 through `sendChatMessage`, a helper planted in
+ * `$CLAUDE_CONFIG_DIR/settings.json` ran in a chat turn, and on an OAuth login
+ * (the environment's token or a stored `.credentials.json`) its key replaced
+ * the operator's on the request outright. `""` here is what `assistSettingsArgs`
+ * measured to stop it; `null` does not, and a command such as `true` sends an
+ * empty `Bearer`. The cost is an operator's own user-scope helper, which no
+ * longer runs in a chat turn. What the user scope can still do — permission
+ * rules and every `env` key not on the list above — is closed by the lock and
+ * by nothing here.
  *
  * One `--settings` carrying the sandbox overlay too, because the CLI keeps only
  * the last (`sandboxOverlay`).
@@ -4685,7 +4694,12 @@ export function chatSettingsArgs(
     "--setting-sources",
     "user",
     "--settings",
-    JSON.stringify({ env: cycleEnvPins(spawnEnv), ...sandbox, disableAllHooks: true }),
+    JSON.stringify({
+      env: cycleEnvPins(spawnEnv),
+      ...sandbox,
+      disableAllHooks: true,
+      apiKeyHelper: "",
+    }),
   ];
 }
 

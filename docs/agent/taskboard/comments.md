@@ -141,3 +141,18 @@ on every save. `taskComments.ts` is its own module rather than a fifth section o
 file is already the closed sets, the transition rule, the door, the storage and
 the wire for one table, and a second table's half pushed into it would bury
 `taskTransitionRefusal`, which is the function it exists to make findable.
+
+**Notes that share a millisecond are ordered by `rowid`, never by `id`.** The
+thread is "oldest first, in the order the notes were written", and `created_at`
+is a millisecond clock, so a batch writer, a coarse clock or a clock step puts
+several notes on one value. `id` is a random UUID, which orders them by nothing:
+eight notes written under a held clock came back n0, n3, n1, n2, n7, n5, n4, n6,
+and the cap then kept a random three of them as "the newest". Every `ORDER BY`
+in `taskComments.ts` therefore ends in `rowid` (`seq` in the outer query of
+`newestCommentsForTasks`, whose subquery has none of its own). The table is
+not `WITHOUT ROWID` — `id TEXT PRIMARY KEY` is an ordinary column beside the
+implicit one — and `idx_task_comments_thread` carries `rowid` as its last key,
+so `ORDER BY created_at DESC, rowid DESC` is served by the index where `id DESC`
+needed a temporary b-tree (measured with `EXPLAIN QUERY PLAN`, 2026-11-08). A
+new read of this table that sorts on `id` reopens it; so would a rewrite of the
+table as `WITHOUT ROWID`.

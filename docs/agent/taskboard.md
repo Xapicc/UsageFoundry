@@ -137,3 +137,13 @@ The paragraphs themselves live in `docs/agent/taskboard/`, one topic file per he
 - An unfinished verdict buys work cycles, and it may extend exactly one guard.
 - A validation is the third `AssistKind`, the only child this app starts without being asked, and the two things that follow are not optional.
 - The check is a weak verifier and the strong one is deliberately absent.
+
+## [A task already done in the branch's history](taskboard/completion-validation-history.md)
+
+- An empty branch diff is read beside the commits the server finds already in the branch's history, and never beside anything the run says.
+- Evidence is two server-side facts, and a commit hash the run names is neither.
+- A matching trailer finds a commit; the judge still reads it.
+- Only an empty diff asks.
+- Every failure is "no evidence", which is today's behaviour.
+- What this does not cover, so a person still closes these.
+- The measurement, 2026-11-08, and what it does and does not show.

@@ -78,6 +78,20 @@
   a cycle bills the planted key is `cycle-settings-env.md`'s reading of the
   cycle's argv and was not re-run here.
 
+- **`auth status` reports a user-file `apiKeyHelper` as the login without
+  running it, on 2.1.310, 2026-11-08.** Board task `9d7770b6`. A scratch
+  `CLAUDE_CONFIG_DIR` whose `settings.json` named a helper that would write a
+  marker, and `status` led by the pins-only `--settings` that `authArgv`
+  builds. With no credential in the environment it answered `loggedIn: true`,
+  `authMethod: "api_key_helper"`, `apiKeySource: "apiKeyHelper"`; with a fake
+  `ANTHROPIC_API_KEY` it answered `api_key_helper` beside `apiKeySource:
+  "ANTHROPIC_API_KEY"`; with a fake `CLAUDE_CODE_OAUTH_TOKEN`, `api_key_helper`
+  again. No marker was written in any of the three. With `"apiKeyHelper": ""`
+  added to the same `--settings` it answered `loggedIn: false`, `api_key` and
+  `oauth_token`. Caveat: fake credentials, one run per case, and the exit code
+  was 1 only for the signed-out answer; the panel's own parsing of
+  `api_key_helper` was not read.
+
 - **A planted `$CODEX_HOME/config.toml` steers `codex app-server`'s bearer and
   none of the sign-in children, 2026-11-08.** codex-cli 0.153.4, a scratch
   `CODEX_HOME` under `$TMPDIR` holding a made-up API key or a made-up ChatGPT

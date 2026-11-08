@@ -1498,7 +1498,7 @@ export function buildArgs(opts: {
    * no writes at all. `sandboxWritableRoots` in `orchestrator.ts` owns which
    * readings produce which, and its doc carries why an install without a
    * sandbox must get no write set. Such an install's `--settings` carries
-   * `envPins` alone.
+   * `envPins` and the empty `apiKeyHelper` alone.
    *
    * It arrives here rather than being appended to the finished argv by the run
    * loop, which is where it used to be, because the flag that carries it is not
@@ -1519,7 +1519,8 @@ export function buildArgs(opts: {
    * `buildArgs` puts in the same `--settings` as the write set. Ignored by
    * `buildCodexArgs`: `codex exec` reads no `.claude/settings.json`. Null or
    * absent emits no pins, which is the argv from before they existed and is
-   * what a cycle whose checkout can redirect its credential gets.
+   * what a cycle whose checkout can redirect its credential gets. The empty
+   * `apiKeyHelper` beside them does not depend on this.
    */
   envPins?: Readonly<Record<string, string>> | null;
   /**
@@ -1768,8 +1769,20 @@ export function buildArgs(opts: {
   // beside it is a policy nobody has measured. It outranks the write grant
   // `--add-dir` made — measured, the CLI hands bwrap the vault's `--bind` and
   // then a `--ro-bind` of the same path.
+  //
+  // And an empty `apiKeyHelper`, always, because the CLI runs a helper named by
+  // the checkout's `settings.local.json` or `settings.json` or by the user
+  // file, none of which the hooks switch or the endpoint pins reach. Measured
+  // on 2.1.310 through `runIteration`: beside an API key the helper's key went
+  // on the request too, and on an OAuth login (the environment's token or a
+  // stored `.credentials.json`) it replaced the operator's outright. `""`
+  // stopped it; `null` does not, and a command such as `true` sends an empty
+  // `Bearer`. Not tied to `envPins`, so a caller that omits them is not the one
+  // that leaves it open. The cost is an operator's own user-scope helper, which
+  // no longer runs in a work cycle.
   const overlay = {
     ...(opts.envPins ? { env: opts.envPins } : {}),
+    apiKeyHelper: "",
     ...(opts.writableRoots && opts.writableRoots.length > 0
       ? {
           sandbox: {
@@ -1780,7 +1793,7 @@ export function buildArgs(opts: {
         }
       : {}),
   };
-  if (Object.keys(overlay).length > 0) args.push("--settings", JSON.stringify(overlay));
+  args.push("--settings", JSON.stringify(overlay));
   args.push(...promptArgs(opts.prompt));
   return args;
 }

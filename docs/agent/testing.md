@@ -67,6 +67,7 @@ Twenty-three are renderings rather than functions — every `*.test.tsx` in the 
 |---|---|
 | `dataDirClaim.test.ts` |  |
 | `holdoutExport.test.ts` |  |
+| `holdoutInference.test.ts` |  |
 | `holdoutReadback.test.ts` |  |
 | `retention.test.ts` | [stacks], [harnesses] |
 | `retentionSweep.test.ts` | [status] |
@@ -411,6 +412,7 @@ Units that are about no test file in the tree:
 | `src/app/api/jsonObjectBody.test.ts` |  |
 | `src/app/api/login/route.test.ts` | [sign-in] |
 | `src/app/api/otlp/v1/logs/route.test.ts` |  |
+| `src/app/api/runs/[id]/reopen/route.test.ts` |  |
 | `src/app/api/runs/[id]/stream/route.test.ts` |  |
 | `src/app/api/runs/route.test.ts` |  |
 | `src/app/api/runs/live/stream/route.test.ts` | [harnesses] |

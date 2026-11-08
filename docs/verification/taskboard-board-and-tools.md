@@ -130,6 +130,18 @@
   not rendered, and the stored-mount-removed branch of `taskProjectDraft` is
   pinned in `format.test.ts` only.
 
+- **An empty branch diff shown beside the commits already in the history,
+  2026-11-08**, production `buildValidationPrompt` from a compiled build at
+  `7f86291f`, the judge a Claude Code subagent on Sonnet 5.5 with no
+  repository access, 28 requests built from seven spike cases labelled
+  `finished` (`scripts/validator-spike/history.mjs`, `history-report.md`). With
+  no history the judge called **7 of 7** `not-finished` for work that was in the
+  history; with the case's own commit as history **7 of 7** `finished`; with
+  another case's commit, two pairings, **0 of 14** `finished`. Caveat: one
+  sample per request, so 0 of 14 bounds the false-finished rate only below
+  about 21%; not `spawnAssist`'s child; the shipped preamble was scored on
+  these empty-diff inputs only, not on the spike's 40.
+
 ## Not yet verified by hand
 
 - **No model has called the board tools over stdio**; that needs a billed run.
@@ -183,3 +195,9 @@
   Settle it on a project with more open tasks than one page (100): ask a chat
   to file something already on the board, and read whether it calls
   `list_tasks` with `query` before `create_task`.
+
+- **The history evidence has never been shown to a validation `spawnAssist`
+  ran.** Unseen: `git log --grep` with the trailer format on a real run
+  branch, `wholeCommitDiff` on a real commit, and the run-log line that says
+  which commits were shown. Settle with a run whose branch starts after another
+  run's commit for the same task, then read `run_reviews` and the run's log.

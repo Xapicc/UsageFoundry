@@ -3316,7 +3316,10 @@ describe("buildArgs", () => {
       writableRoots: null,
     });
     assert.equal(disallowedToolValues(args).at(-1), "Edit(//vault/**)");
-    assert.equal(args.includes("--settings"), false);
+    // The overlay has nothing to hang `denyWrite` on without a write set; what
+    // it carries is the `apiKeyHelper` pin, which does not depend on one.
+    const overlay = JSON.parse(args[args.indexOf("--settings") + 1]);
+    assert.equal("sandbox" in overlay, false);
   });
 
   it("leaves the vault writable to a run whose workspace it is", () => {
@@ -4020,8 +4023,27 @@ describe("cycleEnvPins — the endpoint a checkout's settings cannot move", () =
     return JSON.parse(args[args.indexOf("--settings") + 1]) as {
       env?: Record<string, string>;
       sandbox?: { filesystem: { allowWrite: string[] } };
+      apiKeyHelper?: unknown;
     };
   };
+
+  it("empties apiKeyHelper in that one --settings, whatever else it carries", () => {
+    // Measured on 2.1.310 through `runIteration`: a helper in the checkout's
+    // `settings.local.json` or `settings.json`, or in the user file, ran in a
+    // cycle, and on an OAuth login its key replaced the operator's on the
+    // request outright. `""` stopped it; `null` and an absent key do not, so
+    // nothing but the empty string passes. Emitted with no pins and no write
+    // set too, so a caller that forgets `envPins` is not the one that leaves it
+    // open.
+    const pins = cycleEnvPins({});
+    for (const opts of [
+      { envPins: pins, writableRoots: roots },
+      { envPins: pins, writableRoots: null },
+      { writableRoots: null },
+    ]) {
+      assert.equal(overlayOf(buildArgs({ ...base, ...opts })).apiKeyHelper, "");
+    }
+  });
 
   it("pins every listed variable, to \"\" where the environment has none", () => {
     const pins = cycleEnvPins({ ANTHROPIC_BASE_URL: "http://127.0.0.1:8789", HTTPS_PROXY: "http://corp:3128" });
@@ -4068,12 +4090,13 @@ describe("cycleEnvPins — the endpoint a checkout's settings cannot move", () =
     assert.deepEqual(both.sandbox?.filesystem.allowWrite, roots);
 
     // A stock install, which has no managed sandbox and is every install by
-    // default: the pins alone, and still no write set naming a sandbox that is
-    // not on.
+    // default: the pins and the empty `apiKeyHelper`, and still no write set
+    // naming a sandbox that is not on.
     const stock = overlayOf(buildArgs({ ...base, envPins: pins, writableRoots: null }));
-    assert.deepEqual(stock, { env: pins });
+    assert.deepEqual(stock, { env: pins, apiKeyHelper: "" });
 
-    assert.equal(buildArgs({ ...base, writableRoots: null }).includes("--settings"), false);
+    // Neither pins nor a write set: the overlay is the `apiKeyHelper` pin alone.
+    assert.deepEqual(overlayOf(buildArgs({ ...base, writableRoots: null })), { apiKeyHelper: "" });
   });
 
   it("is never handed to Codex, which reads no .claude/settings.json", () => {

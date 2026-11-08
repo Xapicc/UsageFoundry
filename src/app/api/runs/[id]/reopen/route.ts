@@ -5,6 +5,7 @@ import { codexGuardSnapshot } from "../../../../../lib/codexAccount";
 import {
   ENFORCEMENT_MODES,
   normalizePolicy,
+  policyNumberRefusal,
   windowGuardRefusal,
 } from "../../../../../lib/budget";
 import {
@@ -67,6 +68,14 @@ async function postHandler(req: Request, ctx: Ctx) {
         { status: 400 },
       );
     }
+  }
+
+  // Before the fold below, for the reason given in `POST /api/runs`: "5O", "$5"
+  // and -5 would reopen a finished run with no spending limit, and the operator
+  // retyping a budget here is exactly who makes that typo.
+  const numberRefusal = policyNumberRefusal(rawBudget);
+  if (numberRefusal) {
+    return NextResponse.json({ error: numberRefusal }, { status: 400 });
   }
 
   const policy = normalizePolicy(rawBudget);

@@ -144,3 +144,15 @@ runs cost dollars each, not twelve cents.
   asked for is present, never that it works.
 - **Repeatability.** Each case was judged once. No verdict was sampled twice, so
   none of these numbers carries a variance.
+
+## The already-on-main arms
+
+`history.mjs` and `history-report.md` beside this file add one input the 40
+cases do not have: an empty branch diff beside commits the server found in the
+branch's history (`src/lib/validationHistory.ts`, board task 17be140e). Seven of
+the cases above, labelled `finished`, are re-built three ways and judged by the
+**shipped** prompt rather than `prompt.md`: with no history, the judge said
+`not-finished` for 7 of 7; with the case's own commit, `finished` for 7 of 7;
+with another case's commit, `not-finished` for 14 of 14. None of these numbers
+extends the 34 of 37, which are about `prompt.md`; the reading, its caveats and
+how to re-run are in `docs/agent/taskboard/completion-validation-history.md`.

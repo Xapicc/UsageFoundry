@@ -290,7 +290,11 @@ export function fmtTokens(n: number): string {
   if (!Number.isFinite(n)) return "—";
   // `signedUSD`'s minus, for its reason: the composition legend prints a
   // deficit in a column of these, and a hyphen is a different width.
-  if (n < 0) return `−${fmtTokens(-n)}`;
+  if (n < 0) {
+    // A deficit under half a token rounds to "0", and zero has no sign.
+    const magnitude = fmtTokens(-n);
+    return magnitude === "0" ? magnitude : `−${magnitude}`;
+  }
   // Each unit is taken only if its *rounded* figure is under 1000, not as soon
   // as the raw number reaches it: 999,950 reaches `k` and rounds to `1000.0k`,
   // a figure in a unit it has already outgrown.
@@ -351,7 +355,10 @@ export function fmtBytes(n: number): string {
     value /= 1024;
     unit++;
   }
-  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
+  // The decimal is dropped on the rounded figure too: 9.96 rounds to 10, which
+  // `du -h` writes `10K`, not `10.0K`.
+  const tenths = value.toFixed(1);
+  return `${Number(tenths) < 10 ? tenths : Math.round(value)} ${units[unit]}`;
 }
 
 export function fmtUSD(n: number): string {

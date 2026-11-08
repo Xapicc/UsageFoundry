@@ -623,3 +623,31 @@ describe("the compliance join, before and after the sweep", () => {
     assert.deepEqual(dbMod.db().prepare(FROM_EXPORT).all(COMPLIANCE_REPO), before);
   });
 });
+
+describe("a notebook call", () => {
+  const NOTEBOOK_REPO = "/workspace/notebooks";
+  const N0 = NOW - 50 * DAY;
+
+  it("is exported with its notebook_path as the path, like any call that names a file", async () => {
+    // NotebookEdit and NotebookRead carry `notebook_path` and no `file_path`, and
+    // neither is in the export's tool list; `EDIT_TOOLS` counts the first as an
+    // edit, so a run that only changed a notebook would read as never editing.
+    run({ id: "nb-run", createdAt: N0, repo: NOTEBOOK_REPO });
+    event("nb-run", N0 + 1, "tool", { name: "NotebookRead", input: { notebook_path: `${NOTEBOOK_REPO}/a.ipynb` } });
+    event("nb-run", N0 + 2, "tool", { name: "NotebookEdit", input: { notebook_path: `${NOTEBOOK_REPO}/a.ipynb`, new_source: "x" } });
+    event("nb-run", N0 + 3, "tool", { name: "Edit", input: { file_path: `${NOTEBOOK_REPO}/b.ts` } });
+    event("nb-run", N0 + 4, "tool", { name: "Bash", input: { command: "ls" } });
+
+    await exportMod.exportHoldoutEvidence(NOW);
+
+    const tools = dbMod
+      .db()
+      .prepare("SELECT name, path FROM holdout_tool_events WHERE run_id = 'nb-run' ORDER BY event_id")
+      .all();
+    assert.deepEqual(tools, [
+      { name: "NotebookRead", path: `${NOTEBOOK_REPO}/a.ipynb` },
+      { name: "NotebookEdit", path: `${NOTEBOOK_REPO}/a.ipynb` },
+      { name: "Edit", path: `${NOTEBOOK_REPO}/b.ts` },
+    ]);
+  });
+});

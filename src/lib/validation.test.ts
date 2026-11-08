@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { after, describe, it } from "node:test";
+import { after, before, describe, it } from "node:test";
 import type { RunDiff } from "./diff";
 import type { Task } from "./tasks";
 
@@ -56,6 +57,9 @@ const {
   validationSkipReason,
   verdictsToActOn,
 } = require("./validation") as typeof import("./validation");
+const { alreadyDeliveredFor, taskCommitsIn } =
+  require("./validationHistory") as typeof import("./validationHistory");
+const { db } = require("./db") as typeof import("./db");
 
 const answer = (body: string) => `Some reasoning about the diff.\n\n${body}`;
 
@@ -461,6 +465,163 @@ describe("buildValidationPrompt", () => {
     // Named in the spike's own list of things that trip a judge up: a shortened
     // diff is not a missing deliverable, and the diffstat above it is complete.
     assert.match(prompt({ truncated: true }), /cut to fit/);
+  });
+
+  describe("with commits the server found in the branch's history", () => {
+    const history = {
+      commits: [{ sha: "c267d6a2f0592555ff10af76da65de4683fb9444", subject: "Fix the lock order" }],
+      text: "### c267d6a2  Fix the lock order\n1 file(s) changed, +4 −1.\n\n--- main.go ---\n+lock()",
+      truncated: false,
+    };
+    const empty = { diff: { ...diff, files: [], filesChanged: 0, added: 0, deleted: 0 }, diffText: "" };
+
+    it("shows them beside the empty diff and says what the trailer does not prove", () => {
+      // Fail-first: before this, an empty diff against a task that required a
+      // change was the whole of the evidence, so a fix that reached the branch
+      // through its target was indistinguishable from a run that did nothing.
+      const text = prompt({ ...empty, history });
+      assert.match(text, /nothing was committed to this branch/);
+      assert.match(text, /Commits already in this branch's history for this task/);
+      assert.match(text, /<history>[\s\S]*Fix the lock order[\s\S]*<\/history>/);
+      // The half that stops "something was committed for this task" being
+      // rounded up to "finished": a run holding two tasks stamps both ids.
+      assert.match(text, /not evidence that it contains\s+this task's deliverable/);
+      assert.match(text, /unjudgeable/);
+    });
+
+    it("leaves every prompt that has none exactly as it was", () => {
+      // The preamble's measured numbers are about the strings it produced, so
+      // the block may only ever be added, never change what is sent without it.
+      assert.equal(prompt({ ...empty, history: null }), prompt(empty));
+      assert.ok(!/<history>/.test(prompt(empty)));
+      // Before the block existed the evidence ended at the diff's closing tag.
+      assert.ok(prompt(empty).endsWith("</diff>"));
+    });
+
+    it("still never tells the judge that the run claims to be finished", () => {
+      const text = prompt({ ...empty, history, runPrompt: "Do the lock work" });
+      for (const leak of [/claims? to (?:be|have)/i, /says it (?:is )?(?:finished|done|complete)/i, /asked to close/i]) {
+        assert.ok(!leak.test(text), `prompt leaks the claim: ${leak}`);
+      }
+    });
+
+    it("says when the patches were cut", () => {
+      assert.match(prompt({ ...empty, history: { ...history, truncated: true } }), /patches below were cut/);
+    });
+  });
+});
+
+describe("taskCommitsIn", () => {
+  const TASK = "11111111-2222-3333-4444-555555555555";
+  const SHA = (n: number) => String(n).repeat(40);
+  const record = (sha: string, subject: string, runs: string, tasks: string) =>
+    [sha, subject, runs, tasks].join("\x1f") + "\x1e\n";
+  const find = (raw: string, started: string[] = ["earlier"]) =>
+    taskCommitsIn(raw, { taskId: TASK, runId: "judged", runStartedFor: (id) => started.includes(id) });
+
+  it("finds a commit another run was started for this task and stamped", () => {
+    assert.deepEqual(find(record(SHA(1), "Fix it", "earlier", `other,${TASK}`)), [
+      { sha: SHA(1), subject: "Fix it" },
+    ]);
+  });
+
+  it("leaves out the commit the run being judged made", () => {
+    // Its own commits are the diff it is judged by, and an empty diff means it
+    // has none that last; counting them would show the judge its own work twice.
+    assert.deepEqual(find(record(SHA(1), "Mine", "judged", TASK), ["judged"]), []);
+  });
+
+  it("reads trailers only: a message that merely names the task is not evidence", () => {
+    // `--grep` matches the whole message, and a commit body written by any
+    // agent can carry any id. The trailer fields are what git parsed as
+    // trailers, so a body mention arrives here as an empty field.
+    assert.deepEqual(find(record(SHA(1), "Mentions it", "", "")), []);
+    assert.deepEqual(find(record(SHA(1), "Other task", "earlier", "someone-else")), []);
+  });
+
+  it("leaves out a stamp the install has no record of", () => {
+    // A run id typed into a commit message by hand names no run this install
+    // started for the task, so it is text and not the server's word.
+    assert.deepEqual(find(record(SHA(1), "Forged", "invented", TASK)), []);
+    assert.deepEqual(find(record(SHA(1), "Other run's task", "earlier", TASK), []), []);
+  });
+
+  it("leaves out a commit carrying two run stamps", () => {
+    assert.deepEqual(find(record(SHA(1), "Two", "earlier,judged", TASK)), []);
+  });
+
+  it("skips a record that is not four fields or whose sha is not one", () => {
+    assert.deepEqual(find(`${SHA(1)}\x1fonly two\x1e\n`), []);
+    assert.deepEqual(find(record("not-a-sha", "Odd", "earlier", TASK)), []);
+  });
+});
+
+describe("alreadyDeliveredFor", () => {
+  const TASK = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  let root: string;
+  let repo: string;
+
+  const git = (...args: string[]) =>
+    execFileSync("git", args, {
+      cwd: repo,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "t",
+        GIT_AUTHOR_EMAIL: "t@example.com",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@example.com",
+      },
+    }).trim();
+  const commit = (message: string, files: Record<string, string>, ...trailers: string[]) => {
+    for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(repo, name), text);
+    git("add", "-A");
+    git("commit", "-q", "-m", message, ...trailers.flatMap((t) => ["--trailer", t]));
+    return git("rev-parse", "HEAD");
+  };
+  const startedFor = (runId: string, taskId: string) =>
+    db().prepare("INSERT OR IGNORE INTO run_tasks (run_id, task_id, position) VALUES (?, ?, 0)").run(runId, taskId);
+  const ask = (head: string, runId = "judged") =>
+    alreadyDeliveredFor({ repoRoot: repo, head, taskId: TASK, runId, budgetBytes: 60_000 });
+
+  before(() => {
+    root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-already-delivered-")));
+    repo = path.join(root, "repo");
+    fs.mkdirSync(repo);
+    git("init", "-q", "-b", "main");
+    commit("base", { "a.txt": "a\n" });
+  });
+
+  after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  it("is null for a history with nothing stamped for the task", async () => {
+    const head = commit("Unrelated", { "u.txt": "u\n" }, "UF-Run: stranger", `UF-Task: ${TASK}`);
+    // Stamped, but the install never recorded that run as started for the task.
+    assert.equal(await ask(head), null);
+  });
+
+  it("finds the stamped commit and its patch, and not a commit that only names the task", async () => {
+    startedFor("earlier", TASK);
+    commit(`Body names ${TASK}`, { "n.txt": "n\n" });
+    const fix = commit("Lock before the directories", { "main.go": "lock()\n" }, "UF-Run: earlier", `UF-Task: ${TASK}`);
+    commit("After", { "z.txt": "z\n" }, "UF-Run: earlier", "UF-Task: some-other-task");
+    const head = git("rev-parse", "HEAD");
+
+    const found = await ask(head);
+    assert.ok(found, "the stamped commit should be found");
+    assert.deepEqual(found.commits.map((c) => c.sha), [fix]);
+    assert.match(found.text, /Lock before the directories/);
+    assert.match(found.text, /\+lock\(\)/);
+    assert.ok(!/Body names/.test(found.text));
+    assert.equal(found.truncated, false);
+  });
+
+  it("is null for the run's own stamp, which its diff already carries", async () => {
+    startedFor("judged", TASK);
+    const own = commit("Mine", { "m.txt": "m\n" }, "UF-Run: judged", `UF-Task: ${TASK}`);
+    const found = await ask(own);
+    assert.ok(found);
+    assert.ok(!found.commits.some((c) => c.sha === own));
   });
 });
 
