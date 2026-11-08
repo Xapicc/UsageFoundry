@@ -1,6 +1,6 @@
 # Validator spike — score against git show a74a1bb:"proposals/implemented - ExternalValidator/validator-baseline.md" §3
 
-model: claude-sonnet-4-5 · transport: file · prompt: shipped (buildValidationPrompt) · testimony: withheld
+model: claude-sonnet-5-5 via Agent-tool subagent · transport: file · prompt: shipped (buildValidationPrompt) · testimony: withheld
 
 cases: 40 · answered: 40 · unparseable: 0 · awaiting: 0
 held out — this harness cannot vouch the model saw the whole diff: 3 (cases 2, 18, 24)
