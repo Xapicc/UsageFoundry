@@ -1641,8 +1641,12 @@ export function listTasks(query: TaskListQuery = {}): TaskListPage {
   }
   if (filters.folder) {
     if (filters.includeSubfolders) {
-      where.push("(folder = ? OR folder LIKE ? ESCAPE '\\')");
-      args.push(filters.folder, `${likePrefix(filters.folder + path.sep)}%`);
+      // `substr`, not `LIKE`: `LIKE` folds ASCII case while `=` does not, so
+      // `/w/Foo`'s subtree would take in `/w/foo/sub`. It also needs no escape,
+      // since `%` and `_` are only wildcards to `LIKE`.
+      const prefix = filters.folder + path.sep;
+      where.push("(folder = ? OR substr(folder, 1, length(?)) = ?)");
+      args.push(filters.folder, prefix, prefix);
     } else {
       where.push("folder = ?");
       args.push(filters.folder);

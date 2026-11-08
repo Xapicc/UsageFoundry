@@ -1413,6 +1413,29 @@ describe("findPastProposals — what other conversations proposed", () => {
       ["api", "web"],
     );
   });
+
+  it("never counts a folder that differs from the asked one only in case", () => {
+    // `LIKE` folds ASCII case and `=` does not, so `Acme/Web` also answered for
+    // `acme/web/api` — a different repository on a case-sensitive mount, whose
+    // rejected proposals the orchestrator would then read as this one's.
+    const asking = createChat();
+    const other = createChat();
+    propose(other.id, "zqp-case web", { mountId: "zqp-case-mount", folder: "Acme/Web" });
+    propose(other.id, "zqp-case api", { mountId: "zqp-case-mount", folder: "Acme/Web/api" });
+    propose(other.id, "zqp-case lower", { mountId: "zqp-case-mount", folder: "acme/web" });
+    propose(other.id, "zqp-case lower api", { mountId: "zqp-case-mount", folder: "acme/web/api" });
+
+    const found = findPastProposals({
+      excludeChatId: asking.id,
+      mountId: "zqp-case-mount",
+      folder: "Acme/Web",
+    });
+    assert.deepEqual(
+      found.proposals.map((p: { title: string }) => p.title).sort(),
+      ["zqp-case api", "zqp-case web"],
+    );
+    assert.equal(found.total, 2);
+  });
 });
 
 describe("a proposal's label, dependencies and graph survive the round trip", () => {
