@@ -20,7 +20,7 @@ it as a property of the app:
 
 > **Three** data sources now, still **never summed or mixed in the UI**.
 
-and `docs/agent/metering/run-spend-readings.md`'s *"what each repository cost is a fifth reading"* paragraph says why:
+and `docs/agent/metering/repository-spend-and-reading.md`'s *"what each repository cost is a fifth reading"* paragraph says why:
 
 > three routes to overlapping work, and any sum double-counts
 

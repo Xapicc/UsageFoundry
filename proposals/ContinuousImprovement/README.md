@@ -38,8 +38,9 @@ last line but one says `STOPS the pointer`, revert `b748ac0d`.
 
 The measurements are in `docs/verification/run-lifecycle-hooks-and-endings.md`
 and `docs/verification/metering-and-cost-run-spend.md`. The decisions are in
-`docs/agent/run-lifecycle/prior-read-pointer.md` and
-`docs/agent/metering/run-spend-readings.md`.
+`docs/agent/run-lifecycle/prior-read-pointer.md`,
+`docs/agent/metering/run-spend-readings.md` and
+`docs/agent/metering/repository-spend-and-reading.md`.
 
 ## Changes to the holdout, 2026-10-31
 
