@@ -33,6 +33,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Area | File |
 |---|---|
 | Metering and cost | [metering-and-cost.md](verification/metering-and-cost.md) |
+| Metering and cost | [metering-and-cost-run-spend.md](verification/metering-and-cost-run-spend.md) — a cycle's spend, resumed sessions and the per-repository readout |
 | Budgets and guards | [budgets-and-guards.md](verification/budgets-and-guards.md) |
 | Run lifecycle | [run-lifecycle.md](verification/run-lifecycle.md) |
 | Run lifecycle | [run-lifecycle-background-work.md](verification/run-lifecycle-background-work.md) — a work cycle's wait for background tasks, and what stopping one tells the next cycle |

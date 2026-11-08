@@ -9113,7 +9113,7 @@ export function cycleCostAfterResult(prevUSD: number, reported: unknown): number
  * `--resume` restores the ledger the previous child saved in the transcript's
  * `cost-state` record, and `total_cost_usd` is read off that ledger — read off
  * the pinned binary and 138 transcripts, not run; see
- * `docs/verification/metering-and-cost.md`. Added whole, three $4 cycles stored
+ * `docs/verification/metering-and-cost-run-spend.md`. Added whole, three $4 cycles stored
  * $24, and every guard built on `spent_usd` — `maxRunCostUSD` before a cycle
  * and on the live tick, `--max-budget-usd`'s remainder, the install limit —
  * stopped the run at half the money it was given.
