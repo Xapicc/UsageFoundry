@@ -1018,6 +1018,58 @@ describe("a driver written between the probe and the call is refused", () => {
     assert.equal(fs.existsSync(marker), true, "the driver included from the user's home did not fire");
   });
 
+  /**
+   * An `include.path` under `%(prefix)/` and where git places it, in its own
+   * install prefix, or null where this process cannot write there: the image's
+   * git is under /usr.
+   */
+  const prefixFiles: string[] = [];
+  function prefixInclude(): { value: string; target: string } | null {
+    const value = `%(prefix)/uf-git-probe-${process.pid}-${count++}.inc`;
+    const placed = plain(root, ["config", "--file", "/dev/null", "--type=path", "-z", "--default", value, "--get", "usagefoundry.include"]);
+    const target = placed.replace(/\0$/, "");
+    try {
+      fs.accessSync(path.dirname(target), fs.constants.W_OK);
+    } catch {
+      return null;
+    }
+    prefixFiles.push(target);
+    return { value, target };
+  }
+  const noWritablePrefix = "this git's install prefix is not writable here, so nothing can be planted in it";
+  after(() => {
+    for (const file of prefixFiles) fs.rmSync(file, { force: true });
+  });
+
+  // git expands `%(prefix)/` to its own install prefix, and the watch read it
+  // as a path relative to `.git` (board task 12d0e24c).
+  it("git() and gitSync(): an include under `%(prefix)/` written after the probe refuses the call", async (t) => {
+    for (const viaSync of [false, true]) {
+      const include = prefixInclude();
+      if (include === null) return t.skip(noWritablePrefix);
+      const { repo, marker } = namedButUndefinedRepo();
+      plain(repo, ["config", "include.path", include.value]);
+      fs.writeFileSync(writeTarget, include.target);
+      setMode("plant-include");
+      const res = viaSync ? gitSync(repo, ["add", "-A"]) : await git(repo, ["add", "-A"]);
+      setMode("pass");
+
+      ranNothing(marker);
+      assert.equal(res.ok, false, `${viaSync ? "gitSync" : "git"}() ran the call`);
+      assert.match(res.stderr, new RegExp(`${path.basename(include.target).replace(/\./g, "\\.")} changed while the filter probe read it`));
+    }
+  });
+
+  it("control: an include under `%(prefix)/` is read from git's install prefix", (t) => {
+    const include = prefixInclude();
+    if (include === null) return t.skip(noWritablePrefix);
+    const { repo, marker } = namedButUndefinedRepo();
+    plain(repo, ["config", "include.path", include.value]);
+    fs.writeFileSync(include.target, `[filter "x"]\n\tclean = ${fs.readFileSync(plantFile, "utf8")}\n`);
+    plain(repo, ["add", "-A"]);
+    assert.equal(fs.existsSync(marker), true, "the driver included from git's install prefix did not fire");
+  });
+
   it("control: what each plant leaves behind runs the driver", () => {
     const viaConfig = namedButUndefinedRepo();
     setMode("plant-after-probe");

@@ -339,6 +339,24 @@
   failure the merge-preview wording case. Caveat: only a rewrite between the
   probe and the call was driven, not a writer racing a call.
 
+- **git expands an include's `%(prefix)/` to its own install prefix, and
+  placing it through git refuses a file written there after the probe,
+  2026-11-08.** Board task `12d0e24c`, `main` at `5773bb0b`. `v2.56.0` built
+  with `NO_RUST=1` against a scratch zlib v1.3.1 under `$TMPDIR`, with a
+  prefix there, under `env -i`. `config --file /dev/null --type=path -z
+  --default '%(prefix)/x.inc'` printed `<prefix>/x.inc`, and on the image's
+  2.39.5 `/usr/x.inc`; `%(prefix)x.inc` and a bare `%(prefix)` came back
+  unchanged, so only the prefix with its slash is expanded. Through this
+  app's compiled `git()` and `gitSync()` on that build,
+  `gitFilterProbe.test.ts`'s `%(prefix)/` case, the stub writing the
+  included file while the index is listed, ran the plant through each at
+  `5773bb0b` and was refused with the change, and its control ran a driver
+  included from the prefix under plain git. The file ran 79 of 80 there, the
+  one failure the merge-preview wording case; on 2.39.5 both cases skip,
+  since `/usr` is not writable. Caveat: a `RUNTIME_PREFIX` build (Git for
+  Windows, some macOS packages) was not tried; that placement follows one,
+  since it asks the same binary the call runs, is inferred.
+
 ## Not yet verified by hand
 
 - **Whether a work cycle can race this app's git on `.git/config` in
