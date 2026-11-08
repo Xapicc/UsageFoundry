@@ -401,6 +401,16 @@ function chainedRunIds(): Set<string> {
  * The newest run recorded in each isolated checkout, which is the one whose
  * state describes that slot. Ordered newest-first, so the first row seen for a
  * path is the one kept.
+ *
+ * `rowid DESC` ends the order because a hand-over chain's links share one slot
+ * and are written in one pass, so they often share a `created_at`, and
+ * `idx_runs_created` returns such a tie oldest-written first. The row kept was
+ * then the chain's *first* link, which changes two decisions: the slot's age
+ * was counted from where the chain began rather than where it stopped, and
+ * `chainedRunIds` — which names the link a waiting run continues, a link that has
+ * no slot of its own — missed the row kept, so a checkout a waiting link was set
+ * to carry on was reclaimed. `runsOn` in `projects.ts` ends its order the same
+ * way, for the same tie.
  */
 function newestRunPerSlot(): Map<string, SlotRow> {
   const rows = db()
@@ -410,7 +420,7 @@ function newestRunPerSlot(): Map<string, SlotRow> {
          FROM runs
         WHERE isolation = 'worktree' AND worktree_path IS NOT NULL
           AND repo_root IS NOT NULL
-        ORDER BY created_at DESC
+        ORDER BY created_at DESC, rowid DESC
         LIMIT 500`,
     )
     .all() as SlotRow[];

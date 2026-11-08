@@ -41,6 +41,7 @@ let repo: string;
 let orch: typeof import("./orchestrator");
 let land: typeof import("./land");
 let projects: typeof import("./projects");
+let retention: typeof import("./retention");
 let dbMod: typeof import("./db");
 
 function git(cwd: string, args: string[]): void {
@@ -84,9 +85,10 @@ before(async () => {
   orch = await import("./orchestrator");
   land = await import("./land");
   projects = await import("./projects");
+  retention = await import("./retention");
   dbMod = await import("./db");
   const settings = await import("./settings");
-  settings.saveSettings({ planUsageFromApi: false });
+  settings.saveSettings({ planUsageFromApi: false, checkoutRetentionDays: 7 });
   // Every case reads the queue as it was written, and a run that started would
   // leave it.
   settings.setNewWorkPaused(true);
@@ -248,5 +250,116 @@ describe("runs written in one millisecond keep their write order", () => {
       branches.map((b) => b.runId),
       [...ids].reverse(),
     );
+  });
+});
+
+describe("checkout reclaim reads the newest link of a chain written in one millisecond", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+
+  function settle(id: string, finishedAt: number): void {
+    dbMod
+      .db()
+      .prepare("UPDATE runs SET status = 'completed', iterations = 1, finished_at = ? WHERE id = ?")
+      .run(finishedAt, id);
+  }
+
+  /**
+   * Links that each continue the one before, written in one pass with every
+   * predecessor settled first — the state a released chain reaches — and then
+   * the checkout they share, made real on disk. `finishedDaysAgo[i]` is when link
+   * `i` ended, and the last link is left unsettled for the case to place.
+   */
+  function chainOnDisk(
+    finishedDaysAgo: readonly number[],
+    now: number,
+  ): { chain: RunRow[]; slot: string; branch: string } {
+    const chain = inOneMillisecond(() => {
+      const links = [create("repo", "link 0", { isolate: true })];
+      for (let i = 1; i <= finishedDaysAgo.length; i++) {
+        settle(links[i - 1].id, now - finishedDaysAgo[i - 1] * DAY);
+        links.push(
+          create("repo", `link ${i}`, {
+            isolate: true,
+            dependsOn: [{ runId: links[i - 1].id, edge: "on-success", continueBranch: true }],
+          }),
+        );
+      }
+      return links;
+    });
+    assert.equal(stampsOf(chain.map((r) => r.id)), 1, "the chain has to share one created_at");
+    const slot = chain[0].worktree_path;
+    const branch = chain[0].worktree_branch;
+    assert.ok(slot && branch, "the first link has to be isolated onto a slot and a branch");
+    for (const link of chain) {
+      assert.equal(orch.getRun(link.id)!.worktree_path, slot);
+    }
+    git(repo, ["worktree", "add", "-q", "-b", branch, slot]);
+    return { chain, slot, branch };
+  }
+
+  function dropCheckout(slot: string, branch: string): void {
+    if (fs.existsSync(slot)) git(repo, ["worktree", "remove", "--force", slot]);
+    git(repo, ["branch", "-D", branch]);
+  }
+
+  it("counts a settled chain's age from its last link, not its first", async () => {
+    const now = realNow();
+    // The first link ended past the week and the last inside it. Read off the
+    // first, the slot looked ten days idle and went, three days short of the
+    // horizon counted from where the chain actually stopped.
+    const { chain, slot, branch } = chainOnDisk([10, 8, 6], now);
+    try {
+      settle(chain[3].id, now - 2 * DAY);
+
+      const within = await retention.sweepCheckouts(now);
+      assert.equal(within.removed, 0);
+      assert.equal(fs.existsSync(slot), true, "the checkout went while its last link was two days old");
+
+      // The control: the same slot, with the last link as old as the first, is
+      // reclaimed — so the keep above was the last link's age and not something
+      // else about the fixture.
+      settle(chain[3].id, now - 10 * DAY);
+      const past = await retention.sweepCheckouts(now);
+      assert.equal(past.removed, 1, "the slot was never a candidate, so the keep above proves nothing");
+      assert.equal(fs.existsSync(slot), false);
+    } finally {
+      dropCheckout(slot, branch);
+    }
+  });
+
+  it("keeps a slot whose next link is waiting on something else", async () => {
+    const now = realNow();
+    // `chainedRunIds` names the run a not-yet-started link continues, and a
+    // waiting link holds no slot, so that keep can only be carried by the
+    // chain's newest link that has one. The first link is continued by a settled
+    // run and carries nothing.
+    const { chain, slot, branch } = chainOnDisk([10, 10], now);
+    try {
+      settle(chain[2].id, now - 10 * DAY);
+      const blocker = create("other", "still running elsewhere");
+      const waiting = create("repo", "link 3", {
+        isolate: true,
+        dependsOn: [
+          { runId: chain[2].id, edge: "on-success", continueBranch: true },
+          { runId: blocker.id, edge: "on-success" },
+        ],
+      });
+      assert.equal(waiting.status, "waiting");
+      assert.equal(waiting.worktree_path, null, "a waiting link has to hold no slot");
+
+      const during = await retention.sweepCheckouts(now);
+      assert.equal(during.removed, 0);
+      assert.equal(fs.existsSync(slot), true, "the checkout went from under a link set to carry its branch on");
+
+      // The control: once nothing is set to carry the branch on, it is reclaimed.
+      dbMod
+        .db()
+        .prepare("UPDATE runs SET status = 'stopped', finished_at = ? WHERE id = ?")
+        .run(now - 10 * DAY, waiting.id);
+      const after = await retention.sweepCheckouts(now);
+      assert.equal(after.removed, 1, "the slot was never a candidate, so the keep above proves nothing");
+    } finally {
+      dropCheckout(slot, branch);
+    }
   });
 });
