@@ -629,6 +629,7 @@ describe("the exemption reaches the owning pass's merge block and no other", () 
 describe("a block behind a pass's merge block", () => {
   const tailRun = (memberId: string) => /#t$/.test(memberId);
   let tailSection: typeof SECTION;
+  let flatTemplateId: string;
 
   before(async () => {
     const templates = await import("./templates");
@@ -644,8 +645,14 @@ describe("a block behind a pass's merge block", () => {
       model: null,
       budget: settings.chatGuards().budget,
     });
-    tailSection = {
-      nodes: [node("a"), mergeNode("m"), node("t", { templateId: flat.id })],
+    flatTemplateId = flat.id;
+    tailSection = tailWorkingIn("repo");
+  });
+
+  /** The landing section with its in-folder tail working in `folder` of the mount. */
+  function tailWorkingIn(folder: string): typeof SECTION {
+    return {
+      nodes: [node("a"), mergeNode("m"), node("t", { templateId: flatTemplateId, folder })],
       edges: [
         { from: "L", to: "a", edge: "repeats" },
         { from: "a", to: "m", edge: "on-success" },
@@ -653,7 +660,7 @@ describe("a block behind a pass's merge block", () => {
       ],
       body: ["a", "m", "t"],
     };
-  });
+  }
 
   /** `drive`, watching the merge block and the run behind it at every step. */
   async function driveWatching(instanceId: string, leave?: () => void) {
@@ -835,6 +842,80 @@ describe("a block behind a pass's merge block", () => {
       assert.match(blockRow(instanceId, "L").error ?? "", /limit of 2 pass\(es\)/);
     });
   }
+
+  // The pass's cost of a dirty folder is the cost of the folder its merges land
+  // into: its branches are cut from that checkout and its merge is refused over
+  // it. A tail is not required to work there, and what it leaves anywhere else
+  // is neither.
+  describe("working in a folder the pass's merges do not land into", () => {
+    const elsewhere = () => path.join(root, MOUNT_DIR, "elsewhere");
+    const passTwo = (id: string) => id.startsWith(passMemberId("L", 2, ""));
+
+    beforeEach(() => {
+      fs.rmSync(elsewhere(), { recursive: true, force: true });
+      fs.mkdirSync(elsewhere(), { recursive: true });
+    });
+
+    async function takesBothPasses(leave: () => void): Promise<string> {
+      const instanceId = scene({ maxPasses: 2, section: tailWorkingIn("elsewhere") });
+      const { members } = await driveWatching(instanceId, leave);
+
+      const loopRow = blockRow(instanceId, "L");
+      assert.ok(
+        members.some((m) => m.memberId === passMemberId("L", 2, "t")),
+        `pass 2 never opened: ${loopRow.error}`,
+      );
+      assert.deepEqual(
+        members.map((m) => m.memberId).filter(passTwo).sort(),
+        [passMemberId("L", 2, "a"), passMemberId("L", 2, "t")].sort(),
+      );
+      assert.equal(blockRow(instanceId, passMemberId("L", 2, "m")).status, "emitted");
+      assert.equal(loopRow.status, "emitted", loopRow.error ?? "");
+      assert.match(loopRow.error ?? "", /limit of 2 pass\(es\)/);
+      return instanceId;
+    }
+
+    it("opens pass 2 when the tail's folder is not a repository", async () => {
+      await takesBothPasses(() =>
+        fs.writeFileSync(path.join(elsewhere(), "note.txt"), "tail was here\n"),
+      );
+      assert.equal(git(repoRoot(), "status", "--porcelain").trim(), "");
+    });
+
+    it("opens pass 2 when the tail left an unrelated repository dirty and the merge's own is clean", async () => {
+      git(elsewhere(), "init", "-q", "-b", "main");
+      fs.writeFileSync(path.join(elsewhere(), "kept.txt"), "kept\n");
+      git(elsewhere(), "add", "-A");
+      git(elsewhere(), "commit", "-q", "-m", "first");
+
+      await takesBothPasses(() =>
+        fs.writeFileSync(path.join(elsewhere(), "unrelated-note.txt"), "tail was here\n"),
+      );
+      assert.equal(git(repoRoot(), "status", "--porcelain").trim(), "");
+      assert.equal(git(elsewhere(), "status", "--porcelain").trim(), "?? unrelated-note.txt");
+    });
+
+    it("still stops the loop when the tail works in a subdirectory of the repository and leaves it dirty", async () => {
+      // A subdirectory is not another folder: its changes are the repository's,
+      // and the merge is refused over them.
+      const inside = path.join(repoRoot(), "inside");
+      fs.mkdirSync(inside, { recursive: true });
+      const instanceId = scene({ maxPasses: 2, section: tailWorkingIn("repo/inside") });
+      let left = false;
+      const { members } = await driveWatching(instanceId, () => {
+        if (left) return;
+        left = true;
+        fs.writeFileSync(path.join(inside, "note.txt"), "tail was here\n");
+      });
+
+      assert.deepEqual(members.map((m) => m.memberId).filter(passTwo), []);
+      const loopRow = blockRow(instanceId, "L");
+      assert.equal(loopRow.status, "failed");
+      assert.match(loopRow.error ?? "", /Pass 2 of “Chip away” was not started/);
+      assert.match(loopRow.error ?? "", /“T”/);
+      assert.match(loopRow.error ?? "", /\(\?\? inside\//);
+    });
+  });
 
   it("takes pass 2 as before when the tail left the folder clean", async () => {
     const instanceId = scene({ maxPasses: 2, section: tailSection });

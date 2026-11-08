@@ -5792,6 +5792,16 @@ function passWhole(pass: LoopPass | undefined): pass is LoopPass {
 }
 
 /**
+ * Whether `dir` is `root` or somewhere under it. Both are paths a run recorded,
+ * resolved when it was created, so this compares them as written and reads no
+ * disk.
+ */
+function isWithin(root: string, dir: string): boolean {
+  const relative = path.relative(root, dir);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+/**
  * Why the pass after `settled` may not open because its in-folder tail left the
  * folder uncommitted, or null when there is no tail or it left the folder clean.
  *
@@ -5813,6 +5823,17 @@ function passWhole(pass: LoopPass | undefined): pass is LoopPass {
  * `emitted` runs', which edit the folder in place all the same — read through
  * `member.run` alone, an orchestrator tail looked like one that touched nothing.
  *
+ * **Only a tail that worked in a repository the pass's merges land into is
+ * asked.** Both costs above are about that checkout and no other: a branch is
+ * cut from it, and a merge is refused over it. Nothing requires a tail to work
+ * there, so a tail in a plain directory, or in an unrelated repository, is
+ * skipped — read, the first strands the loop on "not a git repository" with no
+ * fix the press can offer, and the second fails it over a folder no merge was
+ * ever going to touch. The repositories are the `repo_root` of the pass's other
+ * members' runs, which for a run with a checkout of its own is the folder it was
+ * cut from; a tail inside one of them (a subdirectory of the repository counts,
+ * its changes are the repository's) is asked at that root.
+ *
  * Synchronous for `advanceLoop`'s reason, and a spawn on the event loop that no
  * poll may pay for. It is asked from exactly two doors, both of them a decision
  * to write rather than a read: `advanceLoop` at a pass boundary (once per pass,
@@ -5830,22 +5851,37 @@ function tailLeftDirt(
   const { tail } = sectionTail(section.nodes, section.graph.edges, () => false);
   if (tail.size === 0) return null;
 
-  const names = new Set<string>();
-  const folders = new Set<string>();
-  const folderOf = db().prepare("SELECT folder FROM runs WHERE id = ?");
+  const rowOf = db().prepare("SELECT folder, repo_root FROM runs WHERE id = ?");
+  const landsInto = new Set<string>();
+  const tailRuns: Array<{ name: string; folder: string }> = [];
   for (const member of settled.members) {
-    if (!tail.has(member.nodeId)) continue;
+    const isTail = tail.has(member.nodeId);
     for (const run of member.run ? [member.run, ...member.emitted] : member.emitted) {
-      const row = folderOf.get(run.id) as { folder: string } | undefined;
+      const row = rowOf.get(run.id) as
+        | { folder: string; repo_root: string | null }
+        | undefined;
       if (!row) continue;
-      names.add(`“${section.nodes.find((n) => n.id === member.nodeId)?.name ?? member.name}”`);
-      folders.add(row.folder);
+      if (!isTail) {
+        if (row.repo_root) landsInto.add(row.repo_root);
+        continue;
+      }
+      const name = section.nodes.find((n) => n.id === member.nodeId)?.name ?? member.name;
+      tailRuns.push({ name: `“${name}”`, folder: row.folder });
     }
   }
 
+  // Keyed by the repository, so a tail that worked in a subdirectory of it is
+  // read once, at the root, with the others that worked in that repository.
+  const namesByRoot = new Map<string, Set<string>>();
+  for (const { name, folder } of tailRuns) {
+    const root = [...landsInto].find((repo) => isWithin(repo, folder));
+    if (root === undefined) continue;
+    namesByRoot.set(root, (namesByRoot.get(root) ?? new Set()).add(name));
+  }
+
   const next = settled.pass + 1;
-  const works = [...names].join(", ");
-  for (const folder of folders) {
+  for (const [folder, names] of namesByRoot) {
+    const works = [...names].join(", ");
     // `--branch` for its header line, which `gitSync` trims along with the
     // output's own edges: without one, the first entry loses the leading space
     // of its index column (` M a.ts` reads as `M a.ts`) and the sentence quotes
