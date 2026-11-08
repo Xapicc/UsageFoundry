@@ -544,4 +544,18 @@ describe("the settings flags an auth child starts with", () => {
     // the planted file's value from standing.
     assert.equal(overlay.env.ANTHROPIC_BASE_URL, "");
   });
+
+  // A user-file helper otherwise answers the read as signed in, as
+  // `api_key_helper`, a credential no work cycle uses any more; `null` would not
+  // stop it, and a second --settings would replace the pins.
+  it("empties apiKeyHelper in the status read's one --settings", async () => {
+    fs.rmSync(argvLog, { force: true });
+    await readAuthStatus();
+    const [argv] = startsRecorded("status");
+    assert.ok(argv, "no status child was started");
+    assert.equal(argv.filter((arg) => arg === "--settings").length, 1);
+    const overlay = JSON.parse(argv[argv.indexOf("--settings") + 1]) as Record<string, unknown>;
+    assert.deepEqual(Object.keys(overlay).sort(), ["apiKeyHelper", "env"]);
+    assert.equal(overlay.apiKeyHelper, "");
+  });
 });

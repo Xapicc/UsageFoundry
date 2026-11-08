@@ -92,6 +92,22 @@
   was 1 only for the signed-out answer; the panel's own parsing of
   `api_key_helper` was not read.
 
+- **With `apiKeyHelper: ""` in its `--settings`, the app's own status read
+  answers for the credential a cycle gets, on 2.1.319, 2026-11-08.** Board
+  task `ed6a7179`. `readAuthStatus()` (no read in flight, so
+  `readFreshAuthStatus`) from the compiled `claudeAuth.js` under `env -i`,
+  `CLAUDE_BIN` the installed 2.1.319, a scratch `CLAUDE_CONFIG_DIR` and `HOME`
+  whose `settings.json` named a helper that would write a marker, and the
+  spawn environment's `HTTPS_PROXY` at a loopback listener that refused every
+  CONNECT. With the pins-only argv the value handed to the Settings route was
+  `loggedIn: true`, `method: "api_key_helper"` in all four cases: no
+  credential, a fake `ANTHROPIC_API_KEY`, a fake `CLAUDE_CODE_OAUTH_TOKEN`, and
+  a made-up stored `.credentials.json`. With the change it was `loggedIn:
+  false` and `none`, then `api_key`, `oauth_token`, and `claude.ai` with plan
+  `max`. No marker was written in any of the eight; every connection was a
+  CONNECT to `api.anthropic.com` at the listener. Caveat: one run per case,
+  fake credentials, not in a booted container as root.
+
 - **A planted `$CODEX_HOME/config.toml` steers `codex app-server`'s bearer and
   none of the sign-in children, 2026-11-08.** codex-cli 0.153.4, a scratch
   `CODEX_HOME` under `$TMPDIR` holding a made-up API key or a made-up ChatGPT
