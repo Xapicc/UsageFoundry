@@ -29,7 +29,7 @@ Nineteen are renderings rather than functions — every `*.test.tsx` in the tree
 | `diff.test.ts` |  |
 | `land.test.ts` | [landing], [merge-queue], [harnesses], [contention] |
 | `mountRootIsolation.test.ts` |  |
-| `orchestrator.test.ts` | [cycle], [argv], [samples], [parsers], [codex-cycle], [budgets], [pricing], [landing], [merge-queue], [sandbox], [harnesses] |
+| `orchestrator.test.ts` | [cycle], [edges], [argv], [samples], [parsers], [codex-cycle], [budgets], [pricing], [landing], [merge-queue], [sandbox], [harnesses] |
 | `patch.test.ts` |  |
 | `planUsage.test.ts` |  |
 | `queueOrder.test.ts` |  |
@@ -47,6 +47,10 @@ Nineteen are renderings rather than functions — every `*.test.tsx` in the tree
 | `priorReads.test.ts` |  |
 | `resumeMissingTranscript.test.ts` |  |
 
+## [Dependency edges: `edgeSatisfied`, the rival pair and the restart-closed case](testing/dependency-edges-and-rivals.md)
+
+Its cases are in `orchestrator.test.ts`, `shutdown.test.ts`, `stackWait.test.ts` and `workflows.test.ts`; see those files' rows above.
+
 ## [Fleet stop and hold](testing/fleet-stop-and-hold.md)
 
 | Test file | Also in |
@@ -58,7 +62,7 @@ Nineteen are renderings rather than functions — every `*.test.tsx` in the tree
 
 | Test file | Also in |
 |---|---|
-| `shutdown.test.ts` | [workflows], [cycle] |
+| `shutdown.test.ts` | [workflows], [cycle], [edges] |
 
 ## [Data directory ownership, retention and migrations](testing/data-dir-retention-and-migrations.md)
 
@@ -182,7 +186,7 @@ Nineteen are renderings rather than functions — every `*.test.tsx` in the tree
 |---|---|
 | `loopMergeOwnership.test.ts` |  |
 | `loopSection.test.ts` | [fleet], [loop-endings] |
-| `workflows.test.ts` | [argv], [pricing], [workflows], [decider], [pick-ups], [cycle], [loop-board], [loop-endings], [schedule-routes] |
+| `workflows.test.ts` | [argv], [pricing], [workflows], [decider], [pick-ups], [cycle], [edges], [loop-board], [loop-endings], [schedule-routes] |
 
 Units that are about no test file in the tree:
 
@@ -534,7 +538,7 @@ Units that are about no test file in the tree:
 | `repoReading.test.ts` |  |
 | `repoSpend.test.ts` |  |
 | `stackRequests.test.ts` |  |
-| `stackWait.test.ts` | [budgets], [cycle], [queue], [validation](testing/completion-validation.md) |
+| `stackWait.test.ts` | [budgets], [cycle], [edges], [queue], [validation](testing/completion-validation.md) |
 | `stacks.test.ts` |  |
 | `toolInventory.test.ts` |  |
 | `unsavedWork.test.ts` |  |
@@ -615,3 +619,4 @@ It prints nothing as this is written. Whoever owns a file it names owes that fil
 [live]: testing/live-page-folds.md
 [chat-thread]: testing/chat-thread-page-readings.md
 [branch-delete]: testing/branch-deletion-and-slot-reuse.md
+[edges]: testing/dependency-edges-and-rivals.md
