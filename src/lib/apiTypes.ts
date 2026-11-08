@@ -3951,6 +3951,104 @@ export interface RepoReadingDTO {
   queryMs: number;
 }
 
+/**
+ * The prior-read pointer's holdout read back, from `holdoutReadback.ts`: three
+ * questions that are different questions, over the export tables and never
+ * `run_events`.
+ *
+ * Reporting and never a guard. The one money figure is `runs.spent_usd` (the
+ * CLI's own reported cost), by name; nothing here is added to a transcript or
+ * telemetry reading.
+ */
+export type HoldoutArmDTO = "pointer" | "holdout";
+
+/** One arm's mean and spread on a measure taken per run. */
+export interface HoldoutMeanDTO {
+  n: number;
+  mean: number | null;
+  sd: number | null;
+}
+
+/** The pointer arm against the held-out arm on one per-run measure. */
+export interface HoldoutContrastDTO {
+  pointer: HoldoutMeanDTO;
+  holdout: HoldoutMeanDTO;
+  /** Pointer minus held out; null until both arms have two runs. */
+  difference: number | null;
+  /** The approximate 95% interval of `difference`. */
+  low: number | null;
+  high: number | null;
+}
+
+/** A sample size the proposal says an effect needs, and whether both arms hold it. */
+export interface HoldoutTargetDTO {
+  effect: string;
+  perArm: number;
+  /** Compliance is sized in (cycle, path) pairs; everything else in runs. */
+  unit: "runs" | "pairs";
+  reached: boolean;
+}
+
+export interface HoldoutComplianceArmDTO {
+  runs: number;
+  /** Cycles whose list held a path the brief did not also name. */
+  cycles: number;
+  pairs: number;
+  opened: number;
+  share: number | null;
+}
+
+/** Why a run the pointer considered is not in a reading. A run is counted under the first that applies. */
+export type HoldoutLeftOutReason =
+  | "arm-derived"
+  | "earlier-list"
+  | "continuation"
+  | "unsettled"
+  | "nothing-to-show";
+
+export interface HoldoutReadbackDTO {
+  /** When this was read. */
+  until: number;
+  /** When the export last ran: a run that ended since is not in any figure. */
+  exportedAt: number | null;
+  population: {
+    read: Record<HoldoutArmDTO, number>;
+    leftOut: Array<{ reason: HoldoutLeftOutReason } & Record<HoldoutArmDTO, number>>;
+  };
+  compliance: {
+    pointer: HoldoutComplianceArmDTO;
+    holdout: HoldoutComplianceArmDTO;
+    /** Listed paths the brief also named, which neither arm is credited for. */
+    briefNamedPairs: Record<HoldoutArmDTO, number>;
+    /** Cycles whose list was not logged and so are in neither arm's figure. */
+    unlistedCycles: Record<HoldoutArmDTO, number>;
+    difference: number | null;
+    low: number | null;
+    high: number | null;
+    targets: HoldoutTargetDTO[];
+  };
+  displacement: {
+    /** Distinct files the main thread read before its first edit. */
+    beforeEdit: HoldoutContrastDTO;
+    /** Distinct files the main thread read in the whole run. */
+    wholeRun: HoldoutContrastDTO;
+    /** Runs with no edit, whose pre-edit reading is their whole run. */
+    neverEdited: Record<HoldoutArmDTO, number>;
+    targets: HoldoutTargetDTO[];
+  };
+  outcome: {
+    /** The share of runs that reached a second work cycle. */
+    secondCycle: HoldoutContrastDTO;
+    secondCycleTargets: HoldoutTargetDTO[];
+    /** `runs.spent_usd`, the only spend source here. */
+    spend: HoldoutContrastDTO;
+    spendTargets: HoldoutTargetDTO[];
+    /** `runs.ending_code` counts; a null code is a run that did not record one. */
+    endings: Array<{ code: string | null } & Record<HoldoutArmDTO, number>>;
+  };
+  queryMs: number;
+}
+
 /** What the install is doing, and whether new work is held. */
 export interface FleetStateDTO {
   /**
