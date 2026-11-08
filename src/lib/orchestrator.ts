@@ -1210,6 +1210,8 @@ export function getRun(id: string): RunRow | null {
 
 export function listRuns(limit = 50): RunRow[] {
   return db()
+    // No `rowid` tiebreak: the MCP `list_runs` tool is the only reader, a model,
+    // and the plan's `idx_runs_created` scan already returns a tie in one order.
     .prepare("SELECT * FROM runs ORDER BY created_at DESC LIMIT ?")
     .all(limit) as RunRow[];
 }
@@ -6300,6 +6302,8 @@ export function releaseDependents(): boolean {
  * queue.
  */
 function releasePass(holdReleases: boolean = newWorkPaused()): boolean {
+  // Ties left to the plan: `releasableRuns` decides each run on its own edges,
+  // and what it releases is then ordered by `queueCompare`, not by this.
   const waiting = db()
     .prepare("SELECT * FROM runs WHERE status = 'waiting' ORDER BY created_at")
     .all() as RunRow[];
@@ -13822,6 +13826,9 @@ export async function sweepPaused(): Promise<void> {
     // re-queued comes off the slots the parked runs get.
     const forStack = releaseStackWaits();
 
+    // Ties left to the plan: which of a shared millisecond resumes first under
+    // the per-tick bound is shown nowhere, and the queue it joins is ordered by
+    // `queueCompare`.
     const paused = db()
       .prepare("SELECT * FROM runs WHERE status = 'paused' ORDER BY created_at")
       .all() as RunRow[];
@@ -14043,6 +14050,8 @@ export function releaseStackWaits(
   receipts: readonly StackReceipt[] = readReceipts().receipts,
 ): { released: number; waiting: number } {
   if (!mayWriteDataDir()) return { released: 0, waiting: 0 };
+  // Ties left to the plan, for `sweepPaused`'s reason: what is released joins
+  // a queue `queueCompare` orders.
   const waiting = db()
     .prepare("SELECT id FROM runs WHERE status = 'waiting-for-stack' ORDER BY created_at")
     .all() as { id: string }[];
@@ -15289,6 +15298,8 @@ const RESTART_CLOSED_OUTSTANDING = `${restartClosedSql()} AND set_aside_at IS NU
  */
 export function restartClosedRuns(): RunRow[] {
   return db()
+    // Ties left to the plan: they reach the page only as the order of a
+    // pick-up's refusals, and the runs it re-queues are ordered by `queueCompare`.
     .prepare(
       `SELECT * FROM runs WHERE ${RESTART_CLOSED_OUTSTANDING} ORDER BY created_at`,
     )
@@ -15432,6 +15443,8 @@ export function costBaselineFor(run: RunRow): CostBaseline | null {
       // are both written `completed`. `needs-review` is deliberately not here —
       // it is a run that reached a judgement about the *task*, and what it spent
       // getting there is not what doing the task costs.
+      // No `rowid` tiebreak: which runs of a shared millisecond fill the last
+      // places of the window moves a median by at most one sample.
       "SELECT spent_usd FROM runs WHERE task_signature = ? AND id != ? " +
         "AND status = 'completed' AND spent_usd > 0 " +
         "ORDER BY created_at DESC LIMIT ?",
