@@ -210,6 +210,43 @@
   names that they do not are Claude 3.x and 4.0 strings. Caveat: the darwin
   build rather than the linux-arm64 package the image installs.
 
+- **A `CLAUDE_CODE_SUBAGENT_MODEL` in the mounted `settings.json` reaches every
+  Claude child, and the built-in `Explore` ignores it, 2026-11-08, pin
+  2.1.319.** The operator's `~/.claude/settings.json` sets it to `sonnet` under
+  `env`; nothing in `src/` or the container's environment does. `claude -p
+  --model opus` in the container, delegating once to each built-in with no
+  `model` parameter: `general-purpose` answered on `claude-sonnet-5-5`,
+  `Explore` on `claude-opus-5-5`. The binary agrees: `Explore` and `Plan` carry
+  `model: "inherit"` (Explore capped at `opus`), `general-purpose` and `claude`
+  none. In the prior seven days' foundry transcripts, 184 of 184
+  `general-purpose` sub-agents ran on Sonnet under Sonnet main loops (182 calls
+  also passed `model: "sonnet"`), 3 of 3 `Explore` on Opus under Opus. Caveat:
+  `Plan` was not delegated to; and a transcript's first `"model":"claude-…"` is
+  the `advisor` tool's declared model in its `api-request-shape` row, not the
+  one that answered — count `assistant` rows.
+
+- **An agent file with a built-in's name replaces the built-in, and its
+  `model:` beats `CLAUDE_CODE_SUBAGENT_MODEL`, 2026-11-08, pin 2.1.319.**
+  Project scope: a scratch cwd holding `.claude/agents/{Explore,general-purpose,
+  scout}.md`, each `model: haiku` with its own marker word, under `--model
+  sonnet` — all three answered on `claude-haiku-5-5` with their file's marker.
+  User scope: `~/.claude/agents/Explore.md` (`model: sonnet`) and `Plan.md`
+  (`model: opus`), copies of the built-ins, under `--model haiku` — Sonnet and
+  Opus, Explore's rendered prompt byte-identical to the built-in's, and with
+  `omitClaudeMd: true` none of the operator's `CLAUDE.md` rules loaded (the
+  built-in `general-purpose` loaded them). Caveat: `Plan` in the project scope
+  and `general-purpose` in the user scope were not tried.
+
+- **A file-defined agent gets eight tools fewer than the built-in it replaces,
+  2026-11-08, pin 2.1.319.** Read off the `prompt_snapshot` and
+  `deferred_tools_delta` rows of the two `Explore` sessions above: 28 tools
+  built-in, 20 from the file, the missing eight `CronCreate`, `CronDelete`,
+  `CronList`, `DesignSync`, `ListAgents`, `PushNotification`, `RemoteTrigger`
+  and `ReportFindings`. `disallowedTools: Agent, Edit, Write, NotebookEdit` is
+  the built-in's own exclusion: exactly what built-in `general-purpose` has and
+  built-in `Explore` lacks. Caveat: one session each; the rule that drops the
+  eight was not read out of the binary.
+
 ## Not yet verified by hand
 
 - **No real `/v1/models` listing has been read, with either credential.**
@@ -256,6 +293,13 @@
   has rendered its UI, and no request has written `/api/agents`. Open under
   `--agent`: the two `--agents` drops, turns' agent name, delegation; and
   whether a member's `tools` beats the `PROCESS_KILLERS` deny.
+
+- **Whether a per-call `model` beats an agent file's `model:`, and whether a
+  saved agent on `--agents` beats an ambient file of the same name.** Settling
+  the first: a scratch cwd with `.claude/agents/x.md` at `model: haiku`, a
+  `claude -p` told to delegate to `x` with `model: "opus"`, and the sub-agent
+  transcript's `assistant` model. The second: the same file plus `--agents
+  '{"x":{"description":"…","prompt":"…","model":"sonnet"}}'`.
 
 - **The `settings.json` `agent` key: measured, and deliberately not
   declared.** Declaring it needs a read in `agents.ts`, a field on
