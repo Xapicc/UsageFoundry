@@ -207,11 +207,16 @@ Cases in `loopSection.test.ts` and `workflows.test.ts`, each listed under its ow
 | `chatOrder.test.ts` |  |
 | `chatRequest.test.ts` |  |
 | `chatStream.test.ts` | [pricing] |
-| `chatThread.test.ts` | [proposals] |
 | `chatTurn.test.ts` |  |
 | `jsonRequest.test.ts` |  |
 | `poll.test.ts` |  |
-| `src/app/api/chat/[id]/route.test.ts` |  |
+| `src/app/api/chat/[id]/route.test.ts` | [chat-thread] |
+
+## [The chat page's thread: the cursored poll and what the page reads off it](testing/chat-thread-page-readings.md)
+
+| Test file | Also in |
+|---|---|
+| `chatThread.test.ts` | [proposals] |
 
 ## [Chat proposals, questions and search](testing/chat-proposals.md)
 
@@ -603,3 +608,4 @@ It prints nothing as this is written. Whoever owns a file it names owes that fil
 [delivery]: testing/delivery.md
 [projects]: testing/projects-push-and-fetch.md
 [live]: testing/live-page-folds.md
+[chat-thread]: testing/chat-thread-page-readings.md
