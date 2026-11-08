@@ -180,6 +180,15 @@ export const MCP_SELF_URL = env(
   `http://127.0.0.1:${env("PORT", "3000")}/api/mcp`,
 );
 
+/**
+ * The key this app's MCP server sits under in the `--mcp-config` a Claude cycle
+ * or chat turn is spawned with, and so the `mcp__<name>__` every one of its
+ * tools carries in the CLI. A name rather than a literal because
+ * `tokenEconomizer.ts` derives the tool-pruning protection from it: a rename
+ * that missed that one would leave these tools prunable with nothing failing.
+ */
+export const MCP_SELF_SERVER = "uf";
+
 /** One directory tree the UI may browse and run agents against. */
 export interface WorkspaceMount {
   /** Stable slug used on the wire and as a form value. */

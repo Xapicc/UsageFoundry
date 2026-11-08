@@ -12,6 +12,8 @@ import {
   type TokenEconomizerMicroskills,
   type TokenEconomizerToolprune,
 } from "./apiTypes";
+import { MCP_SELF_SERVER } from "./config";
+import { mcpToolPrefix } from "./mcpStatus";
 import { opsLog, recordOpsEvent, type OpsFields } from "./ops";
 import type { Settings } from "./settings";
 
@@ -55,6 +57,23 @@ export const TOKENECONOMIZER_PLUGIN_DIR = path.join(TOKENECONOMIZER_ROOT, "plugi
 
 /** The image's own interpreter, never one found on the agent `PATH`. */
 const IMAGE_PYTHON = "/usr/bin/python3";
+
+/**
+ * What this app's own MCP tools are called to the CLI, `mcp__uf__`. Tool pruning
+ * would otherwise treat them like any other unused tool: a run calls
+ * `request_stack`, `release_task` and `add_task_dependency` rarely, so they are
+ * what a repository's history never shows, and a run that needs one without it
+ * can neither close or release its task nor wait for its stack.
+ */
+const OWN_TOOL_PREFIX = mcpToolPrefix(MCP_SELF_SERVER);
+
+/**
+ * `TE_TOOLPRUNE_PROTECT`'s value: the plugin matches each comma-separated entry
+ * with `fnmatch.fnmatchcase`, so this is every name that starts with
+ * `OWN_TOOL_PREFIX`, and `denyListToSeed` tests the same prefix. `mcpToolPrefix`
+ * leaves nothing in it that is a comma or a glob character.
+ */
+const OWN_TOOLS_PROTECT = `${OWN_TOOL_PREFIX}*`;
 
 const PLUGIN_MANIFEST = path.join(TOKENECONOMIZER_PLUGIN_DIR, ".claude-plugin", "plugin.json");
 const BOOTSTRAP = path.join(TOKENECONOMIZER_PLUGIN_DIR, "scripts", "te_bootstrap.py");
@@ -121,6 +140,14 @@ export function isTokenEconomizerLoopguard(value: unknown): value is TokenEconom
  * the operator's because it trades one cost against another: below the prompt
  * cache's lifetime, a deny list can land between two cycles of a conversation
  * that is still warm, and its next resume pays to write the whole prefix again.
+ *
+ * `TE_TOOLPRUNE_PROTECT` is pinned and is not the operator's: the plugin never
+ * leaves out a tool it matches, however long it goes unused, and this app's own
+ * MCP tools are how a run works the board, so they must not depend on a config
+ * file any cycle can write. It *replaces* the config files' list rather than
+ * adding to it, so a list the operator wrote there is not in force for these
+ * cycles; the plugin's own fold removes a rule it added for a tool that has
+ * since become protected, but only in the checkout it folds.
  */
 export function tokenEconomizerEnv(
   s: Pick<
@@ -140,6 +167,7 @@ export function tokenEconomizerEnv(
       s.tokenEconomizerMicroskills === "on" ? "envfacts+distiller" : s.tokenEconomizerMicroskills,
     TE_LOOPGUARD: s.tokenEconomizerLoopguard,
     TE_TOOLPRUNE_QUIET_MINUTES: String(s.tokenEconomizerQuietMinutes),
+    TE_TOOLPRUNE_PROTECT: OWN_TOOLS_PROTECT,
   };
 }
 
@@ -304,8 +332,15 @@ const SEEDABLE_TOOL = /^(?:[A-Z][A-Za-z0-9]*|mcp__[A-Za-z0-9_-]+)$/;
  *
  * A tool given back anywhere is not seeded anywhere: a restore is the person
  * saying they want the tool, and nothing in the record says the reason was
- * specific to one checkout. Pure, and tested, because every way it can be
- * wrong is a tool silently missing from a run or silently left in it.
+ * specific to one checkout.
+ *
+ * Never a tool this app's own MCP server offers: the plugin's fold removes a
+ * rule it wrote for a protected tool only from the checkout it folds, and the
+ * state file this reads can still list one from before the protection, or one a
+ * cycle planted, so each new slot would otherwise be given it back.
+ *
+ * Pure, and tested, because every way it can be wrong is a tool silently
+ * missing from a run or silently left in it.
  */
 export function denyListToSeed(o: {
   appliedByPath: unknown;
@@ -324,7 +359,13 @@ export function denyListToSeed(o: {
   const kept = names(o.keptByPath);
   const here = new Set(o.alreadyHere);
   return [...names(o.appliedByPath)]
-    .filter((tool) => SEEDABLE_TOOL.test(tool) && !kept.has(tool) && !here.has(tool))
+    .filter(
+      (tool) =>
+        SEEDABLE_TOOL.test(tool) &&
+        !tool.startsWith(OWN_TOOL_PREFIX) &&
+        !kept.has(tool) &&
+        !here.has(tool),
+    )
     .sort();
 }
 

@@ -55,6 +55,18 @@ describe("tokenEconomizerEnv", () => {
     assert.equal(env.TE_MODE, "headless");
   });
 
+  it("protects this app's own MCP tools from pruning", () => {
+    // `request_stack`, `release_task` and `add_task_dependency` are rarely
+    // called, so tool pruning reads them as unused. The server key `uf` is
+    // pinned by `writeMcpConfig`'s own test in chat.test.ts, and the CLI names
+    // its tools `mcp__uf__*`; this is the third spelling of the same name.
+    assert.equal(tokenEconomizerEnv(on()).TE_TOOLPRUNE_PROTECT, "mcp__uf__*");
+    assert.equal(
+      tokenEconomizerEnv(on({ tokenEconomizerToolprune: "off" })).TE_TOOLPRUNE_PROTECT,
+      "mcp__uf__*",
+    );
+  });
+
   it("passes the quiet period as a whole number of minutes", () => {
     assert.equal(tokenEconomizerEnv(on()).TE_TOOLPRUNE_QUIET_MINUTES, "60");
     assert.equal(
@@ -119,6 +131,23 @@ describe("denyListToSeed", () => {
         alreadyHere: [],
       }),
       ["Grep", "mcp__github__create_issue"],
+    );
+  });
+
+  it("never seeds this app's own MCP tools, and still seeds every other tool", () => {
+    // `untool_applied.json` can still list one from before the protection, or
+    // one a cycle planted, and the plugin's fold only cleans the checkout it
+    // folds.
+    assert.deepEqual(
+      denyListToSeed({
+        appliedByPath: {
+          [slotA]: ["mcp__uf__complete_task", "mcp__github__create_issue", "NotebookEdit"],
+          [slotB]: ["mcp__uf__request_stack"],
+        },
+        keptByPath: {},
+        alreadyHere: [],
+      }),
+      ["NotebookEdit", "mcp__github__create_issue"],
     );
   });
 
