@@ -5,6 +5,7 @@ import { describe, it } from "node:test";
 
 import { DEFAULTS, type Settings } from "./settings";
 import {
+  denyListToSeed,
   TOKENECONOMIZER_HOME,
   TOKENECONOMIZER_PLUGIN_DIR,
   tokenEconomizerEnv,
@@ -51,6 +52,79 @@ describe("tokenEconomizerEnv", () => {
     assert.equal(env.TE_PYTHON, "/usr/bin/python3");
     assert.equal(env.TOKENECONOMIZER_HOME, TOKENECONOMIZER_HOME);
     assert.equal(env.TE_MODE, "headless");
+  });
+
+  it("passes the quiet period as a whole number of minutes", () => {
+    assert.equal(tokenEconomizerEnv(on()).TE_TOOLPRUNE_QUIET_MINUTES, "60");
+    assert.equal(
+      tokenEconomizerEnv(on({ tokenEconomizerQuietMinutes: 0 })).TE_TOOLPRUNE_QUIET_MINUTES,
+      "0",
+    );
+  });
+});
+
+/**
+ * What one worktree slot is given so it matches the rest of its repository.
+ * Wrong one way, a run carries tools its repository never uses; wrong the
+ * other, a tool somebody gave back with `toolprune restore` disappears again,
+ * or a permission pattern planted in the plugin's state reaches every new slot.
+ */
+describe("denyListToSeed", () => {
+  const slotA = "/workspace/.uf-worktrees/repo-1/.claude/settings.local.json";
+  const slotB = "/workspace/.uf-worktrees/repo-2/.claude/settings.local.json";
+
+  it("takes the union of what the plugin applied in every checkout", () => {
+    assert.deepEqual(
+      denyListToSeed({
+        appliedByPath: { [slotA]: ["NotebookEdit", "WebFetch"], [slotB]: ["TodoWrite"] },
+        keptByPath: {},
+        alreadyHere: [],
+      }),
+      ["NotebookEdit", "TodoWrite", "WebFetch"],
+    );
+  });
+
+  it("leaves out what this checkout already has", () => {
+    assert.deepEqual(
+      denyListToSeed({
+        appliedByPath: { [slotA]: ["NotebookEdit", "WebFetch"] },
+        keptByPath: {},
+        alreadyHere: ["NotebookEdit"],
+      }),
+      ["WebFetch"],
+    );
+  });
+
+  it("never seeds a tool somebody gave back in any checkout", () => {
+    assert.deepEqual(
+      denyListToSeed({
+        appliedByPath: { [slotA]: ["NotebookEdit", "WebFetch"] },
+        keptByPath: { [slotB]: ["WebFetch"] },
+        alreadyHere: [],
+      }),
+      ["NotebookEdit"],
+    );
+  });
+
+  it("carries tool names and never a permission pattern", () => {
+    // The state file is writable by every work cycle; a pattern copied from it
+    // would be this app writing a permission rule into every new checkout.
+    assert.deepEqual(
+      denyListToSeed({
+        appliedByPath: {
+          [slotA]: ["Bash(rm:*)", "Read(//**)", "mcp__github__create_issue", "not a tool", "Grep"],
+        },
+        keptByPath: {},
+        alreadyHere: [],
+      }),
+      ["Grep", "mcp__github__create_issue"],
+    );
+  });
+
+  it("reads a record of any other shape as having nothing to seed", () => {
+    for (const appliedByPath of [undefined, null, [], "x", { [slotA]: "NotebookEdit" }, { [slotA]: [1, null] }]) {
+      assert.deepEqual(denyListToSeed({ appliedByPath, keptByPath: null, alreadyHere: [] }), []);
+    }
   });
 });
 

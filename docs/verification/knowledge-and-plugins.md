@@ -159,6 +159,19 @@
   bytes ÷ 4, the notice for one pick went from 986 to 1,126 characters, and for
   three picks from 2,224 to 2,436.
 
+- **A worktree slot is seeded with its repository's TokenEconomizer list
+  through the plugin's own CLI, 2026-11-08.** In the container, as uid 1000
+  against TokenEconomizer `cb42207`: a scratch repository with two linked
+  worktrees, `te toolprune apply NotebookEdit WebFetch` in the first, then the
+  compiled `seedTokenEconomizerSlot` on the second. The first call answered
+  `seeded` with both tools, and a second call answered `nothing`. The second
+  slot's `.claude/settings.local.json` read `{"permissions":{"deny":
+  ["NotebookEdit","WebFetch"]}}` and `git status --porcelain` there was empty.
+  `te status --json` in that slot listed both as applied by the plugin, so its
+  `restore` covers them. The scratch repository and its state were removed
+  afterwards. Caveat: no work cycle ran, so that the CLI drops the two tools
+  from a session's tool list is the plugin's own measurement, not this one.
+
 ## Not yet verified by hand
 
 - **The pending figures have never rendered.** Settings' *Still downloading*
@@ -250,5 +263,12 @@
 
 - **No Claude cycle has been seen to fire TokenEconomizer's hooks (2026-11-08).** Everything about the argv and environment is unit tested, but whether the CLI registers a `--plugin-dir` plugin's hooks on a headless cycle, resumed ones included, and whether they write state, is unmeasured. Settle: switch **TokenEconomizer** on in Settings, run one Claude cycle, then `docker compose exec usagefoundry ls -la /home/node/.tokeneconomizer` and the `te ... cli repos` command `docs/install.md` gives (as the agent user, with `TOKENECONOMIZER_HOME` set); an empty state directory after a cycle means the hooks never ran.
 - **`te toolprune refresh-catalog` has not been seen to succeed as the agent uid in the container (2026-11-08).** `ensureTokenEconomizerCatalog` never fails a cycle, so a failure is only a line in the operations log. Settle: after the first cycle with the switch on, look for the ops event `token_economizer.catalog_refreshed` (and its absence of a failure sibling) in the operations log; without it tool pruning only ever proposes deferred tools.
-- **Where the tool-pruning deny list lands is unobserved (2026-11-08).** It should be written to `<checkout>/.claude/settings.local.json` and `.git/info/exclude` of a shared-checkout run's repository after `toolprune_quiet_minutes` (60) of quiet, and to the throwaway worktree for a worktree-isolated run, so isolated runs mostly gain nothing. Neither has been seen. Settle: run a few shared-checkout cycles on one repository, wait out the quiet window, run another, and read both files; repeat in an isolated run and confirm the operator's checkout is untouched.
+- **No list the plugin produced itself has been seen land (2026-11-08).** The
+  seeding is measured (entry above) on a list applied by hand. Unseen: the
+  plugin forming a proposal from real runs, writing it after the quiet period
+  into the last-folded checkout, and the next new session in another slot
+  receiving it. Settle: with tool pruning on, run a few cycles on one
+  repository, wait out `tokenEconomizerQuietMinutes`, start a new run, and read
+  its log for the "now leaves out" line and its slot's
+  `.claude/settings.local.json`.
 - **The loop guard's side calls are assumed invisible to `runs.spent_usd` (2026-11-08).** Read from the plugin (a `claude -p --no-session-persistence` Haiku call, written to no transcript), not measured, which is why `tokenEconomizerLoopguard` ships `off`. Settle: with the loop guard on `nudge`, provoke a failing loop in a run, then compare `runs.spent_usd` and the telemetry card against the plan's usage percentage before and after.

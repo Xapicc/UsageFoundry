@@ -623,6 +623,20 @@ async function applySettingsPut(body: Record<string, unknown>): Promise<Response
     }
     patch.tokenEconomizerLoopguard = body.tokenEconomizerLoopguard;
   }
+  if ("tokenEconomizerQuietMinutes" in body) {
+    // Refused rather than clamped: the plugin ignores a value it cannot read
+    // and falls back to its own 60, so a typo would read as saved and change
+    // nothing. Zero is a real answer — write at once — and a day is the
+    // plugin's own ceiling on any wait.
+    const n = Number(body.tokenEconomizerQuietMinutes);
+    if (!Number.isInteger(n) || n < 0 || n > 1440) {
+      return NextResponse.json(
+        { error: "tokenEconomizerQuietMinutes must be a whole number of minutes from 0 to 1440" },
+        { status: 400 },
+      );
+    }
+    patch.tokenEconomizerQuietMinutes = n;
+  }
 
   if ("readGuardMaxTokens" in body) {
     const n = optionalNumber("readGuardMaxTokens", body.readGuardMaxTokens, false);

@@ -108,7 +108,11 @@ import {
   updateTask,
 } from "./tasks";
 import { enabledPluginDirs, pluginDirArgs } from "./plugins";
-import { ensureTokenEconomizerCatalog, tokenEconomizerFor } from "./tokenEconomizer";
+import {
+  ensureTokenEconomizerCatalog,
+  seedTokenEconomizerSlot,
+  tokenEconomizerFor,
+} from "./tokenEconomizer";
 import {
   forgetContextCheck,
   sampleCodexContext,
@@ -11930,7 +11934,35 @@ export async function startRun(id: string): Promise<void> {
       if (tokenEconomizer.kind === "unavailable") {
         log(id, `TokenEconomizer not loaded for this cycle — ${tokenEconomizer.reason}.`);
       } else if (tokenEconomizer.kind === "ready") {
-        await ensureTokenEconomizerCatalog(childEnv(tokenEconomizer.env), childCredentials());
+        const teEnv = childEnv(tokenEconomizer.env);
+        await ensureTokenEconomizerCatalog(teEnv, childCredentials());
+        // The plugin applies a deny list only to the checkout whose session
+        // produced it, and this repository's work is spread across reused
+        // worktree slots, so a slot would otherwise wait for a list of its own.
+        // Before a new session only: a resumed one meeting a changed tool list
+        // pays to write its whole cached prefix again.
+        if (
+          sessionId === null &&
+          run.isolation === "worktree" &&
+          settings.tokenEconomizerToolprune === "auto"
+        ) {
+          const seed = await seedTokenEconomizerSlot({
+            slot: workDir,
+            env: teEnv,
+            credentials: childCredentials(),
+          });
+          if (seed.kind === "seeded") {
+            log(
+              id,
+              `TokenEconomizer: this checkout now leaves out ${seed.tools.length} tool${seed.tools.length === 1 ? "" : "s"} this repository's runs have not used (${seed.tools.join(", ")}). \`te toolprune restore\` gives them back.`,
+            );
+          } else if (seed.kind === "failed") {
+            log(
+              id,
+              `TokenEconomizer's deny list was not copied into this checkout — ${seed.reason}. This cycle loads every tool.`,
+            );
+          }
+        }
       }
 
       // The board's tool surface for this cycle, or nothing at all.

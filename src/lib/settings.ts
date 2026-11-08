@@ -319,6 +319,21 @@ export interface Settings {
    */
   tokenEconomizerLoopguard: TokenEconomizerLoopguard;
   /**
+   * Minutes a repository must have had no session before TokenEconomizer
+   * writes a deny list — its own `toolprune_quiet_minutes`, passed through.
+   *
+   * **60, the plugin's default, and on this install that is a measurement
+   * rather than a habit.** Every cache write in this fleet's transcripts is the
+   * one-hour kind (read off four runs on 2026-11-08: no 5-minute writes), so an
+   * hour of quiet is exactly when a paused conversation's cache has gone cold
+   * and a changed tool list costs it nothing. Lower is the operator's call: the
+   * first list lands sooner, and a run parked for less than an hour that then
+   * resumes pays to write its whole prefix again. Worktree slots no longer wait
+   * on it one by one — `seedTokenEconomizerSlot` copies a list across — so it
+   * gates only the first list in a repository and the shared checkout.
+   */
+  tokenEconomizerQuietMinutes: number;
+  /**
    * Start the next work cycle fresh, rather than resuming, once the last one's
    * context passed this many tokens. Null is off and is today's behaviour.
    *
@@ -1086,6 +1101,7 @@ export const DEFAULTS: Settings = {
   tokenEconomizerToolprune: "auto",
   tokenEconomizerMicroskills: "off",
   tokenEconomizerLoopguard: "off",
+  tokenEconomizerQuietMinutes: 60,
   freshStartContextTokens: null,
   maxConcurrentRuns: 4,
   maxConcurrentAssists: 2,

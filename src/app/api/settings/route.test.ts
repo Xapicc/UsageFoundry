@@ -128,6 +128,7 @@ const PROBES: Record<keyof Settings, Probe> = {
   tokenEconomizerToolprune: { send: "propose" },
   tokenEconomizerMicroskills: { send: "envfacts" },
   tokenEconomizerLoopguard: { send: "nudge" },
+  tokenEconomizerQuietMinutes: { send: 15 },
   // Sent above the CLI's own 25,000-token refusal and stored just under it: a
   // cap at or past that is a number nothing would ever act on, so the route
   // clamps rather than storing what was typed.
@@ -313,6 +314,24 @@ for (const key of Object.keys(PROBES) as (keyof Settings)[]) {
  * billed `claude -p` no meter here sees — so a typo stored here would switch on
  * unmetered spend while the page showed whatever was typed.
  */
+test("PUT /api/settings refuses a quiet period the plugin would ignore", async () => {
+  // The plugin falls back to its own 60 for a value it cannot read, so a stored
+  // `-5` or `"soon"` would read as saved and change nothing.
+  const { PUT } = await import("./route");
+  for (const value of [-5, 1.5, "soon", 1441]) {
+    const before = (await read()).tokenEconomizerQuietMinutes;
+    const res = await PUT(
+      new Request("http://localhost/api/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tokenEconomizerQuietMinutes: value }),
+      }),
+    );
+    assert.equal(res.status, 400, `${JSON.stringify(value)} was accepted`);
+    assert.equal((await read()).tokenEconomizerQuietMinutes, before);
+  }
+});
+
 test("PUT /api/settings refuses a TokenEconomizer mode the plugin does not know", async () => {
   const { PUT } = await import("./route");
   for (const [key, value] of [

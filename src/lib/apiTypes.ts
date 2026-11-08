@@ -4108,6 +4108,8 @@ export interface SettingsDTO {
   tokenEconomizerToolprune: TokenEconomizerToolprune;
   tokenEconomizerMicroskills: TokenEconomizerMicroskills;
   tokenEconomizerLoopguard: TokenEconomizerLoopguard;
+  /** Minutes of quiet before a deny list is written. See `settings.tokenEconomizerQuietMinutes`. */
+  tokenEconomizerQuietMinutes: number;
   /**
    * Open the next work cycle without `--resume` once the last one's context
    * passed this many tokens. Null is off, which is what every install does

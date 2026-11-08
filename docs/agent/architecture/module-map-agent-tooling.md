@@ -161,7 +161,19 @@ tokenEconomizer.ts
                 pruning needs the loaded tool list, which a transcript does not
                 record, so `te toolprune refresh-catalog` runs once per server
                 process as the agent uid (a claude -p killed at its init event,
-                which bills nothing). Limits are in
+                which bills nothing). The plugin applies a deny list only to
+                the checkout whose session produced it, and a repository's runs
+                spread over a dozen or more reused worktree slots, so
+                seedTokenEconomizerSlot copies the repository's list into a
+                slot through the plugin's own `toolprune apply` — so its record
+                and its `restore` stay true — and only before a *new* session
+                there, since a resumed one would pay a full cache rewrite for a
+                changed tool list. It reads the union off the plugin's
+                untool_applied.json because no command reports it, drops what
+                was given back anywhere, and carries tool names only. Seeds run
+                one at a time: that file is a read-modify-write. The quiet
+                period (TE_TOOLPRUNE_QUIET_MINUTES) is a setting at 60 because
+                every cache write here is the one-hour kind. Limits are in
                 docs/agent/security/token-economizer.md
 fileCostNotice.ts
                 what a Read of this repository's largest files costs, ranked on

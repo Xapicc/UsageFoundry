@@ -306,9 +306,12 @@ make small side calls to a Haiku model that your plan pays for and that appear
 in no transcript, so the spend figures and budget limits here do not see them -
 which is why the loop guard ships off here although the plugin's own default is
 on. And tool pruning writes a `permissions.deny` list into
-`.claude/settings.local.json` in a repository's checkout, only after that
-repository has been quiet for an hour; runs in their own worktree mostly do not
-benefit, because the file lands in the throwaway worktree.
+`.claude/settings.local.json` in a repository's checkout once that repository
+has had no session for the quiet period in Settings (60 minutes by default).
+The plugin writes it only into the checkout whose session produced it, so this
+app copies the list into each worktree a new run starts in. In the folder
+itself it lands only when a run that works there directly produced it — and
+there your own Claude Code sessions in that folder read it too.
 
 The plugin's code is pinned in the image: the Dockerfile fetches commit
 `TOKENECONOMIZER_REF` into `/opt/tokeneconomizer`. It is a **build argument**,

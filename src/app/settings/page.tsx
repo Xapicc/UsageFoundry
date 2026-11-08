@@ -295,7 +295,7 @@ const TE_TOOLPRUNE_OPTIONS: readonly SegmentedOption<TokenEconomizerToolprune>[]
 const TE_TOOLPRUNE_CONSEQUENCE: Record<TokenEconomizerToolprune, string> = {
   off: "Every tool stays in every session",
   propose: "Lists the tools a repository never uses and changes nothing",
-  auto: "Denies a repository's never-used tools in the checkout's .claude/settings.local.json, once no session has run there for an hour",
+  auto: "Denies a repository's never-used tools in .claude/settings.local.json, and copies the list into each worktree a new run starts in",
 };
 
 const TE_MICROSKILLS_OPTIONS: readonly SegmentedOption<TokenEconomizerMicroskills>[] = [
@@ -392,6 +392,7 @@ const EDITABLE_PATHS = [
   "tokenEconomizerToolprune",
   "tokenEconomizerMicroskills",
   "tokenEconomizerLoopguard",
+  "tokenEconomizerQuietMinutes",
   "freshStartContextTokens",
   "knowledgeBaseMountId",
   "knowledgeBaseSubpath",
@@ -5219,6 +5220,31 @@ export default function SettingsPage() {
                   label="Unused tools"
                 />
               </SettingRow>
+
+              {effective.tokenEconomizerToolprune === "auto" && (
+                <SettingRow
+                  htmlFor="tequiet"
+                  edited={isEdited("tokenEconomizerQuietMinutes")}
+                  label="Quiet before the first list"
+                  description="Below 60, a run paused for under an hour pays to re-send its whole conversation when it resumes"
+                >
+                  <div className="w-36">
+                    <Input
+                      id="tequiet"
+                      type="number"
+                      min={0}
+                      max={1440}
+                      step="1"
+                      className="tabular-nums"
+                      unit="min"
+                      value={effective.tokenEconomizerQuietMinutes}
+                      onChange={(e) =>
+                        patch({ tokenEconomizerQuietMinutes: Math.max(0, Math.round(Number(e.target.value) || 0)) })
+                      }
+                    />
+                  </div>
+                </SettingRow>
+              )}
 
               <SettingRow
                 edited={isEdited("tokenEconomizerMicroskills")}
