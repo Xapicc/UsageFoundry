@@ -170,6 +170,35 @@
   and `fatal: failure to merge`, and exited 128. `merge --no-edit` printed the
   same first two lines, then `Merge with strategy ort failed.`
 
+- **On git 2.56.0 a blanked merge driver makes `merge-tree` exit 1 with a
+  conflict listing, and `parseMergeTree` now reads it as unknown,
+  2026-11-08.** Board task `9dddc18a`, branch at `5773bb0b`. `git --version`
+  2.56.0, a build of the `v2.56.0` tag with `NO_RUST=1` that a sibling run left
+  under `$TMPDIR`, as `GIT_BIN` through this app's compiled `git()`; the
+  image's 2.39.5 beside it. Two branches editing different lines of one file,
+  `merge.evil.driver` set and `* merge=evil` in `.git/info/attributes`.
+  `merge-tree --write-tree -z main side`: on 2.39.5 exit 128, empty stdout, and
+  stderr `error: cannot run : No such file or directory (this app does not run
+  a repository's merge drivers, so it blanked merge.evil.driver and …)`, then
+  `error: error: Failed to execute internal merge` and `fatal: failure to
+  merge`. On 2.56.0 exit 1, stderr only that first line, and stdout a complete
+  conflict listing: the merged tree's oid, the file's three stage records, an
+  empty record, then `Auto-merging` and `CONFLICT (content): Merge conflict in
+  f.txt`. The driver ran on neither. `parseMergeTree` read exit 1 as
+  `conflict` and the case "Land's preview of a merge the blank failed names
+  the driver and says why" failed on 2.56.0 with `'conflict' !== 'unknown'`
+  (53 of 54, the only failure). With `parseMergeTree` taking the line that
+  carries `BLANKED_MERGE_DRIVER_NOTE` as an unknown, whatever the status,
+  `gitFilterProbe.test.ts` passed 54 of 54 on 2.56.0 and 53 with one skip
+  (the hook case) on 2.39.5, and `land.test.ts`' new case, fed the 2.56.0
+  output above, failed with the check removed from the compiled module and
+  passed with it. The real `merge --no-edit side` differs the same way: exit 2
+  and a clean checkout on 2.39.5, exit 1 on 2.56.0 with `CONFLICT (content)`
+  on stdout, `f.txt` as `UU` and a `MERGE_HEAD`, the file's content as it was
+  and no marker run. Caveat: the real merge is only measured, not changed;
+  Land's own `mergeRefusal` reading that exit 1 as a conflict is read from the
+  code, not run.
+
 - **Of this app's git call shapes, only the ref-moving and content-moving
   ones fire a hook defined in config, 2026-11-06.** Board task `6b4dccf3`,
   `main` at `100b9f24`. Apple git 2.54.0 (Apple Git-157) on the macOS host,

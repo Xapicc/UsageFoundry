@@ -972,15 +972,22 @@ function* prepareContentCall(
 }
 
 /**
+ * The sentence `explainBlankedMergeDrivers` appends, exported because a caller
+ * cannot tell this app's refusal from a conflict by exit status: `merge-tree`
+ * exits 128 on git 2.39.5 and 1 on 2.56.0, with a conflict listing on stdout.
+ */
+export const BLANKED_MERGE_DRIVER_NOTE = "this app does not run a repository's merge drivers";
+
+/**
  * A failed call's result with git's `cannot run :` line saying why it could not.
  *
  * A blanked merge driver fails the merge with `error: cannot run : No such file
  * or directory`, which names no driver and no reason, so a repository relying
  * on a legitimate one (`merge.ours.driver = true`) got a refusal it could not
  * diagnose (board task adb9e828). The sentence goes on that same line because
- * the callers that show a failure keep one line of it: `parseMergeTree` line 0,
- * which is this one for both `merge-tree` and `merge` (measured, 2.39.5), and
- * `gitFailureLine` the first `error:` line, which is this one too. Every merge
+ * the callers that show a failure keep one line of it: `parseMergeTree` the one
+ * carrying the sentence, and `gitFailureLine` the first `error:` line, which is
+ * this one too for both `merge-tree` and `merge` (measured, 2.39.5). Every merge
  * driver blanked is named, since git does not say which file it was merging.
  */
 function explainBlankedMergeDrivers<T extends { ok: boolean; stderr: string }>(
@@ -993,7 +1000,7 @@ function explainBlankedMergeDrivers<T extends { ok: boolean; stderr: string }>(
   if (at === -1) return res;
   const keys = drivers.map((name) => `merge.${name}.driver`).join(", ");
   lines[at] +=
-    ` (this app does not run a repository's merge drivers, so it blanked ${keys} ` +
+    ` (${BLANKED_MERGE_DRIVER_NOTE}, so it blanked ${keys} ` +
     `and git could not merge a file that uses ${drivers.length === 1 ? "it" : "one of them"})`;
   return { ...res, stderr: lines.join("\n") };
 }
