@@ -214,12 +214,14 @@ import {
   buildCodexArgs,
   cycleBudgetIsHeadroom,
   cycleBudgetUSD,
+  clipCliSentence,
   cycleDidNoWork,
   cycleEnding,
   cycleEnvPins,
   nextPrompt,
   priorReadsNotice,
   startsFresh,
+  startupFailureSentence,
   type CycleAdapter,
   type IterationResult,
 } from "./cycleInvocation";
@@ -2610,15 +2612,28 @@ export function refusalStopReason(
  * is the subcommand the pinned 0.153.4 lists for picking a recorded session
  * back up by hand (`codex exec resume` is the non-interactive one this app
  * spawns). A local run is still Claude Code.
+ *
+ * `cliSentence` is the CLI's own account of why, when it gave one — a startup
+ * failure's stderr line, or the text of a result that said `is_error: true` —
+ * and it is only ever quoted on the plain exit. A cycle that could not resume
+ * its session names the hand command instead, which is the answer to a
+ * different question.
  */
 export function exitStopReason(
   provider: RunProviderDTO | null,
   exitCode: number,
   resumeTarget: string | null,
+  cliSentence: string | null = null,
 ): string {
   const codex = provider === "codex";
   const cli = RUN_PROVIDER_LABEL[codex ? "codex" : "claude"];
-  if (resumeTarget === null) return `${cli} exited with code ${exitCode}.`;
+  if (resumeTarget === null) {
+    // Quoted, because the sentence can end in a path or a flag and a full stop
+    // after it would read as part of one.
+    return cliSentence
+      ? `${cli} exited with code ${exitCode} and said: “${cliSentence}”.`
+      : `${cli} exited with code ${exitCode}.`;
+  }
   const command = codex ? `codex resume ${resumeTarget}` : `claude --resume ${resumeTarget}`;
   return `Could not resume this run's ${cli} session (exit ${exitCode}). Its work is still on disk; pick it up by hand with: ${command}`;
 }
@@ -8583,6 +8598,8 @@ export function runIteration(
       subtype: null,
       resultTurns: null,
       apiError: null,
+      errorText: null,
+      stdoutLines: 0,
       stderrTail: "",
       subagentNames: new Map(),
       toolCalls: new Map(),
@@ -8599,7 +8616,10 @@ export function runIteration(
       while ((nl = stdoutBuf.indexOf("\n")) !== -1) {
         const line = stdoutBuf.slice(0, nl).trim();
         stdoutBuf = stdoutBuf.slice(nl + 1);
-        if (line) adapter.parseLine(runId, line, result, onSession);
+        if (line) {
+          result.stdoutLines += 1;
+          adapter.parseLine(runId, line, result, onSession);
+        }
       }
     });
 
@@ -8640,8 +8660,10 @@ export function runIteration(
       // the cycle had returned would stop a run whose cycle finished normally.
       if (silenceTimer) clearTimeout(silenceTimer);
       procs.delete(runId);
-      if (stdoutBuf.trim())
+      if (stdoutBuf.trim()) {
+        result.stdoutLines += 1;
         adapter.parseLine(runId, stdoutBuf.trim(), result, onSession);
+      }
       // Whatever the child was inside, it is not inside it any more. A cycle
       // killed mid-call never sends the result that would have cleared it, so
       // without this the run page would keep counting up against a tool whose
@@ -9826,6 +9848,18 @@ function handleStreamLine(
     if (ev.subtype && ev.subtype !== "success") acc.isError = true;
     acc.resultTurns = typeof ev.num_turns === "number" ? ev.num_turns : null;
     if (typeof ev.result === "string" && ev.result) acc.finalText = ev.result;
+    // The CLI's sentence for a result that says it failed, kept apart from
+    // `apiError` (see `errorText`). Read from `is_error` and not from the
+    // subtype: the measured refusal of a resume whose deferred tool is gone is
+    // `subtype: "success"`, so the branch above filed it as a clean result and
+    // the run ended on a bare exit code with the one sentence that says what to
+    // change nowhere on the row. Only the text is taken. Whether such a result
+    // fails the cycle stays the exit code's to say, which is 1 on every shape
+    // measured; an exit-0 `is_error` result is unmeasured, and promoting it to
+    // `isError` would change what ends a run on a guess.
+    if (ev.is_error === true && typeof ev.result === "string" && ev.result.trim()) {
+      acc.errorText = clipCliSentence(ev.result);
+    }
 
     // Second-best source for a refusal, behind the `<synthetic>` message: the
     // CLI summarises the failure here too. `??=` because the summary can be
@@ -12803,8 +12837,18 @@ export async function startRun(id: string): Promise<void> {
         // up by hand after a crash may never have parked at all — a pick-up
         // neither adds to `pause_count` nor clears it — so that condition
         // excluded the one case an operator is watching.
+        // Asked first, and Claude Code only: the shape is measured on that CLI
+        // (a Codex startup failure is unmeasured). A cycle the CLI refused to
+        // start did not fail to *resume* — its argv was the problem, which a
+        // second spawn repeats and `claude --resume` does not carry — so it is
+        // the plain exit with the CLI's sentence, retried by nobody.
+        const startupSentence =
+          run.provider === "codex" ? null : startupFailureSentence(res);
         const looksLikeResumeFailure =
-          usedResume && cyclesThisSegment === 1 && cycleDidNoWork(res);
+          usedResume &&
+          cyclesThisSegment === 1 &&
+          startupSentence === null &&
+          cycleDidNoWork(res);
         if (looksLikeResumeFailure && !resumeRetried) {
           resumeRetried = true;
           iterations -= 1;
@@ -12826,6 +12870,7 @@ export async function startRun(id: string): Promise<void> {
           run.provider,
           res.exitCode,
           looksLikeResumeFailure ? resumeTarget : null,
+          startupSentence ?? res.errorText,
         );
         finalStatus = "failed";
         endingCode = looksLikeResumeFailure ? "resume_failed" : "exit_code";

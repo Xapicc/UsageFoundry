@@ -167,6 +167,30 @@ export interface IterationResult {
    */
   apiError: string | null;
   /**
+   * The CLI's own sentence off a `result` that says `is_error: true`, whatever
+   * its subtype.
+   *
+   * Not `apiError`, and that is the point of it being separate. `apiError`
+   * means the provider refused, and `refusalKind` turns it into a park, a
+   * backoff or a refusal ending, so a sentence the CLI wrote about itself —
+   * measured: a resume refused with `terminal_reason: "tool_deferred_unavailable"`
+   * arrives as `subtype: "success"`, `is_error: true` — would be matched
+   * against patterns written for the provider's wording. This is only read
+   * back into the stop reason of a cycle that already failed on its exit code,
+   * where it is the one sentence that says what to change.
+   */
+  errorText: string | null;
+  /**
+   * Lines the child wrote to stdout, counted before they are interpreted.
+   *
+   * Kept because a startup failure is told apart from every other non-zero
+   * exit by there being none: the pinned CLI writes nothing to stdout when it
+   * refuses an argument, and no field the parser fills can say "nothing
+   * arrived" — an event this build does not recognise leaves them all at their
+   * starting values too.
+   */
+  stdoutLines: number;
+  /**
    * Tail of the child's stderr. Forwarded to `run_events` line by line as it
    * arrives, and kept here too so a refusal that only ever reaches stderr is
    * still visible to the branch that has to classify it.
@@ -196,6 +220,46 @@ export function clipReason(text: string): string {
   return trimmed.length <= MAX_NEEDS_REVIEW_REASON
     ? trimmed
     : `${trimmed.slice(0, MAX_NEEDS_REVIEW_REASON - 1)}…`;
+}
+
+/** Cap on the CLI's own sentence once it is quoted in a stop reason. */
+export const CLI_SENTENCE_LIMIT = 600;
+
+/** One sentence of the CLI's own, flattened to a line and clipped. */
+export function clipCliSentence(text: string): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length <= CLI_SENTENCE_LIMIT ? flat : `${flat.slice(0, CLI_SENTENCE_LIMIT - 1)}…`;
+}
+
+/**
+ * The sentence a Claude Code cycle gave when it refused to start, or null when
+ * the cycle is not that.
+ *
+ * Measured on 2.1.319 (the 2.1.314 changelog's "startup failure now prints the
+ * error and exits 1"): a missing or invalid `--mcp-config` and a missing
+ * `--settings` write nothing to stdout, one sentence to stderr, and exit 1. The
+ * loop had no word for that: no result and no text is `cycleDidNoWork`'s first
+ * clause, which on a picked-up run's first cycle is the signature of a refused
+ * resume, so the run retried and then told the operator to `claude --resume` a
+ * session that was fine. The argv was what failed, it is deterministic, and the
+ * hand command does not carry it. The pinned CLI's own refusal of a resume has
+ * a different shape (`error_during_execution`, zero turns, `errors`), so the
+ * clause no longer has to stand for it.
+ *
+ * All four conditions are load-bearing. A positive exit code, because a child a
+ * signal killed has exited with nothing to say. No `result` and no stdout
+ * line, because a child that got as far as one line did start, and its stderr
+ * is then the agent's own noise rather than the CLI's complaint. And a
+ * stderr tail with something in it, because without a sentence there is nothing
+ * to quote and the silent death is still best explained as a resume that went
+ * wrong — that case keeps the retry.
+ */
+export function startupFailureSentence(
+  res: Pick<IterationResult, "exitCode" | "sawResult" | "stdoutLines" | "stderrTail">,
+): string | null {
+  if (res.exitCode <= 0 || res.sawResult || res.stdoutLines > 0) return null;
+  const sentence = clipCliSentence(res.stderrTail);
+  return sentence === "" ? null : sentence;
 }
 
 /**
