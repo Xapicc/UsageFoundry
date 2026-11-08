@@ -44,6 +44,7 @@ Twenty are renderings rather than functions — every `*.test.tsx` in the tree, 
 |---|---|
 | `backgroundWork.test.ts` |  |
 | `cycleDeadline.test.ts` |  |
+| `cycleEndingSentence.test.ts` |  |
 | `priorReads.test.ts` |  |
 | `resumeMissingTranscript.test.ts` |  |
 
