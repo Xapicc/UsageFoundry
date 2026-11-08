@@ -989,6 +989,89 @@ describe("a driver written between the probe and the call is refused", () => {
     }
   });
 
+  // git joins an include onto the directory of the file naming it and lets the
+  // kernel follow `sub` before it applies `..`, and the watch folded `..` first:
+  // it watched `.git/evil.inc`, which stays absent, while git read the file
+  // beside the symlink's target (board task bbbe1aff).
+  it("git() and gitSync(): an include whose `..` follows a symlink, written after the probe, refuses the call", async () => {
+    for (const viaSync of [false, true]) {
+      const { repo, marker } = namedButUndefinedRepo();
+      const elsewhere = path.join(root, `elsewhere${count++}`);
+      fs.mkdirSync(path.join(elsewhere, "dir"), { recursive: true });
+      fs.symlinkSync(path.join(elsewhere, "dir"), path.join(repo, ".git", "sub"));
+      plain(repo, ["config", "include.path", "sub/../evil.inc"]);
+      fs.writeFileSync(writeTarget, path.join(elsewhere, "evil.inc"));
+      setMode("plant-include");
+      const res = viaSync ? gitSync(repo, ["add", "-A"]) : await git(repo, ["add", "-A"]);
+      setMode("pass");
+
+      ranNothing(marker);
+      assert.equal(res.ok, false, `${viaSync ? "gitSync" : "git"}() ran the call`);
+      assert.match(res.stderr, /\.git\/sub\/\.\.\/evil\.inc changed while the filter probe read it/);
+      assert.equal(fs.existsSync(path.join(repo, ".git", "evil.inc")), false, "the plant went where the old watch looked");
+    }
+  });
+
+  // A relative include inside a file reached that way is joined onto that
+  // file's unfolded directory too, which is the origin git prints for it.
+  it("git() and gitSync(): an include nested in a file reached through a symlink's `..` refuses the call", async () => {
+    for (const viaSync of [false, true]) {
+      const { repo, marker } = namedButUndefinedRepo();
+      const elsewhere = path.join(root, `elsewhere${count++}`);
+      fs.mkdirSync(path.join(elsewhere, "dir"), { recursive: true });
+      fs.symlinkSync(path.join(elsewhere, "dir"), path.join(repo, ".git", "sub"));
+      fs.writeFileSync(path.join(elsewhere, "outer.inc"), "[include]\n\tpath = inner.inc\n");
+      plain(repo, ["config", "include.path", "sub/../outer.inc"]);
+      fs.writeFileSync(writeTarget, path.join(elsewhere, "inner.inc"));
+      setMode("plant-include");
+      const res = viaSync ? gitSync(repo, ["add", "-A"]) : await git(repo, ["add", "-A"]);
+      setMode("pass");
+
+      ranNothing(marker);
+      assert.equal(res.ok, false, `${viaSync ? "gitSync" : "git"}() ran the call`);
+      assert.match(res.stderr, /\.git\/sub\/\.\.\/inner\.inc changed while the filter probe read it/);
+    }
+  });
+
+  // `~/` is git's HOME with the rest appended as written, `..` and all.
+  it("git() and gitSync(): an include under `~/` whose `..` follows a symlink refuses the call", async () => {
+    const savedHome = process.env.HOME;
+    try {
+      for (const viaSync of [false, true]) {
+        const { repo, marker } = namedButUndefinedRepo();
+        const home = path.join(root, `home${count++}`);
+        const elsewhere = path.join(root, `elsewhere${count++}`);
+        fs.mkdirSync(path.join(elsewhere, "dir"), { recursive: true });
+        fs.mkdirSync(home);
+        fs.symlinkSync(path.join(elsewhere, "dir"), path.join(home, "sub"));
+        plain(repo, ["config", "include.path", "~/sub/../evil.inc"]);
+        fs.writeFileSync(writeTarget, path.join(elsewhere, "evil.inc"));
+        process.env.HOME = home;
+        setMode("plant-include");
+        const res = viaSync ? gitSync(repo, ["add", "-A"]) : await git(repo, ["add", "-A"]);
+        setMode("pass");
+
+        ranNothing(marker);
+        assert.equal(res.ok, false, `${viaSync ? "gitSync" : "git"}() ran the call`);
+        assert.match(res.stderr, /\/sub\/\.\.\/evil\.inc changed while the filter probe read it/);
+      }
+    } finally {
+      if (savedHome === undefined) delete process.env.HOME;
+      else process.env.HOME = savedHome;
+    }
+  });
+
+  it("control: git reads an include's `..` after following the symlink before it", () => {
+    const { repo, marker } = namedButUndefinedRepo();
+    const elsewhere = path.join(root, `elsewhere${count++}`);
+    fs.mkdirSync(path.join(elsewhere, "dir"), { recursive: true });
+    fs.symlinkSync(path.join(elsewhere, "dir"), path.join(repo, ".git", "sub"));
+    plain(repo, ["config", "include.path", "sub/../evil.inc"]);
+    fs.writeFileSync(path.join(elsewhere, "evil.inc"), `[filter "x"]\n\tclean = ${fs.readFileSync(plantFile, "utf8")}\n`);
+    plain(repo, ["add", "-A"]);
+    assert.equal(fs.existsSync(marker), true, "the driver included through the symlink did not fire");
+  });
+
   // git places `~<user>/` through the user database, and the watch read it as
   // a path relative to `.git` (board task 10264b6b).
   it("git() and gitSync(): an include under `~<user>/` written after the probe refuses the call", async (t) => {
@@ -1006,6 +1089,29 @@ describe("a driver written between the probe and the call is refused", () => {
       ranNothing(marker);
       assert.equal(res.ok, false, `${viaSync ? "gitSync" : "git"}() ran the call`);
       assert.match(res.stderr, new RegExp(`${path.basename(target).replace(/\./g, "\\.")} changed while the filter probe read it`));
+    }
+  });
+
+  // git places `~<user>/` and leaves the rest as written, so a symlink below the
+  // home is followed before `..` there too (board task bbbe1aff).
+  it("git() and gitSync(): an include under `~<user>/` whose `..` follows a symlink refuses the call", async (t) => {
+    const home = userHome();
+    if (home === null) return t.skip(noUserHome);
+    for (const viaSync of [false, true]) {
+      const { repo, marker } = namedButUndefinedRepo();
+      const elsewhere = path.join(root, `elsewhere${count++}`);
+      fs.mkdirSync(path.join(elsewhere, "dir"), { recursive: true });
+      const link = homeTarget(home);
+      fs.symlinkSync(path.join(elsewhere, "dir"), link);
+      plain(repo, ["config", "include.path", `~${home.user}/${path.relative(home.home, link)}/../evil.inc`]);
+      fs.writeFileSync(writeTarget, path.join(elsewhere, "evil.inc"));
+      setMode("plant-include");
+      const res = viaSync ? gitSync(repo, ["add", "-A"]) : await git(repo, ["add", "-A"]);
+      setMode("pass");
+
+      ranNothing(marker);
+      assert.equal(res.ok, false, `${viaSync ? "gitSync" : "git"}() ran the call`);
+      assert.match(res.stderr, /\.inc\/\.\.\/evil\.inc changed while the filter probe read it/);
     }
   });
 
@@ -1059,6 +1165,27 @@ describe("a driver written between the probe and the call is refused", () => {
       ranNothing(marker);
       assert.equal(res.ok, false, `${viaSync ? "gitSync" : "git"}() ran the call`);
       assert.match(res.stderr, new RegExp(`${path.basename(include.target).replace(/\./g, "\\.")} changed while the filter probe read it`));
+    }
+  });
+
+  // git expands `%(prefix)/` and appends the rest as written (board task bbbe1aff).
+  it("git() and gitSync(): an include under `%(prefix)/` whose `..` follows a symlink refuses the call", async (t) => {
+    for (const viaSync of [false, true]) {
+      const include = prefixInclude();
+      if (include === null) return t.skip(noWritablePrefix);
+      const { repo, marker } = namedButUndefinedRepo();
+      const elsewhere = path.join(root, `elsewhere${count++}`);
+      fs.mkdirSync(path.join(elsewhere, "dir"), { recursive: true });
+      fs.symlinkSync(path.join(elsewhere, "dir"), include.target);
+      plain(repo, ["config", "include.path", `${include.value}/../evil.inc`]);
+      fs.writeFileSync(writeTarget, path.join(elsewhere, "evil.inc"));
+      setMode("plant-include");
+      const res = viaSync ? gitSync(repo, ["add", "-A"]) : await git(repo, ["add", "-A"]);
+      setMode("pass");
+
+      ranNothing(marker);
+      assert.equal(res.ok, false, `${viaSync ? "gitSync" : "git"}() ran the call`);
+      assert.match(res.stderr, /\.inc\/\.\.\/evil\.inc changed while the filter probe read it/);
     }
   });
 

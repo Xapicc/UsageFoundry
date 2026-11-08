@@ -432,6 +432,29 @@
   Windows, some macOS packages) was not tried; that placement follows one,
   since it asks the same binary the call runs, is inferred.
 
+- **git joins an include onto its origin's directory without folding `..`,
+  and watching the path unfolded refuses a file written beside a symlink's
+  target after the probe, 2026-11-08.** Board task `bbbe1aff`, `main` at
+  `4fd7c103`, git 2.39.5 under `env -i`. With `.git/sub` a symlink to
+  `<elsewhere>/dir`, `include.path = sub/../evil.inc` and `* filter=x` in
+  `.git/info/attributes`, `config --show-origin --includes --get-regexp
+  '^filter\.'` printed origin `file:.git/sub/../evil.inc`, `add -A` ran the
+  `filter.x.clean` that `<elsewhere>/evil.inc` defines and exited 0, and
+  `.git/evil.inc`, where the fingerprint looked, did not exist. Through this
+  app's compiled `git()` and `gitSync()`, `gitFilterProbe.test.ts`'s five
+  symlink cases, the stub writing the included file while the index is
+  listed (a relative include, one nested in a file reached that way, `~/`
+  with `HOME` below the link, `~<user>/` below `~/.cache` and `%(prefix)/`),
+  ran the plant at `4fd7c103` through `git()` and, with the loop cut to
+  `gitSync()` alone, through it too; with the change all are refused naming
+  the `sub/../` path. On 2.39.5 the `%(prefix)/` case skips; on a `v2.56.0`
+  built under `$TMPDIR` as the `12d0e24c` entry says, it failed at
+  `4fd7c103` and passed with the change, and the whole file passed 70 of 70
+  there. Caveat: only the
+  include targets were unfolded; the top of the work tree is still
+  `path.resolve(dir, cdup)`, which folds a symlink in the call's own
+  directory, and that was not driven.
+
 ## Not yet verified by hand
 
 - **Whether a work cycle can race this app's git on `.git/config` in

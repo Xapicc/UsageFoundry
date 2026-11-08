@@ -837,27 +837,44 @@ function discoveryEntries(dir: string, top: string): string[] {
 type IncludeTarget = { file: string } | { placedByGit: string; namedIn: string };
 
 /**
+ * `file` joined onto `dir` as git joins an include onto the directory of the
+ * file naming it: by string, `..` left in. `path.resolve` folds `..` against
+ * the component before it, and the kernel, which git hands the path to,
+ * follows that component first when it is a symlink: with `.git/sub` a link
+ * to `<elsewhere>/dir`, `sub/../evil.inc` is `<elsewhere>/evil.inc` to git and
+ * was watched as `.git/evil.inc`, absent at both ends, while a driver written
+ * into the other ran (board task bbbe1aff, measured, 2.39.5). The stat of the
+ * unfolded path goes through the same lookup git's open does.
+ */
+const joinAsGit = (dir: string, file: string) => (path.isAbsolute(file) ? file : `${dir}/${file}`);
+
+/**
  * The files the records' `include.path` and `includeIf.<condition>.path` name,
  * resolved as git resolves them: `~/` against the child's `HOME`, `~user/`
  * through the user database and `%(prefix)/` against git's install prefix,
  * which only git is asked (`placeWithGit`), and anything else against the
  * directory of the file that names it, whose own relative origin is relative
- * to `top`. A conditional include is listed whether or not its condition
- * holds, which watches more than git reads and never less.
+ * to `top`. Each is joined by `joinAsGit` and never normalised, since git
+ * normalises none of them. A conditional include is listed whether or not its
+ * condition holds, which watches more than git reads and never less.
  */
 function includeTargets(top: string, records: ConfigRecord[]): IncludeTarget[] {
   const home = gitEnv().HOME;
   const targets: IncludeTarget[] = [];
   for (const { origin, key, value } of records) {
     if (!/^include(?:if\..+)?\.path$/i.test(key) || !value || !origin.startsWith("file:")) continue;
-    const namedIn = path.dirname(path.resolve(top, origin.slice("file:".length)));
+    // Not `path.dirname` of a resolved path: an origin reached through
+    // `sub/../` is a file in the symlink target's parent, and a relative include
+    // inside it is joined onto that.
+    const namedIn = path.dirname(joinAsGit(top, origin.slice("file:".length)));
     if (value.startsWith("~/")) {
-      // git ignores a `~/` include when HOME is unset, so there is nothing to watch.
-      if (home) targets.push({ file: path.join(home, value.slice(2)) });
+      // git ignores a `~/` include when HOME is unset, so there is nothing to
+      // watch; otherwise it appends the rest to HOME as written.
+      if (home) targets.push({ file: `${home}${value.slice(1)}` });
     } else if (value.startsWith("~") || value.startsWith("%(prefix)/")) {
       targets.push({ placedByGit: value, namedIn });
     } else {
-      targets.push({ file: path.resolve(namedIn, value) });
+      targets.push({ file: joinAsGit(namedIn, value) });
     }
   }
   return targets;
@@ -1012,7 +1029,7 @@ function* prepareContentCall(
       if (placed.code !== 0 || placed.overflowed) {
         return { ok: false, reason: probeFailure(placed, dir, args, step) };
       }
-      watch(path.resolve(target.namedIn, placed.stdout.replace(/\0$/, "")));
+      watch(joinAsGit(target.namedIn, placed.stdout.replace(/\0$/, "")));
     }
 
     if (args[0] === "merge-tree") continue;
