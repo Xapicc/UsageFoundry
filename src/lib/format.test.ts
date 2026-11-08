@@ -10,6 +10,7 @@ import {
   fmtInstanceWait,
   fmtInstantWithZone,
   fmtLiveCycle,
+  fmtPct,
   fmtTokens,
   fmtUSD,
   guardBadge,
@@ -554,6 +555,42 @@ test("a signed dollar figure has no sign once it rounds to zero", () => {
   assert.equal(signedUSD(Number.NaN), "—");
   assert.equal(signedUSD(Number.POSITIVE_INFINITY), "—");
   assert.equal(signedUSD(Number.NEGATIVE_INFINITY), "—");
+});
+
+/**
+ * A percentage writes its minus where `fmtTokens` and `fmtUSD` write theirs.
+ *
+ * `toFixed` on the signed value put an ASCII hyphen before the figure, and a
+ * fraction under half of 0.1% printed `-0.0%`, a direction on a figure that had
+ * rounded to none. No caller passes a negative today: every argument is a
+ * share, a window fraction or a configured limit. `Meter` clamps the bar it
+ * draws but prints its `fraction` unclamped, so this formatter is the one place
+ * that decides what a negative reading would look like if a ratio ever went
+ * below zero.
+ */
+test("a percentage leads a negative with U+2212 and gives a zero none", () => {
+  assert.equal(fmtPct(0), "0.0%");
+  assert.equal(fmtPct(0.25), "25.0%");
+  assert.equal(fmtPct(0.0004), "0.0%");
+  assert.equal(fmtPct(1), "100.0%");
+  assert.equal(fmtPct(1.234), "123.4%");
+  assert.equal(fmtPct(null), "—");
+  assert.equal(fmtPct(Number.NaN), "—");
+  assert.equal(fmtPct(Number.POSITIVE_INFINITY), "—");
+
+  assert.equal(fmtPct(-0.25), "−25.0%");
+  assert.equal(fmtPct(-1.234), "−123.4%");
+
+  // The sign is chosen after the magnitude has rounded to one decimal of a
+  // percent, as `fmtUSD` does it.
+  assert.equal(fmtPct(-0.0001), "0.0%");
+  assert.equal(fmtPct(-0.0004), "0.0%");
+  assert.equal(fmtPct(-0), "0.0%");
+  // The control beside them: just past 0.05% is the first figure that writes
+  // as 0.1%, so a fix that dropped the sign under one percent would pass the
+  // cases above and fail this one.
+  assert.equal(fmtPct(-0.0006), "−0.1%");
+  assert.equal(fmtPct(-0.001), "−0.1%");
 });
 
 /**

@@ -394,9 +394,20 @@ export function signedUSD(n: number): string {
   return n > 0 && /[1-9]/.test(figure) ? `+${figure}` : figure;
 }
 
+/**
+ * A 0–1 fraction as a percentage to one decimal.
+ *
+ * Every caller passes a share, a window fraction or a configured limit, so
+ * nothing reaches the negative branch today. `Meter` clamps the bar it draws
+ * but prints its `fraction` through this unclamped, which makes this the one
+ * place that decides what a ratio below zero would look like. Written to match
+ * `fmtUSD`: U+2212 rather than a hyphen, and the sign is chosen after the
+ * magnitude has rounded, because a figure that is written as zero has none.
+ */
 export function fmtPct(f: number | null): string {
   if (f === null || !Number.isFinite(f)) return "—";
-  return `${(f * 100).toFixed(1)}%`;
+  const written = (Math.abs(f) * 100).toFixed(1);
+  return `${f < 0 && Number(written) !== 0 ? "−" : ""}${written}%`;
 }
 
 /**
