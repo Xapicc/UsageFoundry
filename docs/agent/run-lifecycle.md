@@ -123,11 +123,13 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 ## [A cycle's CLI, argv and appended notices](run-lifecycle/cycle-argv-and-notices.md)
 
 - Three flags ride *every* cycle's argv, not the opening one, and `--resume` restores none of them.
+- `--max-budget-usd` rides a Claude cycle's argv as the smaller of two figures, and the figure is the row's as well as the CLI's.
 - Which CLI a cycle is, what argv it gets and how its stdout is read are one choice, made once per cycle.
 - `runs.provider` records which CLI a run was admitted as, and `null` on it is a third answer rather than a default.
 - An isolated run is told what its worktree does not isolate.
 - A run is told to delegate, and the instruction has a floor in it.
 - A run is told a browser is already here, because the command it reaches for from memory is the one thing that does not work.
+- A run is told the literal value of `$TMPDIR`, because Bash expands it and `Read` does not.
 
 ## [What a Codex cycle's argv carries](run-lifecycle/codex-cycle-argv.md)
 
