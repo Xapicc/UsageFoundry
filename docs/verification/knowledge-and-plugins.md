@@ -199,6 +199,15 @@
   which is the seed answering `nothing`. Caveat: the proposer's cost is the
   plugin's own figure; that `runs.spent_usd` misses it is still open.
 
+- **`TE_TOOLPRUNE_PROTECT` replaces the config files' list and matches
+  `mcp__uf__*`, 2026-11-08.** Against TokenEconomizer `cb42207`, the image's pin
+  and byte-identical (`diff -r`) to this container's `/opt/tokeneconomizer`:
+  `load_config` over a `config.json` with `toolprune_protect: ["Planted*"]` and
+  `TE_TOOLPRUNE_PROTECT=mcp__uf__*` returned `['mcp__uf__*']`, no warnings; with
+  no env it returned `['Planted*']`. `_Protected` held `add_task_dependency`,
+  `release_task` and `request_stack` and not `mcp__ufo__x`, an `mcp__github__`
+  tool or `mcp__UF__x`. Caveat: the loader and matcher only; no fold was run.
+
 ## Not yet verified by hand
 
 - **The pending figures have never rendered.** Settings' *Still downloading*
@@ -296,6 +305,11 @@
   repository, wait out `tokenEconomizerQuietMinutes`, start a new run, and read
   its log for the "now leaves out" line and its slot's
   `.claude/settings.local.json`.
+- **No fold has been seen dropping a pending `mcp__uf__` proposal under the
+  protect pin (2026-11-08).** Settle: with tool pruning on `auto`, run a cycle
+  in a repository whose `untool.json` lists `mcp__uf__` tools under `proposal`,
+  then read `untool.json` and the checkout's `.claude/settings.local.json` once
+  its session has folded: no `mcp__uf__` entry in either.
 - **The loop guard's side calls are assumed invisible to `runs.spent_usd` (2026-11-08).** Read from the plugin (a `claude -p --no-session-persistence` Haiku call, written to no transcript), not measured, which is why `tokenEconomizerLoopguard` ships `off`. Settle: with the loop guard on `nudge`, provoke a failing loop in a run, then compare `runs.spent_usd` and the telemetry card against the plan's usage percentage before and after.
 - **No browser has drawn the Project manager's TokenEconomizer fold
   (2026-11-08).** `npm run smoke-pages` runs without the plugin, so the fold is

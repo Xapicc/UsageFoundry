@@ -8,7 +8,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Readable } from "node:stream";
-import { CLAUDE_BIN, GITHUB_TOKEN, MCP_SELF_URL, WORKSPACE_MOUNTS, spawnCommand } from "./config";
+import {
+  CLAUDE_BIN,
+  GITHUB_TOKEN,
+  MCP_SELF_SERVER,
+  MCP_SELF_URL,
+  WORKSPACE_MOUNTS,
+  spawnCommand,
+} from "./config";
 import { agentEnvironment, chatPath } from "./stacks";
 import { db } from "./db";
 import {
@@ -4912,7 +4919,7 @@ export function writeMcpConfig(
     "config.json",
     JSON.stringify({
       mcpServers: {
-        uf: {
+        [MCP_SELF_SERVER]: {
           type: "http",
           url: MCP_SELF_URL,
           headers: { Authorization: `Bearer ${token}` },

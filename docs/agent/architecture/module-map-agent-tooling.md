@@ -153,9 +153,12 @@ tokenEconomizer.ts
                 set, `off` included, because env outranks the plugin's config
                 files and those live in a state root every cycle can write —
                 a mechanism left unset would fall to a file a cycle planted, or
-                to the plugin's own default. TE_PYTHON names /usr/bin/python3
-                because the agent PATH puts the agent-writable pytools/bin
-                first. The loop guard ships `off`, unlike the plugin: its judge
+                to the plugin's own default. TE_TOOLPRUNE_PROTECT is pinned to
+                `mcp__uf__*` (built from config.ts' MCP_SELF_SERVER) so tool
+                pruning never denies this app's own MCP tools, and
+                denyListToSeed never copies one. TE_PYTHON names
+                /usr/bin/python3 because the agent PATH puts the
+                agent-writable pytools/bin first. The loop guard ships `off`, unlike the plugin: its judge
                 is a `claude -p` call billed to the plan and written to no
                 transcript, so no meter or budget guard here sees it. Tool
                 pruning needs the loaded tool list, which a transcript does not
