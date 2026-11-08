@@ -323,6 +323,22 @@
   merge-preview wording case that fails there at `60db46c4` too. Caveat: one
   container, the paced runs within noise of each other.
 
+- **git reads a linked worktree's `config` from whatever its `commondir`
+  names, and fingerprinting that file refuses the swap, 2026-11-08.** Board
+  task `2290ab7a`, `main` at `5773bb0b`, git 2.39.5 under `env -i`. A clone
+  `B` of repository `A` defined filter `x` in `B/.git/config`, and both named
+  it in `info/attributes`. `add -A` in `A`'s linked worktree `w1` ran nothing;
+  with `A/.git/worktrees/w1/commondir` rewritten from `../..` to `B/.git`,
+  `rev-parse --git-path config` printed `B/.git/config`, `config
+  --show-origin` placed the driver there, and `add -A` ran it and exited 0:
+  git does not refuse such a worktree. Through this app's compiled `git()`
+  and `gitSync()`, `gitFilterProbe.test.ts`'s commondir case, the stub
+  rewriting the file while the index is listed, ran the plant through each
+  at `5773bb0b` and was refused with the change. On a built 2.56.0 the
+  plain-git control ran the driver too, and the file ran 55 of 56, the one
+  failure the merge-preview wording case. Caveat: only a rewrite between the
+  probe and the call was driven, not a writer racing a call.
+
 ## Not yet verified by hand
 
 - **Whether a work cycle can race this app's git on `.git/config` in

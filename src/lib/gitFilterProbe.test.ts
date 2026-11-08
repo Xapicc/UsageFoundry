@@ -1157,3 +1157,65 @@ describe("an include condition flipped between the probe and the call is refused
     assert.equal(fs.existsSync(worktrees.marker), true, "the first worktree aimed at the second's git directory did not run the driver");
   });
 });
+
+/**
+ * A linked worktree's git directory holds a `commondir` file naming the
+ * repository's common directory, which is where git reads `config` and the
+ * branches from. Rewritten to another repository's `.git` between the probe
+ * and the call, it made the call read a configuration the probe never did,
+ * and run a filter defined only there (board task 2290ab7a, measured, 2.39.5).
+ */
+describe("a worktree's commondir rewritten between the probe and the call is refused", () => {
+  /**
+   * A linked worktree with a stat-dirty file, and a clone of its repository
+   * whose `.git/config` alone defines filter `x`. Both name it in
+   * `info/attributes`, which git reads from the common directory.
+   */
+  function worktreeAndOtherCommon(): { tree: string; commondir: string; other: string; marker: string } {
+    const name = `repo${count++}`;
+    const repo = path.join(root, name);
+    committedRepo(repo, "f.txt");
+    const otherRepo = `${repo}-other`;
+    plain(root, ["clone", "-q", repo, otherRepo]);
+    const { prog, marker } = plantProgram(name);
+    plantInGitDir(path.join(otherRepo, ".git"), [["filter.x.clean", prog]]);
+    fs.mkdirSync(path.join(repo, ".git", "info"), { recursive: true });
+    fs.writeFileSync(path.join(repo, ".git", "info", "attributes"), "* filter=x\n");
+    const tree = `${repo}-w1`;
+    plain(repo, ["worktree", "add", "-q", "--detach", tree]);
+    fs.writeFileSync(path.join(tree, "f.txt"), "two\n");
+    return {
+      tree,
+      commondir: path.join(repo, ".git", "worktrees", path.basename(tree), "commondir"),
+      other: `${path.join(otherRepo, ".git")}\n`,
+      marker,
+    };
+  }
+
+  after(() => setMode("pass"));
+
+  it("git() and gitSync(): commondir pointed at another repository refuses the call", async () => {
+    for (const viaSync of [false, true]) {
+      const { tree, commondir, other, marker } = worktreeAndOtherCommon();
+      fs.writeFileSync(writeTarget, commondir);
+      fs.writeFileSync(rewriteContent, other);
+      setMode("rewrite");
+      const res = viaSync ? gitSync(tree, ["add", "-A"]) : await git(tree, ["add", "-A"]);
+      setMode("pass");
+
+      ranNothing(marker);
+      assert.equal(res.ok, false, `${viaSync ? "gitSync" : "git"}() ran the call`);
+      assert.match(res.stderr, /-w1\/commondir changed while the filter probe read it/);
+    }
+  });
+
+  it("control: commondir pointed at another repository runs its driver under plain git, and nothing runs before it", () => {
+    const { tree, commondir, other, marker } = worktreeAndOtherCommon();
+    plain(tree, ["add", "-A"]);
+    assert.equal(fs.existsSync(marker), false, "the driver ran from the worktree's own repository");
+    fs.writeFileSync(commondir, other);
+    fs.writeFileSync(path.join(tree, "f.txt"), "three\n");
+    plain(tree, ["add", "-A"]);
+    assert.equal(fs.existsSync(marker), true, "the worktree aimed at the other repository did not run its driver");
+  });
+});

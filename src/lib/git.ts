@@ -865,8 +865,9 @@ type Prepared =
  * subcommand but `merge-tree`, which writes no work tree, the index listing its
  * populated submodules, which become sites. An include under `~user/` costs
  * one more, to place it, and the common configuration has none. Before the
- * probe, each site's configuration files, HEAD and the refs behind it, and the
- * `.git` entries and git directory it was found through are fingerprinted, and
+ * probe, each site's configuration files, its git directory's `commondir`,
+ * HEAD and the refs behind it, and the `.git` entries and git directory it was
+ * found through are fingerprinted, and
  * after it every include target. Then every watched file is fingerprinted
  * again, last thing before the caller spawns the call, and one that changed
  * refuses it.
@@ -921,7 +922,12 @@ function* prepareContentCall(
       };
     }
     const top = path.resolve(dir, cdup);
-    for (const file of [config, worktreeConfig, head]) watch(file);
+    // `commondir` is what places `config` and the branches, so the paths above
+    // stand only while it does: a linked worktree's rewritten to name another
+    // repository's `.git` ran a filter only that one defined, and git accepted
+    // it (board task 2290ab7a, measured, 2.39.5). git reads one in any git
+    // directory, so in a main checkout it is watched as absent.
+    for (const file of [config, worktreeConfig, head, path.join(gitDir, "commondir")]) watch(file);
     for (const ref of refsBehindHead(head, gitDir, commonDir)) watch(ref, symrefFingerprint);
     for (const entry of [...discoveryEntries(dir, top), gitDir]) watch(entry, locationFingerprint);
 
