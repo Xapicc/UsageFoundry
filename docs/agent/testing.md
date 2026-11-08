@@ -193,8 +193,8 @@ Twenty-three are renderings rather than functions — every `*.test.tsx` in the 
 | Test file | Also in |
 |---|---|
 | `loopMergeOwnership.test.ts` |  |
-| `loopSection.test.ts` | [fleet] |
-| `workflows.test.ts` | [argv], [pricing], [workflows], [decider], [pick-ups], [cycle], [loop-board] |
+| `loopSection.test.ts` | [fleet], [loop-endings] |
+| `workflows.test.ts` | [argv], [pricing], [workflows], [decider], [pick-ups], [cycle], [loop-board], [loop-endings] |
 
 Units that are about no test file in the tree:
 
@@ -205,6 +205,10 @@ Units that are about no test file in the tree:
 | Test file | Also in |
 |---|---|
 | `loopBoardCount.test.ts` |  |
+
+## [How a loop is picked up, fails and ends](testing/workflow-loop-endings.md)
+
+Cases in `loopSection.test.ts` and `workflows.test.ts`, each listed under its own section, that pin how a loop is picked up again, fails at its boundary or before it has a pass, and ends or settles inside its own release.
 
 ## [Chat turns, threads and the request helpers](testing/chat-turns-and-threads.md)
 
@@ -572,6 +576,7 @@ It prints nothing as this is written. Whoever owns a file it names owes that fil
 [workflows]: testing/workflow-instances.md
 [loops]: testing/workflow-loops.md
 [loop-board]: testing/workflow-loop-board.md
+[loop-endings]: testing/workflow-loop-endings.md
 [pick-ups]: testing/workflow-pick-ups.md
 [chat]: testing/chat-turns-and-threads.md
 [proposals]: testing/chat-proposals.md
