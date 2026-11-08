@@ -3804,6 +3804,12 @@ export function findInstances(o: {
   // rather than a refusal — see `clampRunOffset`.
   const offset = clampRunOffset(o.offset ?? 0, total);
 
+  // `id` is a random UUID, left as the tiebreak because two instances of one
+  // workflow cannot share a `created_at` in practice: `startWorkflow` refuses a
+  // press that shares a folder with a live one, the only presses it lets
+  // through are two requests for disjoint chosen folders, and a schedule is one
+  // per workflow with no chosen folder. Not measured; if a second door ever
+  // starts instances in a batch, break the tie on `rowid` as `taskComments.ts` does.
   const rows = db()
     .prepare(
       `SELECT ${INSTANCE_COLUMNS} FROM workflow_instances
@@ -3845,6 +3851,8 @@ export function lastRunAt(workflowId: string): number | null {
 export function lastInstanceOf(
   workflowId: string,
 ): { id: string; createdAt: number; status: WorkflowInstanceStatus } | null {
+  // The tiebreak is `findInstances`' and unreachable for its reason: two presses
+  // of one workflow do not share a millisecond.
   const row = db()
     .prepare(
       `SELECT id, created_at AS createdAt, status FROM workflow_instances
@@ -3976,6 +3984,8 @@ export interface LiveInstance {
  * runs are still being created.
  */
 export function liveInstancesOf(workflowId: string): LiveInstance[] {
+  // The tiebreak is `findInstances`' and unreachable for its reason: two presses
+  // of one workflow do not share a millisecond.
   const rows = db()
     .prepare(
       `SELECT id, graph, liveRuns, liveBlocks
