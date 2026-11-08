@@ -190,6 +190,31 @@
   the file's change; and the git directory the probe found is not watched
   for ceasing to be one.
 
+- **The git directory the probe found is refused once its `objects/` or
+  `refs/` is moved away, 2026-11-08.** Board task `9ef321d6`, branch at
+  `2dd9b3a8`, git 2.39.5 and the `v2.56.0` build. A repository `P` with
+  `filter.x.clean` in `P/.git/config` and `* filter=x` in its
+  `info/attributes`, holding a separate committed repository `R` at `P/r`
+  with a modified file and no driver: under plain git `add -A` in `R` ran
+  nothing, and once `R/.git/objects` or `R/.git/refs` was renamed away
+  `rev-parse --show-toplevel` there printed `P` and `add -A` ran `P`'s
+  driver. Through this app's compiled `git()` and `gitSync()`,
+  `gitFilterProbe.test.ts`'s stub renaming either away while the index is
+  listed, `P`'s driver ran through `git()` at `e51e3e12` on 2.39.5, and
+  through `git()` and `gitSync()` each alone with the new watch cut from the
+  compiled change on 2.39.5 and 2.56.0; with the change each call is refused
+  naming the directory moved. A ref written in `refs/` itself (`update-ref
+  refs/stash HEAD`) and a blob that makes a new fan-out directory in
+  `objects/`, each checked to move that directory's ctime, still run the
+  call, and a `configFingerprint` watch on either, mutated into the compiled
+  change, refused it. The file passed 70 of 80 with 10 skipped on 2.39.5 and
+  80 of 80 on 2.56.0. Caveat: a rename away and back keeps the inode, so a
+  directory away only while the probe reads is not seen; the probe then
+  lists the enclosing repository's drivers, and `R`'s own planted driver ran
+  in 8 of 8 calls through a scratch script on both gits (board task
+  `f3122092`). That a work cycle can make either move beside one of this
+  app's calls is inferred from its writing the common `.git`, not driven.
+
 ## Not yet verified by hand
 
 - **Whether a work cycle can race this app's git on `.git/config` in
