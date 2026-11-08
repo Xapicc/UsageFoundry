@@ -28,7 +28,7 @@ const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-git-probe
 const modeFile = path.join(root, "mode");
 /** The program the plant modes write into a repository's configuration. */
 const plantFile = path.join(root, "plant");
-/** Where `plant-include` and `rewrite` write, absolute. */
+/** Where `plant-include` and `rewrite` write, and what `make-dir` makes, absolute. */
 const writeTarget = path.join(root, "write-target");
 /** What `rewrite` writes there. */
 const rewriteContent = path.join(root, "rewrite-content");
@@ -67,6 +67,7 @@ fs.writeFileSync(
     `      plant-include) printf '[filter "x"]\\n\\tclean = %s\\n' "$(cat '${plantFile}')" > "$(cat '${writeTarget}')" ;;`,
     `      flip-head) '${realGit}' symbolic-ref HEAD refs/heads/uf/x ;;`,
     `      rewrite) cat '${rewriteContent}' > "$(cat '${writeTarget}')" ;;`,
+    `      make-dir) mkdir -p "$(cat '${writeTarget}')" ;;`,
     // Real git with the arguments in a file, for a write that is not a file's: a ref update in a reftable.
     `      run-git) '${realGit}' $(cat '${root}/run-git-args') ;;`,
     "    esac",
@@ -1532,5 +1533,116 @@ describe("a worktree's commondir rewritten between the probe and the call is ref
     fs.writeFileSync(path.join(tree, "f.txt"), "three\n");
     plain(tree, ["add", "-A"]);
     assert.equal(fs.existsSync(marker), true, "the worktree aimed at the other repository did not run its driver");
+  });
+});
+
+/**
+ * At each level on its way up where `<at>/.git` is absent, git asks whether
+ * `<at>` is itself a git directory (a valid `HEAD`, and `objects/` and `refs/`
+ * in the directory its `commondir` names, or in it), and where `<at>/.git` is
+ * a directory, whether that is one. A subdirectory made one between the probe
+ * and the call is found first, and with `core.worktree` naming the real top
+ * the call reads its `config`, which the probe never did (board task fbd6d8dd,
+ * measured, 2.39.5). Each case makes the last missing piece while the index is
+ * listed.
+ */
+describe("a subdirectory made a git directory between the probe and the call is refused", () => {
+  /**
+   * A committed repository whose tracked subdirectory `sub` (or `sub/.git`)
+   * holds everything a git directory needs but `missing`, with a `config` that
+   * names the repository as its work tree and defines filter `x`, which the
+   * repository's own configuration does not.
+   */
+  function almostGitDir(
+    candidate: (sub: string) => string,
+    missing: "HEAD" | "objects" | "common objects",
+  ): { repo: string; sub: string; last: string; marker: string } {
+    const name = `repo${count++}`;
+    const repo = path.join(root, name);
+    committedRepo(repo, "f.txt");
+    const sub = path.join(repo, "sub");
+    fs.mkdirSync(sub);
+    fs.writeFileSync(path.join(sub, "s.txt"), "s\n");
+    plain(repo, ["add", "-A"]);
+    plain(repo, ["commit", "-q", "-m", "sub"]);
+    fs.writeFileSync(path.join(sub, "s.txt"), "two\n");
+    const { prog, marker } = plantProgram(name);
+    const dir = candidate(sub);
+    // With a `commondir`, git takes `core.worktree` only from `config.worktree`.
+    const common = missing === "common objects" ? `${repo}-common` : dir;
+    fs.mkdirSync(path.join(common, "refs", "heads"), { recursive: true });
+    fs.mkdirSync(path.join(common, "info"), { recursive: true });
+    fs.writeFileSync(path.join(common, "info", "attributes"), "* filter=x\n");
+    if (missing === "common objects") {
+      fs.writeFileSync(path.join(dir, "commondir"), `${common}\n`);
+      fs.writeFileSync(path.join(dir, "config.worktree"), `[core]\n\tworktree = ${repo}\n`);
+      fs.writeFileSync(
+        path.join(common, "config"),
+        `[core]\n\trepositoryformatversion = 1\n[extensions]\n\tworktreeConfig = true\n[filter "x"]\n\tclean = ${prog}\n`,
+      );
+    } else {
+      // Without `repositoryformatversion` git discards `core.worktree` here
+      // and finds no work tree, so the call fails rather than runs.
+      fs.writeFileSync(
+        path.join(dir, "config"),
+        `[core]\n\trepositoryformatversion = 0\n\tworktree = ${repo}\n[filter "x"]\n\tclean = ${prog}\n`,
+      );
+    }
+    if (missing !== "HEAD") fs.writeFileSync(path.join(dir, "HEAD"), "ref: refs/heads/main\n");
+    if (missing === "HEAD") fs.mkdirSync(path.join(common, "objects"), { recursive: true });
+    const last = missing === "HEAD" ? path.join(dir, "HEAD") : path.join(common, "objects");
+    return { repo, sub, last, marker };
+  }
+
+  const ways = [
+    { says: "the subdirectory given a HEAD", candidate: (sub: string) => sub, missing: "HEAD" as const },
+    { says: "an empty .git directory in it given a HEAD", candidate: (sub: string) => path.join(sub, ".git"), missing: "HEAD" as const },
+    { says: "the subdirectory, HEAD already there, given objects/", candidate: (sub: string) => sub, missing: "objects" as const },
+    { says: "the subdirectory, HEAD and commondir already there, given the common directory's objects/", candidate: (sub: string) => sub, missing: "common objects" as const },
+  ];
+
+  /** Makes what `almostGitDir` left missing, as the stub does. */
+  const complete = (last: string) =>
+    path.basename(last) === "HEAD" ? fs.writeFileSync(last, "ref: refs/heads/main\n") : fs.mkdirSync(last);
+
+  after(() => setMode("pass"));
+
+  for (const way of ways) {
+    it(`git() and gitSync(): ${way.says} refuses a call from the subdirectory`, async () => {
+      for (const viaSync of [false, true]) {
+        const { sub, last, marker } = almostGitDir(way.candidate, way.missing);
+        fs.writeFileSync(writeTarget, last);
+        fs.writeFileSync(rewriteContent, "ref: refs/heads/main\n");
+        setMode(path.basename(last) === "HEAD" ? "rewrite" : "make-dir");
+        const res = viaSync ? gitSync(sub, ["add", "-A"]) : await git(sub, ["add", "-A"]);
+        setMode("pass");
+
+        ranNothing(marker);
+        assert.equal(res.ok, false, `${viaSync ? "gitSync" : "git"}() ran the call`);
+        const named = last.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        assert.match(res.stderr, new RegExp(`${named} changed while the filter probe read it`));
+      }
+    });
+  }
+
+  it("git() and gitSync(): a call from a subdirectory with nothing made there still runs", async () => {
+    for (const viaSync of [false, true]) {
+      const { sub, marker } = almostGitDir((dir) => dir, "HEAD");
+      const res = viaSync ? gitSync(sub, ["add", "-A"]) : await git(sub, ["add", "-A"]);
+      ranNothing(marker);
+      assert.equal(res.ok, true, `${viaSync ? "gitSync" : "git"}(): ${res.stderr}`);
+    }
+  });
+
+  it("control: each subdirectory made a git directory runs its driver under plain git, and nothing runs before it", () => {
+    for (const way of ways) {
+      const { sub, last, marker } = almostGitDir(way.candidate, way.missing);
+      plain(sub, ["add", "-A"]);
+      assert.equal(fs.existsSync(marker), false, `${way.says}: the driver ran before the last piece was made`);
+      complete(last);
+      assert.equal(plain(sub, ["rev-parse", "--absolute-git-dir"]).trim(), way.candidate(sub), way.says);
+      plain(sub, ["add", "-A"]);
+      assert.equal(fs.existsSync(marker), true, `${way.says}: the driver did not run`);
+    }
   });
 });

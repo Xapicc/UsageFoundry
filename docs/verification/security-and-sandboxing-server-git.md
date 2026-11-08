@@ -455,6 +455,36 @@
   `path.resolve(dir, cdup)`, which folds a symlink in the call's own
   directory, and that was not driven.
 
+- **A directory below the top of the work tree made a git directory after the
+  probe is found first, and fingerprinting what makes one refuses the call,
+  2026-11-08.** Board task `fbd6d8dd`, branch at `011f4457`, git 2.39.5 under
+  `env -i`. In a committed repository `B` with tracked `B/sub`, `add -A` from
+  `B/sub` ran a `filter.x.clean` defined only in a `config` naming `B` as its
+  `core.worktree` (`* filter=x` in its `info/attributes`) in four layouts,
+  each once its last piece was made and never before: `B/sub` given a `HEAD`
+  beside `objects/` and `refs/` (`rev-parse --absolute-git-dir` printed
+  `B/sub`, `--show-toplevel` `B`); an empty `B/sub/.git` directory given the
+  same; `B/sub` holding `HEAD` first and given `objects/` and `refs/`; and
+  `B/sub` holding `HEAD` and a `commondir` first and the directory it names
+  given `objects/`. Without `core.repositoryformatversion` git discarded the
+  `core.worktree` and the call failed "must be run in a work tree" (2.39.5
+  and 2.56.0); with a `commondir` it took one only from `config.worktree`
+  under `extensions.worktreeConfig`. `-c safe.bareRepository=explicit`
+  refused the first layout and ran the driver in the second. Through this
+  app's compiled `git()` and `gitSync()`, `gitFilterProbe.test.ts`'s four
+  cases, the stub making the last piece while the index is listed, ran the
+  plant at `011f4457` through `git()` and, with the loop cut to `gitSync()`
+  alone, through it too, on 2.39.5 and on the `v2.56.0` build; with the
+  change each is refused naming that piece, and a call from the
+  subdirectory with nothing made runs. The file passed 66 of 76 with 10
+  skipped on 2.39.5 and 76 of 76 on 2.56.0. A production caller, traced by
+  reading and not driven: `worktreeDiff`'s `status --porcelain`
+  (`diff.ts`) runs in a run's folder, which `probeIsolation` leaves below
+  the top for a run on a subdirectory. Caveat: a `commondir` is read when it
+  is first fingerprinted, so one whose target moves under it is seen only as
+  the file's change; and the git directory the probe found is not watched
+  for ceasing to be one.
+
 ## Not yet verified by hand
 
 - **Whether a work cycle can race this app's git on `.git/config` in
