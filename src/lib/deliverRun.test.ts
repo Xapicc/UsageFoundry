@@ -478,6 +478,35 @@ describe("Deliver decides on every URL the push goes to, not on the fetch URL", 
   });
 });
 
+/**
+ * What else a push can carry besides the branch. `push.followTags` in the
+ * repository's config (a work cycle writes it) or the operator's own sends every
+ * annotated tag reachable from the pushed commit, with the token, and the tag
+ * is nothing the operator reviewed. Projects' push overrules it with
+ * `--no-follow-tags` and `projectPush.test.ts` fails without the flag; this is
+ * the same case for the other door that sends with the token.
+ */
+describe("Deliver's push carries the branch and no tag, whatever push.followTags says", () => {
+  /** Every ref the bare remote holds, sorted. */
+  const remoteRefs = (s: Scene) =>
+    git(s.remote, "for-each-ref", "--format=%(refname)").trim().split("\n").sort();
+
+  it("sends only the branch when an annotated tag is reachable from it", async () => {
+    const s = scene("follow-tags");
+    git(s.repo, "config", "push.followTags", "true");
+    git(s.slot, "tag", "-a", "-m", "not for publication", "internal-release-candidate");
+    // The guard: the tag is annotated and reachable from the commit that is
+    // pushed, so plain git under this config would carry it.
+    assert.equal(git(s.slot, "cat-file", "-t", "internal-release-candidate").trim(), "tag");
+    assert.equal(git(s.slot, "rev-parse", "internal-release-candidate^{commit}").trim(), git(s.slot, "rev-parse", "HEAD").trim());
+
+    const delivered = await land.deliverRun(s.runId);
+
+    assert.equal(delivered.ok, true, delivered.ok ? "" : delivered.reason);
+    assert.deepEqual(remoteRefs(s), ["refs/heads/main", `refs/heads/${s.branch}`]);
+  });
+});
+
 const OPERATORS_ENV = "API_KEY=the-operators-own-key\n";
 
 /**

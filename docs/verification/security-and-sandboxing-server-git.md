@@ -234,6 +234,22 @@
   2.54.0, and after it they passed there and on 2.56.0. Caveat: `fetch`'s gc
   was not driven.
 
+- **Deliver's push sent an annotated tag under `push.followTags`, and
+  `--recurse-submodules=check` would refuse a branch it has always sent,
+  2026-11-08.** Board task `2b0d973f`, branch at `60db46c4`, git 2.39.5.
+  `deliverRun.test.ts`' harness with `push.followTags=true` in the repository
+  and an annotated tag on the run's tip: the bare remote held
+  `refs/tags/internal-release-candidate` beside the branch, and with
+  `--no-follow-tags` it held the two branches only. Through the compiled
+  `git()`, `push <sha>:refs/heads/x` with and without `--no-follow-tags
+  --recurse-submodules=check`: no submodule, and a submodule commit on its
+  remote, pushed either way; a submodule commit on no remote pushed without
+  the flag and was refused with exit 128 (`not be found on any remote`) with
+  it, from a sha source and from a branch name. With
+  `push.recurseSubmodules=on-demand` set, a sha source pushed the parent and no
+  submodule commit, through `git()` and through plain git. Caveat: local bare
+  remotes only, parent and submodule both.
+
 ## Not yet verified by hand
 
 - **Whether a work cycle can race this app's git on `.git/config` in

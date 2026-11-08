@@ -7092,9 +7092,19 @@ async function pushAndOpen(a: {
   // the push reaches an https GitHub
   // remote unauthenticated and, with `GIT_TERMINAL_PROMPT=0`, fails with a
   // message about authentication that names nothing an operator could fix.
+  //
+  // `--no-follow-tags`, because `push.followTags` in the repository's config
+  // (a work cycle can write it) or the operator's own would send every
+  // annotated tag reachable from the SHA, with the token and outside the diff
+  // the operator reviewed; Projects' push passes it for the same reason.
+  // `--recurse-submodules=check` is deliberately not here, unlike there: it
+  // makes git refuse a branch whose submodule commit is on no remote, which
+  // this push has always sent, and a sha source with `push.recurseSubmodules=
+  // on-demand` set pushed no submodule commit without it (both measured,
+  // git 2.39.5, through `git()`).
   const push = await git(
     folder,
-    ["push", DELIVER_REMOTE, `${sha}:refs/heads/${plan.head}`],
+    ["push", "--no-follow-tags", DELIVER_REMOTE, `${sha}:refs/heads/${plan.head}`],
     { ...NO_CLOCK, env: githubEnv(github.token) },
   );
   if (!push.ok) {
