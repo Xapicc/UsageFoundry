@@ -1,5 +1,25 @@
 # UI density audit and restructure specification
 
+> **2026-11-08: `/`'s analysis regions now live on `/usage`.** The operator
+> decided what the dashboard is for — what is left of each window and when it
+> resets, whether it runs out first at the current rate, whether something
+> this app started is spending now or is near the install limit, and whether
+> the fleet is held or the reading is broken — and moved everything else to a
+> page of its own. `/usage` (`src/app/usage/page.tsx`, the Usage pane) carries
+> `Usage by period`, *Where it went*, *What filled the context*, `Recent
+> 5-hour blocks`, the cache-read and lifetime rows of what was `Rate and
+> totals`, `What each repository cost`, the *What runs keep re-deriving* and
+> *Does the prior-read pointer change what runs do* regions, and the
+> provenance strip. `/` keeps the banner, `FirstRun`, the window card with
+> `CodexWindows`, `LiveTelemetry`, the burn rate and projected exhaustion as a
+> card titled `Rate`, `InstallSpendCard` and the plan label. **Do not
+> "restore" any of the moved cards to `/` from §3.E.1**: that section, and
+> every `src/app/page.tsx` line it cites, describes the page before this
+> move, and "nothing here is a feature cull" below was a premise of these
+> five runs, not a rule about the dashboard. Both pages render the same
+> `SourceRegion` and the same `UsageNotices`, so §5.1's region boundaries
+> hold on each.
+>
 > **All five runs have landed. §8 is the record of what each one actually did**
 > — including the one change that landed partially and the deviations from the
 > text above. Read it before acting on anything in §3 as though it describes
@@ -134,8 +154,9 @@ Notes that are part of the rule, not commentary:
   paragraph above a group is a lede for a heading that is already there.
 - **The card cap is on *peers*, not on the page.** Seven cards side by side with
   nothing between them is the fuzziness this document is about; seven cards
-  under three named regions is a structure. `/` keeps all eight of its cards and
-  gets regions (§3.E.1) rather than losing one.
+  under three named regions is a structure. `/` kept all eight of its cards and
+  got regions (§3.E.1) rather than losing one; since 2026-11-08 most of them
+  live on `/usage` instead (see the note at the top).
 - **A group of two is legitimate where its label is the information.** Settings'
   `Raw-token ceilings` holds two rows whose labels are the same two words as the
   `Cost ceilings` group above it; the group label is the only thing telling them
@@ -147,7 +168,7 @@ Notes that are part of the rule, not commentary:
   both stay.
 - **A `SegmentedControl` used to pick a *value* is not a tab strip** and none of
   rule 6's caps reach it. The runs list's six-option status filter, the
-  dashboard's three pickers (`Period length`, `Breakdown dimension`, `Span`),
+  three pickers on `/usage` (`Period length`, `Breakdown dimension`, `Span`),
   Settings' four and the run form's three are all form controls, governed by
   `conventions.md`'s own rule for the component and by its `max-md:flex-wrap`.
   **Do not "fix" the six-option filter to satisfy rule 6.**
@@ -1405,6 +1426,9 @@ graph lives on the canvas one route over.
 
 ### 3.E.1 `/` — the dashboard
 
+> Describes `/` before 2026-11-08, when its analysis regions moved to `/usage`.
+> Read the note at the top of this document before acting on anything here.
+
 **Files:** `src/app/page.tsx` (1156), `LiveTelemetry.tsx`, `UsagePeriods.tsx`,
 `RepoSpendCard.tsx`, `Meter.tsx`.
 
@@ -1956,8 +1980,8 @@ Three readings of overlapping money, and **any sum double-counts**:
 
 | Reading | What it is | Where it renders today |
 |---|---|---|
-| **A** | this app's price table over every Claude Code transcript on the machine (`buildSnapshot`) | dashboard cards 1, 4, 5, 7, 8; `RunAgentCost`'s rows |
-| **B** | `runs.spent_usd` — what a work cycle's own `result` event reported | dashboard `This install…`, `What each repository cost`; the run page's `Spent` stat |
+| **A** | this app's price table over every Claude Code transcript on the machine (`buildSnapshot`) | the dashboard's window card and `Rate`; on `/usage`, `Usage by period`, *Where it went*, *What filled the context*, `Recent 5-hour blocks` and `Totals`; `RunAgentCost`'s rows |
+| **B** | `runs.spent_usd` — what a work cycle's own `result` event reported | dashboard `This install…`; `What each repository cost` on `/usage`; the run page's `Spent` stat |
 | **C** | OTLP telemetry — Claude Code's own per-request cost | `LiveTelemetry` on the dashboard; `Telemetry — first-party` on the run page |
 
 Rules a build run must not break:

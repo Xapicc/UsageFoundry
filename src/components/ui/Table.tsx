@@ -126,7 +126,7 @@ export function Th({
     <th
       // Every header here labels a column. Without scope a screen reader has to
       // guess, and guesses wrong on any table with a leading label column —
-      // which is most of the breakdowns on the dashboard.
+      // which is most of the breakdowns on `/usage`.
       scope={rest.scope ?? "col"}
       // Sentence case at 12px, one weight step above the cells rather than a
       // different treatment from them — see CardTitle. `--fg-muted`, not

@@ -124,7 +124,7 @@
 
 - **What the per-repository readout shows on this install.** Not measured: no
   run could read the database (`proposals/ContinuousImprovement/19-remeasure-2026-10.md`).
-  To settle it, open the dashboard's *What runs keep re-deriving* band and
+  To settle it, open the *What runs keep re-deriving* band on `/usage` and
   compare its largest repository's repeat and addressable shares with
   `docker exec -i -w /app usagefoundry node --input-type=module - /data/usagefoundry.db < proposals/ContinuousImprovement/scripts/remeasure.mjs`,
   which uses the same definitions. They should agree except where the card

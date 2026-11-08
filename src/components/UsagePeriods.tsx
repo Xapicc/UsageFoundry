@@ -25,7 +25,7 @@ import { TBody, THead, Table, Td, Th, Tr } from "./ui/Table";
  * Spend per calendar day, week or month, with each period's share of the
  * ceiling beside it.
  *
- * The two meters above this on the dashboard answer "may I start a run right
+ * The two meters on the dashboard answer "may I start a run right
  * now"; this answers "what has this been costing me", which is a question the
  * 5-hour block table could only be read sideways to answer. Nothing here feeds
  * a guard — see `buildPeriods`.
@@ -287,14 +287,14 @@ export function UsagePeriods({
       </ListView>
 
       {/* The meter's own detail already handles the no-ceiling case and the
-          page already carries one "set a ceiling" notice, so this says the two
+          dashboard already carries one "set a ceiling" notice, so this says the two
           things neither of them does: which zone the days were cut in, and —
           only where it could be misread — that a pro-rated percentage stops no
           run. Said for a week too, it would imply the weekly window is
           unguarded, which is the opposite of true. */}
       <div className="mt-3 max-w-[80ch] text-xs text-ink-muted">
         Calendar {noun}s in <span className="mono">{series.timeZone}</span>,
-        priced from the same transcripts as the meters above.
+        priced from the same transcripts as the dashboard&rsquo;s meters.
         {series.limitBasis === "prorated" && (
           <>
             {" "}

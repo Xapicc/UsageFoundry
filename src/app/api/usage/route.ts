@@ -111,8 +111,8 @@ export async function GET(req: Request) {
     // since a horizon under a week still keeps the week.
     const completeFrom = transcriptCutoff(settings.transcriptRetentionDays, now);
     // The same weekly reading `buildSnapshot` was given, so the newest week
-    // bucket covers the identical seven hours-to-the-minute as the meter
-    // directly above it on the page. Without it the buckets fell back to
+    // bucket covers the identical seven hours-to-the-minute as the weekly
+    // meter on the dashboard. Without it the buckets fell back to
     // `weeklyAnchor`, which a stock install ships as null, and drew ISO-Monday
     // weeks under a meter bounded by the provider's reset.
     const planWeekly = plan?.weekly ?? null;
@@ -132,7 +132,7 @@ export async function GET(req: Request) {
 
     // Gzipped: 51,984 bytes to 9,785, measured — three granularities of
     // calendar bucket over the same entries repeat their keys on every one, and
-    // this is the dashboard's ten-second heartbeat. The error branch below is
+    // this is the answer `/` and `/usage` both poll. The error branch below is
     // one sentence and stays plain.
     return jsonMaybeGzipped(req, {
       snapshot,
