@@ -184,11 +184,14 @@ differ between the two runs and no other:
 - **8** (labelled `unjudgeable`, so wrong either way): `finished` → `not-finished`.
   The task requires uncommitted work to go onto its own branch via `commitPending`;
   the README the run added says "the halt never commits", and no visible file calls
-  it. `workflows.ts`, where `stopInstance` lives, was among the files dropped. Of
-  the three this is the one that points the costly way: if the label's premise is
-  wrong, as the section on the seven `unjudgeable` rows argues for 8 and 36, a
-  `not-finished` here buys a work cycle. The judge's reason cites text that is in
-  the evidence, and nobody has read the omitted file to say which is right.
+  it. `workflows.ts`, where `stopInstance` lives, was among the files dropped from the
+  patch. Read afterwards in `/workspace/UsageFoundry` at the case's last commit: that
+  file has no `commitPending`, and none of the lines the five commits added, in any
+  file, mentions it. So the `not-finished` named a requirement the branch does not
+  meet, which is the validator doing its job on a case the label called
+  unjudgeable; the earlier run's `finished` is the one that missed it. Whether the
+  deviation matters to the operator, the README states it as a choice, was not
+  assessed.
 
 **Whether the preamble caused the two lost cases is not shown, and a control says
 it probably did not.** Between the two runs the judge model (Sonnet 4.5 → 5.5), the
