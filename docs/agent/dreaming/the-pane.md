@@ -37,13 +37,17 @@ written into a store with no version control, so a list that silently stopped at
 
 **A reason that moves by itself is drawn as of the read, and is never drawn as where the night ended.** `settling` is true for a live run, a branch in the merge queue, and a land nobody has recorded yet; the page dates it ("As of 21:40: its branch is in the merge queue"). The payload never carries an active queue status, for the rule that makes `runEnding` null while a run is live: the pane does not poll, and `landing` read now is `landed` a minute later. A reason that stays until somebody acts, a refused land with the queue row's own `message` or a stopped night, is drawn plain, warn-toned, with a `Land or purge` link to the run page where those two exits are. The pane offers no Land or Purge of its own.
 
-**The pane is the tenth row, directly under Knowledge, and `Pane.shortcut` is
+**The pane is the eleventh row, directly under Knowledge, and `Pane.shortcut` is
 optional because of where that leaves the digits.** It reads as a readout of what
 the install did to itself, which is nearer in kind to the vault than to the two
 configuration panes it used to sit below, and the operator asked for that order
 knowing what it costs. The digit follows the row's position, so **Dreaming, API
-account and Settings, the tenth, eleventh and twelfth rows, carry no shortcut
-at all** — ⌘1…⌘9 is nine digits against twelve rows. Project manager going in
+account and Settings, the eleventh, twelfth and thirteenth rows, carry no shortcut
+at all** — ⌘1…⌘9 is nine digits against thirteen rows. Usage, the second row,
+has none either, and that one the operator chose rather than the order: it went
+in under Dashboard on 2026-11-08 without a digit, so nothing below it was
+renumbered and Dreaming moved from the tenth row to the eleventh without
+changing what it had. Project manager going in
 under Branches on 2026-10-16 is what took Dreaming's ⌘9, pushing it past the
 ninth row as Taskboard had pushed API account. Dreaming held ⌘8
 and API account held ⌘9 until Taskboard went in fourth and pushed every row

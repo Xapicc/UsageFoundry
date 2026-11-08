@@ -10,7 +10,7 @@ import { ListView, STICKY_HEAD } from "./ui/ListView";
 import { TBody, THead, Table, Td, Th, Tr } from "./ui/Table";
 import { fmtDateTime, fmtTokens, fmtUSD } from "../lib/format";
 
-/** Every table on the dashboard cuts its tail. What is cut is counted rather
+/** Every table on `/usage` cuts its tail. What is cut is counted rather
  *  than dropped — see the line under the table. */
 const MAX_BLOCK_ROWS = 15;
 
@@ -21,7 +21,7 @@ const MAX_BLOCK_ROWS = 15;
  * one thing in this card that can go quietly wrong: `AggregateDTO` carries five
  * token counts and a window's volume is all five, so dropping one — the 1-hour
  * cache write is the easy one to forget — understates the row against the very
- * meter above it that this table is meant to break down. Nothing throws and the
+ * session meter on the dashboard that this table is meant to break down. Nothing throws and the
  * column still looks like a number.
  */
 export function RecentBlocksCard({ blocks }: { blocks: SessionBlockDTO[] }) {

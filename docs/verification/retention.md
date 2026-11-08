@@ -56,7 +56,7 @@
 
 - **The holdout readback against this install's real database.** Built and tested
   on scratch exports only, because a work cycle cannot read `/data`. Open the
-  dashboard band *Does the prior-read pointer change what runs do*, or
+  `/usage` band *Does the prior-read pointer change what runs do*, or
   `GET /api/holdout-readback`, and record under *Verified* the date, each arm's
   runs read, its compliance pairs, and the runs left out by reason. Check that the
   two arms lose alike: a lopsided *No file to name* would mean the list is not

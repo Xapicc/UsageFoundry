@@ -12,13 +12,24 @@ import type { IconName } from "@/components/ui/Icon";
  * The digit follows the row's position rather than the pane's age: a shortcut
  * that names the fifth row and lands on the sixth is worse than one somebody
  * has to relearn, so inserting a pane renumbers the ones under it. **Nine is
- * the ceiling** — ⌘1…⌘9 is nine digits and the list is twelve rows — so the
- * last **three** rows have no digit at all, and *which* rows those are falls
- * out of the order rather than being chosen: today they are Dreaming, API
- * account and Settings, because Taskboard went in under Runs and Project
- * manager under Branches, and each pushed everything below it down one. The loss is always taken from the bottom, which is the only rule
- * that keeps "the digit is the row's position" true; a two-key chord to buy a
- * digit back is a different decision and not one this file may make on its own.
+ * the ceiling** — ⌘1…⌘9 is nine digits and the list is thirteen rows — so four
+ * rows have no digit at all. Three of them are the last three, and *which*
+ * rows those are falls out of the order rather than being chosen: today they
+ * are Dreaming, API account and Settings, because Taskboard went in under Runs
+ * and Project manager under Branches, and each pushed everything below it down
+ * one. The loss is always taken from the bottom, which is the only rule that
+ * keeps "the digit is the row's position" true; a two-key chord to buy a digit
+ * back is a different decision and not one this file may make on its own.
+ *
+ * The fourth is Usage, and it is the one exception, made by the operator
+ * rather than by the order: it went in second with no digit, so the digits
+ * count the rows that carry one and ⌘2 is still Orchestrator. Renumbering
+ * ⌘2…⌘9 for it would have been the third time an insertion left docs naming a
+ * digit for the row above the one it lands on (board tasks 44bf21f8 and
+ * 5af3d6ea were the first two), and Usage is the Dashboard's own analysis
+ * half and linked from it, so it is one click past ⌘1. Nothing names a
+ * digit it does not land on — each reader prints a row's own `shortcut` or
+ * nothing — so the rule above still holds for every row that has one.
  *
  * That used to be a warning rather than a mechanism, and it named the wrong row
  * (Knowledge, which was the eighth from when it moved above the two
@@ -33,8 +44,9 @@ export interface Pane {
   label: string;
   icon: IconName;
   /**
-   * The digit after ⌘, or absent past the ninth row — Dreaming, API account and
-   * Settings, as the list below stands.
+   * The digit after ⌘, or absent — on Usage, by the operator's decision, and
+   * past the ninth digit on Dreaming, API account and Settings, as the list
+   * below stands.
    *
    * Announced with `aria-keyshortcuts` on the row and shown in quick open, and
    * **every reader of it must handle its absence** — see the note above.
@@ -44,6 +56,10 @@ export interface Pane {
 
 export const PANES: readonly Pane[] = [
   { href: "/", label: "Dashboard", icon: "dashboard", shortcut: "1" },
+  // Directly under Dashboard and wearing its gauge, because it is the same
+  // subject — the readings `/` used to carry below the windows — rather than a
+  // destination of its own kind. No digit: see the note at the top.
+  { href: "/usage", label: "Usage", icon: "dashboard" },
   { href: "/chat", label: "Orchestrator", icon: "chat", shortcut: "2" },
   { href: "/runs", label: "Runs", icon: "runs", shortcut: "3" },
   // Directly under Runs rather than beside the other backlogs, because it is
@@ -72,11 +88,11 @@ export const PANES: readonly Pane[] = [
   // above renumbers everything under an inserted row, so the two config panes
   // each dropped one and the list ran out of digits one row early. Taskboard
   // going in under Runs took the second row's digit on the same rule, and
-  // Project manager going in under Branches took this row's: it is the tenth,
-  // past the ninth digit, and stays one press away in quick open.
+  // Project manager going in under Branches took this row's: it is the
+  // eleventh, past the ninth digit, and stays one press away in quick open.
   { href: "/dreaming", label: "Dreaming", icon: "dreaming" },
-  // The eleventh and twelfth rows, which with Dreaming are the three in this
-  // app with no shortcut. ⌘9 moved up to Dreaming when Taskboard went in above
+  // The twelfth and thirteenth rows, which with Dreaming are the three past
+  // the ninth digit. ⌘9 moved up to Dreaming when Taskboard went in above
   // it, so the account pane joined Settings in losing its digit — the loss is
   // taken from the bottom, and both of these are read rather than worked in:
   // the account pane is a readout and Settings is opened when something is

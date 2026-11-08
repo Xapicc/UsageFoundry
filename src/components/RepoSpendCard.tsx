@@ -205,8 +205,8 @@ export function RepoSpendCard() {
                 cycles killed before they reported.
               </>
             )}{" "}
-            Never add this to the window meters above, which cover every Claude
-            Code transcript on this machine.
+            Never add this to the window meters on the dashboard, which cover
+            every Claude Code transcript on this machine.
             {codexRuns > 0 && (
               <>
                 {" "}

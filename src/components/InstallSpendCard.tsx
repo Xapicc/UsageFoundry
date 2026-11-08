@@ -88,8 +88,8 @@ export function InstallSpendCard({ install }: { install: InstallSpendDTO }) {
           </>
         ) : (
           <>
-            Not comparable with the meters above, which cover every transcript on
-            this machine.
+            Not comparable with the window meters, which cover every transcript
+            on this machine.
           </>
         )}
       </Hint>

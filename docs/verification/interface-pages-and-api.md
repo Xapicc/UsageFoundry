@@ -127,6 +127,39 @@ The runs list, the run inspector and `/runs/live` are in
   summaries rest on `npm run smoke-pages` (96/96) and on the mark count above,
   not on a search typed in the page.
 
+- **`/` fits 1280×800 in the common state, 2026-11-08** (branch
+  `uf/usagefoundry-721638d11c0b-1-7bda2526`, after `5d53ab75`). The built
+  standalone server was run over a scratch install in headless Chromium, with
+  `GET /api/usage` answered by a patched copy of its own response. The common
+  state had both windows on the provider's reading, a run working, one Codex
+  sign-in and no notice. `main`'s content ended 27px above its 748px viewport,
+  counting the 48px bottom padding. The same layout with no run working left
+  19px; with no telemetry and a trailing week, 157px. It overflowed by 18px
+  with the fleet-held notice and a per-model wall line showing. Nothing ran
+  sideways at 1280 or 390, and the console was clean. **Caveat:** the data was
+  mocked, not read from transcripts, and only 1280 and 390 were measured.
+
+- **`/` carries the waiting line and still fits 1280×800, 2026-11-08**
+  (branch `uf/usagefoundry-721638d11c0b-1-7bda2526`, after `13abb5a4`). The
+  previous entry's harness, run again over the built standalone server: with
+  the line showing "Nothing is waiting on you.", five counts, three counts with
+  one unknown and one floor of zero, and a 500 from `/api/waiting`, `main`
+  ended 3px above its 748px viewport at 1280×800 with a run working and with
+  none. The line alone overflowed it by 17px (a 20px line and 16px below it
+  against the 19px the page had, derived from that overflow); the grid's foot
+  margin applying only while a notice follows it, and 12px under the line,
+  brought it back. Nothing ran sideways at 390 or 1280. The only console error
+  was the browser's note of the injected 500. Separately, the real route over a
+  scratch database seeded with two `needs-review` runs, one recent failure,
+  two pending proposals, three open operator-only tasks and one branch a commit
+  ahead of its target answered 2, 1, 1, 2 and 3, and the page drew all five as
+  links to `/runs`, `/runs`, `/branches`, `/chat` and `/tasks`; 70 branches in
+  one scratch repository answered a floor of 60, in about 50ms a call, the same
+  as `/api/branches` over that repository. **Caveat:** the usage figures were
+  mocked as before; only 1280 and 390 were measured; no one has looked at the
+  page in their own browser; and that repository was tiny, so the 50ms says
+  nothing about the install's real checkouts.
+
 ## Not yet verified by hand
 
 - **No after-change payload from the 2026-08-23 pass has been read from a
@@ -145,12 +178,22 @@ The runs list, the run inspector and `/runs/live` are in
   `npm test` (1,660 tests / 245 suites / 0 failures) and the build at `a34e56b`.
   No page tests, jsdom or CI browser.
 
-- **The dashboard's top row has not been seen as the real page**, with
-  transcripts behind it: its composition, the ragged bottom edge under
-  `items-start` at 1920 and the `lg`-to-`xl` band with content are unlooked-at.
-  Open `/` at 1920 and about 1100 with a run in flight.
+- **The dashboard's top row has not been seen over real transcripts.** Its
+  composition at 1280 and 390 was measured over a mocked `/api/usage` (above).
+  Still unseen: 1920 and the `lg`-to-`xl` band with real figures, and a real
+  run's telemetry switching between the card and the idle line. Open `/` at
+  1920 and about 1100 with a run in flight.
 
 - **The live-telemetry card has not been seen in the real row (2026-09-04)**:
   its bottom edge beside the 16rem tile, and the phone case with a six-run list
   between the meters and everything below. Open `/` at 1920 and about 390 with
   a run in flight.
+
+- **`GET /api/waiting`'s branch read has not been timed on this install's own
+  repositories.** It is `branchInventory` without the checkout probes — one
+  `rev-list` per branch up to the first 60, plus a `worktree list` and two
+  `for-each-ref`s per repository — polled every 60s with a run working and 120s
+  otherwise, and only a scratch repository has been measured (about 50ms).
+  Settle it with `time curl -s -H "authorization: Bearer $UF_AUTH_TOKEN"
+  http://127.0.0.1:3000/api/waiting` on the running container, once with the
+  dashboard closed.

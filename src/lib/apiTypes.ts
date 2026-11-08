@@ -148,6 +148,40 @@ export interface UsageRemainingDTO {
 }
 
 /**
+ * One count on the dashboard's "waiting on you" strip, and how far it can be
+ * trusted.
+ *
+ * Three states because two are not enough: a read that failed is not a zero,
+ * and a count over a slice is not the whole. `floor` is "at least this many" —
+ * the read looked at part of what it counts over and said so — and a floor of
+ * zero is therefore not a zero either.
+ */
+export type WaitingReadingDTO =
+  | { state: "exact"; count: number }
+  | { state: "floor"; count: number }
+  | { state: "unknown"; reason: string };
+
+/**
+ * `GET /api/waiting`: what is waiting on the operator, one reading per place
+ * they act on it. Each is read on its own, so one failing leaves the others
+ * standing and names itself.
+ */
+export interface WaitingDTO {
+  /** Runs ended `needs-review` — a person is asked to look at each. */
+  needsReview: WaitingReadingDTO;
+  /** Runs that ended `failed` at or after `failedSince`. */
+  failedRecently: WaitingReadingDTO;
+  /** Branches `/branches` offers a tick box for. A floor past its first page. */
+  branches: WaitingReadingDTO;
+  /** Chat proposals still waiting for approval or rejection. */
+  proposals: WaitingReadingDTO;
+  /** Open taskboard tasks marked operator-only. */
+  tasks: WaitingReadingDTO;
+  /** The instant `failedRecently` is cut from, in ms. */
+  failedSince: number;
+}
+
+/**
  * Mirror of `AgentOrigin` in `windows.ts` — where the definition behind an
  * agent bucket lives, as far as this install can see.
  *
@@ -3384,6 +3418,25 @@ export interface BranchSummaryDTO {
   active: boolean;
   landedAt: number | null;
   prompt: string;
+}
+
+/**
+ * Whether a branch can be put in the merge queue at all — the one rule the
+ * branches page draws a tick box by and the dashboard's "waiting on you" count
+ * reads, so the two cannot disagree about what is ready to land.
+ *
+ * Structural only, deliberately: whether it can be *landed* is decided at its
+ * turn, from git, because the branches ahead of it change that answer. A run
+ * that is still going is offered too — it may well have finished by the time
+ * the queue reaches it, and if it has not, that row says so. An uncounted
+ * branch (`ahead` null) is offered as well: the queue asks git again at its
+ * turn, and refuses there with a sentence naming why, where a missing checkbox
+ * says nothing.
+ */
+export function isQueueableBranch(
+  b: Pick<BranchSummaryDTO, "exists" | "target" | "merged" | "landedUnchanged" | "ahead">,
+): boolean {
+  return b.exists && !!b.target && !b.merged && !b.landedUnchanged && b.ahead !== 0;
 }
 
 export interface DirtySlotDTO {

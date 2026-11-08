@@ -96,7 +96,7 @@ The paragraphs themselves live in `docs/agent/taskboard/`, one topic file per he
 
 ## [The board page](taskboard/board-page.md)
 
-- The pane sits directly under Runs, and two panes now go without a digit.
+- The pane sits directly under Runs, and inserting it left two panes without a digit.
 - The board reads every row, one status at a time, and narrows only the project in the browser.
 - The board draws controls; it never decides a move.
 - The count goes inside a cell the board already has, and a column for it is refused rather than merely not built.

@@ -14,8 +14,9 @@ treats them separately on purpose:
 | How this tool reads it | percentages from that endpoint; volumes and costs by parsing `~/.claude/projects/**/*.jsonl` locally | Admin API, with an `sk-ant-admin01-…` key |
 | Accuracy | **volumes and costs are exact; percentages are the provider's own, or estimates when it cannot be reached** | authoritative |
 
-The **Dashboard** is the subscription view. The **API account** page is the
-Console view, and stays empty unless you set an Admin key. They are never summed
+The **Dashboard** and **Usage** pages are the subscription view: the Dashboard
+carries the windows, the burn rate and what is spending now, and Usage carries
+the history and the breakdowns. The **API account** page is the Console view, and stays empty unless you set an Admin key. They are never summed
 together.
 
 ### ⚠️ What the subscription view can and cannot see
@@ -269,7 +270,7 @@ hatched indeterminate meter, never 0%.
 
 Weekly buckets follow the **weekly reset day** when one is configured, rather
 than a calendar Monday, so the newest bucket is the same seven hours-to-the-
-minute as the weekly meter above it. Buckets that closed before your first
+minute as the weekly meter on the Dashboard. Buckets that closed before your first
 recorded turn are dropped rather than shown as `$0.00`, so a fresh install sees
 the days it has instead of thirteen empty ones above them.
 

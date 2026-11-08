@@ -16,7 +16,7 @@ This page is the index. The bar every test is held to comes first, each of its p
 
 `npm run typecheck` plus a `docker compose up --build` smoke test is still the real verification loop, and `docs/verification.md` records what was checked by hand — including its "Not yet verified" list, which must stay honest.
 
-Nineteen are renderings rather than functions — every `*.test.tsx` in the tree, which is the whole of that class and is countable as `find src -name '*.test.tsx' | wc -l`.
+Twenty are renderings rather than functions — every `*.test.tsx` in the tree, which is the whole of that class and is countable as `find src -name '*.test.tsx' | wc -l`.
 
 ## [Run queue and admission](testing/run-queue-and-admission.md)
 
@@ -413,7 +413,7 @@ Units that are about no test file in the tree:
 
 ## [The install's edges and its pages](testing-edges-and-pages.md)
 
-Auth, credentials, config and settings, provider sign-in, the status routes, sign-in limits, the container, the knowledge vault, Dreaming, the toolbar readout, the git-directory watch, the components, stacks and the TokenEconomizer: their sections, with their tables, are in [testing-edges-and-pages.md](testing-edges-and-pages.md), which is this page's second half.
+Auth, credentials, config and settings, provider sign-in, the status routes, sign-in limits, the container, the knowledge vault, Dreaming, the toolbar readout, the dashboard's "waiting on you" line, the git-directory watch, the components, stacks and the TokenEconomizer: their sections, with their tables, are in [testing-edges-and-pages.md](testing-edges-and-pages.md), which is this page's second half.
 
 ## [Test harnesses: which tests open a database, and how this page is checked](testing/test-harnesses.md)
 

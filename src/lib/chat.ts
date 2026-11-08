@@ -755,6 +755,19 @@ export function pendingProposals(chatId: string): ChatProposalRow[] {
   return listProposals(chatId).filter((p) => p.status === "pending");
 }
 
+/**
+ * Proposals waiting for a decision in any conversation — the same `pending`
+ * `pendingProposals` filters one thread by, counted across all of them. Rows
+ * are not read: the dashboard polls this.
+ */
+export function countPendingProposals(): number {
+  return (
+    db()
+      .prepare("SELECT COUNT(*) AS n FROM chat_proposals WHERE status = 'pending'")
+      .get() as { n: number }
+  ).n;
+}
+
 /** The widest page `findPastProposals` answers with, whatever it was asked for. */
 export const PAST_PROPOSALS_MAX = 50;
 

@@ -18,6 +18,7 @@ import {
 } from "./localCertification";
 import { localRunsOnBranch } from "./localProvider";
 import { OPERATION_ENDED_BY } from "./landView";
+import { isQueueableBranch } from "./apiTypes";
 import {
   assistRefusal,
   assistRunning,
@@ -6128,6 +6129,18 @@ export interface BranchQuery {
   offset?: number;
   /** Branches to examine. Clamped to `MAX_INVENTORY`, whatever is asked for. */
   limit?: number;
+  /**
+   * Skip the two reads that cost a `git status` apiece — the checkouts' pending
+   * work and the slot census — for a caller that only needs each branch's
+   * `ahead`, `merged` and `landedUnchanged`. Up to 68 of them a request, and
+   * `GET /api/branches` is deliberately not polled for that cost.
+   *
+   * The probed fields come back as "not asked", which is what the page already
+   * reads a row the probe cap did not reach as, and `checkouts` is empty. A
+   * caller that drew either would draw a clean checkout and a store with nothing
+   * in it, so only `landableBranches` passes it.
+   */
+  light?: boolean;
 }
 
 export interface BranchSelection<T> {
@@ -6465,7 +6478,7 @@ export async function branchInventory(
   // one or the loop needs. `MAX_PENDING_PROBES` still bounds how many probes
   // run at all; `selectProbeTargets` is where it is applied, and its own note
   // says why that has to happen before the first one is dispatched.
-  const probeTargets = selectProbeTargets(pending, MAX_PENDING_PROBES);
+  const probeTargets = query.light ? [] : selectProbeTargets(pending, MAX_PENDING_PROBES);
   const [aheads, landed, probed] = await Promise.all([
     // One call per row whatever it answers — `MAX_INVENTORY` bounds these — so
     // a target renamed away is a null here. The Land card, with one branch to
@@ -6568,7 +6581,29 @@ export async function branchInventory(
         };
       })
       .sort((a, b) => a.repoLabel.localeCompare(b.repoLabel)),
-    checkouts: await checkoutStores(roots),
+    checkouts: query.light ? [] : await checkoutStores(roots),
+  };
+}
+
+/**
+ * How many branches the branches page offers a tick box for, and whether that
+ * is all of them.
+ *
+ * The rule is `isQueueableBranch`, the one the page draws its boxes by, applied
+ * to the rows `branchInventory` examines — so "ready to land" here is exactly a
+ * row the page would let the operator tick, uncounted branches included.
+ *
+ * One page of the inventory is as much as one poll pays git for
+ * (`MAX_INVENTORY`), so `complete` is false whenever branches lie past it and
+ * `count` is then a floor: an older unmerged branch is exactly what a
+ * newest-first slice misses. The caller has to say so rather than print the
+ * number as if it were the whole.
+ */
+export async function landableBranches(): Promise<{ count: number; complete: boolean }> {
+  const inventory = await branchInventory({ light: true });
+  return {
+    count: inventory.branches.filter(isQueueableBranch).length,
+    complete: inventory.notShown === 0,
   };
 }
 

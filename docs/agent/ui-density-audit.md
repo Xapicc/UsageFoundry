@@ -1,5 +1,60 @@
 # UI density audit and restructure specification
 
+> **2026-11-08: `/`'s analysis regions now live on `/usage`.** The operator
+> decided what the dashboard is for — what is left of each window and when it
+> resets, whether it runs out first at the current rate, whether something
+> this app started is spending now or is near the install limit, and whether
+> the fleet is held or the reading is broken — and moved everything else to a
+> page of its own. `/usage` (`src/app/usage/page.tsx`, the Usage pane) carries
+> `Usage by period`, *Where it went*, *What filled the context*, `Recent
+> 5-hour blocks`, the cache-read and lifetime rows of what was `Rate and
+> totals`, `What each repository cost`, the *What runs keep re-deriving* and
+> *Does the prior-read pointer change what runs do* regions, and the
+> provenance strip. `/` keeps the banner, `FirstRun`, the window card with
+> `CodexWindows`, `LiveTelemetry`, the burn rate and projected exhaustion (a
+> card titled `Rate` until the note below), `InstallSpendCard` and the plan
+> label. **Do not
+> "restore" any of the moved cards to `/` from §3.E.1**: that section, and
+> every `src/app/page.tsx` line it cites, describes the page before this
+> move, and "nothing here is a feature cull" below was a premise of these
+> five runs, not a rule about the dashboard. Both pages render the same
+> `SourceRegion` and the same `UsageNotices`, so §5.1's region boundaries
+> hold on each.
+>
+> **2026-11-08, later: the `Rate` card is gone and `/` fits one screen.** Each
+> window in the window card now reads what is left of it, when it resets
+> (absolute, then relative), its meter, and one line saying whether it runs
+> out before that reset at the current burn — the burn rate rides on that
+> line. `projectedExhaustionAt` is the earliest instant across both windows,
+> and `windowOutlooks` (`src/components/windowOutlook.ts`) works out whose it
+> is, or says "session or week" when the snapshot cannot tell. Codex windows
+> use the same layout without a projection, because Codex reports no rate.
+> The prose that explained each reading moved into one `How these are read`
+> fold at the foot of the card, under §1.1's rule 5. A pinned reset and a
+> per-model wall stay visible, because they change what a meter means.
+> `LiveTelemetry` is one line while no run is working. `InstallSpendCard`, in
+> its own `What this app spent` region, moved into the right-hand column under
+> it. Measured at 1280×800 over a mocked `/api/usage`, the common state ends
+> 27px short of the scroll.
+>
+> **2026-11-08, last: `/` says what is waiting on the operator.** One line
+> between the banner and the window card (`WaitingOnYou`, from
+> `GET /api/waiting`), in words and counts only: runs in `needs-review`,
+> runs `failed` in the last 24 hours, branches the branches page offers a tick
+> box for (`isQueueableBranch`, the one rule both read), chat proposals still
+> `pending`, and open operator-only tasks. A count of zero is left out; when
+> every count was read in full and every one is zero the line is "Nothing is
+> waiting on you."; a count that could not be read is named as unknown and is
+> never drawn as zero, and neither is a floor of zero. `waitingView` is the
+> pure rule and `waiting-on-you.md` under `docs/agent/testing/` is its test. It
+> adds no chart, meter or badge, and the held-fleet sentence stays in the
+> banner. Neither `/runs` nor `/tasks` takes the filter from its URL (`/runs`
+> refuses a `?status=` that is not in flight; the board keeps its operator-only
+> lane in the browser), so every link opens the whole page. The line cost 32px
+> and the page had 19px, so the grid's foot margin now applies only while a
+> notice follows it (`has-[+*]:mb-4`), which was 16px of dead space under the
+> window card in the common state; `/` still fits 1280×800 by 3px.
+>
 > **All five runs have landed. §8 is the record of what each one actually did**
 > — including the one change that landed partially and the deviations from the
 > text above. Read it before acting on anything in §3 as though it describes
@@ -134,8 +189,9 @@ Notes that are part of the rule, not commentary:
   paragraph above a group is a lede for a heading that is already there.
 - **The card cap is on *peers*, not on the page.** Seven cards side by side with
   nothing between them is the fuzziness this document is about; seven cards
-  under three named regions is a structure. `/` keeps all eight of its cards and
-  gets regions (§3.E.1) rather than losing one.
+  under three named regions is a structure. `/` kept all eight of its cards and
+  got regions (§3.E.1) rather than losing one; since 2026-11-08 most of them
+  live on `/usage` instead (see the note at the top).
 - **A group of two is legitimate where its label is the information.** Settings'
   `Raw-token ceilings` holds two rows whose labels are the same two words as the
   `Cost ceilings` group above it; the group label is the only thing telling them
@@ -147,7 +203,7 @@ Notes that are part of the rule, not commentary:
   both stay.
 - **A `SegmentedControl` used to pick a *value* is not a tab strip** and none of
   rule 6's caps reach it. The runs list's six-option status filter, the
-  dashboard's three pickers (`Period length`, `Breakdown dimension`, `Span`),
+  three pickers on `/usage` (`Period length`, `Breakdown dimension`, `Span`),
   Settings' four and the run form's three are all form controls, governed by
   `conventions.md`'s own rule for the component and by its `max-md:flex-wrap`.
   **Do not "fix" the six-option filter to satisfy rule 6.**
@@ -156,10 +212,11 @@ Notes that are part of the rule, not commentary:
 
 Each of these is a thing a build run would plausibly reach for. None is allowed.
 
-1. **A thirteenth pane.** `panes.ts` is twelve rows against ⌘1–⌘9, read by
-   four things (`panes.ts:3-18`). The digits are spent: the tenth, eleventh and
-   twelfth rows — Dreaming, API account and Settings — already have none, and a
-   thirteenth would be a fourth row you cannot reach from the keyboard. New
+1. **A fourteenth pane.** `panes.ts` is thirteen rows against ⌘1–⌘9, read by
+   four things (`panes.ts:3-18`). The digits are spent: the eleventh, twelfth
+   and thirteenth rows — Dreaming, API account and Settings — and Usage, the
+   second, already have none, and a fourteenth would be a fifth row you cannot
+   reach from the keyboard. New
    destinations are sub-routes under an existing pane.
 
    *This read "a ninth pane" until `/knowledge` was built, and "a tenth" until
@@ -177,8 +234,10 @@ Each of these is a thing a build run would plausibly reach for. None is allowed.
    ground an append does. The heading above read "a twelfth pane" rather than
    "an eleventh" because of that insertion, and it now reads "a thirteenth"
    because Project manager went in under Branches on 2026-10-16, at the
-   operator's own request, taking Dreaming's digit; it will move again the next
-   time any pane is added, wherever in the list it lands.
+   operator's own request, taking Dreaming's digit; it read "a thirteenth"
+   until Usage went in second on 2026-11-08, also at the operator's request,
+   and it will move again the next time any pane is added, wherever in the
+   list it lands.
    `/knowledge` earned a row rather than a sub-route because it is not *about*
    any existing pane: a vault is neither a run, a workflow nor a setting, and
    filing it under Settings would have made a destination out of a
@@ -197,6 +256,15 @@ Each of these is a thing a build run would plausibly reach for. None is allowed.
    holds ⌘9 today and Dreaming, the tenth row, has none. See `docs/agent/dreaming.md` for the
    first of those two trades and for why the compromise (moving the row,
    keeping the digits) is the one arrangement that is forbidden.
+
+   **Usage is the one row whose missing digit the operator chose rather than
+   the order.** It went in second, under Dashboard, on 2026-11-08 with no
+   digit, so nothing under it was renumbered and Dreaming became the eleventh
+   row. That is not the forbidden compromise: no reader names a digit for the
+   row above the one it lands on, because every reader prints a row's own
+   `shortcut` or nothing, so the digits now count the rows that carry one.
+   Renumbering ⌘2–⌘9 is what left docs naming stale digits twice (board tasks
+   44bf21f8 and 5af3d6ea); `panes.ts`' header carries the reasoning.
 2. **An accordion** — a *coordinated* set where opening one panel closes
 another. It is cards with extra clicks and a lost scroll position, and the
 coordination is a second state machine nothing else here has. **Independent
@@ -1393,6 +1461,9 @@ graph lives on the canvas one route over.
 
 ### 3.E.1 `/` — the dashboard
 
+> Describes `/` before 2026-11-08, when its analysis regions moved to `/usage`.
+> Read the note at the top of this document before acting on anything here.
+
 **Files:** `src/app/page.tsx` (1156), `LiveTelemetry.tsx`, `UsagePeriods.tsx`,
 `RepoSpendCard.tsx`, `Meter.tsx`.
 
@@ -1944,8 +2015,8 @@ Three readings of overlapping money, and **any sum double-counts**:
 
 | Reading | What it is | Where it renders today |
 |---|---|---|
-| **A** | this app's price table over every Claude Code transcript on the machine (`buildSnapshot`) | dashboard cards 1, 4, 5, 7, 8; `RunAgentCost`'s rows |
-| **B** | `runs.spent_usd` — what a work cycle's own `result` event reported | dashboard `This install…`, `What each repository cost`; the run page's `Spent` stat |
+| **A** | this app's price table over every Claude Code transcript on the machine (`buildSnapshot`) | the dashboard's window card, burn rate and run-out lines included; on `/usage`, `Usage by period`, *Where it went*, *What filled the context*, `Recent 5-hour blocks` and `Totals`; `RunAgentCost`'s rows |
+| **B** | `runs.spent_usd` — what a work cycle's own `result` event reported | dashboard `This install…`; `What each repository cost` on `/usage`; the run page's `Spent` stat |
 | **C** | OTLP telemetry — Claude Code's own per-request cost | `LiveTelemetry` on the dashboard; `Telemetry — first-party` on the run page |
 
 Rules a build run must not break:

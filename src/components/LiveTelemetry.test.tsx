@@ -84,27 +84,35 @@ test("a complete list claims nothing about omissions", () => {
 
 test("a run with no matching row reads as unknown, not as a status", () => {
   const telemetry = windowOf();
+  // A second run that is working, because with none the card is one line and
+  // has no table to put a status in. The assertions are scoped to the
+  // status-less run's own row for that reason: the working run's badge is real.
   const html = renderToStaticMarkup(
     <LiveTelemetry
       telemetry={{
         ...telemetry,
-        runCount: 1,
-        workingRunCount: 0,
-        runs: [{ ...telemetry.runs[0], status: null }],
+        runCount: 2,
+        workingRunCount: 1,
+        runs: [
+          { ...telemetry.runs[0], status: null },
+          { ...telemetry.runs[1], status: "running" },
+        ],
       }}
       now={NOW}
     />,
   );
+  const row = /aaaa1111[\s\S]*?<\/tr>/.exec(html)?.[0] ?? "";
+  assert.notEqual(row, "", "the status-less run has a row");
   // Anchored on the cell, not on the document: the card title carries an
   // em-dash of its own, so a bare /—/ is satisfied before the table body is
   // reached and a component that rendered an *empty* cell for a null status
   // would pass it. The null branch is a bare dash as the only child of its
   // `Td`, which is what `>—<` picks out.
-  assert.match(html, />—</, "the unknown status is a dash in its own cell");
+  assert.match(row, />—</, "the unknown status is a dash in its own cell");
   // Against the badge markup rather than the bare word, so this does not start
   // depending on "running" being absent from unrelated copy on the card.
   assert.doesNotMatch(
-    html,
+    row,
     /<span[^>]*>running<\/span>/,
     "no status may be invented for it",
   );
@@ -135,4 +143,9 @@ test("nothing is described as working when no run is", () => {
     <LiveTelemetry telemetry={windowOf({ workingRunCount: 0 })} now={NOW} />,
   );
   assert.doesNotMatch(html, /working/);
+  // Collapsed to one line, which still names where its figure came from.
+  assert.match(html, /Live from runs — first-party/);
+  assert.match(html, /\$2\.43/);
+  assert.match(html, /idle/);
+  assert.doesNotMatch(html, /<table/, "the run breakdown waits for a run that is working");
 });

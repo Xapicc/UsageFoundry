@@ -481,7 +481,7 @@ knowing before you do:
   file, so reopening that run starts a fresh session and is told, in its first
   prompt, which branch the earlier attempt's commits are on — the same restart
   this app already does when a session id was never recorded.
-- **It shortens the dashboard's calendar history.** That card offers twelve
+- **It shortens the calendar history on the Usage page.** That card offers twelve
   months and the horizon is thirty days, so buckets older than the cutoff are
   priced from files that are gone. The card says which ones rather than
   quietly understating them, and periods with nothing left in them drop off it.
@@ -740,7 +740,7 @@ Whether a run started as an agent files its own turns under that agent's name or
 under *(main thread)* is Claude Code's bookkeeping and has not been checked; this
 app never guesses a name, so the card will say whichever the transcript says.
 
-**The dashboard's by-agent breakdown**, which says where each name's definition
+**The Usage page's by-agent breakdown**, which says where each name's definition
 lives: *saved* for one in this registry, *on disk* for one only your `~/.claude`
 has, *name clash* for both. Unmarked is the ordinary case — a Claude Code
 built-in, a repository's own `.claude/agents`, or an agent since deleted — and
@@ -816,7 +816,7 @@ the dashboard's marks. The probes above were run by hand, outside this app.
   either is wrong the refusal is stricter than it needs to be, which is the safe
   direction and still a form saying no for a reason that has stopped being true.
 - **Whether a `--agent` session records its own name on the turns it produces.**
-  The *Agent work* card and the dashboard's by-agent column both read whatever
+  The *Agent work* card and the Usage page's by-agent column both read whatever
   Claude Code wrote to the transcript, and nothing here infers a bucket — so this
   changes what those cards say and no code branches on it.
 - **Whether a `--agent` session delegates at all.** If it does, the forwarding
