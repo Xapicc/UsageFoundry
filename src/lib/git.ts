@@ -497,18 +497,34 @@ const UNPROBED_SUBCOMMANDS = new Set([
 ]);
 
 /**
- * Whether a call must be prepared by the probe before it is spawned.
+ * Where a call's subcommand is, and the `--git-dir=<path>` ahead of it, if any.
  *
- * The subcommand is found past any leading `-c <pair>`, which two call sites put
- * before it (`commit-tree` with an identity, `check-ignore` with
- * `core.excludesFile`); reading `args[0]` would take `-c` for the subcommand.
- * The functions the probe hands the call to still read `args[0]` for the
- * `worktree`, `merge-tree` and `checkout` special cases, so a call of one of
- * those must keep putting its subcommand first.
+ * Past any leading `-c <pair>`, which two call sites put before the subcommand
+ * (`commit-tree` with an identity, `check-ignore` with `core.excludesFile`),
+ * and any `--git-dir=<path>`, which `readGitDir` (`gitDirRead.ts`) names the
+ * git directory it lists with. Read off `args[0]`, each was taken for a
+ * subcommand nobody listed: that `config` listing paid three probe children
+ * and failed whenever the probe did (board task 507d7792). The last
+ * `--git-dir=` is kept because git takes the last.
  */
-function needsProbe(args: string[]): boolean {
+function leadingOptions(args: string[]): { at: number; gitDir: string | null } {
   let at = 0;
-  while (args[at] === "-c") at += 2;
+  let gitDir: string | null = null;
+  for (;;) {
+    if (args[at] === "-c") {
+      at += 2;
+    } else if (args[at]?.startsWith("--git-dir=")) {
+      gitDir = args[at];
+      at += 1;
+    } else {
+      return { at, gitDir };
+    }
+  }
+}
+
+/** Whether a call must be prepared by the probe before it is spawned. */
+function needsProbe(args: string[]): boolean {
+  const { at } = leadingOptions(args);
   const subcommand = args[at];
   if (subcommand === "remote") return !(args.length === at + 1 || args[at + 1] === "get-url");
   return !UNPROBED_SUBCOMMANDS.has(subcommand);
@@ -987,14 +1003,25 @@ type Prepared =
  * `%(prefix)/` costs one more, to place it, and the common configuration has
  * none. Before the probe, each site's configuration files, its git directory's
  * `commondir`, HEAD and the refs behind it, the `.git` entries and git
- * directory it was found through, and what would make a directory below the
- * top a git directory are fingerprinted, and after it every include target. Then every watched file is fingerprinted again, last thing
+ * directory it was found through, the `objects/` and `refs/` that keep that
+ * one a git directory, and what would make a directory below the top a git
+ * directory are fingerprinted, and after it every include target. Then every
+ * watched file is fingerprinted again, last thing
  * before the caller spawns the call, and one that changed refuses it.
+ *
+ * A call that names its git directory with a leading `--git-dir=` reads that
+ * one and not the one discovery finds from `cwd`, so each step in `cwd` carries
+ * the flag too: probed without it, the drivers of the repository `cwd` was in
+ * were blanked and the named one's ran (board task 507d7792, measured, 2.39.5).
+ * A flag naming no git directory fails the first step, and so the call. The
+ * special cases below read the subcommand past the leading options.
  */
 function* prepareContentCall(
   cwd: string,
-  args: string[],
+  call: string[],
 ): Generator<PrepareStep, Prepared, ProbeEnding> {
+  const { at, gitDir: namedGitDir } = leadingOptions(call);
+  const args = call.slice(at);
   const sites = probeSites(cwd, args);
   if (!sites.ok) return sites;
 
@@ -1027,16 +1054,20 @@ function* prepareContentCall(
       };
     }
 
-    const located = yield { dir, args: SITE_PATHS };
+    // Only the call's own site: a submodule's child git and a removed tree's
+    // `status` find their git directory for themselves.
+    const named = i === 0 && namedGitDir !== null ? [namedGitDir] : [];
+    const sitePaths = [...named, ...SITE_PATHS];
+    const located = yield { dir, args: sitePaths };
     if (located.code !== 0 || located.overflowed) {
-      return { ok: false, reason: probeFailure(located, dir, args, SITE_PATHS) };
+      return { ok: false, reason: probeFailure(located, dir, args, sitePaths) };
     }
     const [config, worktreeConfig, head, gitDir, commonDir, cdup = ""] = located.stdout.split("\n");
     if (!config || !worktreeConfig || !head || !gitDir || !commonDir) {
       return {
         ok: false,
         reason:
-          `The filter probe failed in ${dir}, so git ${args[0]} was not run: git ${SITE_PATHS.join(" ")} ` +
+          `The filter probe failed in ${dir}, so git ${args[0]} was not run: git ${sitePaths.join(" ")} ` +
           `printed ${JSON.stringify(located.stdout)}, not the five paths it was asked for`,
       };
     }
@@ -1050,11 +1081,22 @@ function* prepareContentCall(
     for (const ref of refsBehindHead(head, gitDir, commonDir)) watch(ref, symrefFingerprint);
     for (const file of reftableFiles(gitDir, commonDir)) watch(file);
     for (const entry of [...discoveryEntries(dir, top), gitDir]) watch(entry, locationFingerprint);
+    // git takes the directory it found for a git directory only while the
+    // common one holds `objects/` and `refs/`: with either moved away, its
+    // discovery climbed past it to an enclosing repository and ran a filter
+    // only that one's configuration defined (board task 9ef321d6, measured,
+    // 2.39.5). By `locationFingerprint`, as `gitDirectoryInputs` watches them
+    // below the top, because every commit writes inside both and `git stash`
+    // writes `refs/stash` in `refs/` itself, so their ctime moves on writes
+    // that leave the repository where it was.
+    for (const entry of [path.join(commonDir, "objects"), path.join(commonDir, "refs")]) {
+      watch(entry, locationFingerprint);
+    }
     const below = gitDirectoryInputs(dir, top);
     for (const file of below.asConfig) watch(file);
     for (const entry of below.asLocation) watch(entry, locationFingerprint);
 
-    const probe = yield { dir, args: FILTER_PROBE };
+    const probe = yield { dir, args: [...named, ...FILTER_PROBE] };
     const read = readFilterProbe(probe, dir, args);
     if (!read.ok) return read;
     const names = driverNames(read.records);
@@ -1075,9 +1117,10 @@ function* prepareContentCall(
     }
 
     if (args[0] === "merge-tree") continue;
-    const index = yield { dir, args: GITLINK_LIST };
+    const gitlinkList = [...named, ...GITLINK_LIST];
+    const index = yield { dir, args: gitlinkList };
     if (index.code !== 0 || index.overflowed) {
-      return { ok: false, reason: probeFailure(index, dir, args, GITLINK_LIST) };
+      return { ok: false, reason: probeFailure(index, dir, args, gitlinkList) };
     }
     queue.push(...populatedGitlinks(dir, index.stdout));
   }
@@ -1095,7 +1138,7 @@ function* prepareContentCall(
   }
   return {
     ok: true,
-    args: QUIETED.has(args[0]) ? [args[0], "--quiet", ...args.slice(1)] : args,
+    args: QUIETED.has(args[0]) ? [...call.slice(0, at), args[0], "--quiet", ...args.slice(1)] : call,
     extra: [...SUBMODULE_PINS, ...neutralizers(filters, merges, hooks)],
     mergeDrivers: [...merges],
   };
