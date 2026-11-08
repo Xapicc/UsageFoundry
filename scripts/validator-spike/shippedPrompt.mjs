@@ -65,19 +65,31 @@ const statTotals = (stat) => {
  * are the paths whose bodies were not kept; `stat` is the diffstat the totals
  * come from. Returns the pieces `buildValidationPrompt` takes.
  */
-export function diffFor({ diffAsText, branch, patches, omittedPaths = [], stat }) {
-  const shown = patches.map(fileOfPatch);
+export function diffFor({ diffAsText, branch, patches, omittedPaths = [], stat, maxBytes = Number.MAX_SAFE_INTEGER, cutPatch = null }) {
+  const shown = patches.map((p) => {
+    const f = fileOfPatch(p);
+    if (!cutPatch) return f;
+    // The server cuts one file's patch at a line cap before the byte budget sees it.
+    const cut = cutPatch(f.patch);
+    return { ...f, patch: cut.text, patchTruncated: cut.truncated };
+  });
   const dropped = omittedPaths.map((p) => ({
     path: p, oldPath: null, status: "modified", added: null, deleted: null, binary: false, patch: null, patchTruncated: false,
   }));
   const files = [...shown, ...dropped];
-  const totals = files.length === 0 ? { filesChanged: 0, added: 0, deleted: 0 } : statTotals(stat);
+  const sum = (key) => shown.reduce((n, f) => n + f[key], 0);
+  const totals =
+    files.length === 0
+      ? { filesChanged: 0, added: 0, deleted: 0 }
+      : stat
+        ? statTotals(stat)
+        : { filesChanged: files.length, added: sum("added"), deleted: sum("deleted") };
   const diff = {
     kind: "range", reason: null, base: "base", branch: branch ?? "(unknown)", measuredFrom: null, head: "0".repeat(40),
     files, filesChanged: totals.filesChanged || files.length, added: totals.added, deleted: totals.deleted,
     omittedPatches: dropped.length, patchFailure: null, uncommitted: [], caveat: null,
   };
-  const { text, truncated } = files.length === 0 ? { text: "", truncated: false } : diffAsText(diff, Number.MAX_SAFE_INTEGER);
+  const { text, truncated } = files.length === 0 ? { text: "", truncated: false } : diffAsText(diff, maxBytes);
   return { diff, diffText: text, truncated };
 }
 
@@ -89,8 +101,9 @@ export function loadProduction(buildDir) {
   process.env.CLAUDE_BIN ??= "/nonexistent";
   const require = createRequire(import.meta.url);
   const { buildValidationPrompt } = require(path.resolve(buildDir, "lib/validation.js"));
-  const { diffAsText } = require(path.resolve(buildDir, "lib/diff.js"));
-  return { buildValidationPrompt, diffAsText };
+  const { diffAsText, wholeCommitDiff, truncatePatch } = require(path.resolve(buildDir, "lib/diff.js"));
+  const { HISTORY_COMMITS_SHOWN } = require(path.resolve(buildDir, "lib/validationHistory.js"));
+  return { buildValidationPrompt, diffAsText, wholeCommitDiff, truncatePatch, HISTORY_COMMITS_SHOWN };
 }
 
 /** `compose(caseFile)` -> the production prompt for that case, with no history. */

@@ -242,3 +242,9 @@ the cases above, labelled `finished`, are re-built three ways and judged by the
 with another case's commit, `not-finished` for 14 of 14. None of these numbers
 extends the 34 of 37, which are about `prompt.md`; the reading, its caveats and
 how to re-run are in `docs/agent/taskboard/completion-validation-history.md`.
+
+`history.mjs --arms split` adds the other half of that question, a non-empty branch
+diff that is only the later run's share of a task, over six multi-commit cases
+(`history-split-report.md`): the later half alone, as today, 0 of 6 `finished`; with
+the earlier commits as history, 5 of 6; with another case's commits, 0 of 12; the
+rest is in the same document and in `docs/verification/taskboard-board-and-tools.md`.

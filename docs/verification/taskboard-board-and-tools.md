@@ -160,6 +160,30 @@
   Sonnet 4.5 so the two are not a clean A/B; `runs.task` stands in for the
   board's title and brief; 16 of 40 replies were saved by hand from chat.
 
+- **A task worked across two runs: the later half as the branch diff beside the
+  earlier commits, 2026-11-08**, production `buildValidationPrompt` from a build
+  at `4fd7c103` plus a candidate framing appended by the script, the judge a
+  Claude Code subagent on Sonnet 5.5 with no repository access, 27 requests
+  (`scripts/validator-spike/history.mjs --arms split`, `history-split-report.md`,
+  `io-history-split/`). Six multi-commit cases the spike labelled `finished` and
+  the shipped preamble also called `finished` whole (12, 16, 17, 25, 33, 37) were
+  cut in two with each commit's real diff read from its repository
+  (`wholeCommitDiff`). The later half alone, as today: **0 of 6** `finished`,
+  3 `not-finished` (12, 17, 37, where the diff plainly lacked files the task
+  names) and 3 `unjudgeable`. The later half with the earlier commits: **5 of 6**
+  `finished`, 1 `unjudgeable` (12, whose `page.tsx` patch was cut). The later
+  half with another case's earlier commits, two pairings: **0 of 12**
+  `finished`, each the verdict that case's diff alone had got. A diff skipping the
+  middle commits with only the first as history, 3 cases: 0 `finished`. Caveat:
+  false-finished 0 of 15 bounds the rate below about 18% and no tighter; n = 6 an
+  arm, one sample per request; the splits cut one run's commits in two, so no
+  task worked across two real runs was observed; the six were chosen after
+  seeing the whole-branch verdicts (7 and 19, which the preamble could not
+  settle whole, and 14 and 29, whose earlier commit is larger than the history
+  budget, were not run); 3 of the 12 mismatch pairs touch a file the task's own
+  work touched; not `spawnAssist`'s child; 5 of 27 replies were saved by hand
+  from chat.
+
 ## Not yet verified by hand
 
 - **No model has called the board tools over stdio**; that needs a billed run.
