@@ -19,6 +19,7 @@ import {
   linksWithTemplate,
   linksWithoutMember,
   markedAfterPress,
+  memberRefusal,
   resolveLayout,
   resolveLinkRelease,
   resolveRepeat,
@@ -1535,6 +1536,103 @@ test("a block that works in the folder goes after the merge, or after the tail",
   assert.ok(afterTail.some((l) => l.from === "b" && l.to === "y"));
   const second = saved2({ blocks, links: afterTail }, KNOWS);
   assert.ok(second.ok, second.ok ? "" : second.error);
+});
+
+/**
+ * l repeats o, which fans out and is landed by two merges; `m1` is set to hand
+ * on to `m2` once it finishes either way. That saves. A block that works in the
+ * folder put into it can only go after the last merge, where it becomes the
+ * tail, and the server refuses an either-way link out of a merge that reaches a
+ * tail.
+ */
+const EITHER_WAY = {
+  blocks: [
+    loop("l"),
+    block("o", { kind: "orchestrator", templateId: "t-iso" }),
+    block("m1", { kind: "merge" }),
+    block("m2", { kind: "merge" }),
+    block("x", flat),
+  ],
+  links: [
+    repeats("l", "o"),
+    link("o", "m1", { edge: "on-success" }),
+    link("o", "m2", { edge: "on-success" }),
+    link("m1", "m2", { edge: "on-finish" }),
+  ],
+};
+
+test("a block put in behind a merge an either-way link reaches is not minted into a graph Save refuses", () => {
+  const { blocks, links } = EITHER_WAY;
+  const without = blocks.filter((b) => b.id !== "x");
+  const before = saved2({ blocks: without, links }, KNOWS);
+  assert.ok(before.ok, before.ok ? "" : before.error);
+
+  const next = linksWithMember("l", "x", blocks, links, KNOWS);
+  // Whichever way the gesture answers, it must not hand back a graph Save
+  // refuses over the link the operator never touched.
+  if (next !== null) {
+    const res = saved2({ blocks, links: next }, KNOWS);
+    assert.ok(res.ok, res.ok ? "" : res.error);
+  }
+});
+
+test("a block that works in the folder is refused before it is put in, naming the link", () => {
+  const { blocks, links } = EITHER_WAY;
+  assert.equal(linksWithMember("l", "x", blocks, links, KNOWS), null);
+  const why = memberRefusal("l", "x", blocks, links, KNOWS);
+  assert.ok(why !== null);
+  // The block put in, the merge it would follow, and the link to change: the
+  // operator has to find all three on the canvas.
+  assert.match(why, /\bx\b/);
+  assert.match(why, /\bm1\b.*\bm2\b/);
+  assert.match(why, /only if/);
+
+  // And it is the server's own refusal it stands in front of.
+  const forced = [...links, sectionLink("m2", "x", links, blocks, KNOWS)];
+  const res = saved2({ blocks, links: forced }, KNOWS);
+  assert.equal(res.ok, false);
+  assert.match(res.ok ? "" : res.error, /finishes either way/);
+});
+
+test("the refusal goes once the link out of the merge is only-if-it-completes", () => {
+  const { blocks, links } = EITHER_WAY;
+  const mended = links.map((l) =>
+    l.from === "m1" && l.to === "m2" ? { ...l, edge: "on-success" as const } : l,
+  );
+  assert.equal(memberRefusal("l", "x", blocks, mended, KNOWS), null);
+  const next = linksWithMember("l", "x", blocks, mended, KNOWS);
+  assert.ok(next !== null);
+  assert.ok(next.some((l) => l.from === "m2" && l.to === "x"));
+  const res = saved2({ blocks, links: next }, KNOWS);
+  assert.ok(res.ok, res.ok ? "" : res.error);
+});
+
+test("an either-way link the section already had refused is not blamed on the block put in", () => {
+  const { blocks, links } = EITHER_WAY;
+  // The tail is already there, so the link was already refused before this
+  // gesture; a block put in after it changes nothing about that, and a gesture
+  // that refused it would be refusing a section for a fault it did not make.
+  const tailed = [...links, sectionLink("m2", "x", links, blocks, KNOWS)];
+  const more = [...blocks, block("y", flat)];
+  assert.equal(memberRefusal("l", "y", more, tailed, KNOWS), null);
+  const next = linksWithMember("l", "y", more, tailed, KNOWS);
+  assert.ok(next !== null);
+  assert.ok(next.some((l) => l.from === "x" && l.to === "y"));
+});
+
+test("a block that cuts a branch is not refused over an either-way link out of a merge", () => {
+  const { blocks: base, links } = EITHER_WAY;
+  // It goes beside the section and the merges land it, so no tail appears and
+  // the either-way link still reaches nothing.
+  const blocks = [
+    ...base.filter((b) => b.id !== "x"),
+    block("z", { templateId: "t-iso" }),
+  ];
+  assert.equal(memberRefusal("l", "z", blocks, links, KNOWS), null);
+  const next = linksWithMember("l", "z", blocks, links, KNOWS);
+  assert.ok(next !== null);
+  const res = saved2({ blocks, links: next }, KNOWS);
+  assert.ok(res.ok, res.ok ? "" : res.error);
 });
 
 test("a link drawn inside a section that works in the folder carries no branch", () => {

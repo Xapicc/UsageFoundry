@@ -9,9 +9,10 @@ database, and refused in five cases on arithmetic taken from that database.
 
 Phases 0 to 3 of [17-implementation-sketch.md](17-implementation-sketch.md), on
 branch `uf/usagefoundry-721638d11c0b-22`, in two runs. Phase 4, reading the
-holdout back, is not built. It needs runs through both arms first: **the first
-reading is due around 2026-10-31**, and it must be taken before
-`eventRetentionDays` sweeps those runs' logs.
+holdout back, was built on 2026-11-08 (below) over the export tables, which is
+what lets it be read after `eventRetentionDays` has swept the logs. **Its first
+reading on the install is still to be taken** and recorded in
+`docs/verification/retention.md`.
 
 **The re-measure before Phases 1 and 3 was not run**, because a work cycle cannot
 read the install's database. [19-remeasure-2026-10.md](19-remeasure-2026-10.md)
@@ -33,6 +34,7 @@ last line but one says `STOPS the pointer`, revert `b748ac0d`.
 | Re-measure | **Not run: the database is unreachable from a work cycle.** The queries are a read-only script, checked against a scratch database whose figures were worked out by hand. | `a1336c23` |
 | Phase 1, the readout | **Built.** `repoReading.ts`: repeat reads split by whether the run edited the file, tool failures grouped by Dreaming's `signatureOf` and ordered by distinct runs, and completed conflict resolutions with their cost per repository and never per file. `/api/repo-reading`, and a card per repository in its own dashboard band beside the repository spend. **Linked to Dreaming rather than duplicating it**: its pane is install-wide and carries no folder, so the per-repository list is new, but it uses Dreaming's normaliser unchanged. | `74ab5b28` |
 | Phase 3, the pointer | **Built, behind `inHoldout(runId)`.** The top 20 files earlier runs' main threads read on the repository, at ×0.9 per run back, proved to exist in the run's tree, named in the session-less prompt directly ahead of the task as a record rather than an instruction. Half of all runs are held out by a hash of the id. Every session-less cycle's `iteration` event records `priorReads: { arm, paths }`. No setting. Codex, local-model, non-repository and Dreaming-writer runs are in neither arm. | `b748ac0d` |
+| Phase 4, the readback | **Built, over the export tables and never `run_events`.** `holdoutReadback.ts`, at `/api/holdout-readback` and in a dashboard band: compliance (each cycle's logged list, both arms, files the brief also named set aside), displacement (distinct main-thread reads before the first edit and in the whole run, counted the same in both arms) and outcome (second-cycle share, `ending_code`, `runs.spent_usd` as the one spend source) as three results sharing no figure. Read only for settled, non-continuation runs on a fixed snapshot with `paths > 0`; every other considered run is counted under one reason, per arm. Each section says how many each arm needs before a difference is significant. **Not computed:** the plan's regression-adjusted estimate, its interference diagnostics and its two O'Brien-Fleming looks. The earlier rolling-list period is not read. | `f54d1f49` |
 
 The measurements are in `docs/verification/run-lifecycle-hooks-and-endings.md`
 and `docs/verification/metering-and-cost.md`. The decisions are in

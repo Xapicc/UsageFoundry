@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { CodexWindows } from "@/components/CodexWindows";
+import { HoldoutReadbackCard } from "@/components/HoldoutReadbackCard";
 import { InstallSpendCard } from "@/components/InstallSpendCard";
 import { LiveTelemetry } from "@/components/LiveTelemetry";
 import { Meter } from "@/components/Meter";
@@ -1367,6 +1368,18 @@ export default function Dashboard() {
         statement="Counted per repository from each run’s own log, and from the conflict resolutions this app paid for."
       >
         <RepoReadingCards />
+      </SourceRegion>
+
+      {/* The prior-read pointer's holdout, read from the export tables the
+          event sweep does not touch. Its own band because it asks a different
+          question from the one above: that band counts what runs re-derive,
+          this one asks whether naming files in advance changed it. Its one
+          spend figure is `runs.spent_usd`, named on the card. */}
+      <SourceRegion
+        heading="Does the prior-read pointer change what runs do"
+        statement="Runs dealt the list of files earlier runs opened most, against runs held back from it, read from the holdout export."
+      >
+        <HoldoutReadbackCard />
       </SourceRegion>
 
       {/* Not a fourth cost source, and the heading has to carry that — the word

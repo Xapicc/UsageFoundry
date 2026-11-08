@@ -316,6 +316,7 @@ describe("assistSettingsArgs — the endpoint a checkout's settings cannot move"
       env?: Record<string, string>;
       sandbox?: { filesystem: { allowWrite: string[] } };
       disableAllHooks?: boolean;
+      apiKeyHelper?: unknown;
     };
   };
 
@@ -328,6 +329,17 @@ describe("assistSettingsArgs — the endpoint a checkout's settings cannot move"
     );
     assert.equal(withSandbox.disableAllHooks, true);
     assert.deepEqual(withSandbox.sandbox?.filesystem.allowWrite, ["/w/repo"]);
+  });
+
+  it("empties apiKeyHelper, with or without a write set", () => {
+    // Measured on 2.1.310: hooks off, a checkout's helper still ran in the
+    // validator and its key reached the request. `""` stopped it; `null` and an
+    // absent key did not, so nothing but the empty string passes here.
+    assert.equal(overlayOf(assistSettingsArgs(null, {})).apiKeyHelper, "");
+    const withSandbox = overlayOf(
+      assistSettingsArgs({ sandbox: { filesystem: { allowWrite: ["/w/repo"] } } }, {}),
+    );
+    assert.equal(withSandbox.apiKeyHelper, "");
   });
 
   it("pins every listed variable on a stock install, which sends no write set", () => {

@@ -67,6 +67,7 @@ Twenty-three are renderings rather than functions — every `*.test.tsx` in the 
 |---|---|
 | `dataDirClaim.test.ts` |  |
 | `holdoutExport.test.ts` |  |
+| `holdoutReadback.test.ts` |  |
 | `retention.test.ts` | [stacks], [harnesses] |
 | `retentionSweep.test.ts` | [status] |
 | `schemaMigration.test.ts` |  |

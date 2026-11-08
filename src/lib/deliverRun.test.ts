@@ -478,6 +478,100 @@ describe("Deliver decides on every URL the push goes to, not on the fetch URL", 
   });
 });
 
+/**
+ * A push to a path is not a push to a remote: git starts `receive-pack` on the
+ * far side as a second git, which reads the receiving repository's own config
+ * and runs its own `hooks/`, and nothing `gitArgs` passes reaches it. So Deliver
+ * must spawn no push at all when any push URL, after git's rewrites, is a path.
+ * Each row is a spelling of that in `.git/config`, which a work cycle can
+ * write; the bare repository it points at has a `pre-receive` hook that leaves
+ * a marker, so a push that went out is seen whatever else the refusal says.
+ */
+describe("Deliver spawns no push to a local path, whose receiving repository would run its hooks", () => {
+  /** A bare repository whose `pre-receive` hook records that it ran. */
+  function hooked(name: string): { dir: string; marker: string } {
+    const dir = path.join(root, "hooked", `${name}.git`);
+    const marker = path.join(root, "hooked", `${name}.ran`);
+    git(root, "init", "-q", "--bare", dir);
+    fs.writeFileSync(path.join(dir, "hooks", "pre-receive"), `#!/bin/sh\nprintf ran > ${marker}\n`, {
+      mode: 0o755,
+    });
+    return { dir, marker };
+  }
+
+  it("control: git itself runs that hook on a push to the path", () => {
+    // Without this, every marker below being absent could be the harness (a
+    // temporary directory mounted noexec, say) and not the refusal.
+    const s = scene("hook-control");
+    const { dir, marker } = hooked("hook-control");
+
+    git(s.slot, "push", "-q", dir, "HEAD:refs/heads/probe");
+
+    assert.equal(fs.existsSync(marker), true, "the hook did not run, so no case here can tell");
+  });
+
+  const spellings: Array<[string, (repo: string, away: string, github: string) => void]> = [
+    ["a path as origin", (repo, away) => git(repo, "remote", "set-url", "origin", away)],
+    ["a file:// URL as origin", (repo, away) => git(repo, "remote", "set-url", "origin", `file://${away}`)],
+    ["a pushurl to a path", (repo, away) => git(repo, "remote", "set-url", "--push", "origin", away)],
+    [
+      "a pushInsteadOf to a path",
+      (repo, away, github) => git(repo, "config", `url.${away}.pushInsteadOf`, github),
+    ],
+    ["an insteadOf to a path", (repo, away, github) => git(repo, "config", `url.${away}.insteadOf`, github)],
+  ];
+
+  for (const [spelling, configure] of spellings) {
+    it(`refuses ${spelling}, on the card and at the press, with no hook run`, async () => {
+      const name = `hook-${spelling.replace(/\W+/g, "-")}`;
+      const s = scene(name);
+      const { dir, marker } = hooked(name);
+      configure(s.repo, dir, githubRemote(name));
+
+      const state = await land.deliveryState(s.runId);
+      const pressed = await land.deliverRun(s.runId);
+
+      assert.equal(fs.existsSync(marker), false, "the receiving repository's hook ran");
+      assert.equal(state.possible, false, "the card offered the press");
+      assert.match(state.reason ?? "", /is not a GitHub remote/);
+      assert.equal(pressed.ok, false, "the press delivered");
+      assert.equal(pressed.ok ? "" : pressed.reason, state.reason);
+      assert.equal(git(dir, "for-each-ref").trim(), "", "something reached the path");
+      assert.equal(remoteTip(s), null);
+      assert.deepEqual(opened, []);
+    });
+  }
+});
+
+/**
+ * What else a push can carry besides the branch. `push.followTags` in the
+ * repository's config (a work cycle writes it) or the operator's own sends every
+ * annotated tag reachable from the pushed commit, with the token, and the tag
+ * is nothing the operator reviewed. Projects' push overrules it with
+ * `--no-follow-tags` and `projectPush.test.ts` fails without the flag; this is
+ * the same case for the other door that sends with the token.
+ */
+describe("Deliver's push carries the branch and no tag, whatever push.followTags says", () => {
+  /** Every ref the bare remote holds, sorted. */
+  const remoteRefs = (s: Scene) =>
+    git(s.remote, "for-each-ref", "--format=%(refname)").trim().split("\n").sort();
+
+  it("sends only the branch when an annotated tag is reachable from it", async () => {
+    const s = scene("follow-tags");
+    git(s.repo, "config", "push.followTags", "true");
+    git(s.slot, "tag", "-a", "-m", "not for publication", "internal-release-candidate");
+    // The guard: the tag is annotated and reachable from the commit that is
+    // pushed, so plain git under this config would carry it.
+    assert.equal(git(s.slot, "cat-file", "-t", "internal-release-candidate").trim(), "tag");
+    assert.equal(git(s.slot, "rev-parse", "internal-release-candidate^{commit}").trim(), git(s.slot, "rev-parse", "HEAD").trim());
+
+    const delivered = await land.deliverRun(s.runId);
+
+    assert.equal(delivered.ok, true, delivered.ok ? "" : delivered.reason);
+    assert.deepEqual(remoteRefs(s), ["refs/heads/main", `refs/heads/${s.branch}`]);
+  });
+});
+
 const OPERATORS_ENV = "API_KEY=the-operators-own-key\n";
 
 /**

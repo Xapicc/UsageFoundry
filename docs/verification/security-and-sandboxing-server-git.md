@@ -234,6 +234,95 @@
   2.54.0, and after it they passed there and on 2.56.0. Caveat: `fetch`'s gc
   was not driven.
 
+- **Deliver's push sent an annotated tag under `push.followTags`, and
+  `--recurse-submodules=check` would refuse a branch it has always sent,
+  2026-11-08.** Board task `2b0d973f`, branch at `60db46c4`, git 2.39.5.
+  `deliverRun.test.ts`' harness with `push.followTags=true` in the repository
+  and an annotated tag on the run's tip: the bare remote held
+  `refs/tags/internal-release-candidate` beside the branch, and with
+  `--no-follow-tags` it held the two branches only. Through the compiled
+  `git()`, `push <sha>:refs/heads/x` with and without `--no-follow-tags
+  --recurse-submodules=check`: no submodule, and a submodule commit on its
+  remote, pushed either way; a submodule commit on no remote pushed without
+  the flag and was refused with exit 128 (`not be found on any remote`) with
+  it, from a sha source and from a branch name. With
+  `push.recurseSubmodules=on-demand` set, a sha source pushed the parent and no
+  submodule commit, through `git()` and through plain git. Caveat: local bare
+  remotes only, parent and submodule both.
+
+- **Neither push door spawns a push to a local path, so no receiving hook
+  runs, on git 2.39.5, 2026-11-08.** Board task `474d09dd`, branch at
+  `d8e52114`, `git --version` 2.39.5 (the image's). `deliverRun.test.ts` and
+  `projectPush.test.ts`, each with a bare repository holding an executable
+  `hooks/pre-receive` that writes a marker: a plain `git push` to it wrote the
+  marker (the control). With `origin` a path, a `file://` URL, a `pushurl` to a
+  path, a `pushInsteadOf` to it and an `insteadOf` to it, Deliver's card and
+  press and Projects' button and press each refused (`is not a GitHub remote`,
+  `not-github`) with no marker and nothing reaching the path. With the
+  `https://` test in `planDelivery` and in `githubDestination` replaced by a
+  constant in the compiled modules, all ten cases failed on the marker, so
+  through this app's `git()` on 2.39.5 a push to a path did run the receiving
+  repository's `pre-receive`. The harnesses never push to a path: their
+  remotes are `https://github.com/acme/<name>.git`, carried to bare
+  repositories by a stand-in `git-remote-https` on `GIT_EXEC_PATH`, which is
+  how `originPushUrls` accepts them. Also, `remote.origin.mirror=true` with
+  Deliver's explicit refspec failed closed (`--mirror can't be combined with
+  refspecs`). Caveat: a configured hook on the receiving side (git 2.54 and
+  later) was not driven; the image has no such git, and the refusal comes
+  before the spawn whatever the version.
+
+- **A filter, merge driver or configured hook with an empty name runs, and a
+  `--config-env` blank of it stops it, 2026-11-08.** Board task `582bceef`,
+  `main` at `60db46c4`. The container's git 2.39.5 and `v2.56.0` built with
+  `NO_RUST=1` against a scratch zlib under `$TMPDIR`, each under `env -i`. git
+  lists `[filter ""]`, `[merge ""]` and `[hook ""]` as `filter..clean`,
+  `merge..driver` and `hook..command`. On both, `filter..clean` with
+  `* filter=` ran on `add -A` and did not under
+  `--config-env=filter..clean=B`, `B` empty; `merge..driver` with `* merge=`
+  ran on `merge-tree --write-tree`, and blanked it ran nothing and exited 128
+  (2.39.5) or 1 (2.56.0). On 2.56.0 a `[hook ""]` `pre-commit` ran on
+  `commit` and did not under `--config-env=hook..enabled=F` or
+  `-c hook..enabled=false`. Through this app's compiled `git()` and
+  `gitSync()`, `gitFilterProbe.test.ts`'s empty-name cases ran the plant at
+  `60db46c4`, four on 2.39.5 and five on 2.56.0, and none with the change.
+  Caveat: 2.54.0 was not built, and the hook case skips on 2.39.5.
+
+- **git names an include's origin relative to the top of the work tree, and
+  places `~<user>/` through the user database, 2026-11-08.** Board task
+  `10264b6b`, `main` at `60db46c4`, git 2.39.5 under `env -i`. With
+  `include.path = evil.inc`, `config --show-origin --includes` printed
+  `file:.git/config` and `file:.git/evil.inc` from the top, a subdirectory
+  and a nested one, `file:config` from inside `.git` and a bare repository's
+  root, and absolute paths from a linked worktree and from a subdirectory of
+  a git directory. `rev-parse --show-cdup`, last on its line, printed an
+  empty line at the top, `../` one level down, and no line where there is no
+  work tree. `config --file /dev/null --type=path --default ~node/x --get k`
+  printed `/home/node/x`; for `~nosuchuser/` it exited 128, and so did the
+  probe over an `include.path` naming one. Through `git()` and `gitSync()`,
+  `gitFilterProbe.test.ts`'s subdirectory and `~<user>/` cases ran the plant
+  at `60db46c4` and were refused with the change. Caveat: one user database,
+  the container's `/etc/passwd`.
+
+- **An `includeIf` condition flips on HEAD, on the ref behind it and on a
+  worktree's `.git` file, and fingerprinting those stops a nonstop flip and
+  not a paced one, 2026-11-08.** Board task `9d44342d`, `main` at
+  `60db46c4`, git 2.39.5 under `env -i`. With filter `x` only behind
+  `includeIf "onbranch:uf/**"`, plain `add -A` ran it after `symbolic-ref
+  HEAD refs/heads/uf/x`, and after `.git/refs/heads/main` was rewritten as
+  `ref: refs/heads/uf/x` with HEAD left on main. With it behind
+  `gitdir:**/worktrees/w2`, `add -A` in worktree `w1` ran it once `w1/.git`
+  named `w2`'s git directory. git also followed a branch made a symbolic ref
+  through `main-worktree/HEAD`, `worktrees/w2/HEAD` and a per-worktree
+  `refs/worktree/x`. Through this app's compiled `git()` and `gitSync()`,
+  `gitFilterProbe.test.ts`'s three flip cases ran the plant at `60db46c4`
+  and were refused with the change. A writer looping `symbolic-ref` between
+  `uf/x` and `main` against 200 `git()` `add -A` calls: nonstop, 42, 42 and
+  47 driver runs at `60db46c4` and 0, 0 and 0 with the change (199 to 200
+  refused); 20 ms between flips, 7 and 7 against 5 and 3 (13 and 15
+  refused). The suite ran 53 of 54 on a built 2.56.0, the one failure the
+  merge-preview wording case that fails there at `60db46c4` too. Caveat: one
+  container, the paced runs within noise of each other.
+
 ## Not yet verified by hand
 
 - **Whether a work cycle can race this app's git on `.git/config` in
