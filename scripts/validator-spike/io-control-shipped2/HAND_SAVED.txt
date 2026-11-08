@@ -1,0 +1,1 @@
+Replies saved by hand, verbatim with the harness's indentation removed, because the judge subagent answered in chat instead of writing its file: 08 20 (2 of 3; 07 was written by the judge). io-control-promptmd: all 3 written by the judge.

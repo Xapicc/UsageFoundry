@@ -240,7 +240,10 @@ function sendViaFile(prompt, ioDir, name) {
 // --------------------------------------------------------------------- driver
 
 export async function validate(caseFile, options) {
-  const prompt = composePrompt(caseFile, options);
+  // `options.compose` swaps prompt.md for another composer (score.mjs --shipped
+  // passes the production `buildValidationPrompt`), so the same sender, parser
+  // and scoring read either string.
+  const prompt = options.compose ? options.compose(caseFile) : composePrompt(caseFile, options);
   const meta = {
     n: caseFile.n,
     runId: caseFile.runId,

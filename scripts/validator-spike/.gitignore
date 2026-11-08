@@ -3,3 +3,5 @@
 # corpus. The replies next to them are NOT derivable and are committed.
 io/*.request.md
 io-testimony/*.request.md
+# The same, for every later arm (io-history, io-shipped, the controls).
+io-*/*.request.md

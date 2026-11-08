@@ -142,6 +142,24 @@
   about 21%; not `spawnAssist`'s child; the shipped preamble was scored on
   these empty-diff inputs only, not on the spike's 40.
 
+- **The shipped judge preamble scored on the spike's 40 cases, 2026-11-08**,
+  `score.mjs --shipped` over production `buildValidationPrompt` from a build at
+  `4fd7c103`, the judge a Claude Code subagent on Sonnet 5.5 with no repository
+  access, one sample per case (`scripts/validator-spike/RESULT.md`,
+  `score-report-shipped.md`, `io-shipped/`). **32/37** on the held-out set
+  against `prompt.md`'s 34/37; false-finished **0 of 1** (0 of 2 all-in) as
+  before; false-not-finished 0 of 29 held-out as before; 5 of 7 labelled
+  `unjudgeable` answered so, as before. Agreement is two cases lower: cases 7 and
+  20, both with patch bodies dropped to fit, moved from `finished` to
+  `unjudgeable`, and case 8 (labelled `unjudgeable`) from `finished` to
+  `not-finished`. A control re-judging those three by this judge gave the same
+  answers under `prompt.md`, so the preamble is not shown to be the cause; case
+  20 answered `finished` on a second sample under the shipped preamble. Caveat:
+  not `spawnAssist`'s child under `plan` mode, and the subagent's tools could
+  not be restricted to the one file it was told to read; the older 34/37 was
+  Sonnet 4.5 so the two are not a clean A/B; `runs.task` stands in for the
+  board's title and brief; 16 of 40 replies were saved by hand from chat.
+
 ## Not yet verified by hand
 
 - **No model has called the board tools over stdio**; that needs a billed run.
@@ -153,9 +171,12 @@
   to non-operators, chat live view, Backups, sign-out, queue priority, Open PR.
 
 - **The external validator, end to end.** No verdict has come from the pinned
-  CLI via `spawnAssist`. It rests on a spike's 34 of 37, zero false-finished
-  (subagent transport, one sample per case, 40 runs judged against `runs.task`)
-  on a prompt since replaced; the shipped prompt has never been scored.
+  CLI via `spawnAssist`. It rests on the spike's 40 cases, 34 of 37 on
+  `prompt.md` and 32 of 37 on the shipped preamble, zero false-finished in both
+  (subagent transport, one sample per case, judged against `runs.task`); what
+  is unmeasured is the real CLI's answer under `plan` mode, a repeat of any case
+  to put a variance on those two, and a same-model `prompt.md`-versus-shipped
+  comparison over more than the three cases the control covered.
 
 - **`get_my_task` has never been called by a model.** What it was added to
   replace — a run told to read its brief in full digging the body out of
