@@ -1,7 +1,8 @@
 import { db } from "./db";
-import { diffAsText, runDiff, type RunDiff } from "./diff";
+import { diffAsText, repoPathFor, runDiff, type RunDiff } from "./diff";
 import { getSettings } from "./settings";
 import { getTask, updateTask, type Task } from "./tasks";
+import { alreadyDeliveredFor, type AlreadyDelivered } from "./validationHistory";
 import {
   emitRunEvent,
   getRun,
@@ -382,6 +383,53 @@ function validationPreamble(): string {
 }
 
 /**
+ * What the judge is told about commits the server found in the branch's history.
+ *
+ * Only ever appended to an **empty** branch diff, and only when the server
+ * found commits (`validationHistory.ts`), so every prompt that has none is
+ * byte-for-byte the one the preamble above was measured on. The framing says
+ * what the trailer proves and, as plainly, what it does not: a run holding two
+ * tasks stamps both ids on every commit, so a commit being listed is no
+ * evidence that it contains *this* task's deliverable, and a judge that took it
+ * for that would round "something was committed for this task" up to
+ * `finished`. Like the preamble it says nothing of what an answer causes.
+ */
+function historyEvidence(history: AlreadyDelivered): string {
+  const count = history.commits.length;
+  return [
+    "",
+    "## Commits already in this branch's history for this task",
+    "",
+    "The branch's own diff above is empty. That is what a run that did nothing",
+    "leaves, and it is also what a run leaves when the work reached the branch",
+    "some other way — through the target branch it was updated from, or because",
+    "the branch was started after the work landed.",
+    "",
+    `The server searched the history the branch starts from and found ${count}`,
+    `commit${count === 1 ? "" : "s"} carrying a trailer that names this task. The server writes that`,
+    "trailer after a run's process has ended, for a run its own records show was",
+    "started for this task; the run being judged did not make these commits. The",
+    "trailer says that and nothing more: a run holding two tasks stamps both on",
+    "every commit, so a commit being listed here is not evidence that it contains",
+    "this task's deliverable.",
+    "",
+    "Judge the task against these commits as you would against a diff. Every",
+    "deliverable the task names must be present in them; commits that cover only",
+    "part of the task, or a different task, leave the rest absent. If they cannot",
+    "settle it, the answer is **unjudgeable**.",
+    history.truncated
+      ? "The patches below were cut to fit. The file lists and the counts are complete."
+      : "",
+    "",
+    "<history>",
+    history.text,
+    "</history>",
+  ]
+    .filter((line, i, all) => line !== "" || all[i - 1] !== "")
+    .join("\n");
+}
+
+/**
  * The whole prompt for one validation.
  *
  * Pure, so the composition can be tested without a child and without a
@@ -401,6 +449,8 @@ export function buildValidationPrompt(o: {
   diffText: string;
   /** Set when the patch was cut to fit; the diffstat above it is still whole. */
   truncated: boolean;
+  /** Commits the server found in the history of a branch whose own diff is empty. */
+  history?: AlreadyDelivered | null;
 }): string {
   const { task, diff } = o;
 
@@ -454,6 +504,7 @@ export function buildValidationPrompt(o: {
     "<diff>",
     o.diffText || "(the diff is empty — nothing was committed to this branch)",
     "</diff>",
+    o.history ? historyEvidence(o.history) : "",
   ]
     .filter((part) => part !== "")
     .join("\n");
@@ -620,6 +671,33 @@ export async function completeTaskWithValidation(
 }
 
 /**
+ * The commits already in the branch's history that carry this task's trailer,
+ * for a branch whose own diff is empty, or null.
+ *
+ * Only an empty diff asks: with a diff to judge the question is already
+ * answered by what the run committed, and a task worked in two runs would show
+ * the judge the earlier run's half and the later one's as if one were the
+ * other's. `diff.head` is the sha the diff was read at, so the history is read
+ * from the same commit the empty diff was.
+ */
+async function deliveredBefore(
+  run: RunRow,
+  task: Task,
+  diff: RunDiff,
+): Promise<AlreadyDelivered | null> {
+  if (diff.kind !== "range" || diff.filesChanged !== 0 || !diff.head || !run.repo_root) return null;
+  const repoRoot = repoPathFor(run.repo_root);
+  if (!repoRoot) return null;
+  return alreadyDeliveredFor({
+    repoRoot,
+    head: diff.head,
+    taskId: task.id,
+    runId: run.id,
+    budgetBytes: VALIDATION_DIFF_BYTES,
+  });
+}
+
+/**
  * Read the branch and spawn the check, or say why the task was closed instead.
  *
  * The order here is the same order `startReview` takes and for its reasons: the
@@ -643,6 +721,9 @@ async function startCheck(
   try {
     const diff = await runDiff(runId);
     const refusal = diff.kind === "none" ? null : await assistRefusal();
+    // Read ahead of the stop check below, whose point is that nothing is
+    // awaited between it and the start.
+    const history = refusal === null ? await deliveredBefore(run, task, diff) : null;
 
     // After the last await and ahead of every close as well as the start: a
     // Stop that landed while those read has no child to reach, and either a
@@ -696,6 +777,7 @@ async function startCheck(
         diff,
         diffText: text,
         truncated,
+        history,
       }),
       counts: { files: diff.files.length, shown: diff.files.length, truncated },
       taskId: task.id,
@@ -732,6 +814,12 @@ async function startCheck(
       runId,
       `Checking “${task.title}” against this run's branch before closing it. The task stays open until that comes back.`,
     );
+    if (history) {
+      logRun(
+        runId,
+        `This branch's own diff is empty, so the check was also shown ${history.commits.length} commit(s) already in its history that carry “${task.title}”'s task id: ${history.commits.map((c) => c.sha.slice(0, 8)).join(", ")}.`,
+      );
+    }
 
     return { kind: "checking", task, reviewId: started.id };
   } finally {

@@ -42,6 +42,9 @@ export type Trailer = readonly [token: string, value: string];
 /** The trailer that marks a commit as stamped, and that `hasRunTrailer` reads. */
 export const RUN_TRAILER = "UF-Run";
 
+/** The trailer naming a board task a run was started for, one per task. */
+export const TASK_TRAILER = "UF-Task";
+
 /**
  * A model id as git can carry it on a trailer line: no whitespace, no control
  * characters. `[` and `]` are allowed because the CLI's own ids carry them
@@ -75,7 +78,7 @@ export function trailersFor(input: {
     throw new Error(`run id ${JSON.stringify(input.runId)} cannot be written as a trailer`);
   }
   const out: Trailer[] = [[RUN_TRAILER, input.runId]];
-  for (const id of input.taskIds) if (IDENTIFIER.test(id)) out.push(["UF-Task", id]);
+  for (const id of input.taskIds) if (IDENTIFIER.test(id)) out.push([TASK_TRAILER, id]);
   if (input.night !== null && NIGHT.test(input.night)) out.push(["UF-Night", input.night]);
   if (input.model !== null && MODEL_ID.test(input.model)) out.push(["Model", input.model]);
   return out;
