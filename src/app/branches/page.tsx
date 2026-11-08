@@ -12,6 +12,7 @@ import {
 } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { isQueueableBranch } from "@/lib/apiTypes";
 import type {
   BranchInventoryDTO,
   BranchSummaryDTO,
@@ -179,19 +180,6 @@ function StateBadge({ b }: { b: BranchSummaryDTO }) {
     </Badge>
   );
 }
-
-/**
- * Whether this branch can be put in the queue at all.
- *
- * Structural only, deliberately: whether it can be *landed* is decided at its
- * turn, from git, because the branches ahead of it change that answer. A run
- * that is still going is offered too — it may well have finished by the time
- * the queue reaches it, and if it has not, that row says so.
- */
-// An uncounted branch is offered: the queue asks git again at its turn, and
-// refuses there with a sentence naming why, where a missing checkbox says nothing.
-const queueable = (b: BranchSummaryDTO) =>
-  b.exists && !!b.target && !b.merged && !b.landedUnchanged && b.ahead !== 0;
 
 const ITEM_ACTIVE: MergeQueueItemDTO["status"][] = [
   "queued",
@@ -1521,7 +1509,7 @@ function BranchTable({
                     className="transition-colors duration-150 hover:bg-inset focus-within:bg-inset"
                   >
                     <Td className="align-top">
-                      {queueable(b) ? (
+                      {isQueueableBranch(b) ? (
                         // The negative margin buys a 32px hit target without
                         // changing what the cell occupies; below the breakpoint
                         // the app's own floor is 44px and the box grows to it,
