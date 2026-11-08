@@ -442,7 +442,7 @@ export function parseLsTreeSizes(raw: string): Map<string, number> {
  * rather than throwing — a repository that has since moved is an empty state,
  * not a server error.
  */
-function repoPathFor(dir: string): string | null {
+export function repoPathFor(dir: string): string | null {
   try {
     const resolved = resolveWorkspaceFolder(dir, describeFolder(dir).mountId);
     return resolved === dir ? resolved : null;
@@ -578,6 +578,47 @@ async function rangeDiff(run: RunRow): Promise<RunDiff> {
     deleted: entries.reduce((n, e) => n + (e.deleted ?? 0), 0),
     uncommitted: await uncommittedIn(run),
     caveat: null,
+  };
+}
+
+/**
+ * One commit's own change against its first parent, in the shape `diffAsText`
+ * renders, or null when any part of it cannot be read.
+ *
+ * For evidence about work that is already in a branch's history, so a null here
+ * is "no evidence" and never a verdict: the caller goes on as it did before the
+ * evidence existed. It takes the same flags and the same byte budget as a run's
+ * diff for the reason `DIFF_FLAGS` gives, and reads from the commit's sha, which
+ * no later commit moves.
+ */
+export async function wholeCommitDiff(repoRoot: string, sha: string): Promise<RunDiff | null> {
+  const parent = `${sha}^`;
+  const range = `${parent}..${sha}`;
+  const numstat = await git(repoRoot, ["diff", ...DIFF_FLAGS, "--numstat", "-z", range], {
+    maxBytes: MAX_DIFF_BYTES,
+  });
+  if (!numstat.ok) return null;
+  const entries = parseNumstat(numstat.stdout);
+  if (entries.length === 0) return null;
+
+  const nameStatus = await git(repoRoot, ["diff", ...DIFF_FLAGS, "--name-status", "-z", range]);
+  if (!nameStatus.ok) return null;
+  const contents = await filesWithPatches(
+    repoRoot,
+    range,
+    { from: parent, to: sha },
+    entries,
+    parseNameStatus(nameStatus.stdout),
+  );
+  return {
+    ...EMPTY,
+    kind: "range",
+    reason: null,
+    head: sha,
+    ...contents,
+    filesChanged: entries.length,
+    added: entries.reduce((n, e) => n + (e.added ?? 0), 0),
+    deleted: entries.reduce((n, e) => n + (e.deleted ?? 0), 0),
   };
 }
 
