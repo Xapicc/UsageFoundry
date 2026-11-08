@@ -3,7 +3,7 @@ import { runVerify, verifyCommandFor, type VerifyOutcome } from "./landGate";
 import { runTrailers, trailerFlags, trailerParagraph, type Trailer } from "./runTrailers";
 import { openPullRequest, planDelivery, type DeliveryRequest } from "./delivery";
 import path from "node:path";
-import { addWorktree, git, headBranchOf } from "./git";
+import { addWorktree, BLANKED_MERGE_DRIVER_NOTE, git, headBranchOf } from "./git";
 import { withRepoAdmin } from "./repoLock";
 import { checkoutWriter, claimCheckout, releaseCheckout } from "./checkoutClaim";
 import { db } from "./db";
@@ -362,6 +362,8 @@ const MAX_CONTENT_BYTES = 1_000_000;
  * Exit 0 is a clean merge, exit 1 means conflicts, anything else is an error —
  * including "unknown option" from a git older than 2.38, which is a real
  * possibility on a host-mounted toolchain and must not read as "no conflicts".
+ * The exception is a `stderr` carrying `git()`'s note that it blanked a merge
+ * driver: that is unknown whatever the status says.
  *
  * `-z` is what makes the conflict *types* readable. The plain output states them
  * only in prose — "CONFLICT (content): Merge conflict in f.txt" — and finding
@@ -385,6 +387,12 @@ export function parseMergeTree(
   code: number | null,
 ): MergePreview {
   if (code === 0) return { outcome: "clean" };
+  // Before the exit status is read: a driver this app blanked fails the merge
+  // with exit 128 on git 2.39.5 and with exit 1 and a conflict listing for the
+  // file on 2.56.0, so on the newer git the status alone reads this app's own
+  // refusal as a conflict the operator could resolve.
+  const blanked = stderr.split("\n").find((line) => line.includes(BLANKED_MERGE_DRIVER_NOTE));
+  if (blanked) return { outcome: "unknown", reason: `git could not preview the merge: ${blanked.trim()}` };
   if (code !== 1) {
     const detail = stderr.split("\n")[0] ?? "";
     return {

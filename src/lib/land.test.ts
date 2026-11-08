@@ -145,6 +145,39 @@ describe("parseMergeTree", () => {
     const preview = parseMergeTree("", "fatal: not a valid object name", 128);
     assert.equal(preview.outcome, "unknown");
   });
+
+  it("reads a merge this app's blanked driver failed as unknown whatever the exit status", () => {
+    // Captured from git 2.56.0 through `git()`: the failed driver exits 1 and
+    // writes a conflict listing for the file it was merging, where 2.39.5 exits
+    // 128 and writes nothing. Read by status alone this is a conflict the
+    // operator is shown a file list for, and the sentence saying this app
+    // refused to run the driver is never seen.
+    const stdout = z(
+      "7780fcea3833ef82eae20768d25e8f2b6f721561",
+      "100644 940532533944dd159bfd11136fac2ee35872de38 1\tf.txt",
+      "100644 c2f2e5e7ad9148aba226ae149f9bf6eeba4f2a8c 2\tf.txt",
+      "100644 6fe8acc87876b59a7c33d8f122933869f19f39c4 3\tf.txt",
+      "",
+      "1", "f.txt", "CONFLICT (contents)", "CONFLICT (content): Merge conflict in f.txt\n",
+      "",
+    );
+    const stderr =
+      "error: cannot run : No such file or directory (this app does not run a repository's merge drivers, " +
+      "so it blanked merge.evil.driver and git could not merge a file that uses it)";
+
+    for (const code of [1, 128]) {
+      const preview = parseMergeTree(stdout, stderr, code);
+      assert.equal(preview.outcome, "unknown", `exit ${code}`);
+      const reason = preview.outcome === "unknown" ? preview.reason : "";
+      assert.match(reason, /merge\.evil\.driver/);
+      assert.match(reason, /does not run a repository's merge drivers/);
+    }
+  });
+
+  it("keeps reading exit 1 as a conflict when the driver was not blanked", () => {
+    const stdout = z("<tree-oid>", "100644 aaa 1\tf.txt", "", "1", "f.txt", "CONFLICT (contents)", "CONFLICT (content): Merge conflict in f.txt\n", "");
+    assert.equal(parseMergeTree(stdout, "", 1).outcome, "conflict");
+  });
 });
 
 /* ------------------------------------------------------------------ */
