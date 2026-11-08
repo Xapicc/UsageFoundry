@@ -3,7 +3,10 @@
 import { useEffect, useState } from "react";
 import type {
   HoldoutArmDTO,
+  HoldoutInterferenceDTO,
   HoldoutLeftOutReason,
+  HoldoutLookDTO,
+  HoldoutLookVerdict,
   HoldoutReadbackDTO,
   HoldoutTargetDTO,
 } from "@/lib/apiTypes";
@@ -27,6 +30,9 @@ import { TBody, THead, Table, Td, Th, Tr } from "@/components/ui/Table";
  *   - **No interval is a verdict before its sample size.** Each section says
  *     how many each arm needs and how many the smaller one has.
  *   - **Spend has one source.** It is named, and nothing else is added to it.
+ *   - **Reloading is not a look.** The primary is called only at two looks, each
+ *     fixed at the runs there were when the smaller arm reached its size, so the
+ *     card says what a figure to date is: descriptive.
  *
  * Loaded once and never polled, `RepoReadingCards`' choice: the figures move
  * when a run ends and the export that feeds them runs every six hours.
@@ -100,7 +106,7 @@ const LEFT_OUT_LABEL: Record<HoldoutLeftOutReason, string> = {
 };
 
 function Readback({ data }: { data: HoldoutReadbackDTO }) {
-  const { population, compliance, displacement, outcome } = data;
+  const { population, compliance, displacement, outcome, interference } = data;
   const read = population.read.pointer + population.read.holdout;
   const leftOut = population.leftOut.filter((l) => l.pointer + l.holdout > 0);
   return (
@@ -210,6 +216,14 @@ function Readback({ data }: { data: HoldoutReadbackDTO }) {
         </p>
       </Subsection>
 
+      <Subsection title="Primary: files read in the run, by repository">
+        <Primary primary={displacement.primary} />
+      </Subsection>
+
+      <Subsection title="Interference: does the held-out arm move with the runs around it">
+        <Interference rows={interference} />
+      </Subsection>
+
       <Subsection title="Outcome: did the run end differently">
         <Grid
           caption="Per run, by arm"
@@ -276,10 +290,152 @@ function Readback({ data }: { data: HoldoutReadbackDTO }) {
       </Subsection>
 
       <p className="mt-3 max-w-[72ch] text-xs text-ink-muted">
-        Intervals are approximate 95% and unadjusted. Nothing here is a limit.
+        Intervals are approximate 95%; only the primary is stratified by repository.
+        Nothing here is a limit.
       </p>
     </Card>
   );
+}
+
+const VERDICT_TEXT: Record<HoldoutLookVerdict, string> = {
+  "before-interim": "Nothing is called before the interim look.",
+  continue: "The interim boundary was not crossed. The final look decides; figures before it are descriptive.",
+  "difference-at-interim":
+    "The interim boundary was crossed: the arms differ. The test ends there, and later figures are descriptive.",
+  "difference-at-final": "The final boundary was crossed: the arms differ.",
+  "none-at-final": "Neither boundary was crossed: no difference was found at the planned size.",
+};
+
+function Primary({ primary }: { primary: HoldoutReadbackDTO["displacement"]["primary"] }) {
+  const { estimate, permutation, looks, verdict } = primary;
+  const setAside = estimate.setAside;
+  return (
+    <>
+      <p className="max-w-[72ch] text-sm text-ink">
+        To date, pointer minus held out (descriptive):{" "}
+        {interval(estimate.difference, estimate.low, estimate.high, FILES)}
+      </p>
+      <p className="max-w-[72ch] text-sm text-ink">
+        Permutation p-value:{" "}
+        {permutation.p === null
+          ? "no repository with two runs in each arm"
+          : `${pText(permutation.p)}, over ${permutation.assignments.toLocaleString()} ${permutation.exact ? "arm assignments, all of them" : "re-dealt arm assignments"}`}
+      </p>
+      <ListView box="capped" className="mt-2">
+        <Table stack>
+          <caption className="sr-only">The two looks, each at the runs there were when the smaller arm reached its size</caption>
+          <THead>
+            <tr>
+              <Th className={STICKY_HEAD_FLAT}>Look</Th>
+              <Th num className={STICKY_HEAD_FLAT}>
+                Each arm needs
+              </Th>
+              <Th num className={STICKY_HEAD_FLAT}>
+                z
+              </Th>
+              <Th num className={STICKY_HEAD_FLAT}>
+                Boundary
+              </Th>
+              <Th className={STICKY_HEAD_FLAT}>Result</Th>
+            </tr>
+          </THead>
+          <TBody>
+            {looks.map((look) => (
+              <Tr key={look.stage}>
+                <Td>{look.stage === "interim" ? "Interim" : "Final"}</Td>
+                <Td num label="Each arm needs">
+                  {look.perArm.toLocaleString()}
+                </Td>
+                <Td num label="z">
+                  {look.z === null ? "—" : signed(look.z, Math.abs(look.z).toFixed(2))}
+                </Td>
+                <Td num label="Boundary">
+                  ±{look.boundary}
+                </Td>
+                <Td label="Result">{lookResult(look)}</Td>
+              </Tr>
+            ))}
+          </TBody>
+        </Table>
+      </ListView>
+      <p className="mt-2 max-w-[72ch] text-sm text-ink">{VERDICT_TEXT[verdict]}</p>
+      <p className="mt-1 max-w-[72ch] text-xs text-ink-muted">
+        A look is the runs there were when the smaller arm first held its size, so
+        reloading this card is not another look. Each repository is weighted by its
+        runs.
+        {setAside > 0 &&
+          ` ${setAside} runs are left out of it because one arm held fewer than two runs in their repository.`}
+      </p>
+    </>
+  );
+}
+
+function lookResult(look: HoldoutLookDTO): string {
+  if (look.crossed === null) {
+    return `Waiting: the smaller arm holds ${Math.min(look.runs.pointer, look.runs.holdout).toLocaleString()}`;
+  }
+  const crossed = look.crossed ? "Crossed" : "Not crossed";
+  return `${crossed}, at ${look.runs.pointer.toLocaleString()} pointer and ${look.runs.holdout.toLocaleString()} held-out runs`;
+}
+
+const EXPOSURE_LABEL: Record<HoldoutInterferenceDTO["exposure"], string> = {
+  preceding: "The hundred runs before it",
+  overlapping: "Runs alive alongside it",
+  live: "Runs live when it started",
+};
+
+function Interference({ rows }: { rows: HoldoutInterferenceDTO[] }) {
+  const spread = rows.find((r) => r.exposure === "preceding")?.exposureSd ?? null;
+  return (
+    <>
+      <ListView box="capped">
+        <Table stack>
+          <caption className="sr-only">Held-out runs' reading against the treated share of the runs around them</caption>
+          <THead>
+            <tr>
+              <Th className={STICKY_HEAD_FLAT}>Runs around it</Th>
+              <Th num className={STICKY_HEAD_FLAT}>
+                Held-out runs
+              </Th>
+              <Th className={STICKY_HEAD_FLAT}>Files per 10 points more treated</Th>
+              <Th num className={STICKY_HEAD_FLAT}>
+                p
+              </Th>
+            </tr>
+          </THead>
+          <TBody>
+            {rows.map((row) => (
+              <Tr key={row.exposure}>
+                <Td>{EXPOSURE_LABEL[row.exposure]}</Td>
+                <Td num label="Held-out runs">
+                  {row.runs.toLocaleString()}
+                </Td>
+                <Td label="Files per 10 points more treated">
+                  {row.slope === null || row.low === null || row.high === null
+                    ? "no exposure to compare"
+                    : interval(row.slope / 10, row.low / 10, row.high / 10, FILES)}
+                </Td>
+                <Td num label="p">
+                  {row.p === null ? "—" : pText(row.p)}
+                </Td>
+              </Tr>
+            ))}
+          </TBody>
+        </Table>
+      </ListView>
+      <p className="mt-1 max-w-[72ch] text-xs text-ink-muted">
+        A slope away from zero would mean something a pointer run left behind reached a
+        run that never saw the list.
+        {spread !== null &&
+          ` The treated share of the hundred before a run varies by only ${(spread * 100).toFixed(1)} points within a repository, so a wide interval is no evidence of no leak.`}{" "}
+        Re-dealt {rows[0]?.draws.toLocaleString() ?? 0} times by the real assignment rule.
+      </p>
+    </>
+  );
+}
+
+function pText(p: number): string {
+  return p < 0.001 ? "< 0.001" : p.toFixed(3);
 }
 
 function Grid({
