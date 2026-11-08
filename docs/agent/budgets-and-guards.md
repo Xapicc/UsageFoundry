@@ -41,4 +41,4 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - Three rules follow from the column rather than from the arithmetic, and each fails silently.
 - One guard can now be extended, by a bounded count, and nothing else about the terminus rule moves.
 - A number a person typed that is not a number is refused where there is somebody to tell, and "off" is only `null`, `""`, `0` and absent.
-- Three doors ask `windowGuardRefusal` — `POST /api/runs`, the reopen route and, per run, the fleet pick-up — and workflow members, chat approvals, the dreaming pass and the restart notice's pick-up do not.
+- Four doors ask `windowGuardRefusal` — `POST /api/runs`, the reopen route and, per run, the fleet pick-up and the restart notice's — and workflow members, chat approvals and the dreaming pass do not.

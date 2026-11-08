@@ -57,6 +57,7 @@ Its cases are in `orchestrator.test.ts`, `shutdown.test.ts`, `stackWait.test.ts`
 |---|---|
 | `fleet.test.ts` | [harnesses], [cycle] |
 | `restartClosedView.test.ts` |  |
+| `src/app/api/runs/restarted/route.test.ts` |  |
 
 ## [Shutdown](testing/shutdown.md)
 

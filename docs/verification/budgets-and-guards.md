@@ -78,6 +78,28 @@
   was empty because the scratch home had no transcripts and no provider
   percentage, not because a real endpoint was down.
 
+- **A fraction guard in a restart-closed run's stored budget, picked up through
+  `POST /api/runs/restarted`, spawned its cycle unread; it is now refused,
+  2026-11-08.** The same scratch drive as the fleet entry above, not kept: a
+  throwaway `DATA_DIR`, `child_process.spawn` stubbed for `CLAUDE_BIN`, the
+  fleet unpaused, one `stopped` row with `restart_closed = 1` and a blob of
+  `{ maxIterations: 1, maxWeeklyFraction: 0.5 }`, no weekly ceiling
+  (`currentSnapshot().weekly.fraction` null), the compiled route's `POST` called
+  with no body. On the tree before the change: 200, `{ reopened: 1, refused: [] }`,
+  one spawn, a `budget` event with `code: "no_ceiling"` and `enforceable: false`,
+  the run `completed` and `restart_closed` cleared. After: 200,
+  `{ reopened: 0, refused: [{ id, reason }] }` with the weekly sentence, no
+  spawn, the run `stopped` with `restart_closed` still 1. The kept test,
+  `src/app/api/runs/restarted/route.test.ts`, failed 4 of its 5 cases on the old
+  door (the fifth, a window with a reading, is there to stop the refusal being
+  widened) and failed only the Codex case with the provider mapping forced to
+  `claude`. Caveat: as the fleet entry's — a stub stands in for the CLI, so this
+  measures the loop's decision to spawn and not a billed cycle, and the reading
+  was empty because the scratch home had no transcripts and no provider
+  percentage, not because a real endpoint was down. Not driven: the notice's
+  rendering of a refusal in a browser; `restartClosedView.test.ts` pins its text
+  handling, and the sentence is the one the reopen route already shows.
+
 ## Not yet verified by hand
 
 - **The process budget has never refused a real child in a browser, nor
