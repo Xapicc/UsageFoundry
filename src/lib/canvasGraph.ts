@@ -804,6 +804,8 @@ export interface IsolationKnowledge {
 }
 
 type IsolationBlock = { id: string; kind: WorkflowNodeKind; templateId?: string };
+/** A block the put-in gesture names in the sentence it refuses with. */
+type NamedBlock = IsolationBlock & { name: string };
 
 /**
  * Whether a run or orchestrator block works in a checkout of its own. The
@@ -1411,25 +1413,73 @@ export function resolveRepeat(
  *     because there is no merge block yet to land it through
  *
  * Returns null when the gesture cannot mean anything: the block is the loop,
- * another loop, or already a member.
+ * another loop, or already a member — and when `memberRefusal` has something
+ * to say, because the only place left for the block would make Save refuse a
+ * link the operator did not touch.
  */
 export function linksWithMember(
   loopId: string,
   blockId: string,
-  blocks: readonly IsolationBlock[],
+  blocks: readonly NamedBlock[],
   links: readonly LinkDraft[],
   known?: IsolationKnowledge,
 ): LinkDraft[] | null {
+  const gesture = resolveMember(loopId, blockId, blocks, links, known);
+  return gesture !== null && gesture.because === null ? gesture.links : null;
+}
+
+/**
+ * Why a block cannot be put inside a frame where the gesture would put it, or
+ * null.
+ *
+ * Asked at the press, before `linksWithMember` writes anything, for
+ * `linkRefusal`'s reason: the other way to say it is Save refusing a graph, and
+ * the sentence it earns names a link the operator never drew. The one case is
+ * a block that works in the folder put into a landing section that has no tail
+ * yet. Its only place is after the last merge block, which makes it the tail,
+ * and the server refuses an *either way* link out of a merge that reaches a
+ * tail (`unsafeLink` in `loopBodyRefusal`) — so a section that saved a moment
+ * ago would stop saving on a link the gesture never touched. Moving the block
+ * elsewhere is not an answer: beside the section it leaves the merge no branch
+ * to land, and in front of a merge it edits the folder before the merge lands.
+ * Changing the link instead would swap a condition the operator chose for
+ * another in silence, so the gesture says so and leaves both to them.
+ *
+ * Null for a block that is already inside the frame, which the same press takes
+ * out again.
+ */
+export function memberRefusal(
+  loopId: string,
+  blockId: string,
+  blocks: readonly NamedBlock[],
+  links: readonly LinkDraft[],
+  known?: IsolationKnowledge,
+): string | null {
+  return resolveMember(loopId, blockId, blocks, links, known)?.because ?? null;
+}
+
+/**
+ * What `linksWithMember` and `memberRefusal` both answer from, so the refusal
+ * and the null cannot disagree about when they apply.
+ */
+function resolveMember(
+  loopId: string,
+  blockId: string,
+  blocks: readonly NamedBlock[],
+  links: readonly LinkDraft[],
+  known: IsolationKnowledge | undefined,
+): { links: LinkDraft[]; because: string | null } | null {
   const block = blocks.find((b) => b.id === blockId);
   if (!block || block.kind === "loop" || blockId === loopId) return null;
   const members = sectionOf(loopId, blocks, links);
   if (members.includes(blockId)) return null;
+  const placed = (written: LinkDraft[]) => ({ links: written, because: null });
 
   if (members.length === 0) {
-    return [
+    return placed([
       ...links.filter((l) => !(l.from === loopId && l.edge === "repeats")),
       { from: loopId, to: blockId, edge: "repeats", continueBranch: false },
-    ];
+    ]);
   }
 
   const entryId = members[0];
@@ -1451,28 +1501,114 @@ export function linksWithMember(
       // Beside the section it would leave the merge block no branch of its own
       // to land, which the server refuses by name.
       const after = shape.tail.length > 0 ? shape.tail[shape.tail.length - 1] : landers[0];
-      return [...links, sectionLink(after, blockId, links, blocks, known)];
+      const written = [...links, sectionLink(after, blockId, links, blocks, known)];
+      return {
+        links: written,
+        because: eitherWayRefusal(
+          loopId,
+          blockId,
+          after,
+          { members, blocks, links, written, known },
+        ),
+      };
     }
     if (landers.includes(entryId)) {
-      return [
+      return placed([
         ...links.filter((l) => !(l.from === loopId && l.edge === "repeats")),
         { from: loopId, to: blockId, edge: "repeats", continueBranch: false },
         sectionLink(blockId, entryId, links, blocks, known),
-      ];
+      ]);
     }
     const withEntry = [...links, sectionLink(entryId, blockId, links, blocks, known)];
-    return landers.reduce(
-      (written, lander) => [
-        ...written,
-        sectionLink(blockId, lander, written, blocks, known),
-      ],
-      withEntry,
+    return placed(
+      landers.reduce(
+        (written, lander) => [
+          ...written,
+          sectionLink(blockId, lander, written, blocks, known),
+        ],
+        withEntry,
+      ),
     );
   }
-  return [
+  return placed([
     ...links,
     sectionLink(members[members.length - 1], blockId, links, blocks, known),
-  ];
+  ]);
+}
+
+/**
+ * The either-way links out of a merge block that lead into the section's
+ * in-folder tail, or to a block that reaches it — the client's copy of
+ * `unsafeLink` in `loopBodyRefusal`, which says why the condition matters. Any
+ * path and not only a direct link, for the server's reason: a gate or a second
+ * merge in between is released by an either-way link just the same.
+ */
+function eitherWayIntoTail(
+  memberIds: readonly string[],
+  blocks: readonly IsolationBlock[],
+  links: readonly LinkDraft[],
+  known: IsolationKnowledge | undefined,
+): LinkDraft[] {
+  const tail = sectionTail(memberIds, blocks, links, known);
+  if (tail.length === 0) return [];
+  const inside = new Set(memberIds);
+  const within = links.filter(
+    (l) => l.edge !== "repeats" && inside.has(l.from) && inside.has(l.to),
+  );
+  const reachesTail = new Set(tail);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const l of within) {
+      if (reachesTail.has(l.to) && !reachesTail.has(l.from)) {
+        reachesTail.add(l.from);
+        grew = true;
+      }
+    }
+  }
+  return within.filter(
+    (l) =>
+      l.edge === "on-finish" &&
+      reachesTail.has(l.to) &&
+      blocks.find((b) => b.id === l.from)?.kind === "merge",
+  );
+}
+
+/**
+ * The sentence for a block that works in the folder, written after `after`, if
+ * that makes an either-way link out of a merge reach a tail it did not reach
+ * before. A link that already did is not the gesture's doing: the section was
+ * refused for it before the block went in, and is still.
+ */
+function eitherWayRefusal(
+  loopId: string,
+  blockId: string,
+  after: string,
+  gesture: {
+    members: readonly string[];
+    blocks: readonly NamedBlock[];
+    links: readonly LinkDraft[];
+    written: readonly LinkDraft[];
+    known: IsolationKnowledge | undefined;
+  },
+): string | null {
+  const { members, blocks, links, written, known } = gesture;
+  const already = eitherWayIntoTail(members, blocks, links, known);
+  const fresh = eitherWayIntoTail(
+    sectionOf(loopId, blocks, written),
+    blocks,
+    written,
+    known,
+  ).find((l) => !already.some((a) => a.from === l.from && a.to === l.to));
+  if (!fresh) return null;
+  const named = (id: string) => `“${blockLabel(blocks.find((b) => b.id === id))}”`;
+  return (
+    `${named(blockId)} works in the folder, so it can only go after ${named(after)}, ` +
+    `as the last block of the section. But ${named(fresh.from)} leads to ` +
+    `${named(fresh.to)} whether or not it completed, and a merge that failed can ` +
+    `leave the folder part-way through the merge for ${named(blockId)} to edit. ` +
+    `Set the link from ${named(fresh.from)} to ${named(fresh.to)} to start only ` +
+    `if ${named(fresh.from)} completes, then put ${named(blockId)} in.`
+  );
 }
 
 /**
