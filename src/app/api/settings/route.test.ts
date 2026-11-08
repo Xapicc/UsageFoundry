@@ -440,6 +440,52 @@ test("PUT /api/settings refuses a chat guard set whose budget is not an object",
 });
 
 /**
+ * The same budget as `POST /api/runs` takes, and every chat proposal without a
+ * template inherits it. `normalizePolicy` reads "5O", "$5" and -5 as no limit and
+ * `true` as 1, so a typo here answered 200 and saved a default under which every
+ * approved run has no spending limit. Blank, null and 0 are how the form says off.
+ */
+test("PUT /api/settings refuses a chat guard budget number that is not a number", async () => {
+  const { PUT } = await import("./route");
+  const { DEFAULTS } = await import("../../../lib/settings");
+  const before = (await read()).chatDefaultGuards;
+  const put = (budget: Record<string, unknown>) =>
+    PUT(
+      new Request("http://localhost/api/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          chatDefaultGuards: { ...DEFAULTS.chatDefaultGuards, budget: { maxIterations: 1, ...budget } },
+        }),
+      }),
+    );
+
+  for (const sent of ["5O", "$5", -5, true]) {
+    const res = await put({ maxRunCostUSD: sent });
+    const body = (await res.json()) as { error?: string };
+    const reason = `${JSON.stringify(sent)}: ${res.status} ${body.error ?? "(no message)"}`;
+    assert.equal(res.status, 400, reason);
+    assert.ok(
+      String(body.error).startsWith("chatDefaultGuards.budget.maxRunCostUSD must be a ") &&
+        String(body.error).endsWith(`; got ${JSON.stringify(sent)}.`),
+      reason,
+    );
+    assert.deepEqual(
+      (await read()).chatDefaultGuards,
+      before,
+      `${reason}: a refused guard set was stored anyway`,
+    );
+  }
+
+  const off = await put({ maxRunCostUSD: 0, maxRunTokens: "", maxRunCostFactor: null });
+  assert.equal(off.status, 200, "a switched-off limit was refused");
+  const stored = (await read()).chatDefaultGuards.budget;
+  assert.equal(stored.maxRunCostUSD, null);
+  assert.equal(stored.maxRunTokens, null);
+  assert.equal(stored.maxRunCostFactor, null);
+});
+
+/**
  * What the settings page folds on.
  *
  * A fold whose contents differ from their defaults opens by default, and that
