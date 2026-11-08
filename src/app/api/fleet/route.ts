@@ -7,7 +7,8 @@ import {
   setFleetPaused,
   stopFleet,
 } from "../../../lib/fleet";
-import { readJsonObject } from "../../../lib/http";
+import { ENFORCEMENT_MODES, policyNumberRefusal } from "../../../lib/budget";
+import { optionalObjectField, readJsonObject } from "../../../lib/http";
 import { auditMutation, recordDurableMutation } from "../../../lib/requestLog";
 
 export const runtime = "nodejs";
@@ -87,11 +88,15 @@ async function postHandler(req: Request) {
         { status: 400 },
       );
     }
+    const budgetField = optionalObjectField(body, "budget");
+    if (!budgetField.ok) {
+      return NextResponse.json({ error: budgetField.error }, { status: 400 });
+    }
+    const rawBudget = budgetField.value ?? {};
     // Checked here because `reopenFleet` adds it to each run's own count, and
     // a zero or a word there would come back as twenty-five refusals telling
     // the operator to raise a limit they never typed.
-    const more = (body.budget as Record<string, unknown> | null | undefined)
-      ?.moreIterations;
+    const more = rawBudget.moreIterations;
     if (
       more !== undefined &&
       more !== null &&
@@ -104,7 +109,29 @@ async function postHandler(req: Request) {
         { status: 400 },
       );
     }
-    const report = reopenFleet(ids, body.budget);
+    // Narrowed rather than trusted, for the reason given in `POST /api/runs`:
+    // `reopenFleet` spreads the wire over each stored blob, and `normalizePolicy`
+    // reads an unknown mode as the default, so a typo here would swap every
+    // picked-up run's chosen enforcement for `between-cycles`.
+    if (rawBudget.enforcement !== undefined && rawBudget.enforcement !== null) {
+      const candidate = String(rawBudget.enforcement);
+      if (!(ENFORCEMENT_MODES as readonly string[]).includes(candidate)) {
+        return NextResponse.json(
+          { error: `Unknown enforcement mode: ${candidate}` },
+          { status: 400 },
+        );
+      }
+    }
+    // Before the fold in `reopenFleet`, for the reason given in `POST
+    // /api/runs/[id]/reopen`: "5O", "$5" and -5 would put every run in the batch
+    // back with no spending limit and answer 200 — once for the whole selection
+    // rather than for one run. `moreIterations` is not one of the fields this
+    // reads; the check above is its own.
+    const numberRefusal = policyNumberRefusal(rawBudget);
+    if (numberRefusal) {
+      return NextResponse.json({ error: numberRefusal }, { status: 400 });
+    }
+    const report = reopenFleet(ids, rawBudget);
     // A batch where every id was refused is a 400 for the same reason an empty
     // list is: a 200 with nothing started is indistinguishable from a batch that
     // worked, and the page clears its selection on `res.ok`.
