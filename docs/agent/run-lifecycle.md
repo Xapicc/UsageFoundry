@@ -11,6 +11,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 ## [Origin, queue order and the request log](run-lifecycle/origin-queue-and-request-log.md)
 
 - A run records the gate it came through, and a pick-up is not that gate.
+- `runs.origin` has been rewritten exactly once, and `migrate()` in `db.ts` is the only place that does it.
 - What the queue is allowed to consider besides age.
 - Every mutating request leaves a line, and the line is a shape rather than a dump.
 
@@ -18,6 +19,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 
 - There is one install-wide stop, one install-wide hold, and neither is a new way for a run to end.
 - The hold is a settings row of its own, and nine separate call sites read it.
+- The sheet's spending field is left off the wire when it is blank, because `null` there is an answer, not an absence.
 - An orchestrator block's deciding turn is held at its claim, not refused at its emission.
 - A review block is held at its claim and at each review's door, and a merge block only at its conflict resolution.
 - A control that acts on a set needs a per-run way to say no, and `runs.set_aside_at` is it.
@@ -45,6 +47,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 
 - A Codex run's wall is read in Codex's words and waited out to Codex's reset.
 - A content refusal is its own ending, with what to change in it.
+- A notice on a turn that went on to complete is not a refusal.
 
 ## [Waiting for a stack](run-lifecycle/waiting-for-stack.md)
 
@@ -103,6 +106,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - The arm is `inHoldout(id)` of the run's own id, or of its chain, and `inHoldout` must never change.
 - Every session-less cycle the pointer considered records `priorReads: { arm, paths, files, basis, treatment }` on its `iteration` event, in both arms.
 - The holdout is read back from the export tables, as three questions that share no figure (2026-11-08).
+- The plan's primary, interference check and two looks are computed beside those, by `holdoutInference.ts` (2026-11-08).
 - There is no setting.
 
 ## [The vault pointer and its holdout](run-lifecycle/vault-pointer.md)
@@ -156,7 +160,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 ## [`--autocompact` is not emitted, and compaction notices](run-lifecycle/autocompact-and-compaction.md)
 
 - `--autocompact` is not emitted, and nothing replaced it: a cycle's context is bounded only by the model's window.
-- What dropping the flag gave up is measured, and it is the strongest measurement in this repository.
+- What the removal gave up is measured, and it is the strongest measurement in this repository.
 - Whether to restore the flag is an open decision, not a settled one.
 - When a compaction happens the run says what it took, and it says it from the vendor's table rather than from anything measured here.
 
