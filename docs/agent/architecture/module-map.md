@@ -36,28 +36,12 @@ toolComposition.ts
                 it reconciles to itself and never to a window total, and its type
                 is an object of rows so nothing written for the five compiles
                 against it
-intakeFilter.ts what winnow's intake filter kept off the wire, read from its own
-                ledger at /var/lib/winnow/filter.jsonl — the one file here
-                that no part of this app writes. A counterfactual, never a
-                fourth cost source: the meters are priced from usage frames and
-                a usage frame reports the request the filter had already
-                rewritten, so this money is already absent from every figure
-                beside it. The filter is stateless and re-drops the same result
-                on every later request still carrying it, so a ledger line is a
-                *request* and not a removal — de-duplicating on tool_use_id, or
-                on (session, tool, rule, bytes) for lines written before winnow
-                carried one, is what separates 14 results from 334 and is the
-                whole of why this is a module rather than a SUM. It joins
-                request_id to UsageEntry.requestId for the clock, the model and
-                the turns that followed, so it is bounded by the transcript
-                horizon exactly as the prune total is, and it is read behind a
-                minute-long TTL with single-flight because the dashboard polls
-                every ten seconds and the ledger grows with every request the
-                fleet makes. That join is also what windows it: session and
-                weekly are three nets off one pass, sliced by resultsSince on
-                the anchor turn's instant, and a result that joined to nothing
-                is left out of both rather than guessed into one — so the two
-                window figures are a floor by much more than the total is
+contextSamples.ts
+                how full a live run's context is, sampled off its own transcript
+                (or a Codex rollout) and kept as a series for the run page's
+                chart. It measures and records and nothing acts on it: no
+                interrupt, no cut. Its two bases, api and transcript, are
+                different currencies and a series never mixes them silently
 agents.ts       saved agents — form input, never a run: the role a run itself
                 takes, carried onto a spawn by sessionAgentArgs as an --agents
                 definition *and* an --agent selection, built on the one encoder

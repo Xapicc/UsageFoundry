@@ -151,48 +151,19 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - One park notifies, and it is the one only a person can end.
 - A workflow stopped at a gate notifies too, through a function that is not the run-event sink, and it carries the same six fields.
 
-## [What replaced `--autocompact`, and compaction notices](run-lifecycle/autocompact-and-compaction.md)
+## [`--autocompact` is not emitted, and compaction notices](run-lifecycle/autocompact-and-compaction.md)
 
-- `--autocompact` is gone, and `contextPruning.ts` is what replaced it.
-- What the removal gave up is measured, and it is the strongest measurement in this repository.
-- The two mechanisms are not the same operation, which is the case for the swap.
-- Never run both.
-- Every failure on this path is a log line and nothing else.
+- `--autocompact` is not emitted, and nothing replaced it: a cycle's context is bounded only by the model's window.
+- What dropping the flag gave up is measured, and it is the strongest measurement in this repository.
+- Whether to restore the flag is an open decision, not a settled one.
 - When a compaction happens the run says what it took, and it says it from the vendor's table rather than from anything measured here.
-
-## [The cycle-boundary prune](run-lifecycle/boundary-prune.md)
-
-- A prune happens at two moments and only one of them is free.
-- Two engines do the cutting, and which one is configured never labels a figure.
-- A prune answers two questions and one subtraction cannot answer both.
-- Tokens, never bytes, and the number is computed here rather than read from the tool.
-- Every boundary writes down how it ended, and that is what makes an empty section honest.
-- `PAYBACK_HORIZON_TURNS` and `CEILING_PAYBACK_HORIZON_TURNS` are one policy in two arithmetics, and sharing a number got it wrong.
-- `paybackTurns` takes the suffix *before* the cut.
-- `gentle` is not offered.
-- Pruning and `startsFresh` are independent switches, and the one place they touch is a correction.
-- A Codex run has no boundary to prune, and the whole boundary is skipped rather than failed.
-
-## [The live context ceiling](run-lifecycle/context-ceiling.md)
-
-- The ceiling asks the engine that would do the cutting, and asking the other one silenced the feature for two days.
-- A `treat` dry run is read in bytes and converted as a share, never through `BYTES_PER_TOKEN`.
-- The ceiling has its own watch map, not `liveGuards`.
-- The ceiling's growth mark dies with the conversation it measured.
-- A `prune` interrupt is the one kind that does not end the run
 
 ## [Context samples and the tick's cadence](run-lifecycle/context-samples.md)
 
-- `prunerState()` is shipped unconditionally, and `observePlan` is gated.
-- The tick's reading is written down, and the one thing it is not gated on is pruning.
+- The tick's reading is written down, and nothing acts on it.
 - When the number last moved and when it was last looked at are two facts, and the panel needs both.
 - The read's cadence came off the budget's.
-- A Codex run's samples come off its session rollout, on the same basis, and are drawn against its window rather than a ceiling.
-
-## [Context composition](run-lifecycle/context-composition.md)
-
-- The tick reads what the window is *made of* as well as how full it is, and the two are not one measurement.
-- Winnow's window and this app's are the same measure from different anchors, and nothing may subtract one from the other.
+- A Codex run's samples come off its session rollout, on the same basis, and are drawn against its window.
 
 ## [A cycle's commits are stamped with the run's trailers](isolation-and-landing/commit-trailers.md)
 

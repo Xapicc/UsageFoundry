@@ -261,10 +261,9 @@
 
 ## Not yet verified by hand
 
-- **The pins in a booted container with a real login and winnow on.** The
+- **The pins in a booted container with a real login.** The
   measurements above used a fake API key and a scratch credentials file. They
-  were never run as root with the uid drop or with winnow at
-  `127.0.0.1:8789`. Settle: in a checkout a cycle will work in, commit
+  were never run as root with the uid drop. Settle: in a checkout a cycle will work in, commit
   `.claude/settings.json` with `{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:9"}}`
   and start a one-cycle run. A cycle that completes means the pin holds there;
   one that fails connecting to port 9 means it does not. Also unrun: a cycle

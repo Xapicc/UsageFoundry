@@ -77,6 +77,14 @@
   234, 362), `spawnSync` via `spawn_sync.cc` (l.516, 866, 881). Caveat: a
   refused `setgroups`, e.g. under `setgroups` = `deny`, keeps the groups.
 
+- **`CLAUDE_CODE_HARBOR_KITE=0` still removes `ListAgents` on 2.1.319,
+  2026-11-08**, the check `docs/agent/security/` requires of a pin bump. The
+  macOS build of 2.1.319 against the same stub with a dummy key: without the
+  variable `init.tools` held 22 tools including `ListAgents` and
+  `SendMessage`; with it, 21, `ListAgents` the only one gone. Caveat: the
+  darwin build, a bare argv without the app's `--allowedTools`, and the inbox
+  socket was not looked for.
+
 ## Not yet verified by hand
 
 - **What an authenticated work cycle replaces under `~/.claude` is unwatched,
@@ -95,11 +103,6 @@
   and a one-byte read across a token refresh: the read should stop returning the
   device in the step the inode changes, and the `settings.json` inode should not
   move at all.
-
-- **The intake filter's uid drop has never been booted.** Unseen: the filter
-  running as the agent uid (`docker compose exec usagefoundry ps -o uid,cmd |
-  grep 'winnow filter'` must not say 0), the `/var/lib/winnow` ledger growing
-  after a cycle (a failed write is silent), and uid 1000 refused `filter-off`.
 
 - **`/app`'s ownership has never been read off a built image** since the
   `Dockerfile` stopped chowning it to `node` (#200); `deployment.test.ts` pins

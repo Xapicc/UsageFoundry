@@ -15,16 +15,12 @@ import Link from "next/link";
 import { RUN_PROVIDER_LABEL, pausedMsAt, providerReportsSpend } from "@/lib/apiTypes";
 import type {
   ContextOccupancyDTO,
-  ContextPrunerDTO,
   EnforcementModeDTO,
-  PruneActivityDTO,
   RunDTO,
   RunEventDTO,
-  PruneSavingsDTO,
   RunTelemetryDTO,
   RunToolActivityDTO,
 } from "@/lib/apiTypes";
-import { pruneStatement } from "@/lib/pruneStatement";
 import {
   STATUS_TONE,
   fmtBankedTokens,
@@ -77,7 +73,6 @@ import {
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
 import { startPoll } from "@/lib/poll";
 import { RunAgentCost } from "@/components/RunAgentCost";
-import { RunPruning } from "@/components/RunPruning";
 import { RunDiff } from "@/components/RunDiff";
 import { RunActivity } from "@/components/RunActivity";
 import { RunHandoff } from "@/components/RunHandoff";
@@ -863,12 +858,6 @@ export default function RunDetail({
   const { id } = use(params);
   const [run, setRun] = useState<RunDTO | null>(null);
   const [telemetry, setTelemetry] = useState<RunTelemetryDTO | null>(null);
-  const [pruning, setPruning] = useState<PruneSavingsDTO | null>(null);
-  // The pair that turns an absent pruning section from a blank into a sentence.
-  // `pruner` is what is configured now; `pruneActivity` is what this run's own
-  // boundaries did, which is the half the money could never carry.
-  const [pruner, setPruner] = useState<ContextPrunerDTO | null>(null);
-  const [pruneActivity, setPruneActivity] = useState<PruneActivityDTO | null>(null);
   // Rides the run poll below rather than a route of its own: this is the row's
   // own state and arrives with the rest of it, so a second timer would only add
   // a way for the indicator and the run header to disagree about the same run.
@@ -965,9 +954,6 @@ export default function RunDetail({
         const json = (await res.json().catch(() => ({}))) as {
           run?: RunDTO;
           telemetry?: RunTelemetryDTO | null;
-          pruning?: PruneSavingsDTO | null;
-          pruner?: ContextPrunerDTO | null;
-          pruneActivity?: PruneActivityDTO | null;
           context?: ContextOccupancyDTO | null;
           error?: string;
         };
@@ -982,9 +968,6 @@ export default function RunDetail({
         }
         setRun(json.run);
         setTelemetry(json.telemetry ?? null);
-        setPruning(json.pruning ?? null);
-        setPruner(json.pruner ?? null);
-        setPruneActivity(json.pruneActivity ?? null);
         setContext(json.context ?? null);
         setPollError(null);
       } catch (err) {
@@ -1090,12 +1073,6 @@ export default function RunDetail({
   // Computed here rather than inside `RunOutput` because the tab bar has to
   // know whether there is a report before it offers a tab for one.
   const cycles = useMemo(() => cycleOutputs(events), [events]);
-  // Null only until the first poll answers. `pruner` is what the server says is
-  // configured now; the activity is this run's own boundaries, and the resolver
-  // prefers the second — a finished run describes what happened to it rather
-  // than announcing a setting that has moved since.
-  const runStatement = pruneStatement(pruneActivity);
-
   // Follow the tail, but stop fighting the user if they scroll up to read.
   // Keyed on the tab as well: the pane is unmounted while another tab is up, so
   // returning to it lands a fresh scroll container at the top, and this is what
@@ -1988,13 +1965,8 @@ export default function RunDetail({
                 </ListGroup>
               </Section>
 
-              {/* Here rather than beside the pruning figures, and the region is
-                  the reason: this is a reading against a limit that acts on the
-                  run — the size at which a work cycle is ended early — and it is
-                  not money. In `What it has spent` its token count would sit
-                  under a heading that says every figure below it is spend, one
-                  block away from a prune's `tokensRemoved`, which is the exact
-                  subtraction the component's caption exists to refuse. */}
+              {/* Here rather than under `What it has spent`: its token count is
+                  not money, and that heading says every figure below it is. */}
               {context && (
                 <Section title="Context">
                   <ContextOccupancy
@@ -2186,26 +2158,6 @@ export default function RunDetail({
                 </Section>
               )}
 
-              {/* A fourth reading in this region, and the only one that is not
-                  money that moved: it is what the run did *not* pay because its
-                  conversation was pruned between cycles. Never added to the three
-                  above. */}
-              {/* Rendered when the run has either cuts or boundary decisions.
-                  Absent now genuinely means nothing happened: every boundary an
-                  install with pruning on reaches writes a decision row, so the
-                  five states that used to share this one blank — pruning off,
-                  winnow absent, every boundary declined, nothing worth removing,
-                  and a run that never reached a boundary — each have a sentence
-                  of their own below. */}
-              {(pruning || pruneActivity || pruner) && (
-                <Section title="Context pruning">
-                  <RunPruning
-                    savings={pruning}
-                    statement={runStatement}
-                    pruner={pruner}
-                  />
-                </Section>
-              )}
             </Region>
 
             {/* What was decided before it started, and the region is what keeps

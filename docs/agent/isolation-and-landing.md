@@ -103,6 +103,7 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - The orchestrator is the grid's second column from `xl`, and sits under the list below it.
 - "Ask the orchestrator" drafts a message and never sends it.
 - The pane is the eighth row, directly under Branches, on the operator's ask.
+- A row's TokenEconomizer fold reads that repository's record on first open, and shows counts, never a saving.
 
 ## [Merge previews and the conflicts map](isolation-and-landing/merge-previews-and-conflict-map.md)
 

@@ -16,19 +16,17 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 ## [Which tables the event sweep reaches, and the column no sweep writes](retention/tables.md)
 
 - `runs.provider` is permanent, and the clause that matters is that no sweep may ever write to it.
-- `prune_decisions` was that decision taken the other way, and taken wrong.
+- Seven tables outlive the code that wrote them, and only one of them is still swept.
 - A fourth table rides the event sweep, and which sweep it rides is the decision.
 - The holdouts' evidence is copied out ahead of this sweep, into tables it never reaches, and a run it could not copy keeps its events.
-- A fifth table rides it on the fourth's ticket, and one clause is its own.
 
 ## [Who may sweep, and the taskboard no sweep reaches](retention/sweeper-and-taskboard.md)
 
 - Every tick re-asks who owns the data directory, and this is the only sweep in the app for which that is a deletion question.
 - The taskboard rides no sweep at all, and the refusal is the decision rather than an omission.
 
-## [Winnow's ledger, no VACUUM, and the storage card's cache](retention/ledger-and-storage-card.md)
+## [No VACUUM, and the storage card's cache](retention/vacuum-and-storage-card.md)
 
-- A fourth store is swept now, and it is the one this module does not decide about.
 - What the sweep deliberately does **not** do is `VACUUM`.
 - The card's two store sizes are measured rather than counted, so they are cached — and which half of this module the cache sits on is a structural decision rather than a tuning one.
 

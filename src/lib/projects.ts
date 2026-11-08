@@ -1101,7 +1101,7 @@ async function readProjects(targets: readonly ProjectTarget[]): Promise<ProjectD
  */
 export async function projectInventory(
   query: { offset?: number; limit?: number } = {},
-): Promise<ProjectInventoryDTO> {
+): Promise<Omit<ProjectInventoryDTO, "tokenEconomizer">> {
   const scan = await scanWorkspace();
   const page = selectProjectPage(
     scan.folders.filter((f) => f.isGitRepo),
@@ -1200,6 +1200,18 @@ async function resolveProject(
   }
   const target = targetOf(listed);
   return target.dir ? { ok: true, target } : { ok: false, reason: target.error ?? "" };
+}
+
+/**
+ * A listed project's directory, for a read that is not one of the two doors —
+ * `resolveProject`'s containment, so a reader can only ever ask about a folder
+ * the inventory shows.
+ */
+export async function resolveProjectDir(
+  ref: ProjectRef,
+): Promise<{ ok: true; dir: string } | { ok: false; reason: string }> {
+  const resolved = await resolveProject(ref);
+  return resolved.ok ? { ok: true, dir: resolved.target.dir! } : resolved;
 }
 
 export type PressOutcome<T> =

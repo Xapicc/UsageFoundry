@@ -55,12 +55,9 @@ export interface UsageEntry {
   /**
    * The API request this turn answered, or `""` when the record carried none.
    *
-   * Half of `key` already, and exposed on its own because it is the only
-   * identifier shared with anything outside these files: winnow's intake filter
-   * writes one ledger line per request it rewrote, keyed on exactly this, and
-   * `intakeFilter.ts` joins on it to learn when a filtered request ran, what
-   * model answered it and how many turns followed. Splitting `key` on a colon
-   * at the join would work until a message id contained one.
+   * Half of `key` already, and exposed on its own because it is the identifier
+   * a request is known by outside these files. Splitting `key` on a colon to
+   * get it back would work until a message id contained one.
    */
   requestId: string;
   /** Epoch milliseconds. */
@@ -108,20 +105,6 @@ export interface UsageEntry {
   entrypoint?: string;
   /** True when the model string had no known price — cost is a floor, not exact. */
   unpriced: boolean;
-}
-
-/**
- * Whether a turn read or wrote any cache at all.
- *
- * The one test every reader of "turns after a point" shares, so that the resume
- * a cut is priced off, the turns a prune's saving is counted over and the turns
- * the intake filter's saving is counted over cannot come to disagree about what
- * a turn is. The CLI's `<synthetic>` record — written at a restart or an API
- * error, its usage block present and entirely zero — fails it, and is kept as a
- * `UsageEntry` only so that it stays out of the unpriced banner.
- */
-export function billedAnything(e: UsageEntry): boolean {
-  return e.tokens.cacheRead + cacheWriteTokens(e.tokens) > 0;
 }
 
 interface FileCacheEntry {
@@ -1058,14 +1041,14 @@ function dedupeAcrossFiles(results: readonly (FileCacheEntry | null)[]): {
           // A tie used to keep whichever file the filesystem listed first, and
           // for a resumed session that is harmless — both copies carry the same
           // numbers *and* the same `sessionId`. A **fork** breaks the second
-          // half of that: `winnow fork` rewrites `sessionId` on every copied
-          // line, so the two records are identical except for the one field
-          // every session-scoped reader keys on. Measured on this operator's
-          // corpus: 6,657 keys appear in more than one file, all 6,657 carry
-          // more than one session id, and all 6,657 tie on output — so readdir
-          // order alone decided which half of a forked run the agent-cost card
-          // counted, and which turns the intake filter could see following a
-          // request.
+          // half of that: `winnow fork`, which this app ran until 2026-11-08 and
+          // whose transcripts are still on disk until retention takes them,
+          // rewrote `sessionId` on every copied line, so the two records are
+          // identical except for the one field every session-scoped reader keys
+          // on. Measured on this operator's corpus: 6,657 keys appear in more
+          // than one file, all 6,657 carry more than one session id, and all
+          // 6,657 tie on output — so readdir order alone decided which half of a
+          // forked run the agent-cost card counted.
           //
           // Recency breaks the tie the same way it does for tool calls below:
           // the transcript still being appended to is the conversation the run
@@ -1088,12 +1071,11 @@ function dedupeAcrossFiles(results: readonly (FileCacheEntry | null)[]): {
         //
         // The rule below — most characters wins — reads two copies of a call as
         // one complete and one unfinished, which is what a streaming write
-        // produces. A **fork** produces something else: `winnow fork` writes a
-        // second transcript whose tool results are deliberately replaced by
-        // short pointers, and there the shorter record is the newer truth. Most
-        // characters would always pick the original's full result and report the
-        // fork as having removed nothing, for as long as the original is on
-        // disk — which is for ever, since winnow never deletes it. Measured on
+        // produces. A **fork** produces something else: `winnow fork` (see the
+        // entry dedupe above) wrote a second transcript whose tool results are
+        // deliberately replaced by short pointers, and there the shorter record
+        // is the newer truth. Most characters would always pick the original's
+        // full result, for as long as the original is on disk. Measured on
         // one real fork: 92,498 characters against the fork's own 69,773, a gap
         // of exactly the 22,725 bytes it removed.
         //

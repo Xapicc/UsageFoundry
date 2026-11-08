@@ -15,14 +15,6 @@ import { codexSignInStored, codexUsage, codexUsageError } from "@/lib/codexAccou
 import { telemetryWindow } from "@/lib/otlp";
 import { transcriptCutoff } from "@/lib/retention";
 import { installSpendReport } from "@/lib/installBudget";
-import {
-  pricedCuts,
-  prunerState,
-  readPruneDecisions,
-  sumPruneActivity,
-  sumPruneSavings,
-} from "../../../lib/contextPruning";
-import { readFilterSavings } from "@/lib/intakeFilter";
 import { PROJECTS_DIR } from "@/lib/config";
 import { configProblems } from "@/lib/configCheck";
 import { jsonMaybeGzipped } from "@/lib/http";
@@ -137,64 +129,6 @@ export async function GET(req: Request) {
       ? telemetryWindow(snapshot.session.startsAt)
       : null;
 
-    // Pruning's value over three spans that nest, read and priced **once**:
-    // pricing counts the turns after each receipt out of the transcript scan,
-    // and asking for the three separately re-counted the same tail three times
-    // on every dashboard poll.
-    //
-    // The span is bounded rather than run over the whole table, and at the
-    // transcript horizon specifically — the same one `completeFrom` carries
-    // above. A receipt whose transcript has been swept cannot be priced, and it
-    // does not merely fall silent: its saving reads zero while an early end's
-    // invalidation is still charged, so an unbounded total would sink towards
-    // negative as it aged. Dropping those receipts whole makes the total a
-    // floor, which is the direction every other figure here errs in. Clamped to
-    // the weekly window's own start as well, so the total can never span less
-    // than a figure printed beside it on an install with a short retention.
-    const pruneFrom = Math.min(completeFrom ?? 0, snapshot.weekly.startsAt);
-    // `pricedCuts` and not `priceReceipts(readReceipts(...))`: that pair reads
-    // the legacy table alone, so every cut the fork engine made was missing
-    // from this card while showing correctly on its own run's page — which goes
-    // through `pruneSavings`, which knows there are two tables. The run page and
-    // the dashboard were describing the same events and disagreeing.
-    const pricedReceipts = await pricedCuts({ from: pruneFrom, to: now });
-    const prunedWithin = (from: number, to: number) =>
-      sumPruneSavings(
-        pricedReceipts.filter((p) => p.row.ts >= from && p.row.ts <= to),
-      );
-
-    // Read once over the widest span and sliced, exactly as the receipts above
-    // are, so a card can never print a boundary count over one window beside a
-    // figure over another. Bounded at the same `pruneFrom` for the same reason.
-    //
-    // That the span is *available* to read is `prune_decisions`' retention rule,
-    // which is `prune_receipts`': `sweepRunEvents` does not touch either table.
-    // `pruneFrom` is a floor on what is asked for and says nothing about which
-    // rows survived a sweep, so bounding the read here was never enough on its
-    // own — see the schema comment on the table in `db.ts`.
-    const decisions = readPruneDecisions({ from: pruneFrom, to: now });
-    const activityWithin = (from: number, to: number) =>
-      sumPruneActivity(decisions.filter((d) => d.ts >= from && d.ts <= to));
-
-    // Bounded at the same horizon the prune total is, and for the same reason:
-    // a filtered request whose transcript has been swept can be neither dated
-    // nor priced. The same two window starts the meters and the prune figures
-    // use, so the card's "of which the filter" line describes the same span as
-    // the figure it is a share of — the ledger carries no clock of its own, so
-    // every instant comes from the transcript join and a result that joined to
-    // nothing is left out of both windows rather than guessed into one. Read
-    // behind its own minute-long TTL: this route is the dashboard's ten-second
-    // heartbeat and the ledger grows with every request every agent in the
-    // fleet makes.
-    const intakeFilter = await readFilterSavings(
-      {
-        from: pruneFrom > 0 ? pruneFrom : null,
-        sessionFrom: snapshot.session.startsAt,
-        weeklyFrom: snapshot.weekly.startsAt,
-      },
-      now,
-    );
-
     // Gzipped: 51,984 bytes to 9,785, measured — three granularities of
     // calendar bucket over the same entries repeat their keys on every one, and
     // this is the dashboard's ten-second heartbeat. The error branch below is
@@ -212,57 +146,6 @@ export async function GET(req: Request) {
       codex: codexSignedIn
         ? { plan: codexPlan, error: codexPlan ? null : codexUsageError() }
         : null,
-      // What context pruning has been worth: the two windows the meters above
-      // already draw — so a reader comparing them is comparing the same span,
-      // not this app's idea of "recently" — and the whole of what can still be
-      // priced, which is what the tile leads with. Whether to leave pruning on
-      // is not a question about this week.
-      //
-      // Its own key and never folded into `snapshot`, on `install`'s rule and
-      // one more: these are not a *third cost source*, they are the netted value
-      // of an intervention, and a figure that could be added to a window total
-      // would be added to one eventually. Nothing here is spend.
-      // Beside `pruning` rather than inside it. They are the two halves of
-      // context control and the card adds them, but their figures overlap —
-      // the filter takes C1/C3/B2 mass off the wire first, and a prune that
-      // later removes the same result from the transcript prices tokens the
-      // API never held. The sum belongs where the overlap is printed beside
-      // it; pre-adding it here would send the overstatement on with nothing
-      // left saying so.
-      intakeFilter,
-      pruning: {
-        session: prunedWithin(
-          snapshot.session.startsAt,
-          snapshot.session.endsAt,
-        ),
-        weekly: prunedWithin(snapshot.weekly.startsAt, snapshot.weekly.endsAt),
-        total: sumPruneSavings(pricedReceipts),
-        // Null is "nothing bounded it", which is a real state — an install with
-        // transcript retention off keeps every receipt priceable. The client
-        // must not print a date it invented for that case.
-        totalFrom: pruneFrom > 0 ? pruneFrom : null,
-        // The pruner's own `running`, and its absence is why an image built
-        // with `WINNOW_REF=` empty rendered an identical dashboard while every
-        // prune no-opped: nothing on this route had ever said the tool was not
-        // there. Sent unconditionally and never behind `pruningEnabled()` — a
-        // readout that disappears on the installs it describes is the failure,
-        // not the fix.
-        pruner: prunerState(settings),
-        // Event counts, never money: they answer "what happened at the
-        // boundaries in this span", which is the question a $0.00 could not be
-        // an answer to. Never summed with anything above them.
-        activity: {
-          session: activityWithin(
-            snapshot.session.startsAt,
-            snapshot.session.endsAt,
-          ),
-          weekly: activityWithin(
-            snapshot.weekly.startsAt,
-            snapshot.weekly.endsAt,
-          ),
-          total: sumPruneActivity(decisions),
-        },
-      },
       meta: {
         transcriptDir: PROJECTS_DIR,
         fileCount: scan.fileCount,

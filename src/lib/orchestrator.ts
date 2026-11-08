@@ -71,7 +71,6 @@ import { installBudgetReading, installBudgetRefusal } from "./installBudget";
 import {
   lastScanReadFailures,
   readCompactions,
-  resolveSessionTranscript,
   scanUsage,
   sessionTranscriptPresence,
   sessionTranscriptResolver,
@@ -110,43 +109,16 @@ import {
 } from "./tasks";
 import { enabledPluginDirs, pluginDirArgs } from "./plugins";
 import {
-  apiContextSample,
-  BOUNDARY_BREAK_EVEN_BUDGET,
-  contextTokens,
+  ensureTokenEconomizerCatalog,
+  seedTokenEconomizerSlot,
+  tokenEconomizerFor,
+} from "./tokenEconomizer";
+import {
+  forgetContextCheck,
   sampleCodexContext,
   sampleContext,
-  coldAgeRefusalMessage,
-  CYCLE_CONTEXT_CEILING_TOKENS,
-  forgetContextCheck,
-  freshestPayback,
-  PAYBACK_HORIZON_TURNS,
-  CEILING_PAYBACK_HORIZON_TURNS,
-  paybackTurns,
-  type PaybackReading,
-  boundaryAction,
-  ceilingDeclineMessage,
-  ceilingPayback,
-  CEILING_REMEASURE_GROWTH_TOKENS,
-  COMPOSITION_REMEASURE_GROWTH_TOKENS,
-  contextComposition,
-  recordComposition,
-  forkTranscript,
-  pendingForkFor,
-  PLAN_TIER,
-  markForkResumed,
-  ceilingCut,
-  planCut,
-  pruneTranscript,
-  pruningEnabled,
-  recordForkAttempt,
-  recordPrune,
-  recordPruneDecision,
-  recordResumeProbe,
-  WINNOW_MISSING_REASON,
-  type PruneOutcome,
-  type PruneTrigger,
-} from "./contextPruning";
-import { BYTES_PER_TOKEN, fileCostNotice } from "./fileCostNotice";
+} from "./contextSamples";
+import { fileCostNotice } from "./fileCostNotice";
 import { tmpdirNotice } from "./tmpdirNotice";
 import { WORKTREE_STORE_DIR } from "./worktreeStoreDir";
 import { prepareReadGuard } from "./readGuard";
@@ -204,7 +176,7 @@ import {
 } from "./logLine";
 // Same direction, same reason: the cycle deadline says how long it waited in
 // the words the run page already uses for every other span.
-import { fmtDuration, fmtTokens, shortId } from "./format";
+import { fmtDuration, shortId } from "./format";
 import { isJsonObject, jsonKind } from "./http";
 import {
   RUN_PROVIDER_LABEL,
@@ -434,8 +406,9 @@ export interface RunRow {
    */
   stack_waits: number;
   /**
-   * Work cycles the context ceiling ended early and the loop refunded, which
-   * `MAX_EARLY_ENDS_PER_RUN` caps. Only ever increases.
+   * Work cycles the removed context ceiling ended early and the loop refunded.
+   * Nothing writes it since that ceiling went; kept so the refunds already on
+   * a row still count in `refundedCyclesOf`.
    */
   early_ends: number;
   /**
@@ -470,8 +443,8 @@ export interface RunRow {
   validation_cycles: number;
   /**
    * The start of the earliest work cycle whose boundary never read the task
-   * checks' verdicts, because the loop left above it — a park, a guard, a
-   * ceiling cut. The first boundary after the pick-up reads from here rather
+   * checks' verdicts, because the loop left above it — a park or a guard. The
+   * first boundary after the pick-up reads from here rather
    * than from its own cycle's start. Null once a boundary has read, and cleared
    * by `reopenRun`, which starts a fresh segment.
    */
@@ -807,16 +780,7 @@ export function runStoppedBeforeCheck(runId: string): boolean {
  * what lets the whole set be picked up together afterwards.
  */
 export interface Interrupt {
-  /**
-   * `prune` is the one kind that does not end the run.
-   *
-   * It ends the *cycle*, so that the transcript can be rewritten at a moment no
-   * Claude process is holding it, and then the loop carries on. Every other kind
-   * here is terminal or a pause, which is why the loop's post-cycle checkpoint
-   * has to test for it before it reaches `applyInterrupt` — `interruptOutcome`
-   * has no status that means "carry on" and should never be asked for one.
-   */
-  kind: "operator" | "guard" | "deadline" | "shutdown" | "prune";
+  kind: "operator" | "guard" | "deadline" | "shutdown";
   reason: string;
   code?: BudgetStopCode;
   /**
@@ -869,13 +833,6 @@ export function interruptOutcome(it: Interrupt): {
       ending: null,
     };
   }
-  // `prune` is deliberately not given a case, and this is the safe direction
-  // rather than an omission. The run loop consumes that kind before it reaches
-  // here — it is the one interrupt that means "carry on" — so arriving with one
-  // means the loop ended some other way first, and the run really has stopped.
-  // A `status` invented for it here would be a run reported as still going by
-  // a function whose whole job is to say how it ended. Its ending is null for
-  // the same reason: unknown is true, and any code would be a guess.
   return {
     status: it.kind === "deadline" ? "failed" : "stopped",
     reason: it.reason,
@@ -894,8 +851,6 @@ function interruptEnding(it: Interrupt): RunEndingCode | null {
       return "deadline";
     case "shutdown":
       return "restart";
-    case "prune":
-      return null;
   }
 }
 
@@ -919,14 +874,12 @@ const liveGuards = ((globalThis as unknown as {
 }).__ufLiveGuards ??= new Map<string, LiveGuard>());
 
 /**
- * Runs whose in-flight cycle is being watched for the context ceiling.
+ * Runs whose in-flight cycle is sampled for the context chart.
  *
  * Separate from `liveGuards` and not a field on it, because the two answer to
  * different things. That map is registered only when `enforcement` is not
  * `between-cycles` — an opt-in the operator makes about *budgets* — and the
- * ceiling replaced `--autocompact`, which rode every cycle's argv on every run.
- * Folding this into that map would have made the thing bounding a cycle's
- * context an opt-in nobody knew they were declining.
+ * occupancy series is a reading of every run.
  *
  * Its own `globalThis` key rather than a wider `liveGuards` value, on the rule
  * `__ufInterrupts` records: `??=` only initialises when absent, so a dev hot
@@ -957,29 +910,6 @@ interface ContextWatch {
 const contextWatches = ((globalThis as unknown as {
   __ufContextWatches2?: Map<string, ContextWatch>;
 }).__ufContextWatches2 ??= new Map<string, ContextWatch>());
-
-/**
- * How many times one run may have a cycle ended early and refunded.
- *
- * The refund is what keeps this honest against what it replaced: a compaction
- * never cost a work cycle, so a ceiling crossing that consumed one would make
- * `maxIterations` mean something different than it did before. But an unbounded
- * refund breaks the terminus `budgets-and-guards.md` requires — a run whose
- * every cycle crossed the ceiling would loop forever, always ending, always
- * refunded, never finishing.
- *
- * So it is bounded, `MAX_PAUSES_PER_RUN`'s arrangement and its number. Past
- * this, a crossing still prunes and still ends the cycle; it simply counts,
- * and `iterations` climbs monotonically again.
- *
- * Per run and not per segment, which is why the count is `runs.early_ends`:
- * as a local of `startRun` it restarted at zero after every park, restart and
- * pick-up, so a run whose every cycle crossed the ceiling had three more
- * refunds each time it came back. Nothing resets it, `reopenRun` included — it
- * corrects `iterations`, and a pick-up carries `iterations`, where
- * `started_at` and `paused_ms`, which a pick-up does clear, are a clock.
- */
-export const MAX_EARLY_ENDS_PER_RUN = 3;
 
 /** Shared empty reading, for a policy whose guards do not need telemetry. */
 const NO_TELEMETRY_SPEND: TelemetrySpend = { requests: 0, costUSD: 0, tokens: 0 };
@@ -5694,7 +5624,7 @@ export interface DependencyState {
  * `guard_refunds`, `stack_waits`, `early_ends` and `worked_refunds` each only
  * ever increase and each is written only when a cycle that *did work* was put
  * back on the cycle counter: a live-guard cut, a stack park, a context-ceiling
- * end, and a provider refusal — the wall or a transient error — met after the
+ * end (before that ceiling was removed), and a provider refusal — the wall or a transient error — met after the
  * cycle had spent. That last condition is the whole reason this is not
  * `pause_count`: a refusal on a cycle's first turn hands back a cycle in which
  * nothing happened, and a run refused at the wall that way and then stopped
@@ -6870,10 +6800,9 @@ const CARRIES_NO_CONTEXT = new Set([
   // The conversation itself, which is the thing being summarised rather than
   // something injected into it, and the threshold that decides when.
   //
-  // `--autocompact` is no longer emitted — `contextPruning.ts` replaced it — but
-  // it stays in both this set and `ARGV_ARITY`, because these two describe how
-  // to *read* an argv and every cycle spawned before that change stored one
-  // carrying the flag. Dropping it here would make those historical rows report
+  // `--autocompact` is no longer emitted, but it stays in both this set and
+  // `ARGV_ARITY`, because these two describe how to *read* an argv and every
+  // cycle spawned before that change stored one carrying the flag. Dropping it here would make those historical rows report
   // an unclassified flag and a stray `200000`.
   "--resume",
   "--autocompact",
@@ -8337,7 +8266,7 @@ const CLAUDE_ADAPTER: CycleAdapter = Object.freeze({
  * Frozen and a module constant for `CLAUDE_ADAPTER`'s reasons, which apply
  * unchanged. What is worth saying here is what the three fields buy: they are
  * the *whole* of the difference between the two providers inside the run loop.
- * The loop below spawns, watches, guards, prunes, parks and reconciles without
+ * The loop below spawns, watches, guards, parks and reconciles without
  * knowing which of these it is holding — with two exceptions: `providerRecordsSpend`,
  * which exists because one of the two cannot say what a cycle cost, and
  * `cycleTelemetryEnv`, which withholds a credential only the other one uses.
@@ -8497,6 +8426,9 @@ export function runIteration(
   // is what a Codex cycle gets (the variable is Claude Code's) and what a call
   // site that says nothing gets — the old behaviour rather than a guess.
   backgroundWaitMs: string | null = null,
+  // Environment a plugin loaded on this cycle's argv reads its settings from —
+  // TokenEconomizer's `TE_*` today. Empty for a call site that loads none.
+  pluginEnv: Record<string, string> = {},
 ): Promise<IterationResult> {
   return new Promise((resolve) => {
     // Before the spawn and not before the run, because what has to be true is
@@ -8561,6 +8493,7 @@ export function runIteration(
         ...cycleTelemetryEnv(runId, adapter, telemetryRequired),
         ...agentGitEnv(githubToken, excludes.path),
         ...(backgroundWaitMs === null ? {} : { [BACKGROUND_WAIT_ENV]: backgroundWaitMs }),
+        ...pluginEnv,
       },
       local,
     );
@@ -8601,7 +8534,6 @@ export function runIteration(
       resumedLedger,
       tokens: 0,
       contextTokens: 0,
-      firstContextTokens: 0,
       sessionId: null,
       finalText: "",
       isError: false,
@@ -8802,711 +8734,6 @@ export function runIteration(
 
     armSilence(silenceMs);
   });
-}
-
-/**
- * Prune this run's transcript, and say on the run's log what it took out.
- *
- * Shared by the two moments a prune can happen, so that they cannot drift into
- * reporting the same operation two different ways. What differs between them is
- * `trigger`, and that difference is priced rather than cosmetic —
- * `contextPruning.ts` and the `prune_receipts` schema both turn on it.
- *
- * **Every failure here is a log line and nothing else.** A prune is an
- * optimisation running between two cycles of a run that is otherwise fine, and
- * there is no outcome — a missing tool, an unreadable transcript, a winnow that
- * exited non-zero — where ending the run is a better answer than carrying on
- * with a larger context. The one thing that must not happen quietly is nothing
- * at all: this is now what bounds a cycle, so a prune that could not run says so
- * in the pane the operator is watching.
- */
-async function prune(
-  id: string,
-  sessionId: string | null,
-  trigger: PruneTrigger,
-): Promise<PruneOutcome | null> {
-  const settings = getSettings();
-  // The switch and the tool are tested apart, deliberately. Off is silent — that
-  // is an operator's decision and needs no line every cycle. On with no tool is
-  // the case that must speak: `pruneTranscript` answers `unavailable` and the
-  // switch below says so. Collapsing the two into `pruningEnabled` here is what
-  // made that branch unreachable, which is the exact silence this whole path is
-  // written against.
-  if (!settings.contextPruning) return null;
-  if (!sessionId) return null;
-
-  const transcript = await resolveSessionTranscript(sessionId);
-  if (!transcript) {
-    const reason = "the run's transcript could not be found";
-    log(id, `Could not find this run's transcript, so its context was not pruned.`);
-    recordPruneDecision(id, trigger, "legacy", "failed", reason);
-    return null;
-  }
-
-  const result = await pruneTranscript(transcript, settings.contextPruningStrictness);
-  switch (result.kind) {
-    case "pruned": {
-      const { tokensRemoved, tokensBefore, apiTokensBefore } = result.outcome;
-      recordPrune(id, trigger, result.outcome, getRun(id)?.model ?? null);
-      const pct = Math.round((tokensRemoved / tokensBefore) * 100);
-      // Reported in the ceiling's currency, because the two lines sit one under
-      // the other in the pane the operator is watching. The ceiling names the
-      // whole prompt and the transcript figures name the conversation inside it
-      // — tens of thousands of tokens apart, either way round — so a line
-      // ending "leaving 68.5k" under one saying "reached 183.7k" describes a
-      // context the next request will never carry, and was read as the ceiling
-      // miscounting.
-      //
-      // The after is derived rather than measured, and there is no alternative:
-      // no request has been made against the smaller conversation yet, so no
-      // `usage` frame exists for it. It errs high, because `contextTokens`
-      // understates what came out — the one crossing measured by hand took
-      // 62.6k off the API's prompt against the 50.3k reported here — and high
-      // is the direction to be wrong in, since it never claims more was freed
-      // than was. `max` because the intake filter can leave the API carrying
-      // less than the transcript holds.
-      //
-      // Subtracted rather than scaled by `contextAfterPrune`'s ratio, and the
-      // difference is the reason that function's basis-independence argument
-      // does not reach here: most of the gap between the two measures is a
-      // *fixed* system prompt and tool list, which a proportion shrinks along
-      // with the conversation. On the crossing measured by hand the ratio gave
-      // 105.6k against a real 120.6k, which is a line telling an operator the
-      // context is smaller than the next request will find it.
-      const apiTokensAfter = Math.max(0, apiTokensBefore - tokensRemoved);
-      log(
-        id,
-        `Pruned ${fmtTokens(tokensRemoved)} tokens of conversation ` +
-          `(${pct}% of the ${fmtTokens(tokensBefore)} of turns on this run's transcript), ` +
-          `taking the context from ${fmtTokens(apiTokensBefore)} to about ` +
-          `${fmtTokens(apiTokensAfter)}.`,
-      );
-      recordPruneDecision(id, trigger, "legacy", "cut");
-      return result.outcome;
-    }
-    case "rewritten": {
-      // A receipt with `tokens_removed = 0`, and it has to be written from here:
-      // `netReceipt` can only charge an invalidation against a row, so a rewrite
-      // that earned nothing had its whole cost fall through the floor while the
-      // rewrites that earned something kept theirs. That drops exactly the cuts
-      // which lose money, in one direction, out of the figure this feature
-      // exists to report.
-      recordPrune(id, trigger, result.outcome, getRun(id)?.model ?? null);
-      log(
-        id,
-        `Nothing worth removing from this run's conversation, but the ` +
-          `transcript was rewritten, so the next request pays a full cache write.`,
-      );
-      recordPruneDecision(id, trigger, "legacy", "nothing");
-      // The outcome and not `null`, because the caller reads a null as a
-      // boundary nothing touched and files the resume after it as a *clean*
-      // one — the control group `netReceipt` prices every boundary prune
-      // against. This resume is not clean: the prefix it reads was replaced.
-      return result.outcome;
-    }
-    case "nothing":
-      // A result and not an absence, winnow's own rule for its hook lines: a
-      // cycle whose conversation held nothing worth removing has to be
-      // distinguishable from one where the tool never ran.
-      log(id, `Nothing worth removing from this run's conversation.`);
-      // Written beside the line rather than instead of it: the line is one
-      // cycle in a pane somebody may not be reading, and the row is what the
-      // span's own sentence is counted from a week later.
-      recordPruneDecision(id, trigger, "legacy", "nothing");
-      break;
-    case "unavailable":
-      log(id, `Context pruning is switched on but ${result.reason}.`);
-      recordPruneDecision(id, trigger, "legacy", "unavailable", result.reason);
-      break;
-    case "failed":
-      log(id, `This run's context could not be pruned: ${result.reason}.`);
-      recordPruneDecision(id, trigger, "legacy", "failed", result.reason);
-      break;
-  }
-  return null;
-}
-
-/**
- * Whether a run's cycle boundary is one the pruner may touch at all.
- *
- * Every engine here edits a **Claude Code** transcript — `prune` looks the
- * session up among Claude's own files, `forkAndAdopt` forks one with winnow, and
- * `settleBoundary` probes the resume and observes the plan against the same
- * file. A Codex run's session id names a thread in `$CODEX_HOME/sessions`, so on
- * the first real Codex run every boundary logged "Could not find this run's
- * transcript, so its context was not pruned." and wrote a failed prune decision:
- * a failure nothing could fix, recorded as one, on every cycle. There is
- * nothing to decline or settle either, so the whole boundary is skipped rather
- * than routed through any of them.
- *
- * Pure and tested on its other edge, which is the expensive one: a version that
- * also answered false for a Claude run would stop every run's pruning in silence.
- */
-export function boundaryPruneApplies(provider: RunProviderDTO | null): boolean {
-  return provider !== "codex";
-}
-
-/**
- * The boundary case, named so the call site inside the loop reads as one line.
- *
- * ## Why this is gated at all
- *
- * A cut pays `1.9·S − 2·D` once and earns `0.1·D` a turn back, so it needs
- * `19·(S/D) − 20` further turns to pay for itself — `paybackTurns`, which this
- * app already computes and already acts on, but only on the early-end path
- * (`declineOrEndEarly`). The boundary path ran unconditionally on the argument
- * that its edit is free because `--resume` was going to rewrite the prefix
- * anyway.
- *
- * That argument is about the *cost* side and it may well be right. It says
- * nothing about the *earning* side, and the earning side is where a boundary
- * prune actually fails: `S` grows every cycle while `D` is only the newest
- * cycle's strippable results, so `S/D` drifts up and the payback horizon with
- * it. Measured with `winnow inspect` on real orchestrated transcripts from this
- * install, `T*` at tier CB runs from 68 to 598 turns — against runs that billed
- * 113 to 520. A cut needing 598 turns to break even, taken at a boundary with
- * perhaps one cycle left, is not free even if the write was.
- *
- * ## One-sided, on purpose
- *
- * Every unknown resolves to **prune**. `predictedPayback` returns null on a
- * run's first cut, and null means go: the repo's own corpus has always-prune
- * netting +$214.46 over 175 sessions, so refusing too readily costs more in
- * aggregate than allowing too readily does. This gate is here to catch the tail
- * where the arithmetic has already said no once, not to second-guess the median.
- *
- * ## The side effect that is worth as much as the gate
- *
- * Every decline leaves a cycle boundary with no prune at it — a **clean resume**,
- * which is the only observation that can settle what a boundary prune's edit
- * actually costs (`contextPruning.ts`'s `classifyResume`). The probe is recorded
- * either way, so the control group grows whichever branch is taken.
- */
-async function pruneAtBoundary(
-  id: string,
-  sessionId: string | null,
-  contextTokensNow: number,
-  adopt: (sid: string) => void,
-): Promise<PruneOutcome | null> {
-  const settings = getSettings();
-  // Above the payback gate rather than below it, and that ordering is the whole
-  // point. Below, an install with pruning switched **off** still ran the gate,
-  // still incremented `boundaryDeclines`, and still wrote "the last prune here
-  // removed too little to pay for another one" into the pane every cycle — a
-  // considered decision the app had not made, about a feature nobody had asked
-  // for. `prune()` opens by checking this itself, so the legacy path was
-  // covered and the two newer ones were not: the fork engine spawned winnow and
-  // rewrote a conversation, and the plan observation spawned winnow every
-  // cycle. An operator who turned it off is entitled to a tool that does
-  // nothing and says nothing.
-  if (!settings.contextPruning) {
-    await settleBoundary(id, sessionId, false, contextTokensNow);
-    return null;
-  }
-
-  const predicted = predictedPayback(id);
-  const declinesSoFar = boundaryDeclines.get(id) ?? 0;
-  const action = boundaryAction(predicted, declinesSoFar);
-  const declined = action === "decline";
-
-  boundaryDeclines.set(id, declined ? declinesSoFar + 1 : 0);
-
-  if (declined) {
-    // Said plainly, and not as a failure. `prune`'s own error path writes "This
-    // run's context could not be pruned", and a policy decision arriving in that
-    // wording would send an operator looking for a broken install every cycle.
-    //
-    // Said every time rather than once per run, unlike `earlyEndDeclined`. That
-    // one latches because it fires on a minute timer and would otherwise repeat
-    // for hours; this fires once per work cycle, and a cycle that silently did
-    // not prune is exactly the thing an operator reading the pane needs told.
-    log(
-      id,
-      `Left this run's conversation alone at the cycle boundary: the last prune ` +
-        `here removed too little to pay for another one (it would need ` +
-        `${predicted} more turns to break even, and the limit is ` +
-        `${PAYBACK_HORIZON_TURNS}).`,
-    );
-    // The one outcome that left no durable trace of any kind: `boundaryDeclines`
-    // is a `globalThis` map cleared when the run ends, so "declined at every
-    // boundary for forty cycles" and "pruning was never on" were the same empty
-    // section a day later.
-    recordPruneDecision(
-      id,
-      "boundary",
-      settings.contextPruningEngine,
-      "declined",
-      null,
-      predicted,
-    );
-    await settleBoundary(id, sessionId, false, contextTokensNow);
-    return null;
-  }
-  if (action === "refresh") {
-    log(
-      id,
-      `Pruning this run's conversation once despite the payback test, to retake ` +
-        `the measurement — the figure it refused on is ${declinesSoFar} cycles old.`,
-    );
-  }
-
-  const outcome =
-    settings.contextPruningEngine === "winnow"
-      ? await forkAndAdopt(
-          id,
-          sessionId,
-          settings.contextPruningForkMinColdAge,
-          BOUNDARY_BREAK_EVEN_BUDGET,
-          "boundary",
-          adopt,
-        )
-      : await prune(id, sessionId, "boundary");
-  // `sessionId` and not whatever the fork adopted: the probe is a statement
-  // about the conversation that was standing at this boundary, and the control
-  // group is read by looking for the first billed turn after it.
-  await settleBoundary(id, sessionId, outcome !== null, contextTokensNow);
-  if (outcome) {
-    forgetComposition(id);
-    // The ceiling's mark too, for the reason the ceiling clears it at its own
-    // cut: the measurement it records was of a conversation that no longer
-    // exists. Under the fork engine this clear is the only thing that notices,
-    // because the window after the resume is not lower than before the cut and
-    // the tick's below-the-mark reset never fires.
-    ceilingMeasuredAt.delete(id);
-    // And whether a decline has been explained: the one it explained was about
-    // the conversation this cut just replaced.
-    earlyEndDeclined.delete(id);
-  }
-  return outcome;
-}
-
-/**
- * Write down what this boundary actually did, once it has done it.
- *
- * Both records used to be written from the gate's *intent* — `!declined` —
- * before the engine had run. That is not the same fact. A boundary the gate
- * allowed but where the pruner found nothing worth removing, or where the fork
- * engine refused on cold-age, left no cut behind and is therefore a **clean**
- * resume: exactly the observation `resumeControl` needs, and the one the label
- * was throwing away. Under the fork engine at its default cold age that is
- * every boundary, so the control group would have stayed empty for ever while
- * appearing to fill up.
- */
-async function settleBoundary(
-  id: string,
-  sessionId: string | null,
-  cut: boolean,
-  contextTokensNow: number,
-): Promise<void> {
-  recordResumeProbe(id, sessionId, cut, contextTokensNow);
-  // Read-only, and asked whichever way the boundary went — one where nothing
-  // was removed is exactly as interesting a comparison as one where something
-  // was. Awaited rather than left floating for `pruneAtBoundary`'s own reason:
-  // the next spawn must not read the transcript while a subprocess is on it.
-  await observePlan(id, sessionId);
-}
-
-/**
- * Cut at the boundary this app just manufactured by ending a cycle early.
- *
- * The sibling of `pruneAtBoundary`, and it exists because the engine switch did
- * not: `contextPruningEngine: "winnow"` forked at the natural boundary and then
- * ran the **legacy in-place pruner** here, so a run crossing the ceiling was cut
- * by whichever engine the moment happened to reach, not by the one the operator
- * chose. Two engines with different rules, different guards and different
- * receipts, selected by timing.
- *
- * There is no payback gate here and that is deliberate. The ceiling watcher has
- * already made the only decision with a cost behind it — whether to spend a work
- * cycle manufacturing this boundary, which it takes against
- * `CEILING_PAYBACK_HORIZON_TURNS`. That cycle is spent by the time this runs,
- * cut or no cut, so a second gate on the same arithmetic could only decline to
- * use a boundary already paid for. `BOUNDARY_BREAK_EVEN_BUDGET` carries the
- * argument.
- *
- * That is not in tension with passing `early-end` below, though it reads like
- * it. Two different questions:
- *
- * - **Should this cut happen?** No, the rewrite is already committed; refusing
- *   here forgoes the saving without avoiding the cost. Hence no gate.
- * - **Who owns the rewrite on the books?** The pruning feature, because the
- *   only reason this boundary exists is that the ceiling watcher made it in
- *   order to cut. Hence `early-end`.
- *
- * Measured on this install, that write is ~$1.80 a time — 178k–183k tokens at
- * the one-hour class. So the gate worth arguing about is the ceiling watcher's,
- * which decides whether to spend it at all, and not this one. Reporting it here
- * is what puts the number in front of that argument.
- *
- * `--min-cold-age` does not stand here either, and for the third time it is the
- * same argument: the session was live seconds ago because a fork can only happen
- * seconds after a child exits, so the guard's pass condition is unreachable on
- * this path rather than merely strict. `contextPruningForkMinColdAge` ships at 0
- * and carries the reasoning. An operator who raises it gets the refusal back,
- * and it reads in the log as the guard standing rather than as a breakage.
- */
-async function pruneAtEarlyEnd(
-  id: string,
-  sessionId: string | null,
-  adopt: (sid: string) => void,
-): Promise<PruneOutcome | null> {
-  const settings = getSettings();
-  // Checked here as well as inside `prune`, on `pruneAtBoundary`'s reasoning:
-  // the fork path does not go through `prune` and would otherwise spawn winnow
-  // against an install that has context pruning switched off.
-  if (!settings.contextPruning) return null;
-  return settings.contextPruningEngine === "winnow"
-    ? await forkAndAdopt(
-        id,
-        sessionId,
-        settings.contextPruningForkMinColdAge,
-        BOUNDARY_BREAK_EVEN_BUDGET,
-        // The trigger the receipt is priced by, and the reason it is passed
-        // rather than assumed: a fork here rides a boundary that exists only
-        // because this app made it in order to cut, so the rewrite it causes is
-        // charged to the cut exactly as the legacy pruner's is. `forkAndAdopt`
-        // used to record every fork as a `boundary` and this moment was priced
-        // free — see `forkCutFromRow`.
-        "early-end",
-        adopt,
-      )
-    : await prune(id, sessionId, "early-end");
-}
-
-/**
- * Drop the composition mark, so the next tick re-reads the shape.
- *
- * Called where a conversation is cut or replaced rather than from the tick,
- * because the tick cannot see either happen: it pages the reading on
- * **distance** — 40,000 tokens from where the sampled figure stood at the last
- * reading, in either direction — and neither is obliged to move that figure
- * that far. Under the fork engine a cut does not move it at all: measured on
- * all five forks here, the API window after the resume was 1,153 to 5,238
- * tokens *higher* than before the cut, so the distance test never fires on a
- * run whose whole shape has just changed. Under the in-place engine 12 of this
- * install's 54 receipts removed under 40,000 tokens, and each of those left the
- * stack drawing the pre-cut shape until ordinary growth had regrown what the
- * cut took *and then* 40,000 more.
- *
- * Three call sites and they are not redundant. The ceiling watcher clears it as
- * it writes the interrupt, which is the only route to an early-end cut and the
- * only one a tick can be standing beside; `pruneAtBoundary` clears its own,
- * because a natural boundary never passes through the watcher; and the
- * fresh-start branch in `startRun` clears it, because that drops the whole
- * conversation without cutting it, so neither of the other two sees it. The
- * distance does not cover a fresh start either: `freshStartContextTokens` is
- * floored at 20,000, so a threshold of 80,000 restarts a conversation last read
- * near 85k at roughly the 55k of system prompt, tool list and task — a 30k
- * move. Clearing at the interrupt is a shade early — winnow may still refuse
- * the cut — and that costs one extra `winnow context` on a cycle that was
- * ending anyway, which is the cheaper of the two ways to be wrong.
- *
- * A function rather than the bare `delete` three times, so the argument above
- * has one home instead of being part-stated in three comments.
- */
-function forgetComposition(id: string): void {
-  compositionMeasuredAt.delete(id);
-}
-
-/**
- * The fork engine: cut into a new transcript and switch the run onto it,
- * provisionally.
- *
- * Called from both moments a resume is already committed — the natural cycle
- * boundary and the manufactured one the ceiling watcher makes by ending a cycle
- * early. The *mechanics* do not distinguish them: the rewrite is spent either
- * way and the cut rides it, which is what `maxBreakEven` carries a position on
- * (see `BOUNDARY_BREAK_EVEN_BUDGET`). The **accounting** must, which is what
- * `trigger` carries — a boundary this app manufactured in order to cut owns the
- * rewrite it causes, and one that was going to happen anyway does not. Recording
- * every fork as a `boundary` is what let an early-end fork be priced free while
- * the identical operation under the legacy engine was charged in full.
- *
- * Returns null on a refusal and a synthesised `PruneOutcome` on success. Only
- * `tokensRemoved` is read from it, by `contextAfterPrune`; the rest is filled
- * from what the fork reported rather than invented. Non-null is therefore also
- * the signal that a cut landed, which is what `settleBoundary` labels the
- * control group by — so this must not go back to returning null on success.
- *
- * The adoption is deliberately not verified here, because it cannot be: the
- * only thing that proves a fork resumes is a resume. `pendingFork` carries the
- * way back, and the resume-failure branch in the run loop takes it.
- */
-async function forkAndAdopt(
-  id: string,
-  sessionId: string | null,
-  minColdAge: number | null,
-  maxBreakEven: number | null,
-  trigger: PruneTrigger,
-  adopt: (sid: string) => void,
-): Promise<PruneOutcome | null> {
-  if (!sessionId) return null;
-  const transcript = await resolveSessionTranscript(sessionId);
-  if (!transcript) {
-    log(id, `Could not find this run's transcript, so its context was not forked.`);
-    recordPruneDecision(id, trigger, "winnow", "failed", "the run's transcript could not be found");
-    return null;
-  }
-
-  // **Read before the fork, because it is the only side of the measurement this
-  // moment holds.** `winnow fork` writes a new file and leaves this one alone,
-  // so the reading would survive the call — but the run moves off this session
-  // the instant the fork is adopted, and nothing downstream can find its way
-  // back to the window it was carrying. The other side arrives a cycle later,
-  // as the first billed turn of the resume; see `markForkResumed`.
-  //
-  // Only the `api` basis is taken. `apiContextTokens` falls back to
-  // `contextTokens` when a session has no usage frame, which is right for a
-  // ceiling that must not switch itself off and wrong here: a transcript-basis
-  // "before" subtracted from a wire-basis "after" is a number in no units at
-  // all, and the whole of this issue is one such subtraction.
-  //
-  // `apiContextSample` rather than `apiContextTokens` only because it is the
-  // one that reports its basis; its turn count is not wanted here. That costs a
-  // walk of the whole file where `apiContextTokens` stops at the first frame
-  // from the end, and it is affordable at this site alone: a fork already
-  // spawns winnow over this transcript and then parses the file it wrote, at
-  // most once per work cycle.
-  const beforeReading = apiContextSample(transcript, null);
-  const apiContextBefore =
-    beforeReading.basis === "api" ? beforeReading.tokens : null;
-
-  const result = await forkTranscript(transcript, minColdAge, maxBreakEven);
-  if (!result) {
-    log(id, `Context pruning is switched on but winnow is not installed.`);
-    recordPruneDecision(id, trigger, "winnow", "unavailable", WINNOW_MISSING_REASON);
-    return null;
-  }
-
-  // Measured off the written file, in the currency `prune_receipts.tokens_after`
-  // already uses, so the two engines' receipts are comparable rather than merely
-  // similarly named. This is what the next resume has to write, and the netting
-  // prices exactly that until a real turn lands to be read instead. Only for a
-  // fork that was written — a refusal wrote no file to measure.
-  const contextTokensAfter =
-    result.written && result.out ? contextTokens(result.out) : null;
-
-  const rowId = recordForkAttempt(
-    id,
-    sessionId,
-    result,
-    minColdAge,
-    trigger,
-    contextTokensAfter,
-    apiContextBefore,
-  );
-
-  if (!result.written || !result.newSessionId) {
-    // A refusal is a result, not a failure, and the two must not read alike.
-    if (result.refusedBy === "cold-age") {
-      // The wording lives in contextPruning so it can be tested against the
-      // thing that actually decides this refusal — see coldAgeRefusalMessage.
-      log(id, coldAgeRefusalMessage(result.coldAgeSeconds, minColdAge));
-    } else if (result.refusedBy === "break-even") {
-      // Reachable only if someone armed the gate: both callers ask for
-      // `--max-break-even none` because a boundary cut rides a rewrite that was
-      // going to happen (contextPruning's BOUNDARY_BREAK_EVEN_BUDGET). Kept
-      // anyway, because a refusal that surprises this app should read as the
-      // arithmetic it is rather than as a broken install.
-      log(
-        id,
-        `Left this run's conversation alone: winnow priced the cut at ` +
-          `${result.breakEvenTurns ?? "?"} further turns before it would pay for ` +
-          `the cache invalidation, which is more than it was told this run has ` +
-          `left. Nothing was written.`,
-      );
-    } else if (result.refusedBy) {
-      log(id, `Winnow refused to fork this run's conversation (${result.refusedBy}): ${result.reason ?? "no reason given"}.`);
-    } else if (result.reason) {
-      log(id, `This run's context could not be forked: ${result.reason}.`);
-    } else {
-      log(id, `Nothing worth removing from this run's conversation.`);
-    }
-    // One row after the branches rather than one per branch: `fork_attempts`
-    // already carries this refusal in full, and what this table is for is the
-    // count an operator reads on a card -- three outcomes, not five wordings.
-    // A guard that stood is `refused`; winnow breaking is `failed`; neither is
-    // `nothing`, which is the tool working and finding no rule hit.
-    recordPruneDecision(
-      id,
-      trigger,
-      "winnow",
-      result.refusedBy ? "refused" : result.reason ? "failed" : "nothing",
-      result.refusedBy
-        ? `${result.refusedBy} — ${result.reason ?? "no reason given"}`
-        : result.reason,
-    );
-    return null;
-  }
-
-  const breakEven = result.breakEvenTurns === null
-    ? ""
-    : `, needing ${Math.round(result.breakEvenTurns)} further turns to pay for itself`;
-  // "out of the transcript", not "removed", and the two are not the same claim.
-  // The fork rewrites `message.content` and leaves `toolUseResult`, which the
-  // resumed CLI rebuilds its tool results from — so this many bytes leave the
-  // file and some or none of them leave the request. What actually came off the
-  // window is settled a cycle later against the resume's own first turn, and
-  // this line must not pre-empt it with a figure in the wrong units.
-  log(
-    id,
-    `Forked this run's conversation: ${fmtTokens(Math.round(result.netBytes / BYTES_PER_TOKEN))} ` +
-      `tokens' worth of transcript replaced by pointers${breakEven}. What that ` +
-      `takes off the API's window is measured on the next cycle's first turn. ` +
-      `The original is untouched and stays the recovery path; this run ` +
-      `continues in session ${result.newSessionId}.`,
-  );
-  pendingFork.set(id, {
-    fallbackSessionId: sessionId,
-    forkSessionId: result.newSessionId,
-    rowId,
-  });
-  // `adoptSession` is a closure over the run loop's own `sessionId` local, and
-  // moving that local is the entire point — it is what the next cycle's
-  // `--resume` and the live context watch both read. Passed in rather than
-  // reached for, because a module-level function could not touch it.
-  adopt(result.newSessionId);
-  recordPruneDecision(id, trigger, "winnow", "cut");
-
-  // Report what came out, so `contextAfterPrune` can correct the loop's running
-  // figure. Returning null here — which this did — left `lastContextTokens`
-  // describing the transcript the run had just stopped using, and
-  // `startsFresh` reads that figure to decide whether the next cycle should
-  // drop the conversation entirely. A fork that shrank a conversation past the
-  // fresh-start threshold would therefore be discarded on the *pre*-fork
-  // reading: the run pays for the cut and then throws away the result, on the
-  // very cycle the cut was made for.
-  //
-  // `tier` and the api figures are what `PruneOutcome` carries for a prune and
-  // has no counterpart here; only `tokensRemoved` is read by
-  // `contextAfterPrune`, and the rest is filled from what the fork reported so
-  // nothing downstream sees an invented number.
-  //
-  // **`tokensRemoved` is 0 here, and that is a measurement rather than a
-  // placeholder.** `contextAfterPrune` subtracts it from `lastContextTokens`,
-  // which is a wire-basis figure off the cycle's own `usage` frames, and
-  // `startsFresh` then reads the result to decide whether to drop the
-  // conversation. Handing it the transcript delta told it a 200k conversation
-  // had become a 180k one when the API went on carrying all 200k — an invented
-  // shrink, on the one figure whose failure is to throw a conversation away.
-  // Five forks were measured for this and none of them moved the window.
-  //
-  // Not "unknown", because this return has nowhere to put one and the caller's
-  // conservative direction is the same either way: claiming *less* was freed
-  // can only cost a fresh start that was not needed.
-  const bytesRemoved = Math.max(0, Math.round(result.netBytes / BYTES_PER_TOKEN));
-  const before = Math.max(
-    bytesRemoved,
-    Math.round(result.suffixBytes / BYTES_PER_TOKEN),
-  );
-  return {
-    tier: PLAN_TIER as PruneOutcome["tier"],
-    tokensBefore: before,
-    tokensAfter: Math.max(0, before - bytesRemoved),
-    tokensRemoved: 0,
-    apiTokensBefore: 0,
-    elapsedMs: 0,
-  };
-}
-
-/**
- * Ask winnow's newer rule engine what it would have removed here, and say so in
- * the run's log. Acts on nothing.
- *
- * The answer used to go to a `plan_observations` row as well. Nothing ever read
- * one — the log line was the whole of the audience the comparison ever had — so
- * the table is gone and the line is what is left.
- *
- * This is the only place in the app where SPEC section 4's rules run at all.
- * The pruner is `winnow treat`, the inherited engine, and the two classifiers
- * share no code — so no amount of pruning produces evidence about which of them
- * is right. `plan` writes nothing and is allowed while a session is live, so it
- * costs one subprocess and cannot affect the run.
- *
- * Silent on every failure. An observation that could end a cycle would be worth
- * less than not taking it.
- */
-async function observePlan(id: string, sessionId: string | null): Promise<void> {
-  // Gated here as well as at `pruneAtBoundary`'s head, because this is reached
-  // through `settleBoundary` on the off branch too — and an observation is
-  // still a subprocess spawned against the operator's transcript. Read-only is
-  // not the same as free, and it is emphatically not the same as permitted:
-  // the one thing an operator who turned the feature off has asked for is that
-  // winnow is not run on their conversation.
-  if (!getSettings().contextPruning) return;
-  try {
-    const transcript = sessionId ? await resolveSessionTranscript(sessionId) : null;
-    if (!transcript) return;
-    const plan = await planCut(transcript);
-    if (!plan) return;
-    // The whole output. A comparison nobody sees is one nobody acts on, and
-    // this is the only place it is seen.
-    const breakEven =
-      plan.breakEvenTurns === null
-        ? "nothing would fire"
-        : `it would need ${Math.round(plan.breakEvenTurns)} further turns to pay for itself`;
-    log(
-      id,
-      `winnow's rule engine, asked about this conversation at tier ${plan.tier}: ` +
-        `${plan.stripped} of ${plan.toolCalls} tool results, ` +
-        `${fmtTokens(Math.round(plan.netBytes / BYTES_PER_TOKEN))} tokens net — ${breakEven}. ` +
-        `Shown for comparison; nothing acted on it.`,
-    );
-  } catch {
-    // See above.
-  }
-}
-
-/**
- * `lastContextTokens`, corrected for a prune that has just happened.
- *
- * `startsFresh` reads that figure to decide whether the next cycle should drop
- * the conversation, and it comes from the **usage frames of the cycle that just
- * ended** — which were billed before the prune ran and cannot know about it. So
- * with both features on, a prune that shrank a 200k conversation to 124k would
- * be followed immediately by a fresh start triggered on the 200k reading, and
- * the run would pay for the re-discovery of a conversation something had just
- * finished shrinking to fit.
- *
- * That is precisely the failure `IterationResult.contextTokens` documents in its
- * "**Last, not largest**" paragraph, arriving from a direction that did not
- * exist when it was written: there, a compaction is what shrinks the tail and
- * reading a high-water mark is what would get it backwards.
- *
- * Corrected rather than replaced, and that is the careful part. The two figures
- * are not the same measurement — one is exact from `usage`, the other is
- * `contextTokens`' estimate over content — so substituting the estimate would
- * put a different basis into a threshold the operator set against the first.
- * What is carried across is the **amount removed**, which is a quantity of
- * conversation and belongs to neither basis.
- *
- * ## Why the amount and not the ratio
- *
- * This scaled the billed figure by `tokensAfter / tokensBefore` until
- * 2026-08-25, on the argument that a ratio taken over one file twice seconds
- * apart is basis-independent. It is — but the figure it is applied to is not a
- * conversation. Most of the gap between the two measures is a **fixed** system
- * prompt, tool list and set of project instructions, and a proportion shrinks
- * those along with the turns, crediting a prune with freeing context that was
- * never removable. Measured on the crossing in `docs/verification.md`: the
- * ratio put a real 120,595-token remainder at 105,600, low by 15,000, where
- * subtracting what came out puts it at 132,900, high by 12,300. The part a
- * ratio cannot see is ~55,000 tokens wide.
- *
- * High is the direction to be wrong in here for the same reason it is on the
- * log line: `contextTokens` understates what a prune removed, so a subtraction
- * can only ever claim *less* was freed than was, and the failure mode of this
- * function is a fresh start that did not need to happen.
- */
-export function contextAfterPrune(
-  before: number,
-  outcome: PruneOutcome | null,
-): number {
-  if (!outcome) return before;
-  // `max` for the case the intake filter creates: it drops tool results on the
-  // wire while the transcript keeps them, so a prune can report removing more
-  // conversation than the API was carrying in the first place.
-  return Math.max(0, before - outcome.tokensRemoved);
 }
 
 /**
@@ -9898,10 +9125,6 @@ export function cycleCostAfterResult(prevUSD: number, reported: unknown): number
  * - the CLI answered under a session other than the one it was asked for;
  * - there is no earlier figure;
  * - or the total went down, which a restored ledger cannot do.
- *
- * A fork counts as the same conversation here, because winnow copies every
- * record it does not strip, `cost-state` included, and the CLI reports the id
- * it resumed.
  *
  * A cycle that reported nothing banks nothing — `reconcileKilledCycle`
  * estimates it into its own column. If it resumed the ledger it was asked for,
@@ -10358,12 +9581,6 @@ function handleStreamLine(
         n(usage.cache_creation_input_tokens) +
         n(usage.cache_read_input_tokens);
       if (window > 0) acc.contextTokens = window;
-      // And the first one, kept beside it rather than derived from it. What a
-      // resume was asked to carry and what the cycle grew to are different
-      // facts, and after a fork only the first says whether the cut landed.
-      if (window > 0 && acc.firstContextTokens === 0) {
-        acc.firstContextTokens = window;
-      }
     }
 
     for (const b of blocks as Array<Record<string, unknown>>) {
@@ -11685,18 +10902,10 @@ export async function startRun(id: string): Promise<void> {
    */
   let reportedDone = run.reported_done !== 0;
   let sessionId: string | null = run.session_id;
-  // A fork this run adopted and never got a verdict for. `pendingFork` is
-  // in-memory and dies with the loop, so a run parked or restarted between the
-  // fork and its first resume came back holding a session nothing could roll
-  // back from — and would fail outright rather than returning to the
-  // conversation it had. Recovered from the table, which survives the gap.
-  {
-    const carried = pendingForkFor(id, sessionId);
-    if (carried && !pendingFork.has(id)) pendingFork.set(id, carried);
-  }
-  // How many cycles the context ceiling has ended and refunded, over the run's
-  // whole life. See `MAX_EARLY_ENDS_PER_RUN`.
-  let earlyEnds = run.early_ends ?? 0;
+  // Cycles the removed context ceiling ended and refunded. Nothing increments
+  // it any more; it is carried so a run that earned refunds before the removal
+  // keeps them in `refundedCycles`.
+  const earlyEnds = run.early_ends ?? 0;
   // How many guard-cut cycles have been refunded, over the run's whole life
   // rather than this segment's: every cut ends a segment. See
   // `MAX_PAUSES_PER_RUN`.
@@ -11867,22 +11076,19 @@ export async function startRun(id: string): Promise<void> {
   /**
    * Park on the stacks this run is waiting to be answered about.
    *
-   * Two boundaries reach it: a cycle that ended on its own, and one the context
-   * ceiling cut, which has already been refunded on `early_ends`' bound when
-   * that had room. `refunded` says so, because one cycle is refunded once.
    *
    * The caller sets `finalStatus`, where the compiler can see it: TypeScript
    * does not widen a narrowed `let` for an assignment inside a closure, so the
    * ending's `waiting-for-stack` branches would no longer typecheck.
    */
-  const parkForStack = (asked: StackWaitRequest[], refunded: boolean) => {
+  const parkForStack = (asked: StackWaitRequest[]) => {
     // `reportedDone`'s trap from the `needs-review` branch: hydrated from the
     // row, so a break that does not clear it writes a stale DONE.
     reportedDone = false;
     // Refunded on `guard_refunds`' terms and for the default cap's sake —
     // see `MAX_STACK_WAITS_PER_RUN`. `request_stack` refuses at the bound,
     // so a charged park is reachable only for a run attached before it.
-    if (!refunded && stackWaits < MAX_STACK_WAITS_PER_RUN) iterations -= 1;
+    if (stackWaits < MAX_STACK_WAITS_PER_RUN) iterations -= 1;
     stackWaits += 1;
     // The fact and nothing else: the run page's card already says what
     // the wait means, and the log and the lists need which stack.
@@ -11969,7 +11175,7 @@ export async function startRun(id: string): Promise<void> {
       log(
         id,
         signIn
-          ? `This run's work cycles go to ${signIn.baseUrl} as ${run.model ?? signIn.model}, not to Anthropic. Winnow's intake filter and pruner do not see them, their spend is unknown rather than $0, and the branch cannot land or be delivered until a frontier model's review approves it. ${
+          ? `This run's work cycles go to ${signIn.baseUrl} as ${run.model ?? signIn.model}, not to Anthropic. Their spend is unknown rather than $0, and the branch cannot land or be delivered until a frontier model's review approves it. ${
               signIn.contextTokens === null
                 ? "No context window was given at sign-in, so Claude Code assumes 200,000 tokens and compacts against that."
                 : `Claude Code is told the model's context window is ${signIn.contextTokens.toLocaleString("en-US")} tokens and compacts against that.`
@@ -12309,15 +11515,12 @@ export async function startRun(id: string): Promise<void> {
       // leaves the file where it was, so both still reach the resume and end
       // the way they did. The first cycle of a segment only, for
       // `looksLikeResumeFailure`'s reason: later, the id is one this segment
-      // just used. Never a carried fork, whose failed resume returns to the
-      // conversation it was cut from, which this would skip. Claude Code's tree
-      // only: a Codex session is not one of its transcripts, and a local cycle
+      // just used. Claude Code's tree only: a Codex session is not one of its transcripts, and a local cycle
       // writes under its own config directory. Above the pre-spawn re-check
       // because this awaits a walk, and a Stop pressed during it must still win.
       if (
         sessionId !== null &&
         cyclesThisSegment === 0 &&
-        !pendingFork.has(id) &&
         run.provider !== "codex" &&
         run.provider !== "local" &&
         (await sessionTranscriptPresence(sessionId)) === "absent"
@@ -12490,16 +11693,6 @@ export async function startRun(id: string): Promise<void> {
           `Starting this work cycle fresh rather than resuming: the last one ended on about ${Math.round(lastContextTokens / 1000)}k tokens of context, past the ${Math.round(freshStartAt / 1000)}k this install restarts at. The task is sent again and the work so far is on disk; nothing of the previous conversation carries over.`,
         );
         adoptSession(null);
-        // The conversation the ceiling last measured is gone, so its mark is
-        // too. Kept, it would hold the fresh conversation's first crossing back
-        // until it had grown 25,000 tokens past a figure it never had.
-        ceilingMeasuredAt.delete(id);
-        // A decline explained against that conversation explained nothing about
-        // this one, so the next is written out in full rather than as a follow-up.
-        earlyEndDeclined.delete(id);
-        // And the shape, which is now a different conversation's — see
-        // `forgetComposition` for why the distance test cannot be left to it.
-        forgetComposition(id);
       }
 
       // Read for a Claude Code cycle only: a Codex cycle's stream has no such
@@ -12636,8 +11829,7 @@ export async function startRun(id: string): Promise<void> {
       // already folded into `spent_usd`.
       const cycleStartedAt = Date.now();
       // The earlier of the two, so a cycle that follows one whose boundary was
-      // never reached — a park's resume, or the `continue` after a ceiling
-      // cut — reads the verdicts that landed in between. Still read once: the
+      // never reached — a park's resume — reads the verdicts that landed in between. Still read once: the
       // boundary that reads them clears this, and every later cycle starts
       // after that read.
       const verdictsSince = Math.min(verdictsUnreadSince ?? cycleStartedAt, cycleStartedAt);
@@ -12734,6 +11926,45 @@ export async function startRun(id: string): Promise<void> {
         );
       }
 
+      // Off the segment's `settings` rather than a fresh read, unlike the read
+      // guard above: the plugin's slash commands are listed in the session's
+      // system prompt, so switching it between two cycles of one run would cost
+      // a full rewrite of the cached prefix at the resume.
+      const tokenEconomizer = tokenEconomizerFor(settings, run.provider);
+      if (tokenEconomizer.kind === "unavailable") {
+        log(id, `TokenEconomizer not loaded for this cycle — ${tokenEconomizer.reason}.`);
+      } else if (tokenEconomizer.kind === "ready") {
+        const teEnv = childEnv(tokenEconomizer.env);
+        await ensureTokenEconomizerCatalog(teEnv, childCredentials());
+        // The plugin applies a deny list only to the checkout whose session
+        // produced it, and this repository's work is spread across reused
+        // worktree slots, so a slot would otherwise wait for a list of its own.
+        // Before a new session only: a resumed one meeting a changed tool list
+        // pays to write its whole cached prefix again.
+        if (
+          sessionId === null &&
+          run.isolation === "worktree" &&
+          settings.tokenEconomizerToolprune === "auto"
+        ) {
+          const seed = await seedTokenEconomizerSlot({
+            slot: workDir,
+            env: teEnv,
+            credentials: childCredentials(),
+          });
+          if (seed.kind === "seeded") {
+            log(
+              id,
+              `TokenEconomizer: this checkout now leaves out ${seed.tools.length} tool${seed.tools.length === 1 ? "" : "s"} this repository's runs have not used (${seed.tools.join(", ")}). \`te toolprune restore\` gives them back.`,
+            );
+          } else if (seed.kind === "failed") {
+            log(
+              id,
+              `TokenEconomizer's deny list was not copied into this checkout — ${seed.reason}. This cycle loads every tool.`,
+            );
+          }
+        }
+      }
+
       // The board's tool surface for this cycle, or nothing at all.
       //
       // Read per cycle rather than fixed for the run, the read guard's rule
@@ -12794,6 +12025,7 @@ export async function startRun(id: string): Promise<void> {
               }
             : null,
         readGuardDir: readGuard.kind === "ready" ? readGuard.pluginDir : null,
+        tokenEconomizerDir: tokenEconomizer.kind === "ready" ? tokenEconomizer.pluginDir : null,
         // On every cycle including a resumed one, `--plugin-dir`'s rule: the
         // CLI restores no MCP config on `--resume`, so a version of this that
         // passed it once would leave cycle two of every run without the board
@@ -12951,10 +12183,8 @@ export async function startRun(id: string): Promise<void> {
         startLiveTicker();
       }
 
-      // Unconditional, unlike the block above. This is the ceiling that replaced
-      // `--autocompact`, and that flag did not ask about `enforcement`.
-      // `pruningEnabled` is re-read on the tick rather than tested here, so an
-      // operator switching the feature off reaches a cycle already in flight.
+      // Unconditional, unlike the block above: the occupancy series is a
+      // reading of every run, not an opt-in about budgets.
       contextWatches.set(id, { sessionId: () => sessionId, iteration: () => iterations });
       startLiveTicker();
 
@@ -13008,6 +12238,7 @@ export async function startRun(id: string): Promise<void> {
                 pausedMs,
                 now: Date.now(),
               }).value,
+          tokenEconomizer.kind === "ready" ? tokenEconomizer.env : {},
         );
       } finally {
         liveGuards.delete(id);
@@ -13038,45 +12269,6 @@ export async function startRun(id: string): Promise<void> {
       cyclesThisSegment += 1;
       lastExit = res.exitCode;
       await stampCycleCommits(id, run, workDir, local ? local.model : run.model);
-
-      // Settle the last boundary's fork here, where both facts are known: which
-      // session this cycle was asked to resume, and whether it did any work.
-      //
-      // It used to be settled further down, past the exit-code branch, so a
-      // cycle that ended by any route other than a clean exit left the row at
-      // NULL for ever — the evidence was collected only from runs that finished
-      // tidily, which is the population least likely to contain a bad fork. The
-      // failure branch below takes over when the resume is the thing that
-      // failed; this covers every other ending.
-      const settling = pendingFork.get(id);
-      if (settling && resumeTarget === settling.forkSessionId) {
-        if (!cycleDidNoWork(res)) {
-          pendingFork.delete(id);
-          if (settling.rowId !== null) {
-            // The other half of the fork's removal measurement, and this is the
-            // first moment it exists: the window the resume was actually asked
-            // to carry, against the one the source session was carrying when
-            // the cut was taken. Nothing else in this app can see it — the
-            // transcript records bytes the request no longer sends.
-            //
-            // Null rather than 0 for a cycle that billed nothing, so a fork
-            // whose resume was killed before its first turn stays unmeasured
-            // instead of being recorded as having removed the whole window.
-            markForkResumed(
-              settling.rowId,
-              true,
-              res.firstContextTokens > 0 ? res.firstContextTokens : null,
-            );
-          }
-        }
-        // A cycle that did no work falls through: that is the resume-failure
-        // shape, and the branch below owns it, including the rollback.
-      } else if (settling) {
-        // The cycle resumed something else — `startsFresh` dropped the
-        // conversation, or an operator intervened. The fork was never tried, so
-        // it is neither a pass nor a failure and the row stays NULL.
-        pendingFork.delete(id);
-      }
 
       // What this cycle cost, as against what its session has cost so far.
       // `res.costUSD` is the running total from the first cycle onwards, so
@@ -13272,88 +12464,6 @@ export async function startRun(id: string): Promise<void> {
       // code that reads as -1. Judging that as a crash would file every stop —
       // operator or guard — as a red `failed` run.
       const postCycle = interrupts.get(id);
-      if (postCycle?.kind === "prune") {
-        // The one interrupt that does not end the run, so it is taken off the
-        // map here rather than passed to `applyInterrupt` — which has no status
-        // meaning "carry on" and would file this as a `stopped` run.
-        //
-        // Ordered ahead of every test below for the reason the general interrupt
-        // check is: the child was killed, so it closed with a null code that
-        // reads as -1 and reported no `result`. Judging that as a crash, or as a
-        // refusal, would end a run that is working exactly as configured.
-        interrupts.delete(id);
-        log(id, postCycle.reason);
-
-        // Refunded, bounded. A compaction never cost a work cycle, so a ceiling
-        // crossing that consumed one would quietly change what `maxIterations`
-        // buys; but an unbounded refund is a run with no terminus, which
-        // `budgets-and-guards.md` forbids. Past the cap the crossing still
-        // prunes and simply counts.
-        const earlyEndRefunded = earlyEnds < MAX_EARLY_ENDS_PER_RUN;
-        if (earlyEndRefunded) {
-          earlyEnds += 1;
-          iterations -= 1;
-          // Written straight back to the row, which the pause path above does
-          // not need to do and this one does. The UPDATE a few lines up has
-          // already stored the *un*-refunded count, and a paused run is picked
-          // up later by a different path that writes its own; this one carries
-          // on inside the same loop, so nothing else would correct the row until
-          // the next cycle ends — and by then the counter has been re-incremented
-          // to the same number, so it never corrects at all. The visible effect
-          // is a "Work cycles" bar that advances the moment the ceiling fires,
-          // while the run is still working on the cycle it was refunded for.
-          // The count goes in the same statement, so a restart can never store
-          // the refund without the refund's cost against the bound.
-          db()
-            .prepare("UPDATE runs SET iterations = ?, early_ends = ? WHERE id = ?")
-            .run(iterations, earlyEnds, id);
-        }
-
-        // Captured before the cut, because `adoptSession` reassigns `sessionId`
-        // and the probe is a statement about the conversation that was standing
-        // at this boundary — the same reason `pruneAtBoundary` passes its own
-        // parameter rather than whatever the fork adopted.
-        const boundarySessionId = sessionId;
-        const boundaryContextTokens = lastContextTokens;
-        const earlyEndOutcome = await pruneAtEarlyEnd(id, sessionId, adoptSession);
-        lastContextTokens = contextAfterPrune(
-          lastContextTokens,
-          // `adoptSession` and not `prune` directly: under the fork engine this
-          // writes a new transcript and the run has to move onto it, exactly as
-          // at a natural boundary. Passing the closure is what lets it.
-          earlyEndOutcome,
-        );
-        // The other half of the boundary bookkeeping, and it was missing here.
-        // `settleBoundary` was called only from `pruneAtBoundary`, so on an
-        // install where the context ceiling reaches every run before a natural
-        // boundary does — which is this one, 50 early-end receipts against 2 —
-        // `resume_probes` stayed empty for ever. That table is the control group
-        // `boundaryInvalidation` needs before it will charge anything, so with
-        // it empty every boundary cut was priced at $0 and the reported net
-        // could not go negative. An empty control is not a neutral state: it is
-        // the one that silently restores the assumption the control exists to
-        // test.
-        await settleBoundary(
-          id,
-          boundarySessionId,
-          earlyEndOutcome !== null,
-          boundaryContextTokens,
-        );
-        // A run that asked for a stack in the cycle the ceiling cut parks here,
-        // read off the record as at a natural boundary. The `continue` used to
-        // be the whole of this ending, so it spawned another cycle — billed,
-        // refunded as well, and worked without the tool it had just asked for —
-        // and parked only at that one's end. After the prune rather than before
-        // it, because the resume continues this conversation and would open at
-        // the ceiling it was cut at.
-        const asked = stackWaitOf(id);
-        if (asked.length > 0) {
-          parkForStack(asked, earlyEndRefunded);
-          finalStatus = "waiting-for-stack";
-          break;
-        }
-        continue;
-      }
       if (postCycle) {
         applyInterrupt(postCycle);
         // A cycle the live guard cut short is refunded to the counter: the
@@ -13644,51 +12754,8 @@ export async function startRun(id: string): Promise<void> {
         // up by hand after a crash may never have parked at all — a pick-up
         // neither adds to `pause_count` nor clears it — so that condition
         // excluded the one case an operator is watching.
-        // "This cycle did no work at all", split out because two callers need
-        // it and only one of them wants the segment-position term.
-        const didNoWork = cycleDidNoWork(res);
         const looksLikeResumeFailure =
-          usedResume && cyclesThisSegment === 1 && didNoWork;
-        // A fork's resume failure is not the same shape. `cyclesThisSegment === 1`
-        // means "this segment opened on a session an earlier one left behind",
-        // which is a statement about how the *segment* started — and a fork is
-        // adopted at a cycle boundary in the middle of a segment, so the counter
-        // is already 2 or more by the time the fork's first resume is attempted.
-        // Inheriting that term made the rollback below unreachable, and with it
-        // the only writer of `fork_attempts.resumed = 0`: the column that is
-        // milestone 2's kill condition could never hold the value that trips it.
-        const forkWouldNotResume = usedResume && didNoWork;
-        // A fork that will not resume, caught on the one cycle that can catch
-        // it. Taken before the ordinary retry, because retrying the same
-        // unresumable id would burn the single retry the run gets and then fail
-        // for a reason that names the fork rather than the cause.
-        //
-        // The verdict goes on the row either way. This column is milestone 2's
-        // first criterion — "given a forked session, when `claude --resume` runs,
-        // then it exits 0" — and a 0 in it is that guardrail's kill condition,
-        // reached by a resume the run actually needed.
-        const fork = pendingFork.get(id);
-        if (forkWouldNotResume && fork && fork.fallbackSessionId) {
-          pendingFork.delete(id);
-          if (fork.rowId !== null) markForkResumed(fork.rowId, false);
-          iterations -= 1;
-          cyclesThisSegment = 0;
-          // The fork carried its source's ledger, so the figure from before this
-          // cycle is still the one the fallback restores — whatever throwaway
-          // session the failed resume named.
-          returnToSession(fork.fallbackSessionId, sessionCostBeforeCycle);
-          // The fork was cut from that conversation, so what this cycle was
-          // asked to say is still what it is waiting to hear.
-          handBack(handed);
-          log(
-            id,
-            `The forked conversation would not resume, so this run is back on the ` +
-              `one it had before the fork (${fork.fallbackSessionId}). The fork is ` +
-              `still on disk and nothing was lost. Winnow's own guardrail counts ` +
-              `this as a failure and it is recorded as one.`,
-          );
-          continue;
-        }
+          usedResume && cyclesThisSegment === 1 && cycleDidNoWork(res);
         if (looksLikeResumeFailure && !resumeRetried) {
           resumeRetried = true;
           iterations -= 1;
@@ -13735,7 +12802,7 @@ export async function startRun(id: string): Promise<void> {
       // one that only says it needs a tool does not.
       const asked = stackWaitOf(id);
       if (asked.length > 0) {
-        parkForStack(asked, false);
+        parkForStack(asked);
         finalStatus = "waiting-for-stack";
         break;
       }
@@ -13823,8 +12890,8 @@ export async function startRun(id: string): Promise<void> {
       // the ending its cycle earned, deliberately: `restart_closed` follows
       // the shutdown's ending, and a run whose agent said DONE taking it would
       // be re-queued by the restart notice to work on a task it had finished.
-      // A guard or a prune cannot be written here at all, since both watch a
-      // cycle and their watches went with this one's `finally`.
+      // A guard cannot be written here at all, since it watches a cycle and
+      // its watch went with this one's `finally`.
       const stoppedDuringWait = interrupts.get(id);
       if (stoppedDuringWait?.kind === "operator") {
         applyInterrupt(stoppedDuringWait);
@@ -13888,28 +12955,6 @@ export async function startRun(id: string): Promise<void> {
           `Checked and not closed: ${heldBack.reason}. Giving this run another work cycle to finish what is missing.`,
         );
       }
-
-      // The boundary prune, and its position in this loop is the whole of why
-      // it is free.
-      //
-      // Every `break` above has been passed, so another cycle is going to run
-      // and it is going to `--resume` this session — which rewrites the cached
-      // prefix whatever we do here. That is the `2·D` term in
-      // `contextPruning.ts`'s arithmetic being refunded: the edit costs nothing
-      // it was not about to cost anyway, and every turn of the next cycle then
-      // carries less. Moved above any of those breaks and it would prune a
-      // transcript nothing resumes, paying a rewrite for a conversation that has
-      // ended.
-      //
-      // Awaited rather than left floating. It is seconds of subprocess against a
-      // cycle measured in minutes, and the next spawn must not read the file
-      // while winnow is rewriting it.
-      if (boundaryPruneApplies(run.provider)) {
-        lastContextTokens = contextAfterPrune(
-          lastContextTokens,
-          await pruneAtBoundary(id, sessionId, lastContextTokens, adoptSession),
-        );
-      }
     }
   } catch (err) {
     stopReason = err instanceof Error ? err.message : String(err);
@@ -13927,11 +12972,6 @@ export async function startRun(id: string): Promise<void> {
     liveGuards.delete(id);
     contextWatches.delete(id);
     forgetContextCheck(id);
-    earlyEndDeclined.delete(id);
-    ceilingMeasuredAt.delete(id);
-    compositionMeasuredAt.delete(id);
-    boundaryDeclines.delete(id);
-    pendingFork.delete(id);
     // The exporter's credential dies with the run's loop, the way the chat's
     // dies with its turn — on a short grace, because the exporter batches on a
     // one-second timer and revoking on the instant would drop the tail of the
@@ -14140,20 +13180,7 @@ export type StopOutcome = "signalled" | "cancelled" | "not-active";
 function interruptRun(id: string, it: Interrupt): "signalled" | "cancelled" {
   // First interrupt wins. An operator stop landing just after a guard kill must
   // not rewrite why the run ended, and re-signalling a dying child does nothing.
-  //
-  // Except over a pending `prune`, which is not an ending, so there is no "why
-  // the run ended" for a later one to rewrite: the post-cycle checkpoint
-  // consumes it and carries on. An operator's Stop or a shutdown kept out by
-  // one was gone by the next pre-scan, and nothing asks for either again — the
-  // press was answered and the loop spawned another cycle, into the shutdown's
-  // grace for the latter. Only those two: a guard's verdict is re-derived by
-  // the pre-cycle guard, and a deadline is about the cycle the prune is
-  // already ending.
-  const pending = interrupts.get(id);
-  if (
-    !pending ||
-    (pending.kind === "prune" && (it.kind === "operator" || it.kind === "shutdown"))
-  ) {
+  if (!interrupts.has(id)) {
     interrupts.set(id, it);
     // Announced before the signal, so the log explains the kill even when the
     // child dies instantly and the loop's own checkpoint is the next thing to
@@ -14442,7 +13469,7 @@ function stopLiveTicker(): void {
  * interrupt is worth recording.
  *
  * Exported for `orchestrator.test.ts` and for nothing else, on
- * `checkContextCeilings`' grounds: its only caller is a `setInterval` a spawn
+ * `sampleLiveContexts`' grounds: its only caller is a `setInterval` a spawn
  * starts, so the alternative to the export is a billed cycle.
  */
 export async function liveGuardTick(): Promise<void> {
@@ -14456,13 +13483,8 @@ export async function liveGuardTick(): Promise<void> {
     }
 
     // Before the budget scan, and cheap enough to run first: it reads one file
-    // per run and parses backwards from its end until it finds a usage frame. A
-    // run that crosses the ceiling is interrupted here and then skipped by the
-    // budget loop below on the `interrupts.has(id)` test every branch already
-    // makes. It is also where the occupancy series is written, off that same
-    // read — see the function's own note on why that half is not gated on
-    // pruning being switched on.
-    await checkContextCeilings();
+    // per run and parses backwards from its end until it finds a usage frame.
+    await sampleLiveContexts();
 
     // The context read above runs on every tick; the budget scan below runs on
     // the operator's own interval, which the tick may now be faster than. See
@@ -14489,8 +13511,8 @@ export async function liveGuardTick(): Promise<void> {
     for (const [id, guard] of pending) {
       // An operator stop may have landed while the scan was running — and so
       // may the end of the cycle this guard was registered for, since the scan
-      // is coalesced and can take seconds. Identity rather than `has`,
-      // `checkContextCeilings`' test: the entry is re-set per cycle. A stale
+      // is coalesced and can take seconds. Identity rather than `has`, because
+      // the entry is re-set per cycle. A stale
       // guard's `progress()` still reads the loop's live `spentUSD`, which by
       // now includes that cycle's `result`, and adds telemetry since the same
       // cycle's start on top — that cycle counted twice, and a run under its
@@ -14528,92 +13550,28 @@ export async function liveGuardTick(): Promise<void> {
 }
 
 /**
- * Record how full every live run's context is, and end any cycle past the
- * ceiling so it can be pruned.
+ * Take one occupancy sample per live run, for the run page's context chart.
  *
- * Two jobs off one read, and the order between them is load-bearing: the sample
- * is stored **before** the ceiling comparison, because that comparison discards
- * every reading below the ceiling and those are every reading a graph of
- * occupancy is made of. Sampling after it would record only the runs that were
- * already over.
+ * Measurement only: nothing here ends, interrupts or edits a cycle. The watch
+ * is registered beside every spawn, so the series exists for every run rather
+ * than only on installs that turned something on.
  *
- * This is what replaced `--autocompact`, and the shape of the replacement is the
- * part worth reading. The CLI compacted *in place*: it summarised the
- * conversation and the same cycle carried on. Nothing here can do that — a
- * transcript rewritten under a live session races the CLI's own appends, and the
- * CLI is sending its in-memory context to the API regardless, so an edit to the
- * file would not shrink what this turn costs anyway. What this app can do that
- * the CLI cannot is end the cycle, which puts the transcript back in nobody's
- * hands, and that is the whole mechanism.
- *
- * ## Why there is no size gate any more
- *
- * A `statSync` used to stand in front of this, skipping any transcript smaller
- * than the ceiling's worth of bytes on the argument that message content is a
- * subset of the file, so a file that small cannot hold a conversation past the
- * ceiling. That was sound while the measure was `contextTokens`, and it stopped
- * being sound the moment this started reading `apiContextTokens`: the prompt
- * carries ~55,000 tokens of system prompt, tool list and project instructions
- * that are in no transcript at all, so a file **under** the gate can be a cycle
- * over the ceiling. It held anyway because a transcript's envelopes outweigh
- * that — measured at 1.74× the message bytes on this install — but that is a
- * property of how tool-heavy a run happens to be, not a bound, and what it
- * hides is silent: a cycle that never gets ended and never gets pruned.
- *
- * What it bought is also smaller than it was. `contextTokens` JSON-parses every
- * line; `apiContextTokens` reads the file and parses backwards from the end,
- * stopping at the first `usage` frame — a read and a split for a file of a few
- * megabytes, once a minute per live run.
- *
- * ## Why the payback test measures this conversation
- *
- * Ending a cycle manufactures a boundary, so unlike the one at the end of a
- * cycle it pays the invalidation in full and only pays back over later turns.
- * That is `ceilingPayback`, and it needs to know how much a prune would remove
- * *here*. It used to be inferred instead from this run's last receipt, which
- * meant the first crossing on every run acted unconditionally — a $1.80 cold
- * rewrite decided by the absence of a reading rather than by one.
- *
- * So a dry run per measurement, which is affordable because
- * `CEILING_REMEASURE_GROWTH_TOKENS` paces it by the conversation's growth
- * rather than by the ticker. What it reads off that dry run is a **byte**
- * figure: winnow's own token count is anchored on the `usage` frames and does
- * not move when content is stripped, so it prints a 0% saving on a cut that
- * halves the file, and `treatRemovedTokens` records what converting the bytes
- * costs instead.
- *
- * Exported for `contextCeilingRace.test.ts` and for nothing else. Its only
- * caller is `liveGuardTick`, which is reachable only through a `setInterval` a
- * spawn starts, so the alternative to the export is a billed cycle.
+ * Exported for `contextSamples.test.ts`. Its only caller is `liveGuardTick`,
+ * which is reachable only through a `setInterval` a spawn starts, so the
+ * alternative to the export is a billed cycle.
  */
-export async function checkContextCeilings(): Promise<void> {
+export async function sampleLiveContexts(): Promise<void> {
   if (contextWatches.size === 0) return;
-
-  // `pruningEnabled()` used to stand in front of this whole function, and moving
-  // it down one level is the point of this pass. The reading below is the only
-  // answer this app has to "how full is this run's context", and it was
-  // reachable only where pruning happened to be switched on — so on every other
-  // install the indicator was permanently blank, install-dependent and with
-  // nothing anywhere saying why. The **watch** is registered unconditionally
-  // beside every spawn, because the ceiling replaced a flag that rode every
-  // cycle of every run; so the reading belongs with the watch and only the
-  // acting-on-it belongs with the feature. It costs nothing extra where pruning
-  // is on: one scan answers both, and the sample is taken before the ceiling
-  // comparison rather than after, which would record only runs already over it.
-  const settings = getSettings();
-  const pruning = pruningEnabled(settings);
   // One walk of the projects tree for the whole tick rather than one per watched
-  // run, which is the same hoist the `transcript` binding below performs within
-  // a single run. Every run was walking the identical tree for its own basename:
-  // 288 ms a tick at four concurrent runs on this operator's store and 1.7 s at
+  // run: every run was walking the identical tree for its own basename — 288 ms
+  // a tick at four concurrent runs on this operator's store and 1.7 s at
   // twenty-five, spent on the event loop these guards run on. Lazy, so a tick
   // that resolves nothing still walks nothing.
   const resolveSession = sessionTranscriptResolver();
 
   for (const [id, watch] of contextWatches) {
     if (interrupts.has(id)) continue;
-    // A Codex cycle: the occupancy reading comes off its rollout, and nothing
-    // below applies — no transcript, no ceiling and no pruning act on it.
+    // A Codex cycle: the reading comes off its rollout rather than a transcript.
     if (codexCycleTracked(id)) {
       const reading = readCodexCycle(id);
       const advance = takeCodexSampleAdvance(id);
@@ -14624,444 +13582,16 @@ export async function checkContextCeilings(): Promise<void> {
     }
     const sessionId = watch.sessionId();
     if (!sessionId) continue;
-
-    let tokens: number;
-    // Hoisted out of the try because the payback measurement below needs it
-    // too, and resolving the session twice on the same tick would be a second
-    // directory walk for an answer already in hand.
-    let transcript: string | null = null;
     try {
-      transcript = await resolveSession(sessionId);
+      const transcript = await resolveSession(sessionId);
       if (!transcript) continue;
-      // Read off `usage` rather than estimated from bytes. The two diverge by
-      // tens of thousands of tokens in both directions on this install — the
-      // intake filter drops tool results on the wire while the transcript keeps
-      // them, and the prompt carries a system prompt and tool list the
-      // transcript never held. See `apiContextTokens`. Ending a cycle against a
-      // conversation the API was never asked to carry is a prune that pays
-      // `1.9·S` for nothing.
-      tokens = sampleContext(id, watch.iteration(), transcript).tokens;
+      sampleContext(id, watch.iteration(), transcript);
     } catch {
       // A transcript that cannot be read is not a run to end. The budget guards
-      // below are unaffected and the next tick tries again.
+      // are unaffected and the next tick tries again.
       continue;
     }
-
-    // Re-read after the await above, for the reason the budget loop re-reads
-    // `interrupts` after its own scan: the cycle this just measured may have
-    // ended while the transcript was being resolved, and everything below acts
-    // on a cycle it believes is still running. Identity rather than `has`,
-    // because the entry is re-set per cycle — a run whose *next* cycle started
-    // inside this window is a different conversation than the one measured, and
-    // ending it would charge that conversation for this one's size.
-    //
-    // The sample above is deliberately left standing: it is a true reading of a
-    // transcript that existed, and the occupancy series is the half of this
-    // function that is not gated on the run still working.
-    if (contextWatches.get(id) !== watch || interrupts.has(id)) continue;
-
-    if (!pruning) continue;
-
-    // What that window is *made of*, on the same tick and behind the same gate.
-    //
-    // Above the ceiling comparison rather than below it, and that placement is
-    // the point: the composition answers "what is this run's context growing
-    // on", which is a question worth an answer at 60,000 tokens and not only at
-    // the 200,000 where the app starts acting. Read below the `continue` it
-    // would exist only for conversations already over the line, which is the
-    // half of the climb an operator can no longer do anything cheap about.
-    //
-    // Behind `pruning`, though — `observePlan`'s rule, and not by analogy: this
-    // spawns winnow against the operator's own conversation, and switching the
-    // feature off is the request that it does not. The free reading above stays
-    // ungated because it spawns nothing.
-    //
-    // Awaited rather than left floating. A rejected floating promise takes the
-    // process down under Node's default handler, and the two guards below are
-    // already written for a tick that can lose its cycle mid-await.
-    const compositionAt = compositionMeasuredAt.get(id);
-    if (
-      compositionAt === undefined ||
-      Math.abs(tokens - compositionAt) >= COMPOSITION_REMEASURE_GROWTH_TOKENS
-    ) {
-      // Marked before the await, not after. `contextComposition` is bounded at
-      // `PRUNE_TIMEOUT_MS`, which is two minutes of ticks that would each see an
-      // unmarked run and spawn their own winnow against the same transcript.
-      compositionMeasuredAt.set(id, tokens);
-      const composition = await contextComposition(transcript);
-      // Re-checked after the await for the reason every await on this path is:
-      // the cycle may have ended, and a reading filed against a run whose next
-      // cycle has started would draw this conversation's shape on that one. The
-      // reading is dropped rather than kept — unlike the sample above, which is
-      // true of a transcript that existed whatever became of the run, a
-      // composition is only meaningful beside the iteration it is stamped with.
-      if (composition && contextWatches.get(id) === watch && !interrupts.has(id)) {
-        recordComposition(id, watch.iteration(), composition);
-      }
-    }
-
-    // A reading under the ceiling's mark is a conversation that shrank since it
-    // was measured, and the growth the mark counts from went with it. Paced from
-    // the stale mark, a run declined at 210k and cut to 120k went unmeasured
-    // from its next crossing until 235k, carrying the excess on every turn. The
-    // cut sites clear the mark themselves; this is for whatever shrinks the
-    // conversation without passing through one — a compaction the CLI makes
-    // inside a cycle, or the next such path. Ahead of the ceiling comparison so
-    // that a reading taken back under the ceiling counts: behind it, a run whose
-    // next reading over the line was already past the old mark would still be
-    // held to it.
-    const staleMark = ceilingMeasuredAt.get(id);
-    if (staleMark !== undefined && tokens < staleMark) ceilingMeasuredAt.delete(id);
-
-    if (tokens < CYCLE_CONTEXT_CEILING_TOKENS) continue;
-
-    // Asked about **this** conversation, now, rather than inferred from the last
-    // cut this run made. `predictedPayback` returns null until a run has cut
-    // once, and null resolved to "act" — so every run's first crossing
-    // manufactured a boundary unconditionally, and a manufactured boundary is a
-    // cold rewrite of the whole conversation. Measured on this install: 178k–183k
-    // tokens at the one-hour class, about $1.80, spent to remove 2.3%–8.8% of a
-    // conversation, needing 209–771 further turns to repay against cycles that
-    // ran 36–67. The gate was not wrong afterwards; it never saw the first one.
-    //
-    // `plan` is read-only, is allowed while the session is live, and is the same
-    // subprocess `observePlan` already spawns at every boundary — whose answer
-    // is logged for an operator to argue with and acted on nowhere.
-    //
-    // Re-measured on growth rather than on every tick. This function runs once a
-    // minute and the plan spawns winnow over the whole transcript, so a run
-    // parked above the ceiling would otherwise pay a subprocess a minute for an
-    // answer that barely moves — see `CEILING_REMEASURE_GROWTH_TOKENS`.
-    // `earlyEndDeclined` does not bound this: it suppresses the log line, not
-    // the work.
-    const measuredAt = ceilingMeasuredAt.get(id);
-    if (
-      measuredAt !== undefined &&
-      tokens - measuredAt < CEILING_REMEASURE_GROWTH_TOKENS
-    ) {
-      continue;
-    }
-    ceilingMeasuredAt.set(id, tokens);
-    // Asked of the engine the operator chose, not of `plan` regardless. The two
-    // classify differently enough that reading one to decide the other's action
-    // refused every crossing this install saw for two days — see `ceilingCut`.
-    const cut = await ceilingCut(transcript, tokens, settings);
-    // And again, because that one is a winnow subprocess bounded by
-    // `PRUNE_TIMEOUT_MS` — two minutes in which a cycle has every chance to
-    // finish. Nothing below this line awaits, so the test and the write are one
-    // step: an interrupt written past a cycle's end is either a completed cycle
-    // refunded and its `DONE` discarded, a healthy run filed `stopped` by
-    // `interruptOutcome`, or — past `startRun`'s outer `finally` — an entry no
-    // deleter ever reaches, which stops the run's next resume dead.
-    if (contextWatches.get(id) !== watch || interrupts.has(id)) continue;
-
-    const predicted = ceilingPayback(tokens, cut);
-    if (predicted === null || predicted > CEILING_PAYBACK_HORIZON_TURNS) {
-      // Null declines here, which is the opposite of what `predictedPayback`'s
-      // null meant. That one was "no history", and `boundaryAction`'s aggregate
-      // argument says an unknown of that kind should prune. This one is "no
-      // measurement", and there is no argument for spending $1.80 on a cut
-      // nothing has priced.
-      //
-      // Said on every measurement, not once per run. This is safe to repeat
-      // *because* the measurement is paced by growth rather than by the ticker:
-      // the line follows the conversation, and a run that stops growing stops
-      // repeating itself. Latching it instead left a run climbing from 200k to
-      // 300k silent for an hour while the gate re-decided behind it, which reads
-      // exactly like a feature that has stopped working. `earlyEndDeclined` now
-      // records only whether the decision has been *explained* yet.
-      const explained = earlyEndDeclined.has(id);
-      earlyEndDeclined.add(id);
-      log(
-        id,
-        ceilingDeclineMessage({
-          contextTokens: tokens,
-          removedTokens: cut ? Math.round(cut.removedTokens) : 0,
-          turnsNeeded: predicted,
-          engine: cut?.engine ?? null,
-          measuredForks: cut?.measuredForks ?? null,
-          repeat: explained,
-        }),
-      );
-      // Beside the line and not instead of it, the boundary gate's rule one
-      // function above: `earlyEndDeclined` records only whether the operator has
-      // been *told*, and the line itself expires with `run_events`, so a run held
-      // above the ceiling for forty minutes and an install where pruning was
-      // never switched on were the same empty section once the run had settled.
-      // This is the gate that takes 55 of 58 cuts on this install, so its
-      // declines are also the boundaries missing from the denominator
-      // `PruneSavings.tsx` says the money above it is measured against — a card
-      // that can only ever count the boundaries that cut.
-      //
-      // Three outcomes and not one, because the branch swallows three different
-      // answers and only the last is a refusal: `ceilingCut` returning null is
-      // "nobody could measure it" — winnow absent, or a subprocess that failed,
-      // which it collapses and this cannot tell apart — and a measurement that
-      // frees nothing is the arithmetic having nothing to weigh rather than
-      // having weighed it. An install missing the engine must not read as one
-      // whose arithmetic refused; that distinction is the whole point of the
-      // table.
-      //
-      // Written on every measurement rather than once per run, which is safe for
-      // the reason the line above it is: `CEILING_REMEASURE_GROWTH_TOKENS` paces
-      // both, so the count follows the conversation and a run that stops growing
-      // stops writing rows.
-      recordPruneDecision(
-        id,
-        "early-end",
-        cut?.engine ?? settings.contextPruningEngine,
-        cut === null ? "unavailable" : predicted === null ? "nothing" : "declined",
-        cut === null
-          ? "no engine measurement was available for this crossing"
-          : predicted === null
-            ? // Four words apart and two different findings. Under the in-place
-              // engine the estimate is a reading of the request, so a zero is
-              // a clean conversation. Under the fork engine it is a reading of
-              // past forks, so a zero is either no evidence yet or the evidence
-              // this app now has: bytes leave the transcript and the request
-              // still carries them.
-              cut.measuredForks === null
-              ? "the measurement removed nothing"
-              : cut.measuredForks === 0
-                ? "no fork here has been measured against the API's window yet"
-                : "forks measured here take nothing off the API's window"
-            : null,
-        predicted,
-      );
-      continue;
-    }
-
-    // Both readings are about to stop describing anything. The cut shrinks the
-    // conversation, so the growth this was counting from is gone; and a later
-    // decline on the smaller conversation is new information an operator should
-    // be told about rather than have swallowed by a latch set before the cut.
-    ceilingMeasuredAt.delete(id);
-    earlyEndDeclined.delete(id);
-    // And the shape, which stops describing the run at the same moment for a
-    // different reason: what a cut changes *is* the composition, and the
-    // distance test above cannot notice that — see `forgetComposition`.
-    forgetComposition(id);
-
-    interruptRun(id, {
-      kind: "prune",
-      reason:
-        `This work cycle's context reached ${fmtTokens(tokens)} tokens, so it was ` +
-        `ended here to be pruned. The next cycle carries on from a smaller conversation.`,
-      pause: false,
-      at: Date.now(),
-    });
   }
-}
-
-/**
- * What a further prune on this run would cost, in turns, or null for no history.
- *
- * Read from the run's last receipt: `tokens_after` is the suffix an edit would
- * invalidate and `tokens_removed` is what came out, which is exactly the `S` and
- * `D` of `paybackTurns`. Null on the first crossing, which is the case the
- * caller treats as "act, and find out".
- */
-function predictedPayback(runId: string): number | null {
-  try {
-    // `tokens_before`, never `tokens_after`. See `paybackTurns`: S is the suffix
-    // as it stood before the cut, and the after figure is short by exactly the
-    // amount removed — which flatters the small cuts this test exists to refuse.
-    const receipt = db()
-      .prepare(
-        `SELECT ts, tokens_before AS s, tokens_removed AS d FROM prune_receipts
-          WHERE run_id = ? ORDER BY ts DESC LIMIT 1`,
-      )
-      .get(runId) as PaybackReading | undefined;
-    // The other engine's record of the same two quantities. `S` is
-    // `context_tokens_after` and **not** `suffix_bytes`, which is what this read
-    // for and got wrong by a factor of two and a half: the suffix is the tail
-    // standing after the cut line, 70–87k on the forks this install has taken,
-    // where what a resume rewrites is the conversation, ~180k. Through the
-    // suffix those cuts priced at 74–275 turns against a billed 209–771, so the
-    // gate meant to refuse exactly them was reading a number less than half the
-    // truth. See `ceilingPayback` for the arithmetic and the measurements.
-    //
-    // Both fields are converted to tokens here rather than passed as stored.
-    // `paybackTurns` reads `S/D` as a ratio, so a reading that mixed the
-    // column's tokens with the other column's bytes would be wrong by
-    // `BYTES_PER_TOKEN` and typecheck perfectly.
-    //
-    // Reading receipts alone left a run under the fork engine with no prediction
-    // at all — see `freshestPayback`.
-    //
-    // **`d` is a byte figure here and deliberately stays one, which is the
-    // opposite of what `ceilingCut` now does.** The two gates are asked
-    // different questions. This one decides whether to cut at a *natural*
-    // boundary, where the resume was happening anyway and the cut rides it, so
-    // being optimistic costs almost nothing — and it is the only path that
-    // still produces written forks, which is where `measuredForkRemoval` gets
-    // the evidence the expensive gate divides by. Pessimism here would starve
-    // that and close the ceiling gate permanently, on no measurements at all.
-    // `ceilingPayback`'s question is whether to spend ~$1.80 manufacturing a
-    // boundary, and there a quantity of file may not stand in for a quantity of
-    // request. Both quantities in this reading are transcript-basis, so the
-    // ratio `paybackTurns` takes is at least internally consistent; that is the
-    // whole of what is claimed for it.
-    const forkRow = db()
-      .prepare(
-        `SELECT ts, context_tokens_after AS s, net_bytes AS d FROM fork_attempts
-          WHERE run_id = ? AND net_bytes > 0 AND context_tokens_after > 0
-          ORDER BY ts DESC LIMIT 1`,
-      )
-      .get(runId) as { ts: number; s: number; d: number } | undefined;
-    const fork: PaybackReading | undefined = forkRow
-      ? { ts: forkRow.ts, s: forkRow.s, d: forkRow.d / BYTES_PER_TOKEN }
-      : undefined;
-    return freshestPayback(receipt, fork);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Runs that have already had the ceiling decision **explained** to them.
- *
- * It used to mean "already told, do not tell again", and that was the wrong
- * shape: a run climbing from 200k to 300k said nothing for an hour while the
- * gate kept re-deciding behind it, which is indistinguishable from a feature
- * that has stopped working. Every decline is reported now; this only chooses
- * between the full explanation and the short form that carries the numbers.
- * See `ceilingDeclineMessage`.
- *
- * Cleared wherever the conversation the explanation was about stops existing —
- * the ceiling's own cut, a cut at a natural boundary in `pruneAtBoundary`, and
- * the fresh-start branch in `startRun` — so the next decline, taken against the
- * conversation that replaced it, explains itself again rather than arriving as
- * a follow-up to a line about the old one. `ceilingMeasuredAt` is cleared at
- * the same three sites for the same reason; a new path that cuts or replaces a
- * conversation clears both.
- *
- * A `Set` on `globalThis` for `__ufInterrupts`' reason, and cleared with the
- * run's other per-run state when its loop ends.
- */
-const earlyEndDeclined = ((globalThis as unknown as {
-  __ufEarlyEndDeclined?: Set<string>;
-}).__ufEarlyEndDeclined ??= new Set<string>());
-
-/**
- * The context a run was last measured at, so the ceiling does not re-measure it
- * every minute.
- *
- * The threshold and the argument for it live with the other tuning constants,
- * in `CEILING_REMEASURE_GROWTH_TOKENS`. What belongs here is the reason this is
- * a map rather than a flag: `earlyEndDeclined` does not bound the measurement,
- * because that latch suppresses the *log line* and not the work.
- *
- * Keyed by run, and cleared wherever the conversation it measured stops
- * existing: the ceiling's own cut, a cut at a natural boundary, a fresh start,
- * and the end of the run's loop. `checkContextCeilings` also drops it on any
- * reading below it, which covers a shrink that none of those sites sees. A mark
- * outliving its conversation holds the next crossing back until the new one has
- * grown 25,000 tokens past a figure it never had.
- */
-const ceilingMeasuredAt = ((globalThis as unknown as {
-  __ufCeilingMeasuredAt?: Map<string, number>;
-}).__ufCeilingMeasuredAt ??= new Map<string, number>());
-
-/**
- * The context a run's composition was last read at, on `ceilingMeasuredAt`'s
- * pattern and with its own threshold.
- *
- * A separate map rather than a second use of that one, because the two pace
- * different work at different prices: the ceiling re-measures to decide whether
- * to end a cycle, this re-measures to draw a band on a graph, and sharing a
- * mark would tie a picture's cadence to a policy constant that moves for
- * reasons of its own. See `COMPOSITION_REMEASURE_GROWTH_TOKENS`.
- *
- * A **new** key rather than a widened `__ufCeilingMeasuredAt`, on the rule a
- * dev hot reload enforces: `??=` only initialises when the key is absent, so a
- * pre-upgrade value at a key whose shape changed survives the reload and every
- * call on it throws.
- *
- * Compared in **both** directions, which is the one place this departs from
- * `ceilingMeasuredAt`'s arithmetic. That mark paces growth only, and treats any
- * reading below it as a reset rather than as distance, because the ceiling acts
- * only above a fixed line and must re-decide the first time a shrunken
- * conversation crosses it. Here a drop is itself worth a reading: a prune that
- * takes 80k off a conversation changes its shape, and read one-sided that is
- * the whole post-cut shape missed — the one moment the composition is worth
- * having.
- *
- * **The distance is the pacing for growth and was never the trigger for a
- * cut**, though it was left standing as both for a while and could not do the
- * second job. A cut is not obliged to move the sampled figure: under the fork
- * engine it does not move it at all — measured on all five forks here, the API
- * window after the resume was 1,153 to 5,238 tokens *higher* than before the
- * cut — and under the in-place engine 12 of this install's 54 receipts removed
- * under 40,000 tokens. In both cases the stack went on drawing the pre-cut
- * shape, and after a cut that lowered the figure it had to regrow what the cut
- * took *and then* 40,000 more before anything re-read it. So the cut clears
- * this mark itself, through `forgetComposition`, and the distance goes on
- * pacing ordinary growth between cuts, which is what it was written for.
- *
- * Keyed by run, cleared when a cut lands, when a fresh start drops the
- * conversation, and when the run's loop ends.
- */
-const compositionMeasuredAt = ((globalThis as unknown as {
-  __ufCompositionMeasuredAt?: Map<string, number>;
-}).__ufCompositionMeasuredAt ??= new Map<string, number>());
-
-/**
- * Consecutive boundaries this run's payback test has declined.
- *
- * Counted rather than latched, and that is the whole reason it exists.
- * `predictedPayback` reads the run's **last receipt**, so a decline writes no
- * new one and the next boundary re-reads the same figure: without a counter the
- * first refusal is permanent for the rest of the run, on one measurement, and an
- * operator sees pruning quietly stop.
- *
- * A latch would even be defensible on the arithmetic — `S` grows every cycle
- * while `D` does not, so a cut that failed to pay is likely to keep failing. But
- * `D` is whatever the newest cycle happened to produce, and one cycle that greps
- * a large tree or runs a long build can make it large again. That case is
- * invisible to a stale prediction, and this gate's standing instruction is that
- * every unknown resolves to *prune*.
- *
- * Cleared with the run's other per-run state when its loop ends.
- */
-const boundaryDeclines = ((globalThis as unknown as {
-  __ufBoundaryDeclines?: Map<string, number>;
-}).__ufBoundaryDeclines ??= new Map<string, number>());
-
-/**
- * For a run whose last boundary forked: the session to go back to, and the row
- * to write the verdict into.
- *
- * The fork engine writes a new transcript and the run switches onto it, but
- * nothing has proved that transcript resumes — winnow's 100-fork guardrail is
- * unrun, and one unresumable fork is its stated kill condition. So the switch is
- * provisional: if the next cycle cannot resume the fork, the run goes back to
- * the conversation it had and carries on.
- *
- * That is what makes turning the engine on survivable, and it is also the
- * measurement. `fork_attempts.resumed` is milestone 2's first criterion being
- * collected one production cycle at a time, from resumes the run actually
- * needed rather than from a harness.
- */
-const pendingFork = ((globalThis as unknown as {
-  __ufPendingFork?: Map<string, PendingFork>;
-}).__ufPendingFork ??= new Map<string, PendingFork>());
-
-/** A fork adopted at the last boundary, and the way back if it will not resume. */
-interface PendingFork {
-  /** The session to return to. */
-  fallbackSessionId: string | null;
-  /**
-   * The fork's own session id.
-   *
-   * Checked before a success is recorded. Without it, any cycle that ended
-   * cleanly counted as "the fork resumed" — including one that never touched
-   * the fork, because `startsFresh` had dropped the conversation and opened a
-   * new session in between. That would write a pass into the column milestone 2
-   * reads as its acceptance criterion, on a resume that did not happen.
-   */
-  forkSessionId: string;
-  rowId: number | null;
 }
 
 

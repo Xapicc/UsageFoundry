@@ -199,8 +199,3 @@
   docker inspect -f '{{.State.OOMKilled}}' usagefoundry   # expect true
   dmesg | tail                                            # expect no host process named
   ```
-
-- **The launcher's `/opt/winnow/src` branch was not booted, a sync failure's
-  retry is unexercised, and no work cycle has run through the rebuilt filter
-  (2026-09-10)**; routing rests on the boot line and the proxy answering. The
-  1024 MB server heap figure is derived, not seen on a dreaming cold scan.

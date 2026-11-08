@@ -127,6 +127,20 @@ if [ -n "${UF_AGENT_UID:-}" ] && [ -d "$CLAUDE_LOCAL_VOLUME" ]; then
   fi
 fi
 
+# TokenEconomizer's state, in its own named volume so what its hooks have learned
+# outlives an `up --build`. The same ownership guard: the hooks run as the agent
+# uid and write there, and a volume an earlier uid populated would be unwritable
+# after UF_AGENT_UID changes.
+TOKENECONOMIZER_VOLUME=/home/node/.tokeneconomizer
+if [ -n "${UF_AGENT_UID:-}" ] && [ -d "$TOKENECONOMIZER_VOLUME" ]; then
+  want="${UF_AGENT_UID}:${UF_AGENT_GID:-$UF_AGENT_UID}"
+  have="$(stat -c '%u:%g' "$TOKENECONOMIZER_VOLUME" 2>/dev/null || echo '')"
+  if [ "$have" != "$want" ] && ! chown -R "$want" "$TOKENECONOMIZER_VOLUME" 2>/dev/null; then
+    echo "[usagefoundry] cannot give $TOKENECONOMIZER_VOLUME to $want — the" \
+         "TokenEconomizer hooks will fail to write their state." >&2
+  fi
+fi
+
 # The Codex CLI's home, `CODEX_HOME`, in its own named volume so the sign-in the
 # Settings panel writes and the threads a picked-up Codex run resumes outlive an
 # `up --build`.
@@ -239,8 +253,7 @@ fi
 # UF_AGENT_UID is unset, which is the arrangement whose children are root
 # anyway, the same condition the chown above is skipped under.
 #
-# Dropped, the environment is an allowlist, for the reason
-# `winnow_filter_as_agent` gives: at the agents' own uid this process's
+# Dropped, the environment is an allowlist: at the agents' own uid this process's
 # /proc/<pid>/environ is theirs to read, so the UF_AUTH_TOKEN,
 # ANTHROPIC_ADMIN_KEY and UF_WEBHOOK_SECRET this script holds would be handed
 # over by the drop itself (board task 7e2073d5). GH_TOKEN is the one credential
@@ -1109,323 +1122,6 @@ if [ -n "${DISCORD_WEBHOOK_URL:-}" ]; then
   ) &
 
   unset DISCORD_WEBHOOK_URL DISCORD_MENTION_USER_ID
-fi
-
-# winnow's intake filter, when WINNOW_FILTER is on.
-#
-# ## What it is
-#
-# A loopback proxy in front of api.anthropic.com. A tool result that a rule
-# marks as spent — a `Glob`, an `ls`, a passing `npm test` — is sent in full on
-# the one request where the agent acts on it, placed *after* the last
-# cache_control breakpoint so the API never writes it to the prompt cache, and
-# dropped from the next request. The bytes cost 1.0x once instead of a 2.0x
-# cache write plus a 0.1x read on every later turn.
-#
-# It has to be a proxy rather than a hook because the decision it makes is where
-# the cache breakpoint goes, and no hook sees the request body. It has to run
-# *inside* this container because that is where the agents run: a proxy on the
-# operator's own machine is not reachable from here.
-#
-# ## Why ANTHROPIC_BASE_URL is exported here and not set in compose
-#
-# `orchestrator.ts`'s childEnv passes it through untouched — its own comment
-# says proxy settings are the operator's decision to make — so an export before
-# the exec below reaches every agent. Setting it in compose instead would let an
-# operator point the URL at a proxy that never started, and the symptom is every
-# agent request failing with a connection refused, inside a tool call, on an
-# unattended run.
-#
-# ## Why the ledger and the switch live on a named volume of their own
-#
-# Not in the writable layer, which is not durable enough. `/home/node/.winnow`
-# is where the ledger started and a restart discarded it — measured, not
-# predicted: a restart on 2026-08-25 took 52 ledger lines with it and left the
-# sessions they described permanently unattributable. The ledger is what tells
-# `winnow inspect` and `winnow fork` which bytes the transcript still holds but
-# the API never received, so losing it is not losing a log, it is losing the
-# correction.
-#
-# And not under /data, which is where it went next and stayed until this process
-# stopped running as root. /data is root-owned 0700, and that mode is the whole
-# of what keeps an agent out of the database, the settings every guard reads and
-# the lock `serverLock.ts` keeps beside them — so nothing at UF_AGENT_UID can
-# traverse into it, and opening it by one bit to let the filter back in would
-# trade this file's privilege defect for a far worse one.
-#
-# What the directory mode used to do is done per file instead, and both of the
-# things it did still hold. The directory is root's 0755: the filter may
-# traverse and read it and may not add to or remove from it, which is what keeps
-# `filter-off` an operator's switch rather than something a run can throw to
-# stop paying for its own transcript. The ledger is root's too, group
-# UF_AGENT_GID and 0620 — appendable by the filter, readable by root alone, and
-# neither chmod-able nor removable by the uid that appends to it. The ledger
-# names the commands whose output was dropped, the agents have no business
-# reading it, and they still cannot.
-#
-# ## Turning it off
-#
-# Two ways, and they are not equivalent. `WINNOW_FILTER=` blank plus a restart
-# is the full off: no proxy, no ANTHROPIC_BASE_URL, boot identical to before
-# this block existed. Without a restart, what can be turned off is the
-# *rewriting* and not the proxy — `touch /var/lib/winnow/filter-off` and the
-# next request is relayed untouched.
-#
-# Only the second one is safe to do to a running install, and the asymmetry is
-# worth stating: ANTHROPIC_BASE_URL is fixed in an agent's environment when the
-# server spawns it, so a listener that goes away takes every in-flight and
-# future agent request with it. Killing this process does not turn the filter
-# off, it turns the API off.
-#
-# ## Why a failure here is not fatal
-#
-# Same argument as the gh and Python tool blocks: a filter that will not start
-# is a *degraded* install, not a broken one, and the degradation is that runs
-# cost what they cost today. So this waits for the port, and if nothing is
-# listening it says so and leaves ANTHROPIC_BASE_URL unset — every agent then
-# talks to the API directly, exactly as it does with the switch off. The one
-# outcome that must not happen is a boot that exports the URL and no listener.
-if [ "${WINNOW_FILTER:-}" = "1" ]; then
-  # WHERE THE FILTER'S CODE COMES FROM, and why this is not just a default.
-  #
-  # This image already builds a pinned winnow at /opt/winnow/src - the same
-  # `WINNOW_REF` the pruner runs from - yet the filter looked only under
-  # /workspace, so an operator who set WINNOW_FILTER=1 on a stock image was
-  # told to "clone winnow under the workspace this container mounts": a second
-  # copy of something already inside the container, at a version that could
-  # then differ from the one the pruner uses.
-  #
-  # MEASURED, which is why this is worth changing rather than documenting: on a
-  # tool-heavy run the filter kept 12,096 bytes off the wire and saved 3.67% of
-  # that run's cost, of which 2.3% is the avoided 2.0x cache write and needs no
-  # assumptions. That saving sat behind an install step for a checkout the
-  # image already had.
-  #
-  # An operator's own checkout still wins when they have one - they may be
-  # tracking a different ref on purpose - and an explicit WINNOW_FILTER_PATH
-  # still wins over both. This only supplies the fallback that stops the answer
-  # being "clone what you already have".
-  WINNOW_PATH="${WINNOW_FILTER_PATH:-}"
-  if [ -z "$WINNOW_PATH" ]; then
-    if [ -f /workspace/winnow/pyproject.toml ]; then
-      WINNOW_PATH=/workspace/winnow
-    elif [ -f /opt/winnow/src/pyproject.toml ]; then
-      WINNOW_PATH=/opt/winnow/src
-    else
-      WINNOW_PATH=/workspace/winnow
-    fi
-  fi
-  WINNOW_PORT="${WINNOW_FILTER_PORT:-8789}"
-  WINNOW_STATE_VOLUME=/var/lib/winnow
-
-  if [ ! -f "$WINNOW_PATH/pyproject.toml" ]; then
-    echo "[usagefoundry] WINNOW_FILTER=1 but no checkout at $WINNOW_PATH, and" \
-         "this image has none vendored either — agents will talk to the API" \
-         "directly. Build with a WINNOW_REF, clone winnow under a mounted" \
-         "workspace, or set WINNOW_FILTER_PATH." >&2
-  else
-    # The volume root, reclaimed on the terms /data's is at the top of this
-    # file: Docker copies the image directory's ownership and mode onto a fresh
-    # volume once and never revisits it, so an install that created this one
-    # before these modes existed keeps whatever it was made with. Inside the
-    # branch rather than beside the other three, because a volume nothing writes
-    # needs no modes — this runs on the boot that switches the filter on.
-    if ! mkdir -p "$WINNOW_STATE_VOLUME" 2>/dev/null ||
-       ! chown 0:0 "$WINNOW_STATE_VOLUME" 2>/dev/null ||
-       ! chmod 0755 "$WINNOW_STATE_VOLUME" 2>/dev/null; then
-      echo "[usagefoundry] cannot reclaim $WINNOW_STATE_VOLUME — the filter's" \
-           "off switch is writable by the agents, so a run can stop the filter" \
-           "rewriting its own transcript." >&2
-    fi
-
-    # The ledger is handed over by name rather than by opening the directory,
-    # and it has to be created here: a 0755 root directory is exactly what stops
-    # the filter making it, and `_append_ledger` is best-effort — a ledger it
-    # cannot write costs one line on stderr and is silent everywhere else,
-    # including on the card that reads it.
-    touch "$WINNOW_STATE_VOLUME/filter.jsonl" 2>/dev/null || true
-    if [ -n "${UF_AGENT_UID:-}" ] &&
-       ! { chown "0:${UF_AGENT_GID:-$UF_AGENT_UID}" "$WINNOW_STATE_VOLUME/filter.jsonl" 2>/dev/null &&
-           chmod 0620 "$WINNOW_STATE_VOLUME/filter.jsonl" 2>/dev/null; }; then
-      echo "[usagefoundry] cannot give $WINNOW_STATE_VOLUME/filter.jsonl to the" \
-           "agent uid — the filter will rewrite every request and record none" \
-           "of it, and the correction will read as zero." >&2
-    fi
-
-    # Carried over once from where the ledger used to live, so an install
-    # upgrading into the uid drop keeps its record rather than starting an empty
-    # one beside a file only root can still reach.
-    if [ -s /data/winnow/filter.jsonl ] &&
-       [ ! -s "$WINNOW_STATE_VOLUME/filter.jsonl" ]; then
-      cat /data/winnow/filter.jsonl >>"$WINNOW_STATE_VOLUME/filter.jsonl" 2>/dev/null || true
-    fi
-
-    # The virtualenv belonged to root on every boot before this, and `uv run` at
-    # the agent uid cannot write one it does not own. Handed over rather than
-    # left to be rebuilt: the rebuild is the ninety seconds below, and on a
-    # `restart` — which keeps the writable layer — it would be spent again on
-    # every boot and then fail anyway.
-    if [ -n "${UF_AGENT_UID:-}" ] && [ -d /home/node/.winnow-venv ]; then
-      winnow_want="$UF_AGENT_UID:${UF_AGENT_GID:-$UF_AGENT_UID}"
-      winnow_have="$(stat -c '%u:%g' /home/node/.winnow-venv 2>/dev/null || echo '')"
-      if [ "$winnow_have" != "$winnow_want" ] &&
-         ! chown -R "$winnow_want" /home/node/.winnow-venv 2>/dev/null; then
-        echo "[usagefoundry] cannot give /home/node/.winnow-venv to" \
-             "$winnow_want — the filter cannot build the virtualenv it runs in" \
-             "and will not start. Remove that directory and restart." >&2
-      fi
-    fi
-
-    # Everything below runs at UF_AGENT_UID, and both halves of that matter.
-    #
-    # `$WINNOW_PATH` is a checkout inside a workspace bind mount, which every
-    # agent can write, and what runs here is what is there — the project's
-    # build backend when `uv sync` builds it, then winnow's own module in the
-    # interpreter that build produced. As root that is one run putting its own
-    # code on every other run's transcript at uid 0, holding this script's
-    # whole environment and root's reach into /data and
-    # ~/.claude/.credentials.json. It is the argument `gh_as_agent` and
-    # `uv_as_agent` are wrapped for, one step further along: those two exit,
-    # the interpreter keeps running for the life of the container.
-    #
-    # The environment is an allowlist rather than the inherited one because the
-    # drop is what makes that matter. A root process's `/proc/<pid>/environ` is
-    # out of the agents' reach; the same process at their own uid is not, so
-    # UF_AUTH_TOKEN, ANTHROPIC_ADMIN_KEY, UF_GITHUB_TOKEN and UF_WEBHOOK_SECRET
-    # left in it would be handed over by the very change that took root away —
-    # the reason the Discord relay is started before its variable is unset, one
-    # uid down. Nothing here needs a credential: the proxy relays the caller's
-    # own headers upstream and reads no key of its own. A WINNOW_* knob added to
-    # compose has to be added to this list as well or it arrives nowhere.
-    #
-    # UV_PYTHON_* are forwarded rather than dropped with the rest: without the
-    # preference `uv` fetches a ~30 MB interpreter instead of using the one this
-    # image already has, and without the directory it fetches it into the
-    # writable layer, once per rebuild.
-    winnow_filter_as_agent() {
-      if [ -n "${UF_AGENT_UID:-}" ]; then
-        setpriv --reuid="$UF_AGENT_UID" --regid="${UF_AGENT_GID:-$UF_AGENT_UID}" \
-                --clear-groups \
-          env -i "$@"
-      else
-        env -i "$@"
-      fi
-    }
-
-    # HOW THE FILTER IS LAUNCHED, and why nothing called `uv` stays resident.
-    #
-    # An operator's checkout is a project uv should resolve: it may be a
-    # different ref and its lock is the one to honour. The tree this image
-    # vendors is not - the Dockerfile already installed it into
-    # /opt/winnow/venv and then made the source read-only with `chmod -R a+rX`,
-    # so `uv sync --project` there fails on `Cannot update time stamp of
-    # directory 'src/winnow.egg-info'`: the build backend wants to write into a
-    # tree that is deliberately not writable. It also has no reason to build at
-    # all, because the venv beside it is that build.
-    #
-    # The checkout is synced by `uv sync --frozen`, which exits, and then run by
-    # the virtualenv's own interpreter — never by `uv run`. `uv run` does not
-    # exec: it syncs, spawns the interpreter and waits, and on Unix it has no
-    # flag to do otherwise. The process left waiting was the one that had just
-    # created the virtualenv, downloaded its packages and built winnow, and it
-    # never gives that heap back — measured 2026-09-10 at 178 MB of anonymous
-    # memory held for the life of the container, beside a 24 MB filter doing
-    # the work. The sync is the only thing `uv run` did that the interpreter
-    # cannot do for itself, and `uv sync` is that step alone.
-    #
-    # Either branch ends with the venv on PATH, so the plain `python` below is
-    # that interpreter in both. Prepending beats naming the binary because the
-    # command that follows is shared.
-    WINNOW_RUN_PATH="$PATH"
-    WINNOW_SYNC=""
-    if [ "$WINNOW_PATH" = /opt/winnow/src ] && [ -x /opt/winnow/venv/bin/python ]; then
-      WINNOW_RUN_PATH="/opt/winnow/venv/bin:$PATH"
-    else
-      WINNOW_SYNC="uv sync --frozen --project $WINNOW_PATH"
-      WINNOW_RUN_PATH="/home/node/.winnow-venv/bin:$PATH"
-    fi
-
-    # One environment for the sync and the launch, written once so the two
-    # cannot drift. UV_PROJECT_ENVIRONMENT is load-bearing in it, not
-    # tidiness: the checkout is a bind mount shared with the operator's own
-    # machine, and `uv sync` in a project whose .venv was built by a different
-    # OS *deletes and rebuilds it* — so without this, starting the filter
-    # destroys the virtualenv the operator works in, on every boot.
-    winnow_filter_env() {
-      winnow_filter_as_agent \
-          PATH="$WINNOW_RUN_PATH" \
-          HOME=/home/node \
-          UV_PROJECT_ENVIRONMENT=/home/node/.winnow-venv \
-          UV_PYTHON_INSTALL_DIR="$UV_PYTHON_INSTALL_DIR" \
-          UV_PYTHON_PREFERENCE="$UV_PYTHON_PREFERENCE" \
-          WINNOW_FILTER=1 \
-        "$@"
-    }
-
-    # A sync that fails must not be followed by a launch: the interpreter would
-    # either import a stale winnow or none at all, and the 90 s port wait below
-    # would then report the filter absent for a reason nobody logged.
-    (
-      while :; do
-        if [ -n "$WINNOW_SYNC" ] && ! winnow_filter_env $WINNOW_SYNC; then
-          echo "[usagefoundry] winnow sync failed; retrying in 5s" >&2
-          sleep 5
-          continue
-        fi
-        winnow_filter_env \
-            python -m winnow filter \
-              --port "$WINNOW_PORT" \
-              --ledger "$WINNOW_STATE_VOLUME/filter.jsonl" \
-              --off-file "$WINNOW_STATE_VOLUME/filter-off" || true
-        echo "[usagefoundry] winnow filter exited; restarting in 5s" >&2
-        sleep 5
-      done
-    ) &
-
-    # Up to 90s, because the first boot after a checkout builds a virtualenv and
-    # every boot after it does not. Polled with the interpreter that is already
-    # required to be here rather than a netcat the image does not ship.
-    winnow_up=""
-    i=0
-    while [ "$i" -lt 90 ]; do
-      if python3 -c "import socket,sys; s=socket.socket(); s.settimeout(1); sys.exit(s.connect_ex(('127.0.0.1', $WINNOW_PORT)))" 2>/dev/null; then
-        winnow_up=1
-        break
-      fi
-      i=$((i + 1))
-      sleep 1
-    done
-
-    if [ -n "$winnow_up" ]; then
-      export ANTHROPIC_BASE_URL="http://127.0.0.1:$WINNOW_PORT"
-      # Pointing ANTHROPIC_BASE_URL anywhere but the API turns the CLI's tool
-      # *deferral* off, and that is a bill the filter's own ledger never shows.
-      # Deferred loading sends a tool's name and withholds its JSON schema until
-      # the model asks for it through ToolSearch; with a custom base URL the CLI
-      # stops offering ToolSearch at all and every schema rides every request.
-      # Measured 2026-08-27 in this container, one variable changed and nothing
-      # else: 30,845 tokens direct against 48,074 through the proxy on the real
-      # spawn argv — 17,229 tokens on the cold write and again at the cache-read
-      # rate on every turn after it. On the corpus the same step is visible as a
-      # cliff: 528 sessions before it opened at a median 36,597 and the 63 after
-      # at 51,388, the change landing 2026-08-24T14:05, which is when this block
-      # was first switched on.
-      #
-      # Setting it to "1" restores exactly the behaviour of talking to the API
-      # directly — 30,849 measured on the same argv, back within 4 tokens — so
-      # this is not a new mode, it is the one the filter took away. It belongs
-      # inside this branch rather than in compose because it is only ever wrong
-      # when the base URL above is unset.
-      export ENABLE_TOOL_SEARCH=1
-      echo "[usagefoundry] winnow intake filter on 127.0.0.1:$WINNOW_PORT;" \
-           "agents routed through it. To stop it rewriting without a restart:" \
-           "docker compose exec usagefoundry touch $WINNOW_STATE_VOLUME/filter-off" >&2
-    else
-      echo "[usagefoundry] winnow filter did not open 127.0.0.1:$WINNOW_PORT" \
-           "within 90s — agents will talk to the API directly. The supervisor" \
-           "is still retrying; its output is above." >&2
-    fi
-  fi
 fi
 
 # A HOOK THE OPERATOR CANNOT SEE FAIL.

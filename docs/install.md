@@ -226,7 +226,7 @@ A fork you maintain is a **container** path — a directory under a workspace
 mount, not a host path:
 
 ```bash
-UF_PY_TOOLS=/workspace/winnow
+UF_PY_TOOLS=/workspace/cozempic
 ```
 
 That is installed *editable* and re-run on every boot. Editable means the
@@ -243,7 +243,7 @@ a URL. That one is copied once and skipped on later boots, exactly like a
 release:
 
 ```bash
-UF_PY_TOOLS=cozempic@file:///workspace/winnow
+UF_PY_TOOLS=cozempic@file:///workspace/cozempic
 ```
 
 Worth knowing before choosing the first. The agents can write the mounts, so an
@@ -290,6 +290,44 @@ docker compose exec usagefoundry uv tool uninstall cozempic
 Then restart. `docker compose down -v` discards them with the volume. What
 happened at boot is in `docker compose logs`, one `[usagefoundry]` line per tool
 installed or refused.
+
+### TokenEconomizer
+
+The image ships [Microsoft's TokenEconomizer](https://github.com/microsoft/TokenEconomizer)
+(Apache-2.0), a Claude Code plugin that learns from a repository's finished
+sessions and trims later ones. It is **off** until you switch it on in
+**Settings**; it applies to Claude work cycles only, never Codex or local-model
+ones. Three mechanisms, each with its own setting: tool pruning (`off`,
+`propose`, `auto`; default `auto`), micro-skills (`off`, `envfacts`, `on`;
+default `off`) and a loop guard (`off`, `nudge`; default `off`).
+
+Two things to know before turning it on. The loop guard and micro-skills `on`
+make small side calls to a Haiku model that your plan pays for and that appear
+in no transcript, so the spend figures and budget limits here do not see them -
+which is why the loop guard ships off here although the plugin's own default is
+on. And tool pruning writes a `permissions.deny` list into
+`.claude/settings.local.json` in a repository's checkout once that repository
+has had no session for the quiet period in Settings (60 minutes by default).
+The plugin writes it only into the checkout whose session produced it, so this
+app copies the list into each worktree a new run starts in. In the folder
+itself it lands only when a run that works there directly produced it — and
+there your own Claude Code sessions in that folder read it too.
+
+The plugin's code is pinned in the image: the Dockerfile fetches commit
+`TOKENECONOMIZER_REF` into `/opt/tokeneconomizer`. It is a **build argument**,
+not an environment variable; set `TOKENECONOMIZER_REF=` empty in `.env` to build
+without it (Settings then says it is not installed). What it learns lives in the
+named volume `usagefoundry-tokeneconomizer`, mounted at
+`/home/node/.tokeneconomizer`, so it survives rebuilds and
+`docker compose down -v` discards it. To see what it has learned, run its `te`
+command as the agent user (`node`, unless you set `UF_AGENT_UID`) and point it at
+that volume — as root it would read `/root/.tokeneconomizer` instead, and leave
+root-owned files the hooks can no longer write:
+
+```bash
+docker compose exec -u node -e TOKENECONOMIZER_HOME=/home/node/.tokeneconomizer \
+  usagefoundry /usr/bin/python3 /opt/tokeneconomizer/plugin/scripts/te_bootstrap.py cli repos
+```
 
 ### Everything else: a stack
 

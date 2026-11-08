@@ -51,6 +51,14 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - A work cycle can now write to this app's database, and what bounds that is the tool list rather than a file mode. (was line 33)
 - The chat's capability token is compared constant-time against every live token in `subjectForCapability`, rather than looked up by key: a `Map.get` on a secret leaks its prefix through timing. (was line 32)
 
+## [TokenEconomizer: what its hooks can reach and what nobody meters](security/token-economizer.md)
+
+- The code is root-owned and the state is not, and both facts are deliberate.
+- Environment pins stop config overrides and stop nothing else.
+- Tool pruning writes into a checkout.
+- Its side calls are invisible to every meter.
+- Codex and local runs get nothing.
+
 ## [What a dropped child runs by name](security/child-path-lookups.md)
 
 - What a dropped child is spawned as is decided on root's `PATH`, never on its own.

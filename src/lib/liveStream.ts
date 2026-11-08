@@ -153,12 +153,11 @@ export function sameCounts(a: LiveCountsDTO | null, b: LiveCountsDTO): boolean {
 }
 
 /**
- * `contextOccupancy`'s answer cut to what a tile draws: the newest sample, and
- * none of the prunes or composition that only the series on the run page uses.
+ * `contextOccupancy`'s answer cut to what a tile draws: the newest sample.
  *
  * A cut of the one derivation rather than a second one — every figure the tile
  * shows is computed by `ContextOccupancy` from this, exactly as the run page's
- * is. The counts are left alone so they still say how much exists, which is the
+ * is. The count is left alone so it still says how much exists, which is the
  * contract `contextOccupancy` keeps for a tail. The series is up to 500 points
  * per run, and this is polled for every running run every few seconds.
  */
@@ -166,7 +165,5 @@ export function contextForTile(context: ContextOccupancyDTO): ContextOccupancyDT
   return {
     ...context,
     samples: context.samples.slice(-1),
-    prunes: [],
-    composition: [],
   };
 }

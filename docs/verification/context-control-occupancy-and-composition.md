@@ -64,13 +64,3 @@
   Its placement in `Against its limits`, its behaviour as the 3-second poll
   replaces the DTO, the one-column narrow layout and its caption length are
   unchecked.
-
-- **The composition series' winnow/sample anchor divergence has never been
-  measured while a sub-agent ran**; it is read from code (2026-09-04).
-
-- **The depth-3 tree has been drawn only from hand-seeded rows, and
-  `COMPOSITION_CHILDREN_PER_NODE` (64) has never fired on real output
-  (2026-09-04)**; its test feeds 200 synthetic children.
-
-- **`describeComposition`'s signed negative share has been seen only by the
-  test build.** It went in after the container was rebuilt.

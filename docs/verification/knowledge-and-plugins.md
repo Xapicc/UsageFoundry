@@ -159,6 +159,46 @@
   bytes ÷ 4, the notice for one pick went from 986 to 1,126 characters, and for
   three picks from 2,224 to 2,436.
 
+- **A worktree slot is seeded with its repository's TokenEconomizer list
+  through the plugin's own CLI, 2026-11-08.** In the container, as uid 1000
+  against TokenEconomizer `cb42207`: a scratch repository with two linked
+  worktrees, `te toolprune apply NotebookEdit WebFetch` in the first, then the
+  compiled `seedTokenEconomizerSlot` on the second. The first call answered
+  `seeded` with both tools, and a second call answered `nothing`. The second
+  slot's `.claude/settings.local.json` read `{"permissions":{"deny":
+  ["NotebookEdit","WebFetch"]}}` and `git status --porcelain` there was empty.
+  `te status --json` in that slot listed both as applied by the plugin, so its
+  `restore` covers them. The scratch repository and its state were removed
+  afterwards. Caveat: no work cycle ran, so that the CLI drops the two tools
+  from a session's tool list is the plugin's own measurement, not this one.
+
+- **The Project manager's TokenEconomizer route answers for listed projects
+  only, 2026-11-08.** In the rebuilt container with the switch on,
+  `/api/projects` answered `tokenEconomizer: "on"`. `GET
+  /api/projects/token-economizer?mountId=github&folder=Dockrac` and
+  `folder=UsageFoundry` each answered `200 {"state":"ready"}`, with a record of
+  0 sessions, nothing left out and no overhead figure, because no session has
+  used the plugin yet. `folder=../../etc` answered 404 ("not a git folder
+  listed in the github mount"), and a missing folder 400. Asking created no
+  repository state. Caveat: an empty record only; no browser drew the fold.
+
+- **TokenEconomizer's hooks fire in real work cycles and the catalog refresh
+  succeeds, 2026-11-08.** Three FoundryCode runs (`1f327f20`, `71fde0ca`,
+  `8e310f74`), worktree-isolated, one cycle each, run one after another in slot
+  `-1` on CLI 2.1.319 with the switch on. Each `init` listed `tokeneconomizer`
+  among its plugins with its 7 slash commands. `te toolprune refresh-catalog`
+  logged `token_economizer.catalog_refreshed ok` at 16:55:29, 2 s before the
+  first `init`, and recorded 32 tools for 2.1.319. The state root then held the
+  FoundryCode repository with 3 folded sessions, one ledger line each and
+  `catalog_source: probe+observed`. Tools unused in all three (CronCreate,
+  NotebookEdit, PushNotification and others) carried streaks of 3; no list
+  formed, because 3 sessions of 1 prompt each is under the evidence bar. The
+  micro-skill proposer ran once, at the second session (39,527 of its effective
+  tokens, 0.46% of the three sessions), and wrote no fact yet. No `errors.log`,
+  no plugin process left running, and no TokenEconomizer line in any run's log,
+  which is the seed answering `nothing`. Caveat: the proposer's cost is the
+  plugin's own figure; that `runs.spent_usd` misses it is still open.
+
 ## Not yet verified by hand
 
 - **The pending figures have never rendered.** Settings' *Still downloading*
@@ -247,3 +287,18 @@
 - **No pointer-arm run has been seen shown the dated block.** Settled by the
   first prompt of the next run whose log names a vault note: its pick line
   should carry `status`, `updated` and, for a tagged note, `contradicted`.
+
+- **No list the plugin produced itself has been seen land (2026-11-08).** The
+  seeding is measured (entry above) on a list applied by hand. Unseen: the
+  plugin forming a proposal from real runs, writing it after the quiet period
+  into the last-folded checkout, and the next new session in another slot
+  receiving it. Settle: with tool pruning on, run a few cycles on one
+  repository, wait out `tokenEconomizerQuietMinutes`, start a new run, and read
+  its log for the "now leaves out" line and its slot's
+  `.claude/settings.local.json`.
+- **The loop guard's side calls are assumed invisible to `runs.spent_usd` (2026-11-08).** Read from the plugin (a `claude -p --no-session-persistence` Haiku call, written to no transcript), not measured, which is why `tokenEconomizerLoopguard` ships `off`. Settle: with the loop guard on `nudge`, provoke a failing loop in a run, then compare `runs.spent_usd` and the telemetry card against the plan's usage percentage before and after.
+- **No browser has drawn the Project manager's TokenEconomizer fold
+  (2026-11-08).** `npm run smoke-pages` runs without the plugin, so the fold is
+  hidden there. Settle: with the switch on in the container, open `/projects`,
+  expand **TokenEconomizer** on a row whose repository has run with it, at
+  390px and 1280px, in both skins.

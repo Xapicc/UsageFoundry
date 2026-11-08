@@ -26,11 +26,11 @@ pair and $1.00 on the models beside them, the discount surviving a dated snapsho
 and a Bedrock prefix through `canonicalModelId`, and `UNKNOWN_MODEL_PRICE`
 *not* inheriting it, because the unknown rate exists to be the dearest plausible
 shape and 0.1× on a $10 input is dearer than 0.025× on one. What it does not
-assert is the arithmetic in `contextPruning.ts` and `intakeFilter.ts` that now
-takes the rate from the price it already resolved; those two are counterfactuals
-with their own tests and their own grounds, and the thing that keeps them honest
-is that there is one function to read the rate from rather than a constant each
-of them could hold a stale copy of.
+assert is any counterfactual that takes the rate from the price it already
+resolved; the two that did (in the since-removed pruning and intake-filter
+modules) had their own tests, and what keeps the next one honest is that there
+is one function to read the rate from rather than a constant it could hold a
+stale copy of.
 
 A fifth case joined them with `settings.modelCatalogue`: **a `[1m]` id prices at
 its base model's rate**. `[1m]` is Claude Code's name for the 1M-context
@@ -83,7 +83,8 @@ expired. Two tests went with the mechanism, deliberately and not by weakening
 them: `windows.test.ts`'s *prices each turn at the rate in force on the day it
 ran*, which pinned the counterfactual's per-day memo key against the ramp's UTC
 midnight, and `contextPruning.test.ts`'s *prices at the receipt's own date*,
-which pinned `netReceipt` reading its own `ts` rather than `Date.now()`. Both
+which pinned `netReceipt` reading its own `ts` rather than `Date.now()` (that
+module and test were removed with winnow on 2026-11-08). Both
 observed time-dependence through the only entry that had any, and with the table
 flat there is nothing either can assert that is not a restatement of the code.
 The rule they protected is not gone — `resolvePrice`'s note and `metering.md`
@@ -150,26 +151,12 @@ a million reads. It fails with `at` dropped from `counterfactualByAgent`'s
 lookup, and with the memo's day part removed or narrowed to three to six days.
 It cannot fail for a 2-, 7- or 14-day bucket, and that is correct rather than a
 gap: 2026-10-08 is day 20,734, a multiple of 14, so those buckets break exactly
-at the cut and the memo is still exact for them. `contextPruning.test.ts`'s
-*prices at the receipt's own date* gives `netReceipt` a Sonnet 5.5 row at two
-instants before the cut and two from it, and expects $0.42 and $0.21 of avoided
-reads for 70,000 tokens over 30 turns; it fails with `at` dropped and with
-`Date.now()` in its place. Both were run against those faults and reverted.
-
-**What those two do not claim is that the saving is priced at the right instant,
-only at the receipt's own, and that is a decision rather than an oversight.** The
-reads a prune avoids happen on the *later* turns, and a receipt dated before the
-cut with turns after it is priced wholly at 0.10×, where its post-cut turns would
-have read at 0.05×. `netFilterSavings` is the same, at the anchor turn's `ts`.
-It stays an approximation: `netReceipt` is handed `turnsAfter` as a count, so
-pricing each turn on its own day means carrying every later turn's timestamp
-through `pricedCuts`, `priceForks` and the filter's anchors, for an error
-confined to receipts whose run was live across one midnight. It runs in one
-direction, overstating a pre-cut prune's saving by at most 2× on its turns past
-the cut, and it is finite: a receipt dated from the cut on is exact. Revisit it
-if another dated rate arrives or a run long enough to make it visible does. Do
-not edit either test to assert the approximation — the receipt's own instant is
-the whole of what they pin.
+at the cut and the memo is still exact for them. The companion case in
+`contextPruning.test.ts`, which gave `netReceipt` a Sonnet 5.5 row at two instants
+either side of the cut, was removed with winnow on 2026-11-08, and so was the
+approximation it stood next to (a prune's saving priced at the receipt's own
+instant rather than each later turn's); no code prices a counterfactual that way
+now, so the caveat has nothing left to attach to.
 
 **Claude Haiku 5.5 earned a block, because its trap is the sum rather than a
 neighbour.** It is the first row priced by each request's prompt length: $0.10

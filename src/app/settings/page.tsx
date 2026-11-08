@@ -29,7 +29,9 @@ import type {
   ToolStateDTO,
   CodexEffortLevel,
   EffortLevel,
-  PruneTier,
+  TokenEconomizerLoopguard,
+  TokenEconomizerMicroskills,
+  TokenEconomizerToolprune,
   RunGuardsDTO,
   SandboxDTO,
   SandboxStateDTO,
@@ -37,7 +39,6 @@ import type {
   StackRequestDTO,
   StorageReportDTO,
 } from "@/lib/apiTypes";
-import { PRUNE_ENGINE_LABEL } from "@/lib/pruneStatement";
 import { parseVerifyCommand } from "@/lib/verifyCommand";
 import { toolCount } from "@/lib/mcpStatus";
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
@@ -285,55 +286,38 @@ const CODEX_EFFORT_OPTIONS: readonly { value: CodexEffortLevel; label: string }[
   { value: "ultra", label: "Ultra — delegates to sub-agents" },
 ];
 
-const PRUNE_TIER_OPTIONS: readonly SegmentedOption<PruneTier>[] = [
-  { value: "standard", label: "Standard" },
-  { value: "aggressive", label: "Aggressive" },
+const TE_TOOLPRUNE_OPTIONS: readonly SegmentedOption<TokenEconomizerToolprune>[] = [
+  { value: "off", label: "Off" },
+  { value: "propose", label: "Propose" },
+  { value: "auto", label: "Apply" },
 ];
 
-/**
- * Measured on one real 2.0 MB transcript on this install, so the figures are an
- * example rather than a promise — which is what the copy says.
- */
-const PRUNE_TIER_CONSEQUENCE: Record<PruneTier, string> = {
-  standard:
-    "Trims long tool output, file reads superseded by later edits, thinking blocks and repeated system reminders; 28% of one real transcript",
-  aggressive:
-    "Standard, plus collapsing repeated errors and polling, deduplicating large documents, trimming any block over 32KB and dropping older images. More of what it removes is content the agent might have re-read",
+const TE_TOOLPRUNE_CONSEQUENCE: Record<TokenEconomizerToolprune, string> = {
+  off: "Every tool stays in every session",
+  propose: "Lists the tools a repository never uses and changes nothing",
+  auto: "Denies a repository's never-used tools in .claude/settings.local.json, and copies the list into each worktree a new run starts in",
 };
 
-type PruneEngine = "legacy" | "winnow";
-
-// Labels from `pruneStatement.ts` rather than repeated here: the engine is now
-// named on the dashboard tile and the run page as well as on this control, and
-// three copies of a two-entry map is three places for the names to drift apart
-// while every one of them still typechecks.
-const PRUNE_ENGINE_OPTIONS: readonly SegmentedOption<PruneEngine>[] = [
-  { value: "legacy", label: PRUNE_ENGINE_LABEL.legacy },
-  { value: "winnow", label: PRUNE_ENGINE_LABEL.winnow },
+const TE_MICROSKILLS_OPTIONS: readonly SegmentedOption<TokenEconomizerMicroskills>[] = [
+  { value: "off", label: "Off" },
+  { value: "envfacts", label: "From failures" },
+  { value: "on", label: "With a model" },
 ];
 
-/**
- * The two engines, described by what they do to the conversation rather than by
- * their names — an operator choosing here does not care which module runs.
- *
- * The Fork row says three things it would be dishonest to leave to a tooltip:
- * that nothing has proved a forked session resumes, that the app rolls back if
- * one does not, and that it does nothing at all until the setting below it is
- * lowered. The last is the one that would otherwise read as the feature being
- * broken.
- *
- * Both rows close on what the choice does to the *decision*, which is the half
- * that was missing. This switch does not only pick who cuts: it picks whose
- * measurement the context ceiling reads when it decides whether ending a cycle
- * early is worth it, and the two engines answer that question very differently
- * on the same conversation. An operator who read this row as "which cutter" had
- * no way to connect it to a run being left alone.
- */
-const PRUNE_ENGINE_CONSEQUENCE: Record<PruneEngine, string> = {
-  legacy:
-    "Rewrites the conversation in place, keeping the same session. It typically finds about half of a long conversation, a cut worth ending a work cycle early for",
-  winnow:
-    "Writes a new conversation with removed output replaced by recoverable pointers and moves the run onto it; the untouched original is the way back. Nothing has yet proved a forked conversation resumes: if one does not, the run returns to the original and the failure is recorded. Does nothing until you lower the quiet period below. It finds only a few percent of a long conversation, so it rarely ends a cycle early",
+const TE_MICROSKILLS_CONSEQUENCE: Record<TokenEconomizerMicroskills, string> = {
+  off: "Nothing is learned or injected",
+  envfacts: "Learns facts from repeated failures, such as a command that has to run first, and states them at session start",
+  on: "Also asks Haiku for facts every third session, billed to your plan outside every meter here",
+};
+
+const TE_LOOPGUARD_OPTIONS: readonly SegmentedOption<TokenEconomizerLoopguard>[] = [
+  { value: "off", label: "Off" },
+  { value: "nudge", label: "Redirect" },
+];
+
+const TE_LOOPGUARD_CONSEQUENCE: Record<TokenEconomizerLoopguard, string> = {
+  off: "No turn is judged",
+  nudge: "Asks Haiku whether a turn that looks stuck is, and redirects it once; billed to your plan outside every meter here",
 };
 
 const LAND_CONSEQUENCE: Record<LandStrategy, string> = {
@@ -404,10 +388,11 @@ const EDITABLE_PATHS = [
   "maxValidationCycles",
   "readGuard",
   "readGuardMaxTokens",
-  "contextPruning",
-  "contextPruningStrictness",
-  "contextPruningEngine",
-  "contextPruningForkMinColdAge",
+  "tokenEconomizer",
+  "tokenEconomizerToolprune",
+  "tokenEconomizerMicroskills",
+  "tokenEconomizerLoopguard",
+  "tokenEconomizerQuietMinutes",
   "freshStartContextTokens",
   "knowledgeBaseMountId",
   "knowledgeBaseSubpath",
@@ -1074,12 +1059,6 @@ function StorageFigures({
               {lastSweep.transcripts.toLocaleString()} transcript
               {lastSweep.transcripts === 1 ? "" : "s"} (
               {fmtBytes(lastSweep.transcriptBytes)}) discarded
-              {lastSweep.ledgerBytes !== undefined && (
-                <>
-                  , and {fmtBytes(lastSweep.ledgerBytes)} cut off the intake
-                  ledger
-                </>
-              )}
             </>
           )}
         </>
@@ -2395,7 +2374,7 @@ function LocalModelAccount() {
         <p>
           Any server that speaks the Anthropic Messages API. Runs you start with
           the Local model provider send their work cycles here instead of to
-          Anthropic, bypassing winnow, and their branches cannot land until a
+          Anthropic, and their branches cannot land until a
           frontier model&rsquo;s review approves them.
         </p>
         <p className="mt-2 text-ink-faint">
@@ -5200,95 +5179,99 @@ export default function SettingsPage() {
         </ListGroup>
       </Section>
 
-      {/* Three ways of spending fewer tokens on the same work, all of which
-          change what an agent *does* rather than what it is told. Two of them
-          are unmeasured optimisations and ship off on that ground. The first is
-          not in that category and its copy has to say so: it replaced
-          `--autocompact`, so it is the only thing bounding a long cycle, and an
-          operator reading this row as "an optimisation I can ignore" would be
-          leaving a cycle able to run to the model's whole window. */}
+      {/* Ways of spending fewer tokens on the same work, all of which change
+          what an agent *does* rather than what it is told. Each is unmeasured
+          on this fleet and ships off on that ground. */}
       <Section
         id="tokens"
         title="Token use"
       >
         <ListGroup>
           <SettingRow
-            htmlFor="ctxprune"
-            edited={isEdited("contextPruning")}
-            label="Prune the conversation between work cycles"
-            description="Removes old tool output between work cycles, where it is free. It also ends a cycle early once its conversation gets long, and nothing else does: off, a single cycle can grow without limit"
+            htmlFor="tokeneconomizer"
+            edited={isEdited("tokenEconomizer")}
+            label="TokenEconomizer"
+            description={
+              env.tokenEconomizerAvailable === false
+                ? "Not in this image: it was built with TOKENECONOMIZER_REF empty"
+                : "Loaded into Claude work cycles; learns from each repository's finished sessions"
+            }
           >
             <Switch
-              id="ctxprune"
-              checked={effective.contextPruning}
-              onChange={(v) => patch({ contextPruning: v })}
+              id="tokeneconomizer"
+              checked={effective.tokenEconomizer}
+              onChange={(v) => patch({ tokenEconomizer: v })}
             />
           </SettingRow>
 
-          <SettingRow
-            edited={isEdited("contextPruningStrictness")}
-            label="How much it takes out"
-            description={PRUNE_TIER_CONSEQUENCE[effective.contextPruningStrictness]}
-          >
-            <SegmentedControl
-              options={PRUNE_TIER_OPTIONS}
-              value={effective.contextPruningStrictness}
-              onChange={(v) => patch({ contextPruningStrictness: v })}
-              label="How much it takes out"
-            />
-          </SettingRow>
-
-          <SettingRow
-            edited={isEdited("contextPruningEngine")}
-            label="How it takes it out"
-            description={PRUNE_ENGINE_CONSEQUENCE[effective.contextPruningEngine]}
-          >
-            <SegmentedControl
-              options={PRUNE_ENGINE_OPTIONS}
-              value={effective.contextPruningEngine}
-              onChange={(v) => patch({ contextPruningEngine: v })}
-              label="How it takes it out"
-            />
-          </SettingRow>
-
-          {/* Only under Fork. The number is meaningless to the other engine,
-              and a control that does nothing where it sits is worse than one
-              that is not there — an operator would set it and wait. */}
-          {effective.contextPruningEngine === "winnow" && (
-            <SettingRow
-              htmlFor="forkcoldage"
-              edited={isEdited("contextPruningForkMinColdAge")}
-              label="Quiet period a conversation needs before forking it"
-              description={
-                <>
-                  <strong>0 forks and every other value never forks</strong>,
-                  blank included (the tool&rsquo;s own hour): a fork happens only
-                  between work cycles, when the last request is a fraction of a
-                  second old. That 0 is free because the next cycle rewrites the
-                  conversation anyway is argued, not measured; raise it to mean
-                  off. The value in force is recorded against every fork
-                </>
-              }
-            >
-              <div className="w-36">
-                <Input
-                  id="forkcoldage"
-                  type="number"
-                  min={0}
-                  className="tabular-nums"
-                  unit="seconds"
-                  placeholder="3600"
-                  value={effective.contextPruningForkMinColdAge ?? ""}
-                  onChange={(e) =>
-                    patch({
-                      contextPruningForkMinColdAge: e.target.value
-                        ? Number(e.target.value)
-                        : null,
-                    })
-                  }
+          {/* Shown only while it is on: three controls that do nothing where
+              they sit would be set and waited on. */}
+          {effective.tokenEconomizer && (
+            <>
+              <SettingRow
+                edited={isEdited("tokenEconomizerToolprune")}
+                label="Unused tools"
+                description={TE_TOOLPRUNE_CONSEQUENCE[effective.tokenEconomizerToolprune]}
+              >
+                <SegmentedControl
+                  options={TE_TOOLPRUNE_OPTIONS}
+                  value={effective.tokenEconomizerToolprune}
+                  onChange={(v) => patch({ tokenEconomizerToolprune: v })}
+                  label="Unused tools"
                 />
-              </div>
-            </SettingRow>
+              </SettingRow>
+
+              {effective.tokenEconomizerToolprune === "auto" && (
+                <SettingRow
+                  htmlFor="tequiet"
+                  edited={isEdited("tokenEconomizerQuietMinutes")}
+                  label="Quiet before the first list"
+                  description="Below 60, a run paused for under an hour pays to re-send its whole conversation when it resumes"
+                >
+                  <div className="w-36">
+                    <Input
+                      id="tequiet"
+                      type="number"
+                      min={0}
+                      max={1440}
+                      step="1"
+                      className="tabular-nums"
+                      unit="min"
+                      value={effective.tokenEconomizerQuietMinutes}
+                      onChange={(e) =>
+                        patch({ tokenEconomizerQuietMinutes: Math.max(0, Math.round(Number(e.target.value) || 0)) })
+                      }
+                    />
+                  </div>
+                </SettingRow>
+              )}
+
+              <SettingRow
+                edited={isEdited("tokenEconomizerMicroskills")}
+                label="Repository facts"
+                description={TE_MICROSKILLS_CONSEQUENCE[effective.tokenEconomizerMicroskills]}
+              >
+                <SegmentedControl
+                  options={TE_MICROSKILLS_OPTIONS}
+                  value={effective.tokenEconomizerMicroskills}
+                  onChange={(v) => patch({ tokenEconomizerMicroskills: v })}
+                  label="Repository facts"
+                />
+              </SettingRow>
+
+              <SettingRow
+                edited={isEdited("tokenEconomizerLoopguard")}
+                label="Stuck turns"
+                description={TE_LOOPGUARD_CONSEQUENCE[effective.tokenEconomizerLoopguard]}
+              >
+                <SegmentedControl
+                  options={TE_LOOPGUARD_OPTIONS}
+                  value={effective.tokenEconomizerLoopguard}
+                  onChange={(v) => patch({ tokenEconomizerLoopguard: v })}
+                  label="Stuck turns"
+                />
+              </SettingRow>
+            </>
           )}
 
           <SettingRow

@@ -370,7 +370,7 @@ function serverEnv(sandbox, token, port, envDir) {
     // need nothing installed and to land on three different badges — a package
     // that will not resolve, a bare checkout path that names no command at all,
     // and an extension no volume here holds.
-    UF_PY_TOOLS: "ruff==0.5.0|/workspace/winnow",
+    UF_PY_TOOLS: "ruff==0.5.0|/workspace/mytool",
     UF_GH_EXTENSIONS: "dlvhdr/gh-dash",
   };
 }

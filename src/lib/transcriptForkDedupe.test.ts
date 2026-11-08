@@ -7,8 +7,9 @@ import { after, before, describe, it } from "node:test";
 /**
  * Which copy of a tool call wins when the same conversation is on disk twice.
  *
- * `winnow fork` writes a second transcript whose tool results are deliberately
- * replaced by short pointers, and never deletes the first. Both files then carry
+ * `winnow fork`, which this app ran until 2026-11-08, wrote a second transcript
+ * whose tool results are deliberately replaced by short pointers, and never
+ * deleted the first; those pairs stay on disk until retention takes them. Both files then carry
  * the same `tool_use` ids, so the composition reading has to pick one — and the
  * rule it used, most characters wins, always picked the original's full result.
  * The fork was reported as having removed nothing, permanently, on the one

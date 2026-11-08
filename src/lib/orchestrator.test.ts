@@ -146,9 +146,7 @@ const {
   sandboxSettings,
   selectCycleAdapter,
   agentCanCreateIn,
-  boundaryPruneApplies,
   codexWritableRoots,
-  contextAfterPrune,
   startsFresh,
   SEARCH_TOOLS,
   selectPromotable,
@@ -1639,60 +1637,6 @@ describe("starting a work cycle fresh instead of resuming", () => {
     followUp: null as string | null,
   };
 
-  it("sees the conversation a prune just shrank, not the size it was billed at", () => {
-    // The two features are independent switches and this is the one place they
-    // touch. `startsFresh` reads the last cycle's *billed* window, which was
-    // recorded before the boundary prune ran and cannot know about it — so
-    // without `contextAfterPrune` a prune that took 95k of turns out of a 200k
-    // context would be followed immediately by a fresh start fired on the 200k
-    // reading, and the run would pay to re-derive a conversation something had
-    // just finished shrinking to fit under the threshold.
-    //
-    // That is `IterationResult.contextTokens`' own "Last, not largest" warning
-    // reached from a direction that did not exist when it was written. Silent in
-    // the usual way: the run restarts, works, and costs more, and every page
-    // shows an ordinary cycle.
-    const outcome = {
-      tier: "standard" as const,
-      tokensBefore: 250_000,
-      tokensAfter: 155_000,
-      tokensRemoved: 95_000,
-      // Not read here — `contextAfterPrune` is handed the billed figure and
-      // subtracts what came out of it. It is on the outcome for the log line,
-      // which reports the prune in the ceiling's units.
-      apiTokensBefore: 310_000,
-      elapsedMs: 1_000,
-    };
-    const corrected = contextAfterPrune(200_000, outcome);
-    // 200,000 - 95,000, not 200,000 x (155/250). The ratio would say 124,000,
-    // which shrinks the fixed system prompt and tool list along with the turns
-    // — see `contextAfterPrune`, which carries the measurement.
-    assert.equal(corrected, 105_000);
-    assert.equal(startsFresh({ ...base, contextTokens: 200_000 }), true);
-    assert.equal(startsFresh({ ...base, contextTokens: corrected }), false);
-  });
-
-  it("leaves the billed figure alone when nothing was pruned", () => {
-    // Null is every cycle on an install with pruning off, and the great majority
-    // of cycles on one with it on. Scaling by a ratio that does not exist would
-    // silently suppress fresh starts fleet-wide.
-    assert.equal(contextAfterPrune(200_000, null), 200_000);
-    // And a zero `tokensBefore` must not divide: an unreadable transcript
-    // reports one, and NaN here would compare false against every threshold,
-    // which is the same suppression by another route.
-    assert.equal(
-      contextAfterPrune(200_000, {
-        tier: "standard",
-        tokensBefore: 0,
-        tokensAfter: 0,
-        tokensRemoved: 0,
-        apiTokensBefore: 0,
-        elapsedMs: 1,
-      }),
-      200_000,
-    );
-  });
-
   it("is off unless the operator set a threshold", () => {
     // Null is the shipped value and has to mean today's behaviour exactly: the
     // resume goes on every cycle, whatever the conversation has grown to.
@@ -3037,31 +2981,6 @@ describe("buildArgs", () => {
     assert.ok(args.includes("--resume"));
   });
 
-  it("emits no compaction ceiling, because pruning replaced it", () => {
-    // The inverse of the test this replaced, and it is worth a test rather than
-    // a deletion. `contextPruning.ts` bounds a cycle's context now — at the
-    // 167,000 `--autocompact 200000` fired at when the flag was removed, and at
-    // `CYCLE_CONTEXT_CEILING_TOKENS` wherever that constant stands since — and
-    // it does it by ending the cycle rather than by summarising it. Both mechanisms running would be
-    // worse than either: the CLI would summarise a conversation moments before
-    // this app ended the cycle to prune it, so the prune would be measuring what
-    // the summariser had already thrown away and the run would pay for both.
-    //
-    // Silent in exactly the way the removed test guarded the other direction —
-    // a reinstated flag fails nothing and looks like an ordinary cycle.
-    const args = buildArgs({
-      ...base,
-      isolated: false,
-      resumeSessionId: "sess-1",
-    });
-    assert.equal(
-      args.indexOf("--autocompact"),
-      -1,
-      "context pruning owns the ceiling; --autocompact must not also be sent",
-    );
-    assert.ok(args.includes("--resume"));
-  });
-
   it("sends every unconditional system-prompt notice under one flag", () => {
     // A second `--append-system-prompt` is a replacement rather than an
     // addition, exactly as a second `--allowedTools` is, so the notices have to
@@ -3379,6 +3298,32 @@ describe("buildArgs", () => {
     for (const readGuardDir of [undefined, null]) {
       assert.equal(
         buildArgs({ ...base, isolated: false, readGuardDir }).includes("--plugin-dir"),
+        false,
+      );
+    }
+  });
+
+  it("hands TokenEconomizer over on the same flag, on a resumed cycle too", () => {
+    // The read guard's two invariants again, for the same reason: a hook plugin
+    // missing from a resumed cycle behaves exactly like one switched off, and
+    // the plugin learns from every session it sees end — a run whose later
+    // cycles lost it would teach the repository's history half a run.
+    const args = buildArgs({
+      ...base,
+      isolated: false,
+      resumeSessionId: "sess-1",
+      readGuardDir: "/run/uf-read-guard/uf-usagefoundry-read-guard",
+      tokenEconomizerDir: "/opt/tokeneconomizer/plugin",
+    });
+    const dirs = args.flatMap((a, i) => (a === "--plugin-dir" ? [args[i + 1]] : []));
+    assert.deepEqual(dirs, [
+      "/run/uf-read-guard/uf-usagefoundry-read-guard",
+      "/opt/tokeneconomizer/plugin",
+    ]);
+    assert.ok(args.includes("--resume"));
+    for (const tokenEconomizerDir of [undefined, null]) {
+      assert.equal(
+        buildArgs({ ...base, isolated: false, tokenEconomizerDir }).includes("--plugin-dir"),
         false,
       );
     }
@@ -3863,10 +3808,6 @@ describe("buildArgs", () => {
  * of every flag on a maximal cycle, including the repeats, and the values of the
  * three that no other case here reads together. The cases above cover what each
  * flag *means*; what this one covers is that the seam still emits all of them.
- *
- * `--autocompact` is asserted absent in the same breath, because a reinstated
- * flag fails nothing and looks like an ordinary cycle — `contextPruning.ts` owns
- * that ceiling now, and `run-lifecycle.md` records what the swap gave up.
  */
 describe("the cycle adapter", () => {
   const adapter = selectCycleAdapter("claude");
@@ -3967,12 +3908,6 @@ describe("the cycle adapter", () => {
     ]) {
       assert.match(appended, notice);
     }
-
-    assert.equal(
-      args.includes("--autocompact"),
-      false,
-      "contextPruning.ts owns the context ceiling; a reinstated flag fails nothing",
-    );
   });
 
   it("routes to the builder and the binary the loop used to name itself", () => {
@@ -6020,21 +5955,6 @@ describe("agentCanCreateIn — read as root, for a different uid", () => {
   });
 });
 
-describe("boundaryPruneApplies", () => {
-  it("skips a Codex run, whose session is not a Claude transcript", () => {
-    assert.equal(boundaryPruneApplies("codex"), false);
-  });
-
-  it("keeps every run whose transcript is Claude Code's", () => {
-    // The expensive edge: answering false here stops every run's pruning with
-    // nothing on any page to say so. `null` is a row from before the column,
-    // and a local run is spawned through Claude Code.
-    assert.equal(boundaryPruneApplies("claude"), true);
-    assert.equal(boundaryPruneApplies(null), true);
-    assert.equal(boundaryPruneApplies("local"), true);
-  });
-});
-
 describe("childEnv — a credential class the app has no use for", () => {
   // A denylist fails open, and these three are the shape it fails open on today:
   // an operator running a second provider's CLI on the same server sets one,
@@ -6701,10 +6621,8 @@ describe("what an interrupt makes of a run", () => {
       ending({ kind: "guard", reason: "cap", code: "iterations", pause: false }),
       "cycle_cap",
     );
-    // A guard that does not say which, and a prune that arrives here only
-    // because the run ended some other way first: unknown, rather than a guess.
+    // A guard that does not say which: unknown, rather than a guess.
     assert.equal(ending({ kind: "guard", reason: "over", pause: false }), null);
-    assert.equal(ending({ kind: "prune", reason: "pruning", pause: false }), null);
   });
 
   it("still parks a live-resume step-aside, which ends nothing", () => {

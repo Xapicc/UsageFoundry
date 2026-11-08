@@ -11,7 +11,6 @@ import {
   costSplitOf,
   guardCostOf,
   promptTokensOf,
-  resolveFlatPrice,
   resolvePrice,
   type TokenCounts,
 } from "./pricing";
@@ -731,14 +730,6 @@ describe("claude-haiku-5-5 is priced by each request's own prompt length", () =>
 
   it("has no fast-mode row, so a fast request prices at the same schedule", () => {
     assert.equal(resolvePrice("claude-haiku-5-5", { speed: "fast" }), haiku);
-  });
-
-  it("hands a caller that reads a rate directly no schedule to misread", () => {
-    assert.equal(resolveFlatPrice("claude-haiku-5-5"), null);
-    assert.equal(resolveFlatPrice("claude-haiku-5-5[1m]"), null);
-    assert.equal(resolveFlatPrice("claude-haiku-5-6"), null);
-    assert.equal(resolveFlatPrice("claude-opus-5-5"), resolvePrice("claude-opus-5-5"));
-    assert.equal(resolveFlatPrice("claude-haiku-4-5"), resolvePrice("claude-haiku-4-5"));
   });
 
   it("leaves a single-rate model untouched by the basis it is asked under", () => {

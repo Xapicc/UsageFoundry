@@ -53,8 +53,6 @@ const { createRun, getRun, reopenRun, runEvents } =
 const { DEFAULT_CONTINUATION_PROMPT, DEFAULT_DONE_PUSHBACK_PROMPT } =
   require("./settings") as typeof import("./settings");
 const { transcriptPresence } = require("./transcripts") as typeof import("./transcripts");
-const { recordForkAttempt } = require("./contextPruning") as typeof import("./contextPruning");
-const { db } = require("./db") as typeof import("./db");
 
 // One project directory holding a transcript nobody resumes, so the tree is
 // a populated one: an empty tree is answered as unknown, which resumes.
@@ -361,8 +359,6 @@ describe("a pick-up the CLI refuses to resume", () => {
 async function pickUpRefusedOnce(o: {
   firstReply: string | Streamed;
   note?: string;
-  /** The run adopted a fork at that boundary and never resumed it. */
-  forked?: boolean;
 }) {
   replies = [o.firstReply, REFUSES, "Still working."];
   spawns = [];
@@ -378,36 +374,13 @@ async function pickUpRefusedOnce(o: {
   const session = first.session_id;
   assert.ok(session, "the fixture's first cycle must leave a session to resume");
   fs.writeFileSync(path.join(projectDir, `${session}.jsonl`), "");
-  let picked = session;
-  if (o.forked) {
-    // As the boundary leaves it: the fork's row with no verdict, and the run
-    // on the fork's id, which is what `startRun` recovers the rollback from.
-    picked = `${session}-fork`;
-    const fork = {
-      written: true,
-      newSessionId: picked,
-      out: path.join(projectDir, `${picked}.jsonl`),
-      refusedBy: null,
-      reason: null,
-      removedBytes: 24_029,
-      netBytes: 22_725,
-      suffixBytes: 122_902,
-      breakEvenTurns: 82.8,
-      coldAgeSeconds: 12.5,
-    };
-    assert.ok(recordForkAttempt(run.id, session, fork, 0, "boundary", null, null));
-    db().prepare("UPDATE runs SET session_id = ? WHERE id = ?").run(picked, run.id);
-  }
-
   const reopened = reopenRun(run.id, { maxIterations: 2 }, o.note);
   assert.ok(reopened.ok, JSON.stringify(reopened));
   const row = await settled(run.id);
   assert.deepEqual(
     spawns.map((s) => s.resumed),
-    [null, picked, session],
-    o.forked
-      ? "the refused fork rolls back to the conversation it was cut from"
-      : "the refused resume is retried once, on the same session",
+    [null, session, session],
+    "the refused resume is retried once, on the same session",
   );
   return { row, refused: spawns[1], retried: spawns[2] };
 }
@@ -436,19 +409,6 @@ describe("a pick-up the CLI refuses once and then resumes", () => {
       `the retry was sent: ${retried.prompt}`,
     );
     assert.ok(!retried.prompt.startsWith(DEFAULT_CONTINUATION_PROMPT), retried.prompt);
-  });
-
-  it("delivers the operator's note on the conversation a refused fork rolls back to", async () => {
-    const note = "Also update the README.";
-    const { row, refused, retried } = await pickUpRefusedOnce({
-      firstReply: "Still working.",
-      note,
-      forked: true,
-    });
-
-    assert.equal(refused.prompt, note);
-    assert.equal(retried.prompt, note, "the rollback carries the note the refusal never delivered");
-    assert.equal(row.follow_up, null);
   });
 
   it("tells the retry which background tasks the last cycle left stopped", async () => {

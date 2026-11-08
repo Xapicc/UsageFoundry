@@ -121,6 +121,12 @@
   from the writer rather than run, like the lock itself.
   `docs/agent/security.md` states no guarantee that these binds hold.
 
+- **The sandbox's bind lists are unchanged on 2.1.319, 2026-11-08.**
+  `sandboxMountPoints.test.ts` run with `CLAUDE_BIN` at the macOS build of
+  2.1.319: 21 of 21 passed and none skipped, so the tree-root list and both
+  config-directory lists still match what that build binds. Caveat: the
+  darwin build, whose bundled JavaScript is assumed to be the linux one's.
+
 ## Not yet verified by hand
 
 None yet.

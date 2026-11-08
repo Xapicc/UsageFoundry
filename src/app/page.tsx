@@ -11,18 +11,11 @@ import { Meter } from "@/components/Meter";
 import { RecentBlocksCard } from "@/components/RecentBlocksCard";
 import { RepoReadingCards } from "@/components/RepoReadingCards";
 import { RepoSpendCard } from "@/components/RepoSpendCard";
-import { PruneSavingsRows } from "@/components/PruneSavings";
-import {
-  ContextControlAside,
-  FilterSavingsRows,
-} from "@/components/ContextControl";
 import { Badge } from "@/components/ui/Badge";
 import { Card, CardTitle, Empty, Stat, StatSub } from "@/components/ui/Card";
-import { Hint } from "@/components/ui/Hint";
 import { ListGroup, ListRow } from "@/components/ui/List";
 import { ListView, STICKY_HEAD } from "@/components/ui/ListView";
 import { Notice } from "@/components/ui/Notice";
-import { prunerLine } from "@/lib/pruneStatement";
 import { windowCardNotes } from "@/lib/windowCardNotes";
 import { startPoll } from "@/lib/poll";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
@@ -37,7 +30,6 @@ import type {
 import {
   agentOriginBadge,
   type BadgeTone,
-  fmtDate,
   fmtDateTime,
   fmtDuration,
   fmtPct,
@@ -509,33 +501,8 @@ export default function Dashboard() {
     periods,
     telemetry,
     install,
-    pruning,
-    intakeFilter,
   } = data;
   const noCeilings = !meta.hasSessionCeiling && !meta.hasWeeklyCeiling;
-  // Gates both context-control surfaces, and they have to agree: an empty tile
-  // beside the meters is a standing invitation to read $0.00 as "this saves
-  // nothing" when it means "this has not run".
-  //
-  // Either half is enough, because either half alone is a real reading and the
-  // card names both. The prune total is the pruning half's gate because it is a
-  // superset of both windows by construction — the route starts its span at or
-  // before the weekly window's own start, whatever the retention is set to.
-  // The filter's is `running` rather than a figure: an operator who has it
-  // switched on is owed the reason it has no number yet.
-  const hasContextControl =
-    pruning.total.prunes > 0 ||
-    // The pruner's own liveness, and the asymmetry it fixes: the filter's
-    // disjunct above was already a *state* and the pruner's was an *outcome*.
-    // An install with pruning switched on and nothing cut yet — or one built
-    // with `WINNOW_REF=` empty, where nothing ever will be — rendered no
-    // context-control surface at all, which reads as the feature not existing.
-    pruning.pruner.state !== "off" ||
-    // A window whose pruning has since been switched off still has boundaries
-    // in it worth reading.
-    pruning.activity.total.boundaries > 0 ||
-    intakeFilter.running ||
-    intakeFilter.ledger === "read";
   // Spelled out per case rather than assembled from parts. Tailwind scans this
   // file for literal class strings and emits nothing for a computed one, so a
   // template built from a variable arrives in the browser as a class with no
@@ -548,32 +515,12 @@ export default function Dashboard() {
   // two conditions are the same ones their call sites carry. A track with no
   // card in it is not free: the row packs left and the leftover is blank.
   const topRowColumns = telemetry
-    ? hasContextControl
-      ? // Three columns only from `xl`. The 50% cap does not scale down: the
-        // two columns beside it are 16rem and a gap whatever the row is, so at
-        // the `lg` breakpoint — 1024px less a 14rem sidebar and the pane's
-        // gutters — half the row leaves the middle card 85px. Measured, not
-        // estimated. Below `xl` the row is what it was and the live card takes
-        // a row of its own under it, which is what `lg:order-last` below does.
-        "lg:grid-cols-[minmax(0,1fr)_minmax(0,16rem)] xl:grid-cols-[minmax(0,50%)_minmax(0,1fr)_minmax(0,16rem)]"
-      : // Nothing fixed-width in this one, so the cap costs nothing at any
-        // width and can start where the row does.
-        "lg:grid-cols-[minmax(0,50%)_minmax(0,1fr)]"
-    : hasContextControl
-      ? "lg:grid-cols-[minmax(0,1fr)_minmax(0,16rem)]"
-      : // Nothing beside it, so nothing to make room for. Half a row of white
-        // space to the right of the meters is a worse answer to "this box could
-        // be shorter" than the wide box was.
-        "";
-  // Only when there is a third card to get out of the way of. `order-last` puts
-  // the live card after the tile in the *flow* while leaving it second in the
-  // DOM, which is the order it is read in at every width where it is beside the
-  // meters; between `lg` and `xl` it spans the row under them instead, because
-  // a full-width card is a better answer to a narrow row than a 16rem column
-  // and a hole where the third one did not fit.
-  const liveTelemetryPlacement = hasContextControl
-    ? "lg:order-last lg:col-span-2 xl:order-none xl:col-span-1"
-    : "";
+    ? // The cap costs nothing at any width and can start where the row does.
+      "lg:grid-cols-[minmax(0,50%)_minmax(0,1fr)]"
+    : // Nothing beside it, so nothing to make room for. Half a row of white
+      // space to the right of the meters is a worse answer to "this box could
+      // be shorter" than the wide box was.
+      "";
   // The exhaustion projection extrapolates dollars and tokens per hour, so it
   // needs an allowance to run them into: a configured ceiling, or a provider
   // percentage, which implies one from what the window had spent when it was
@@ -672,9 +619,8 @@ export default function Dashboard() {
       {header}
       {banner}
 
-      {/* Up to three columns: the window card capped at half the row, the
-          live-telemetry card taking what is left of the remainder, the
-          context-control tile keeping its fixed 16rem. Which template applies,
+      {/* Up to two columns: the window card capped at half the row, the
+          live-telemetry card taking the remainder. Which template applies,
           and from which breakpoint, is `topRowColumns` above.
 
           The window card used to be `minmax(0,1fr)` against that 16rem alone —
@@ -888,19 +834,7 @@ export default function Dashboard() {
             is a reading an operator would act on. The gate is the setting and
             what came back on it, never the guard figure. */}
         {telemetry && (
-          <div className={liveTelemetryPlacement}>
-            <LiveTelemetry telemetry={telemetry} now={s.now} />
-          </div>
-        )}
-
-        {hasContextControl && (
-          <ContextControlAside
-            filter={intakeFilter}
-            pruning={pruning.total}
-            pruningFrom={pruning.totalFrom}
-            session={pruning.session}
-            weekly={pruning.weekly}
-          />
+          <LiveTelemetry telemetry={telemetry} now={s.now} />
         )}
       </div>
 
@@ -1382,120 +1316,6 @@ export default function Dashboard() {
         <HoldoutReadbackCard />
       </SourceRegion>
 
-      {/* Not a fourth cost source, and the heading has to carry that — the word
-          is "saved", never "spent": these are re-reads that did not happen,
-          netted against what buying them cost. Nothing here may be added to a
-          meter above — see `PruneSavingsDTO`.
-
-          The net moved up beside the meters, so what is left here is the
-          derivation, and the heading says so. It is not redundant with the
-          tile and must not be folded into it: a net is four figures netted,
-          and an operator deciding whether to leave pruning on is deciding on
-          which way each of the four went, not on their sum. Every span the
-          tile prints has its own block here, the total included — a headline
-          with no derivation under it is the thing this band exists to prevent.
-
-          Two cards, never one table, and nothing added across them. The tile
-          adds the two mechanisms because that is the question it answers, and
-          it says nothing about how much that overstates the truth: a footnote
-          that did was removed twice by the operator, and the second removal
-          took the invariant behind it. The measured bound is
-          `docs/verification.md`'s,
-          `intakeFilter.ts`'s own docblock's, and `contextTokens`'s
-          (`contextPruning.ts`), not this band's; this band is where each
-          half's own arithmetic lives, and a total here would be the same sum
-          a second time with nothing beside it saying so.
-
-          Gated on `hasContextControl`, the same const the tile reads. */}
-      {hasContextControl && (
-        <SourceRegion
-          heading="What context control saved, in detail"
-          statement="The figure beside the meters is these two added."
-        >
-          {/* The filter first, matching the tile: it acts before the pruner
-              does, so what the pruner reports is the residual of it. */}
-          <Card className="mb-4">
-            <CardTitle>Intake filter</CardTitle>
-            <FilterSavingsRows filter={intakeFilter} />
-            {intakeFilter.ledger === "read" && (
-              <Hint>
-                Measured over {intakeFilter.requests} rewritten{" "}
-                {intakeFilter.requests === 1 ? "request" : "requests"}
-                {intakeFilter.unjoinedRequests > 0 && (
-                  <>
-                    ; {intakeFilter.unjoinedRequests} matched no main-thread turn
-                    still held, so what they saved is missing from the figure
-                    rather than counted as nothing
-                  </>
-                )}
-                .
-              </Hint>
-            )}
-          </Card>
-
-          <Card className="mb-4">
-            <CardTitle>Context pruning</CardTitle>
-            {/* Full strength rather than `quiet`, because this is not a
-                standing banner: it appears only while pruning is switched on
-                with nothing behind it, which an operator either fixes with a
-                rebuild or turns off deliberately. Every figure under it is
-                then a history, not a reading of now. */}
-            {pruning.pruner.state === "unavailable" ? (
-              <Notice tone="warn">
-                <strong>Context pruning cannot run here.</strong>{" "}
-                {pruning.pruner.detail} Nothing below was removed by it.
-              </Notice>
-            ) : (
-              /* Once, at the top, rather than on each of the three spans under
-                 it: what is configured is one fact about now, and repeating it
-                 per span would read as three readings of it. */
-              <p className="mb-3 text-sm text-ink-muted">
-                {prunerLine(pruning.pruner)}
-              </p>
-            )}
-            {/* The total first, because it is what the tile leads with and this
-                band is that figure's derivation. The two windows under it are
-                the same arithmetic over shorter spans. */}
-            <PruneSavingsRows
-              label={
-                pruning.totalFrom === null
-                  ? "All time"
-                  : `Since ${fmtDate(pruning.totalFrom)}`
-              }
-              savings={pruning.total}
-              pruner={pruning.pruner}
-              activity={pruning.activity.total}
-            />
-            <PruneSavingsRows
-              label="This 5-hour window"
-              savings={pruning.session}
-              pruner={pruning.pruner}
-              activity={pruning.activity.session}
-            />
-            <PruneSavingsRows
-              label="This week"
-              savings={pruning.weekly}
-              pruner={pruning.pruner}
-              activity={pruning.activity.weekly}
-            />
-            {/* Why the first block stops where it does. It belongs here rather
-                than on the tile: it is the one line that explains a span, and a
-                reader who wants to know why the total starts on a date has
-                already come looking for the arithmetic. */}
-            {pruning.totalFrom !== null && (
-              <Hint>
-                It starts at{" "}
-                <span className="tabular-nums">
-                  {fmtDate(pruning.totalFrom)}
-                </span>
-                : older transcripts are past your{" "}
-                <Link href="/settings">retention</Link>, so what earlier prunes
-                saved is unknown rather than nothing.
-              </Hint>
-            )}
-          </Card>
-        </SourceRegion>
-      )}
     </>
   );
 }

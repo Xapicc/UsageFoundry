@@ -83,7 +83,7 @@ describe("parseToolList", () => {
     assert.equal(name("cozempic==1.8.39").command, "cozempic");
     assert.equal(name("cozempic>=1.8,<2").command, "cozempic");
     assert.equal(name("cozempic[extra]").command, "cozempic");
-    assert.equal(name("cozempic@file:///workspace/winnow").command, "cozempic");
+    assert.equal(name("cozempic@file:///workspace/mytool").command, "cozempic");
     assert.equal(name("cozempic!=1.0").command, "cozempic");
     assert.equal(name("cozempic~=1.8").command, "cozempic");
     assert.equal(name("cozempic==1.8.39").pin, "==1.8.39");
@@ -92,13 +92,13 @@ describe("parseToolList", () => {
   it("gives a bare container path no command at all rather than guessing one", () => {
     // `.env.example:263`: an absolute path is a checkout installed editable,
     // and its console script is named in the project's metadata. Deriving
-    // "winnow" from the directory would be a claim nobody measured, and the row
+    // "mytool" from the directory would be a claim nobody measured, and the row
     // it draws would read `broken` on every install whose script is named
     // anything else.
-    const editable = mod.parseToolList("/workspace/winnow", "python")[0];
+    const editable = mod.parseToolList("/workspace/mytool", "python")[0];
     assert.equal(editable.command, null);
     assert.equal(editable.pin, null);
-    assert.equal(editable.spec, "/workspace/winnow");
+    assert.equal(editable.spec, "/workspace/mytool");
   });
 
   it("cuts a gh entry at the last @, so an owner may contain one", () => {

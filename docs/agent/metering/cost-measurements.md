@@ -4,6 +4,8 @@
 
 Read before editing `costSplitOf` or `costSharesOf` in `src/lib/pricing.ts`, an agent's tool list in `src/lib/agents.ts`, or anything that quotes these figures.
 
+**Winnow was removed on 2026-11-08.** Every figure below that names winnow, its intake filter, its pruner or `WINNOW_FILTER` is a dated measurement of a mechanism this app no longer ships; the cost structure it measured (writes dear, reads cheap, intake beating removal) is unchanged and is why the intake-versus-pruning argument still stands as arithmetic.
+
 **Where a bill went, and why a token chart does not show it.** `costSplitOf`
 breaks `costOf` into its four terms - input, output, cache read, cache write -
 and `costSharesOf` turns those into shares. It exists because the multipliers

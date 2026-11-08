@@ -81,26 +81,6 @@ export interface IterationResult {
    * as "no reading" rather than as "small".
    */
   contextTokens: number;
-  /**
-   * The same reading taken at the **first** billed turn of the cycle instead of
-   * the last, which is what a resume carried before this cycle added anything.
-   *
-   * It exists for one question and is not a general-purpose figure: after a
-   * boundary fork, did the edit reach the wire? The transcript cannot answer it
-   * — `winnow fork` removes `message.content` and leaves `toolUseResult`, so
-   * bytes leave the file whether or not they leave the request — and the first
-   * request the resumed session makes is the only place the answer exists.
-   * `markForkResumed` writes it onto the `fork_attempts` row.
-   *
-   * **First, not last**, which is the opposite of `contextTokens` above and for
-   * the same underlying reason: this is a reading of what the cut left, and by
-   * the end of the cycle the run has said tens of thousands of tokens more.
-   *
-   * Main thread only and zero when nothing was billed, on `contextTokens`'
-   * rules — a cycle that reported no usage has taken no reading, and 0 must
-   * never be written down as a window that was carried.
-   */
-  firstContextTokens: number;
   sessionId: string | null;
   finalText: string;
   isError: boolean;
@@ -220,15 +200,14 @@ export function clipReason(text: string): string {
 
 /**
  * Whether a cycle did no work at all: the test behind a failed resume's one
- * retry, and behind a fork whose resume is recorded as failing and rolled back.
+ * retry.
  *
  * Two shapes. No result and nothing said is a child that died before the
  * stream got anywhere. An error result with zero turns is the pinned CLI
  * refusing before the first turn — measured as its answer to a `--resume` it
  * will not open — and testing `sawResult` alone read that as a cycle that
  * worked and then failed, so the retry and the stop reason naming the session
- * were never reached. Both callers take this one answer: the fork settlement
- * deciding otherwise records the fork as resumed and leaves nothing to roll back.
+ * were never reached.
  */
 export function cycleDidNoWork(
   res: Pick<IterationResult, "sawResult" | "finalText" | "isError" | "resultTurns">,
@@ -931,20 +910,12 @@ const SELF_HOSTING_NOTICE =
  * cheaper.
  *
  * **Why the text says "while you are in it" rather than "once it has grown".**
- * Winnow is bundled now and does shrink the conversation — `verification.md`
- * measures 28% and 38.4% of API-visible content on two real transcripts at
- * `standard`, and 29.1-52.8% across four real prunes at `aggressive`. What it
- * cannot shrink is the conversation the agent is reading: orchestrator-safe
- * mode refuses a mutating prune while a Claude process is live, so the prune
- * lands at the cycle boundary, after the gradient above has been climbed in
- * full. That is also why pruning composes with this argument rather than
- * replacing it — it stops those bytes costing anything in the NEXT cycle and
- * refunds nothing from this one, where delegation avoids the cost from the
- * first turn.
+ * Nothing this app runs shrinks a conversation while the agent is in it, so
+ * delegation is the only lever that avoids the cost from the first turn.
  *
- * It does mean the 5.0-against-13.6 split wants re-reading at some point: it
- * spans the period when `--autocompact` bounded a cycle and winnow now does,
- * and the main-thread side is the one that could have moved.
+ * The 5.0-against-13.6 split wants re-reading at some point: it spans periods
+ * when `--autocompact` and then a boundary pruner bounded a cycle, and neither
+ * does now, so the main-thread side is the one that could have moved.
  *
  * **One thing the split does not separate, and the claim is weaker for it.**
  * Sub-agents are handed the self-contained errands — find where this lives, read
@@ -1214,7 +1185,7 @@ export function cycleBudgetIsHeadroom(
  * app spawned it with. Measured on 2.1.310 against loopback stubs: a project
  * `ANTHROPIC_BASE_URL` took every `/v1/messages` with the environment's
  * `x-api-key`, or the `Authorization: Bearer` of an OAuth login; a project
- * `HTTP_PROXY`, `http_proxy` or `ALL_PROXY` received winnow-shaped `http://`
+ * `HTTP_PROXY`, `http_proxy` or `ALL_PROXY` received plain `http://`
  * requests whole, key included; `NODE_TLS_REJECT_UNAUTHORIZED=0` or a
  * `NODE_EXTRA_CA_CERTS` naming a CA committed beside it let a project
  * `HTTPS_PROXY` decrypt the default `https://api.anthropic.com` traffic; and
@@ -1457,6 +1428,12 @@ export function buildArgs(opts: {
    * and absent means no guard rather than a default one.
    */
   readGuardDir?: string | null;
+  /**
+   * TokenEconomizer's plugin directory, when the operator has switched it on
+   * and this is a Claude cycle. Another entry in the same `--plugin-dir` list,
+   * for `readGuardDir`'s reason; `tokenEconomizer.ts` carries what it does.
+   */
+  tokenEconomizerDir?: string | null;
   /**
    * The run's own frozen file price list, or nothing.
    *
@@ -1706,6 +1683,7 @@ export function buildArgs(opts: {
       ...(opts.pluginDirs ?? []),
       ...(opts.vaultSkill ? [opts.vaultSkill.pluginDir] : []),
       ...(opts.readGuardDir ? [opts.readGuardDir] : []),
+      ...(opts.tokenEconomizerDir ? [opts.tokenEconomizerDir] : []),
     ]),
   );
   // Beside `--plugin-dir` because it shares that flag's one property: not
@@ -1719,30 +1697,14 @@ export function buildArgs(opts: {
   // another directory, so it is safe here in the middle of the argv.
   if (opts.vaultSkill) args.push("--add-dir", opts.vaultSkill.vaultPath);
   if (opts.resumeSessionId) args.push("--resume", opts.resumeSessionId);
-  // **`--autocompact` used to be emitted here and deliberately is not any
-  // more.** `contextPruning.ts` is what bounds a cycle's context now: it prunes
-  // the transcript at each cycle boundary and ends a cycle early once its
-  // context passes `CYCLE_CONTEXT_CEILING_TOKENS`. That constant *was* the same
-  // 167,000 the flag fired at, which is what made the swap comparable; it is
-  // 200,000 since 2026-08-25, and `contextPruning.ts` carries why — including
-  // why it is not the 300,000 it briefly stood at on that same day.
-  //
-  // What that swap gave up is on the record rather than in a commit message,
-  // because it is the strongest measurement this repository has and a later
-  // reading must be able to tell a decision from a regression. The flag created
-  // the only compaction threshold there was — the pinned bundle refuses to
-  // auto-compact a window resolving to `source:"auto"` at or above 1e6, and this
-  // install's model resolves exactly that, so before it 604 container sessions,
-  // 246 of them past 167,000 tokens and one request reaching 752,172, produced
-  // zero `compact_boundary` records. With it, a natural experiment over 1,147
-  // transcripts split at the commit that added it put turns past the cap at
-  // 0.45× per turn and 0.50× per 1,000 output tokens.
-  //
-  // The two are not the same operation and that is the case for the swap:
-  // compaction replaces the conversation with a summary and the detail is gone,
-  // where a prune removes tool output and keeps the conversation. It is also no
-  // longer true that nothing resets a prefix — a boundary prune does, at the one
-  // moment it is free. `docs/verification.md` carries both halves.
+  // **No `--autocompact`, and nothing else bounds a cycle's context either.**
+  // The flag was replaced by a boundary pruner (winnow), which has since been
+  // removed. The pinned bundle refuses to auto-compact a window resolving to
+  // `source:"auto"` at or above 1e6, and this install's model resolves exactly
+  // that, so a long cycle runs toward the model's whole window. What the flag
+  // was measured to save — turns past its cap at 0.45× per turn over 1,147
+  // transcripts — is in `docs/verification.md`, so that restoring it is a
+  // decision taken against a number rather than a guess.
   // A hard stop inside the CLI, the same mechanism a chat turn and an
   // orchestrator block already carry — and the only one that can bound the
   // cycle that crosses the threshold rather than the one after it. Per

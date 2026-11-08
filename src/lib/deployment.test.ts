@@ -1385,7 +1385,7 @@ describe("stacks reach an agent, and the image ships none of them", () => {
  *
  * Everything that runs as root here looks its tools up by name: the entrypoint
  * (`chown` and `stat` first, then `node` for the applier, the relay and
- * `exec "$@"`, which is the server), winnow's `ps` under the server, and the
+ * `exec "$@"`, which is the server), and the
  * `docker compose exec usagefoundry node scripts/backup-db.mjs` the backup guide
  * puts in cron. The image used to put the stacks' `bin/` and the agent-owned
  * `/home/node/pytools/bin` first on the one `PATH` all of them shared, so a
@@ -1439,12 +1439,10 @@ describe("root's PATH names no directory an agent or a stack can write", () => {
   });
 
   it("never gives root another PATH further down", () => {
-    // A `NAME=value \` line is one command's environment prefix — the winnow
-    // filter's launch, which runs as the agent — not a new PATH for the script.
     const reassigned = entrypoint
       .split("\n")
       .map((line, index) => ({ line, number: index + 1 }))
-      .filter(({ line }) => /^\s*(?:export\s+)?PATH=/.test(line) && !line.trimEnd().endsWith("\\"))
+      .filter(({ line }) => /^\s*(?:export\s+)?PATH=/.test(line))
       .slice(1);
     assert.deepEqual(
       reassigned.map(({ number, line }) => `${number}: ${line.trim()}`),
@@ -1489,9 +1487,7 @@ describe("root's PATH names no directory an agent or a stack can write", () => {
  * helpers, `docker-entrypoint.sh:179` and `:255`. The branches beside them
  * (`:181`, `:257`) run without `setpriv` because UF_AGENT_UID is unset, which
  * is the arrangement where every agent child is root as well, and this reads
- * none of them. `"$@"` passes as named: it is `winnow_filter_as_agent`, whose
- * caller names the command and builds the allowlist, and the intake filter's
- * block below pins that launch.
+ * none of them.
  *
  * Over text, because there is no Docker here. Comment lines are dropped and
  * continuation lines joined, so what is read is the command the shell runs.
@@ -1556,8 +1552,7 @@ describe("what the boot runs at the agent uid holds no credential and is not loo
 
   it("names what it runs by absolute path rather than on the PATH it hands over", () => {
     const looked = droppedEnvCommands().filter(({ words }) => {
-      const program = programOf(words);
-      return program !== '"$@"' && !program.startsWith("/");
+      return !programOf(words).startsWith("/");
     });
     assert.deepEqual(
       looked.map(show),
@@ -1581,6 +1576,104 @@ describe("what the boot runs at the agent uid holds no credential and is not loo
           `nothing there, so every boot reports the install failed and installs nothing`,
       );
     }
+  });
+});
+
+describe("TokenEconomizer is in the image, because the run loop passes its plugin directory every cycle", () => {
+  /**
+   * The three-file agreement behind the bundled plugin. Its absence is silent:
+   * a `--plugin-dir` naming a directory the image never built is not an error
+   * the run loop reads, it is a cycle that runs without the hooks and a bill
+   * that says nothing. So the path `tokenEconomizer.ts` hands the CLI, the path
+   * the Dockerfile fetches into and the volume that holds its state have to be
+   * the same paths, and a rename in one file alone produces exactly that.
+   */
+  const module = fs.readFileSync(path.join(root, "src/lib/tokenEconomizer.ts"), "utf8");
+
+  function constantOf(name: string): string {
+    const match = new RegExp(`^export const ${name} = "([^"]+)";$`, "m").exec(module);
+    assert.ok(match, `tokenEconomizer.ts no longer names ${name}`);
+    return match[1];
+  }
+
+  const mounts = () =>
+    [...compose.matchAll(/^\s*-\s*[A-Za-z0-9][\w.-]*:(\/\S+?)(?::\w+)?\s*$/gm)].map((m) => m[1]);
+
+  it("fetches TokenEconomizer into the directory the run loop loads it from", () => {
+    const target = constantOf("TOKENECONOMIZER_ROOT");
+    assert.ok(
+      dockerfile.includes(`git init -q ${target}`),
+      `The Dockerfile does not fetch into ${target}, which is where ` +
+        `tokenEconomizer.ts points \`--plugin-dir\`. Every cycle would load a ` +
+        `plugin directory that does not exist and run without the hooks.`,
+    );
+  });
+
+  it("keeps that directory off every named volume", () => {
+    // A volume takes its contents from the image exactly once, at creation, so
+    // code placed underneath a mount point is masked by whatever an existing
+    // volume holds: it would build, pass every other test here, and be absent at
+    // runtime on any machine that had already created the volume. The state
+    // directory is the part that belongs on a volume; the code is not.
+    const target = constantOf("TOKENECONOMIZER_ROOT");
+    for (const mount of mounts()) {
+      assert.ok(
+        target !== mount && !target.startsWith(`${mount}/`),
+        `${target} is under the named volume mounted at ${mount}. A volume ` +
+          `takes the image's contents only when it is first created, so on any ` +
+          `machine whose volume already exists the build would be masked and ` +
+          `TokenEconomizer would silently not be there.`,
+      );
+    }
+  });
+
+  it("pins the checkout to a commit, not a branch", () => {
+    // Its hooks run inside every cycle, so an unpinned rebuild would change what
+    // they do to every run's context with nothing announcing it.
+    const match = /^ARG TOKENECONOMIZER_REF=(\S*)$/m.exec(dockerfile);
+    assert.ok(match, "the Dockerfile no longer takes a TOKENECONOMIZER_REF");
+    assert.match(
+      match[1],
+      /^[0-9a-f]{40}$/,
+      `TOKENECONOMIZER_REF defaults to "${match[1]}", which is not a full commit sha.`,
+    );
+  });
+
+  it("lets an operator build without it, rather than only by editing the image", () => {
+    // The escape hatch for a build host that cannot reach GitHub. `${VAR-default}`
+    // and deliberately not `${VAR:-default}`: an explicitly empty
+    // TOKENECONOMIZER_REF has to stay empty, and the colon form would
+    // substitute the default right back over it.
+    assert.match(
+      compose,
+      /TOKENECONOMIZER_REF:\s*"\$\{TOKENECONOMIZER_REF-[^}]*\}"/,
+      "docker-compose.yml must pass TOKENECONOMIZER_REF through with ${VAR-default}, " +
+        "or `TOKENECONOMIZER_REF=` in .env cannot switch the bundling off.",
+    );
+  });
+
+  it("puts its state directory on a named volume, owned by the agents' uid in the image", () => {
+    // The hooks run as the agent uid and write what they learn here. In the
+    // writable layer that is discarded by every `docker compose up --build`; and
+    // a directory the image does not create would be root's on a fresh volume,
+    // which the hooks then cannot write — silently, since a hook failing to
+    // persist state does not fail the cycle.
+    const home = constantOf("TOKENECONOMIZER_HOME");
+    assert.ok(
+      mounts().includes(home),
+      `${home} is not a named volume in docker-compose.yml, so the hooks' state ` +
+        `is the image's writable layer and a rebuild discards it.`,
+    );
+    const made = dockerfile
+      .replace(/\\\n/g, " ")
+      .split("\n")
+      .find((line) => /^RUN mkdir -p\b/.test(line));
+    assert.ok(made, "the Dockerfile no longer has a `RUN mkdir -p` for the agents' directories");
+    assert.ok(
+      made.split(/\s+/).includes(home),
+      `the Dockerfile's mkdir list does not create ${home}, so a fresh volume ` +
+        `mounted there takes root's ownership instead of node's.`,
+    );
   });
 });
 
@@ -1615,324 +1708,6 @@ describe("what the boot runs at the agent uid holds no credential and is not loo
  * covers every `UF_` name the entrypoint reads, because the one that went
  * missing was the one no prefix had been written for.
  */
-describe("winnow is in the image, because nothing else bounds a cycle now", () => {
-  /**
-   * The three-file agreement behind context pruning, and it earns a group of
-   * its own for a reason `UF_PY_TOOLS`' does not have.
-   *
-   * That mechanism installs at boot and is best-effort: a tool that fails to
-   * arrive costs the operator a plugin. This one replaced `--autocompact`, so an
-   * install where it is absent has **nothing at all** bounding a work cycle's
-   * context — a long cycle runs to the model's whole window, no error, no failed
-   * run, just a bill. So the paths `contextPruning.ts` executes and the paths the
-   * Dockerfile builds have to be the same paths, and a rename in either file
-   * alone produces exactly that silence.
-   */
-  const module = fs.readFileSync(path.join(root, "src/lib/contextPruning.ts"), "utf8");
-
-  /** The interpreter path the run loop actually spawns, off the module itself. */
-  function winnowRoot(): string {
-    const match = /^export const WINNOW_ROOT = "([^"]+)";$/m.exec(module);
-    assert.ok(match, "contextPruning.ts no longer names a winnow root");
-    return match[1];
-  }
-
-  it("builds winnow into the directory the run loop runs it from", () => {
-    const target = winnowRoot();
-    assert.ok(
-      dockerfile.includes(`${target}/venv`),
-      `The Dockerfile does not build a virtualenv under ${target}, which is ` +
-        `where contextPruning.ts spawns \`${target}/venv/bin/python\`. A run ` +
-        `would report pruning unavailable on every cycle, and with --autocompact ` +
-        `gone nothing would bound the context at all.`,
-    );
-  });
-
-  it("keeps that directory off every named volume", () => {
-    // The trap this exists for, and it has already caught one design: a volume
-    // takes its contents from the image exactly once, at creation, so a
-    // build-time install underneath a mount point is masked by whatever the
-    // existing volume holds. Installing winnow into `/home/node/pytools` would
-    // build correctly, pass every other test here, and be invisible at runtime
-    // on any machine that had already created that volume.
-    const target = winnowRoot();
-    const mounts = [...compose.matchAll(/^\s*-\s*[A-Za-z0-9][\w.-]*:(\/\S+?)(?::\w+)?\s*$/gm)]
-      .map((m) => m[1]);
-    for (const mount of mounts) {
-      assert.ok(
-        target !== mount && !target.startsWith(`${mount}/`),
-        `${target} is under the named volume mounted at ${mount}. A volume ` +
-          `takes the image's contents only when it is first created, so on any ` +
-          `machine whose volume already exists the build would be masked and ` +
-          `winnow would silently not be there.`,
-      );
-    }
-  });
-
-  it("pins the checkout to a commit, not a branch", () => {
-    // `CLAUDE_CLI_VERSION`'s argument. The run loop measures what this tool
-    // removes and prices it, so an unpinned rebuild moves that contract with
-    // nothing announcing it — and a tier that started removing more or less
-    // would show up only as a KPI that had quietly changed shape.
-    const match = /^ARG WINNOW_REF=(\S*)$/m.exec(dockerfile);
-    assert.ok(match, "the Dockerfile no longer takes a WINNOW_REF");
-    assert.match(
-      match[1],
-      /^[0-9a-f]{40}$/,
-      `WINNOW_REF defaults to "${match[1]}", which is not a full commit sha.`,
-    );
-  });
-
-  it("lets an operator build without it, rather than only by editing the image", () => {
-    // The escape hatch for a build host that cannot reach GitHub. `${VAR-default}`
-    // and deliberately not `${VAR:-default}`: the whole point is that an
-    // explicitly empty WINNOW_REF stays empty, and the colon form would
-    // substitute the default right back over it.
-    assert.match(
-      compose,
-      /WINNOW_REF:\s*"\$\{WINNOW_REF-[^}]*\}"/,
-      "docker-compose.yml must pass WINNOW_REF through with ${VAR-default}, " +
-        "or `WINNOW_REF=` in .env cannot switch the bundling off.",
-    );
-  });
-
-  it("no longer sends --autocompact, which pruning replaced", () => {
-    // Read off `buildArgs` in the source rather than from its output, because
-    // this is the deployment group's own question: the image and the argv have
-    // to agree that exactly one mechanism bounds a cycle. Both running means the
-    // CLI summarises a conversation moments before this app ends the cycle to
-    // prune it, and the run pays for both.
-    const orchestrator = fs.readFileSync(
-      path.join(root, "src/lib/orchestrator.ts"),
-      "utf8",
-    );
-    assert.ok(
-      !/args\.push\("--autocompact"/.test(orchestrator),
-      "buildArgs emits --autocompact again. contextPruning.ts owns the ceiling; " +
-        "running both is worse than either.",
-    );
-  });
-});
-
-/**
- * The intake filter's uid, and the environment it holds at that uid.
- *
- * The third of the entrypoint's long-lived children and the only one that runs
- * code the *agents* wrote: `WINNOW_FILTER_PATH` defaults inside a workspace bind
- * mount, `uv sync` builds the project it points at, and the interpreter that
- * build produced then runs winnow's own module. Started without `setpriv` that is one run
- * putting its code on every other run's transcript as uid 0, with this script's
- * whole environment and root's access to `/data`, and nothing about it is
- * visible: the filter works, the ledger fills, the dashboard reads correctly.
- *
- * The environment half is not a second, separate concern — it is what the uid
- * drop *creates*. A root process's `/proc/<pid>/environ` is unreadable by the
- * agents; the same process at their own uid is not, so anything left in it is
- * handed to them by the fix. Nothing here needs a credential either way: the
- * proxy relays the caller's own `x-api-key` upstream and reads no key of its
- * own.
- *
- * Beside `gh`'s assertion and `uv`'s, which pin the same `setpriv` on the two
- * helpers this launch was written next to and did not copy.
- */
-describe("the intake filter runs as the agent uid, holding no credential", () => {
-  const entrypoint = fs.readFileSync(path.join(root, "docker-entrypoint.sh"), "utf8");
-
-  /**
-   * Everything the `WINNOW_FILTER` branch runs up to the launch, comments
-   * dropped.
-   *
-   * Read off the branch rather than off a helper's name, because the name is
-   * the part a rewrite is free to change: what has to hold is that nothing
-   * between the switch and the process reaches `uv` without dropping the uid
-   * first. Comment lines go the way the `UF_` forwarding assertion drops them —
-   * this is about what the shell runs, not the paragraph above it saying what
-   * it ought to.
-   */
-  function filterLaunch(): string {
-    const start = entrypoint.indexOf('if [ "${WINNOW_FILTER:-}" = "1" ]; then');
-    assert.notEqual(
-      start,
-      -1,
-      "docker-entrypoint.sh no longer gates the intake filter on WINNOW_FILTER",
-    );
-    const off = entrypoint.indexOf("--off-file", start);
-    assert.notEqual(off, -1, "the intake filter launch no longer passes --off-file");
-    return entrypoint
-      .slice(start, entrypoint.indexOf("\n", off))
-      .split("\n")
-      .filter((line) => !/^\s*#/.test(line))
-      .join("\n");
-  }
-
-  /**
-   * The directory the ledger and the off switch are written to, resolved
-   * through the entrypoint's own assignment the way `ghDataVolume` and
-   * `pyToolsVolume` are — the launch passes a variable, and the point of
-   * reading it back is that this file never states the path itself.
-   */
-  function filterStateVolume(): string {
-    const passed = /--ledger\s+"?(\S+?)\/filter\.jsonl/.exec(filterLaunch());
-    assert.ok(passed, "the intake filter launch no longer passes a --ledger path");
-    const raw = passed[1].replace(/^"/, "");
-    if (!raw.startsWith("$")) return raw;
-    const name = raw.replace(/^\$\{?/, "").replace(/\}$/, "");
-    const assigned = new RegExp(`^\\s*${name}=(\\S+)$`, "m").exec(entrypoint);
-    assert.ok(
-      assigned,
-      `docker-entrypoint.sh passes --ledger ${raw} and assigns ${name} nowhere, ` +
-        `so the filter writes its ledger to /filter.jsonl`,
-    );
-    return assigned[1];
-  }
-
-  it("wraps the launch in the setpriv its two neighbours use", () => {
-    // The defect this group was written for. `gh_as_agent` and `uv_as_agent`
-    // twenty lines above drop to UF_AGENT_UID; this one, which is the only one
-    // of the three that keeps running and the only one whose code an agent
-    // wrote, did not — so agent-authored Python executed as root, holding
-    // UF_AUTH_TOKEN, ANTHROPIC_ADMIN_KEY and UF_GITHUB_TOKEN, with root's read
-    // of `/data` and of `~/.claude/.credentials.json`.
-    assert.match(
-      filterLaunch(),
-      /setpriv --reuid="\$UF_AGENT_UID" --regid="\$\{UF_AGENT_GID:-\$UF_AGENT_UID\}"/,
-      "docker-entrypoint.sh starts the winnow intake filter without dropping " +
-        "to UF_AGENT_UID, so the sync and the filter execute a workspace checkout every " +
-        "agent can write as root, holding this script's whole environment",
-    );
-  });
-
-  it("gives it an allowlisted environment rather than the inherited one", () => {
-    // `env` without -i passes everything through, which at uid 0 was merely
-    // excessive and at the agent uid is a handout: the filter's own
-    // /proc/<pid>/environ becomes readable by the uid every agent runs at.
-    assert.match(
-      filterLaunch(),
-      /env -i/,
-      "docker-entrypoint.sh hands the intake filter the entrypoint's whole " +
-        "environment. Dropped to UF_AGENT_UID, that process's " +
-        "/proc/<pid>/environ is readable by every agent — so UF_AUTH_TOKEN, " +
-        "ANTHROPIC_ADMIN_KEY, UF_GITHUB_TOKEN and UF_WEBHOOK_SECRET are handed " +
-        "to them by the very change that took root away.",
-    );
-    for (const name of ["UF_AUTH_TOKEN", "ANTHROPIC_ADMIN_KEY", "UF_GITHUB_TOKEN"]) {
-      assert.ok(
-        !filterLaunch().includes(name),
-        `the intake filter launch names ${name}. The proxy relays the ` +
-          `caller's own credentials upstream and reads none of its own, so ` +
-          `nothing here needs it — and at the agent uid, holding it publishes it.`,
-      );
-    }
-  });
-
-  it("keeps the ledger and the switch out of /data, which that uid cannot reach", () => {
-    // The consequence of the drop, and the half that fails silently. `/data` is
-    // root-owned 0700 — deliberately, it is what keeps the agents out of the
-    // database — so a filter at UF_AGENT_UID cannot traverse into it. Left
-    // there, `_append_ledger` catches its own EACCES and prints one stderr
-    // line, the dashboard reports `ledger: "missing"` (which is a legitimate
-    // state, not an error), and `touch .../filter-off` stops turning the
-    // rewriting off at all.
-    const dir = filterStateVolume();
-    assert.ok(
-      dir !== "/data" && !dir.startsWith("/data/"),
-      `the intake filter writes its ledger under ${dir}. /data is root-owned ` +
-        `0700 — which is what keeps an agent out of the database and the ` +
-        `settings every guard reads — so UF_AGENT_UID cannot traverse into ` +
-        `it: the ledger stays empty and the off switch stops switching ` +
-        `anything off, with one stderr line between them.`,
-    );
-    assert.match(
-      filterLaunch(),
-      new RegExp(`--off-file\\s+"?\\$\\{?\\w+\\}?/filter-off|--off-file\\s+${dir}/filter-off`),
-      `the intake filter's off switch is not beside its ledger under ${dir}, ` +
-        `so one of the two is somewhere the uid it runs at cannot reach`,
-    );
-    // The same literal-copying rule intakeFilter.ts states about itself: the
-    // reader and the writer agree only by hand, and the last time they did not
-    // an install whose filter was rewriting every request read as `missing`.
-    const reader = fs.readFileSync(path.join(root, "src/lib/intakeFilter.ts"), "utf8");
-    for (const [constant, file] of [
-      ["LEDGER_PATH", "filter.jsonl"],
-      ["OFF_FILE", "filter-off"],
-    ]) {
-      assert.match(
-        reader,
-        new RegExp(`const ${constant} = "${dir}/${file}";`),
-        `docker-entrypoint.sh writes ${dir}/${file} and intakeFilter.ts's ` +
-          `${constant} names somewhere else. A path that is not there is a ` +
-          `legitimate reading rather than an error, so the card reports the ` +
-          `filter as absent while it rewrites every request.`,
-      );
-    }
-  });
-
-  it("puts that directory on a named volume, which a rebuild does not discard", () => {
-    // Measured, not predicted: the ledger lived in the writable layer once and
-    // a restart took 52 lines with it, leaving the sessions they described
-    // permanently unattributable. It is the record of which bytes the
-    // transcript still holds and the API never received — losing it is not
-    // losing a log, it is losing the correction.
-    const dir = filterStateVolume();
-    const mounts = [...compose.matchAll(/^\s*-\s*[A-Za-z0-9][\w.-]*:(\/\S+?)(?::\w+)?\s*$/gm)]
-      .map((m) => m[1]);
-    assert.ok(
-      mounts.includes(dir),
-      `${dir} is not a named volume in docker-compose.yml. Without one it is ` +
-        `the image's writable layer, which \`docker compose up --build\` ` +
-        `discards along with every correction the ledger recorded.`,
-    );
-  });
-
-  /**
-   * The virtualenv the filter runs in, read off the launch environment the same
-   * way the ledger directory is — `UV_PROJECT_ENVIRONMENT` is what decides it,
-   * and a test that spelled the path itself would go on passing after a rename.
-   */
-  function filterVirtualenv(): string {
-    const passed = /UV_PROJECT_ENVIRONMENT=(\S+)/.exec(filterLaunch());
-    assert.ok(
-      passed,
-      "docker-entrypoint.sh no longer names UV_PROJECT_ENVIRONMENT for the " +
-        "intake filter. Without it `uv sync` deletes and rebuilds the `.venv` " +
-        "inside the operator's own bind-mounted checkout on every boot.",
-    );
-    return passed[1];
-  }
-
-  it("puts the virtualenv on a named volume too, which a rebuild does not discard", () => {
-    // Same mechanism as the ledger above, different loss: not a correction that
-    // can never be made again, but the ninety seconds the wait below this launch
-    // budgets for building a virtualenv — paid on every `up --build`, with the
-    // filter absent for that whole window and every request going unfiltered
-    // and unrecorded. In the writable layer that is the cost of any rebuild.
-    const venv = filterVirtualenv();
-    const mounts = [...compose.matchAll(/^\s*-\s*[A-Za-z0-9][\w.-]*:(\/\S+?)(?::\w+)?\s*$/gm)]
-      .map((m) => m[1]);
-    assert.ok(
-      mounts.includes(venv),
-      `${venv} is not a named volume in docker-compose.yml, so it is the ` +
-        `image's writable layer and \`docker compose up --build\` discards it. ` +
-        `The next boot rebuilds it, and the filter is not there while it does.`,
-    );
-  });
-
-  it("ships nothing in the image at that mount point", () => {
-    // The trap the `/opt/winnow` assertion above states in full: a volume takes
-    // the image's contents exactly once, at creation, so anything the Dockerfile
-    // wrote here would be present on a fresh install and masked on every
-    // existing one. Nothing does today — the venv is built at boot by `uv` —
-    // and this is what says so if that changes.
-    const venv = filterVirtualenv();
-    assert.ok(
-      !dockerfile.includes(venv),
-      `the Dockerfile names ${venv}, which is now a named volume. Whatever it ` +
-        `puts there is visible on a fresh install and invisible on every ` +
-        `machine whose volume already exists.`,
-    );
-  });
-});
-
 describe("the sandbox ships off, and its switch reaches the container", () => {
   const entrypoint = fs.readFileSync(path.join(root, "docker-entrypoint.sh"), "utf8");
 
@@ -1954,23 +1729,13 @@ describe("the sandbox ships off, and its switch reaches the container", () => {
     );
     assert.ok(read.size > 0, "docker-entrypoint.sh no longer reads any variable");
 
-    // A `NAME=value \` line is one of a command's environment prefixes, not a
-    // variable this script gave itself — the winnow child is launched under
-    // six of them — so a trailing continuation disqualifies the match. Without
-    // that, `WINNOW_FILTER` reads as self-supplied and could be dropped from
-    // compose unnoticed, which is the exact shape of the two bugs above.
+    // A `NAME=value \` line is one of a command's environment prefixes — the
+    // uv helper's launch is written that way — not a variable this script gave
+    // itself, so a trailing continuation disqualifies the match.
     const assigned = new Set(
       [...source.matchAll(/^[ \t]*(?:export[ \t]+)?([A-Z][A-Z0-9_]*)=(.*)$/gm)]
         .filter((m) => !m[2].endsWith("\\"))
         .map((m) => m[1]),
-    );
-    assert.ok(
-      !assigned.has("WINNOW_FILTER") && read.has("WINNOW_FILTER"),
-      "WINNOW_FILTER is no longer both read by docker-entrypoint.sh and passed " +
-        "to the winnow child as an environment prefix. Either the filter above " +
-        "stopped biting — in which case a variable compose forwards is exempt " +
-        "from this assertion and nothing says so — or winnow's launch changed " +
-        "shape, in which case pick another name that is prefixed and read.",
     );
     // `\<newline>` continuations first, or only the first name of a multi-line
     // `ENV` is seen and `DATA_DIR` reads as an operator variable nobody forwards.
