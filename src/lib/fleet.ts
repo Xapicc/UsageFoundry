@@ -1,3 +1,4 @@
+import { normalizePolicy, windowGuardRefusal } from "./budget";
 import { db } from "./db";
 import { newWorkPaused, setNewWorkPaused } from "./settings";
 import {
@@ -12,6 +13,7 @@ import {
   type RunRow,
   type RunStatus,
 } from "./orchestrator";
+import type { UsageSnapshot } from "./windows";
 import { haltSteps, stopInstance, type HaltReport } from "./workflows";
 
 /**
@@ -272,6 +274,116 @@ export interface FleetReopenReport {
 }
 
 /**
+ * Which provider's windows a run's fraction guards are read against.
+ *
+ * `startRun`'s own choice, repeated: a Codex run reads the Codex account's
+ * windows and every other run reads Claude's, `local` included. Two names
+ * rather than the provider column, because the guard has two readings to give
+ * and a snapshot is fetched once per reading, not once per run.
+ */
+export type GuardWindows = "claude" | "codex";
+
+/** The readings `reopenFleet` judges a pick-up's fraction guards against. */
+export type FleetGuardSnapshots = Partial<Record<GuardWindows, UsageSnapshot>>;
+
+const guardWindowsOf = (run: Pick<RunRow, "provider">): GuardWindows =>
+  run.provider === "codex" ? "codex" : "claude";
+
+/**
+ * The budget a pick-up hands one run: the sheet's fields laid over that run's
+ * own stored blob, with the cycle cap rebuilt from what it has used.
+ *
+ * One function because two things read it and must never disagree — the refusal
+ * that asks whether the guards in it can be read, and `reopenRun`, which writes
+ * it to the row. A fraction in the stored blob is carried forward by the merge
+ * exactly as a spending limit is, so what the run will be bound by is whatever
+ * this returns, and nothing else is the thing to check.
+ */
+function pickUpBudget(
+  run: RunRow,
+  wire: Record<string, unknown>,
+  moreIterations: unknown,
+): Record<string, unknown> {
+  // The sheet's fields over this run's own, never in place of them. Parsed
+  // unguarded for `reopenRun`'s reason: every `runs.budget` this app writes
+  // is JSON it wrote itself, and a row that is not is a corrupted database
+  // rather than a refusal to word.
+  const stored = JSON.parse(run.budget) as Record<string, unknown>;
+  const cycles =
+    moreIterations === undefined
+      ? {}
+      : {
+          maxIterations:
+            moreIterations === null
+              ? null
+              : run.iterations - run.validation_cycles + Number(moreIterations),
+        };
+  return { ...stored, ...wire, ...cycles };
+}
+
+/** Whether the budget a pick-up would hand this run carries a fraction guard. */
+function carriesFractionGuard(budget: Record<string, unknown>): boolean {
+  const policy = normalizePolicy(budget);
+  return policy.maxWeeklyFraction !== null || policy.maxSessionFraction !== null;
+}
+
+/**
+ * Which readings a pick-up of these runs has to have in hand before the
+ * synchronous loop starts, so the route can fetch them and `reopenFleet` need
+ * not await.
+ *
+ * A reading is asked for only when some run in the batch would carry a fraction
+ * guard under the budget it is about to be handed: the page's sheet sends
+ * neither fraction, so for nearly every batch this answers nothing and no
+ * transcript scan is paid for. Ids with no row are skipped here and refused by
+ * name in the loop.
+ */
+export function fleetGuardWindows(
+  ids: readonly string[],
+  budget: unknown,
+): GuardWindows[] {
+  const { moreIterations, ...wire } = (budget ?? {}) as Record<string, unknown>;
+  const needed = new Set<GuardWindows>();
+  for (const id of ids) {
+    const run = getRun(id);
+    if (!run) continue;
+    if (carriesFractionGuard(pickUpBudget(run, wire, moreIterations))) {
+      needed.add(guardWindowsOf(run));
+    }
+  }
+  return [...needed];
+}
+
+/**
+ * `POST /api/runs/[id]/reopen`'s refusal for one run of a batch: a fraction
+ * guard with nothing to read, said where there is a person.
+ *
+ * The pre-cycle guard no longer ends a run over `no_ceiling` — it records it
+ * and spawns the cycle (`RUN_ENFORCEABLE_CODES`) — so a pick-up that does not
+ * ask here puts a run back to work with its guard unread, which is what this
+ * door did until it asked. A reading that was not fetched is refused the same
+ * way and says so, rather than being read as one that was fine: the loop may be
+ * handed fewer readings than it needs only if a run's blob changed between the
+ * route's look and the loop's, and a guard that could not be checked is not one
+ * that passed.
+ */
+function fractionGuardRefusal(
+  run: RunRow,
+  budget: Record<string, unknown>,
+  snapshots: FleetGuardSnapshots,
+): string | null {
+  const policy = normalizePolicy(budget);
+  if (policy.maxWeeklyFraction === null && policy.maxSessionFraction === null) {
+    return null;
+  }
+  const snapshot = snapshots[guardWindowsOf(run)];
+  if (!snapshot) {
+    return "Its usage window could not be read just now, so a fraction guard on it could not be checked. Try again.";
+  }
+  return windowGuardRefusal(policy, snapshot, run.provider);
+}
+
+/**
  * Pick up several finished runs at once, under one budget.
  *
  * The list is the ids **the page displayed**, which is `POST /api/chat/[id]/approve`'s
@@ -321,10 +433,20 @@ export interface FleetReopenReport {
  * turn, and two runs reopened into one checkout is exactly what that check
  * exists to stop. And in dependency order rather than the order the page sent,
  * for the reason `dependenciesFirst` gives.
+ *
+ * A run whose merged budget carries a fraction guard that has nothing to read is
+ * refused here, per run and by its short id, and left as it was: `POST
+ * /api/runs/[id]/reopen` refuses the same condition, and `reopenRun` carries a
+ * stored fraction forward without asking. Asking needs a usage reading, which is
+ * async, so the route fetches the ones `fleetGuardWindows` names *before* this
+ * loop and hands them in as `snapshots` — the loop itself still awaits nothing.
+ * A caller that passes none gets every fraction-guarded run refused, which is
+ * the safe way to be wrong.
  */
 export function reopenFleet(
   ids: readonly string[],
   budget: unknown,
+  snapshots: FleetGuardSnapshots = {},
 ): FleetReopenReport {
   const report: FleetReopenReport = { reopened: [], refused: [] };
   const { moreIterations, ...wire } = (budget ?? {}) as Record<string, unknown>;
@@ -349,21 +471,16 @@ export function reopenFleet(
       });
       continue;
     }
-    // The sheet's fields over this run's own, never in place of them. Parsed
-    // unguarded for `reopenRun`'s reason: every `runs.budget` this app writes
-    // is JSON it wrote itself, and a row that is not is a corrupted database
-    // rather than a refusal to word.
-    const stored = JSON.parse(run.budget) as Record<string, unknown>;
-    const cycles =
-      moreIterations === undefined
-        ? {}
-        : {
-            maxIterations:
-              moreIterations === null
-                ? null
-                : run.iterations - run.validation_cycles + Number(moreIterations),
-          };
-    const outcome = reopenRun(id, { ...stored, ...wire, ...cycles });
+    const merged = pickUpBudget(run, wire, moreIterations);
+    // After the set-aside check and before `reopenRun`, which would carry a
+    // stored fraction forward unread; refused here so the row is left exactly as
+    // it was and the report names the run, not the batch.
+    const unreadable = fractionGuardRefusal(run, merged, snapshots);
+    if (unreadable) {
+      report.refused.push({ id, reason: unreadable });
+      continue;
+    }
+    const outcome = reopenRun(id, merged);
     if (outcome.ok) report.reopened.push(id);
     else report.refused.push({ id, reason: outcome.reason });
   }

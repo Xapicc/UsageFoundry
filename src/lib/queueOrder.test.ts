@@ -13,8 +13,8 @@ import { queueCompare, queueOrder } from "./orchestrator";
  * mistake — a priority sort that quietly stopped being stable and started
  * reordering runs an operator never touched.
  */
-const at = (created_at: number, priority = 0, id = String(created_at)) =>
-  ({ id, created_at, priority });
+const at = (created_at: number, priority = 0, id = String(created_at), seq = created_at) =>
+  ({ id, created_at, priority, seq });
 
 describe("queueOrder puts priority first and keeps age as the tie-break", () => {
   it("promotes a higher priority ahead of an older run", () => {
@@ -42,9 +42,9 @@ describe("queueOrder puts priority first and keeps age as the tie-break", () => 
     // DEFAULT, but a null arriving from anywhere else must not sink a run to
     // the bottom of a queue silently.
     const order = queueOrder([
-      { id: "null", created_at: 100, priority: null },
-      { id: "zero", created_at: 200, priority: 0 },
-      { id: "neg", created_at: 50, priority: -1 },
+      { id: "null", created_at: 100, priority: null, seq: 1 },
+      { id: "zero", created_at: 200, priority: 0, seq: 2 },
+      { id: "neg", created_at: 50, priority: -1, seq: 3 },
     ]);
     assert.deepEqual(order.map((r) => r.id), ["null", "zero", "neg"]);
   });
@@ -74,7 +74,7 @@ describe("queueOrder puts priority first and keeps age as the tie-break", () => 
 describe("queueCompare is the one order both the queue and its readout use", () => {
   it("counts a higher-priority run as ahead of an older one", () => {
     // Negative means "considered first". The newer run wins on its lever, so a
-    // position counting `queueCompare(other, self) <= 0` counts it as ahead.
+    // position counting `queueCompare(other, self) < 0` counts it as ahead.
     assert.ok(queueCompare(at(200, 5), at(100, 0)) < 0);
     assert.ok(queueCompare(at(100, 0), at(200, 5)) > 0);
   });
@@ -84,12 +84,19 @@ describe("queueCompare is the one order both the queue and its readout use", () 
     assert.ok(queueCompare(at(200), at(100)) > 0);
   });
 
-  it("treats a same-millisecond pair as mutually ahead, as it did before", () => {
-    // Both sides answer 0, so a `<= 0` count has each seeing the other. That is
-    // the behaviour `queuePosition` had when it read `created_at <=`, and it is
-    // preserved rather than tidied: changing it would move a number on every
-    // install that has never heard of priority.
-    assert.equal(queueCompare(at(100), at(100)), 0);
+  it("breaks a same-millisecond pair on write order, as the queue band's SQL does", () => {
+    // A fan-out's runs share a `created_at`. This answered 0 for them, so the
+    // walk kept whatever order `activeRuns` returned while the band sorted on
+    // `id`, and `queuePosition` counted each of the pair as ahead of the other.
+    assert.ok(queueCompare(at(100, 0, "first", 1), at(100, 0, "second", 2)) < 0);
+    assert.ok(queueCompare(at(100, 0, "second", 2), at(100, 0, "first", 1)) > 0);
+    // Handed in backwards, as a plan that sought another index could return
+    // them: the walk's order is the rows' own, not the input's.
+    const batch = [1, 2, 3, 4, 5, 6, 7, 8].map((seq) => at(100, 0, `w${seq}`, seq));
+    assert.deepEqual(
+      queueOrder([...batch].reverse()).map((r) => r.id),
+      batch.map((r) => r.id),
+    );
   });
 
   it("orders by the same rule queueOrder sorts by", () => {

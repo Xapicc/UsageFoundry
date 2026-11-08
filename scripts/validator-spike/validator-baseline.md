@@ -237,10 +237,28 @@ is what the spike returned for both.
 **The row labels above are struck through rather than rewritten, and the reason
 column is left as the measurement run wrote it.** `scripts/validator-spike/RESULT.md`
 deliberately did *not* rescore: both rows are still counted as misses in the
-spike's 34/37, and had they been rescored it would read 36/37. Keeping the
-original text here is what makes that decision checkable. **The counts in §4 and
+spike's 34/37. (The "36/37 if rescored" this paragraph used to quote assumed both
+rows are `finished`; see the second correction below, which finds only row 36
+is.) Keeping the original text here is what makes that decision checkable. **The counts in §4 and
 §5 below are the corrected ones**, because a base rate that a reader carries into
 a build decision should not be the superseded number.
+
+**Second correction, 2026-11-08: row 8 is not `finished`, so the counts in §4 below
+are one row off.** The premise that was retracted above (the specification *is* in
+the composed prompt) stands for both rows. The step from there to `finished` was
+not checked against the repository, and for row 8 it fails: the task requires
+uncommitted work to go onto its own branch via `commitPending`, and at the case's
+last commit (`918fbf2a`) no line the run added mentions it and the README it wrote
+says "the halt never commits". The evidence supports `partial` at most (one
+requirement checked, not the whole task). Row 36 was checked the same way and its
+named deliverables are present (`scripts/validator-spike/RESULT.md`, *What it did
+with the seven `unjudgeable` rows*, has the list and the one clause that
+had nothing to attach to at that commit). Effect on what follows, none of it re-derived here: §4's label table
+reads `finished` 32, `partial` 1, `not-done` 2, `unjudgeable` 5; the `DONE` row
+reads 30 of 31 judgeable with the work in full and one `partial`, not "31 for 31";
+and "`partial = 0`" in the cautions is no longer true. §5's five unjudgeable rows
+and the retracted category stand, because they depend on the premise and not on
+the label.
 
 ---
 

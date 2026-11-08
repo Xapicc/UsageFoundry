@@ -33,6 +33,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Area | File |
 |---|---|
 | Metering and cost | [metering-and-cost.md](verification/metering-and-cost.md) |
+| Metering and cost | [metering-and-cost-run-spend.md](verification/metering-and-cost-run-spend.md) — a cycle's spend, resumed sessions and the per-repository readout |
 | Budgets and guards | [budgets-and-guards.md](verification/budgets-and-guards.md) |
 | Run lifecycle | [run-lifecycle.md](verification/run-lifecycle.md) |
 | Run lifecycle | [run-lifecycle-background-work.md](verification/run-lifecycle-background-work.md) — a work cycle's wait for background tasks, and what stopping one tells the next cycle |
@@ -57,6 +58,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Isolation and landing | [isolation-and-landing-contention.md](verification/isolation-and-landing-contention.md): a land meeting another git process's lock in the operator's checkout, and the retry |
 | Isolation and landing | [commit-trailers.md](verification/commit-trailers.md): the trailers a run's commits carry, and what git does with the messages they ride on |
 | Git and review | [git-and-review.md](verification/git-and-review.md) |
+| Git and review | [git-and-review-repository-config.md](verification/git-and-review-repository-config.md) — what a repository's own configuration, hooks and filters can make this app's git run |
 | Git and review | [git-and-review-command-keys.md](verification/git-and-review-command-keys.md): which git configuration keys run a command, for the run's git-directory check |
 | Agents, templates and models | [agents-templates-and-models.md](verification/agents-templates-and-models.md) |
 | Other providers | [other-providers.md](verification/other-providers.md) — Codex, and the local provider |
@@ -70,11 +72,16 @@ measurement under *Verified* and cut the item down to what is still open.
 | Security and sandboxing | [security-and-sandboxing-claude-home-lock.md](verification/security-and-sandboxing-claude-home-lock.md) — the `UF_LOCK_CLAUDE_HOME` lock on `~/.claude` and the OAuth refresh under it |
 | Security and sandboxing | [security-and-sandboxing-config-dir-binds.md](verification/security-and-sandboxing-config-dir-binds.md) — the CLI's config-directory binds, and which `~/.claude` files it replaces by rename |
 | Security and sandboxing | [security-and-sandboxing-stacks.md](verification/security-and-sandboxing-stacks.md) — a stack's tool grants and permissions |
-| Security and sandboxing | [security-and-sandboxing-sign-in-and-bearer.md](verification/security-and-sandboxing-sign-in-and-bearer.md) — the sign-in limiter, the gate's bearer budget, the `claude auth` children's settings and the Codex children's `config.toml` |
+| Security and sandboxing | [security-and-sandboxing-sign-in-and-bearer.md](verification/security-and-sandboxing-sign-in-and-bearer.md) — the sign-in limiter, the gate's bearer budget and the `claude auth` children's settings |
+| Security and sandboxing | [security-and-sandboxing-codex-config.md](verification/security-and-sandboxing-codex-config.md) — what `$CODEX_HOME/config.toml` does to the server's Codex children, what writes it, and the root-owned file |
 | Security and sandboxing | [security-and-sandboxing-cross-origin.md](verification/security-and-sandboxing-cross-origin.md) — which browser requests the session cookie authorises |
 | Security and sandboxing | [security-and-sandboxing-name-lookup.md](verification/security-and-sandboxing-name-lookup.md) — root's `PATH`, the agents' `PATH` and what a dropped process runs by name |
 | Security and sandboxing | [security-and-sandboxing-chat-config.md](verification/security-and-sandboxing-chat-config.md) — what the chat child loads from files a work cycle writes |
-| Security and sandboxing | [security-and-sandboxing-server-git.md](verification/security-and-sandboxing-server-git.md): what this app's own git runs from a repository a work cycle wrote |
+| Security and sandboxing | [security-and-sandboxing-server-git-hooks.md](verification/security-and-sandboxing-server-git-hooks.md): what this app's own git runs from a repository a work cycle wrote: hooks defined in config, and which call shapes fire one |
+| Security and sandboxing | [security-and-sandboxing-server-git-drivers.md](verification/security-and-sandboxing-server-git-drivers.md): what this app's own git runs from a repository a work cycle wrote: filters, merge drivers and empty names, and what Land reads of a blanked driver |
+| Security and sandboxing | [security-and-sandboxing-server-git-fingerprints.md](verification/security-and-sandboxing-server-git-fingerprints.md): what this app's own git runs from a repository a work cycle wrote: the configuration fingerprint, conditional includes, `%(prefix)/`, reftable, git directories made, or unmade, after the probe, and a call's own `--git-dir=` |
+| Security and sandboxing | [security-and-sandboxing-server-git-submodules.md](verification/security-and-sandboxing-server-git-submodules.md): what this app's own git runs from a repository a work cycle wrote: a filter in a submodule's git directory and the routes into one |
+| Security and sandboxing | [security-and-sandboxing-server-git-push.md](verification/security-and-sandboxing-server-git-push.md): what this app's own git runs from a repository a work cycle wrote: a push to a local path, Deliver's `followTags` and `--recurse-submodules=check` |
 | Security and sandboxing | [security-and-sandboxing-telemetry-token.md](verification/security-and-sandboxing-telemetry-token.md): who can read a work cycle's telemetry ingest token, the headers helper, and binding ingest to the CLI's process |
 | Container and environment | [container-and-environment-resources.md](verification/container-and-environment-resources.md) — memory, CPU, cgroup limits, OOM and the (removed) filter launcher |
 | Container and environment | [container-and-environment-stacks.md](verification/container-and-environment-stacks.md) — the stacks carrier, its installs, receipts and invocation counts |

@@ -24,7 +24,7 @@ import { after, describe, it } from "node:test";
  * child that behaves as the premise says the CLI does: a `--resume` restores
  * the ledger the last child of that session saved, and a fresh session starts
  * at zero. The premise itself was read off the 2.1.280 binary rather than run,
- * and `docs/verification/metering-and-cost.md` says so.
+ * and `docs/verification/metering-and-cost-run-spend.md` says so.
  *
  * Its own file with the environment set before anything is required, for the
  * reason every database-backed test here needs it: `config.ts` fixes `DATA_DIR`

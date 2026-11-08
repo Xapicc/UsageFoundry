@@ -6209,6 +6209,10 @@ export function selectBranchCandidates<T extends BranchCandidate>(
  * selection reads are fetched — the full rows for the handful actually examined
  * are read back afterwards, so a machine with fifty thousand runs on it does not
  * load fifty thousand prompts to list sixty branches.
+ *
+ * `rowid DESC` breaks a shared millisecond, which a fan-out's one synchronous
+ * pass produces: `idx_runs_created` returns a tie oldest-written first, so a
+ * held-clock batch listed its branches in the reverse of "newest first".
  */
 function branchBearingRuns(): Array<BranchCandidate & { createdAt: number }> {
   return db()
@@ -6221,7 +6225,7 @@ function branchBearingRuns(): Array<BranchCandidate & { createdAt: number }> {
         WHERE isolation = 'worktree'
           AND worktree_branch IS NOT NULL
           AND repo_root IS NOT NULL
-        ORDER BY created_at DESC`,
+        ORDER BY created_at DESC, rowid DESC`,
     )
     .all() as Array<BranchCandidate & { createdAt: number }>;
 }

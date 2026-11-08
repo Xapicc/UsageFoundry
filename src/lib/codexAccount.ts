@@ -125,6 +125,15 @@ interface PendingCall {
  * the child also stopped its own marketplace sync, a `git` to `github.com`
  * under an API key and six plugin listings carrying the ChatGPT bearer.
  *
+ * The last two are `SIGN_IN_CONFIG_PINS` (`codexAuth.ts`), copied for the
+ * reason `codexAccountEnv` is. A planted `cli_auth_credentials_store` of
+ * `"keyring"` or `"ephemeral"`, or a `forced_chatgpt_workspace_id` the token
+ * lacked, made `account/read` answer `account: null` over a stored login, so
+ * `listCodexModels` answered not signed in and the rate-limit read was refused
+ * while cycles, which ignore the file, used that login. With these the same
+ * child answered for it; unplanted they changed none of the four answers nor a
+ * connection.
+ *
  * A list of keys stops only the ones somebody measured, which is the gap
  * `docs/agent/security/cycle-settings-env.md` records under "What is still open".
  */
@@ -143,6 +152,10 @@ const APP_SERVER_CONFIG_PINS = [
   'otel.metrics_exporter="none"',
   "-c",
   "features.plugins=false",
+  "-c",
+  'cli_auth_credentials_store="file"',
+  "-c",
+  "forced_chatgpt_workspace_id=[]",
 ];
 
 /**

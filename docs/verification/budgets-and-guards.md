@@ -63,6 +63,21 @@
   inside one long real Bash call, because the CLI's Bash tool could not start in
   the sandbox this ran in.
 
+- **A fraction guard in a stored budget, picked up through `POST /api/fleet`,
+  spawned its cycle unread; it is now refused, 2026-11-08.** A scratch test, not
+  kept, over a throwaway `DATA_DIR` with `CLAUDE_BIN` and `child_process.spawn`
+  stubbed (`costOutlierGuard.test.ts`'s shape): one stopped row whose blob was
+  `{ maxIterations: 1, maxWeeklyFraction: 0.5 }`, no weekly ceiling
+  (`currentSnapshot()` read `weekly.fraction` null), the fleet unpaused, body
+  `{ action: "reopen", runIds, budget: { moreIterations: 1 } }`. Before the
+  change: 200, `queued` then `running`, one spawn, `run.guard_unreadable` at
+  `info`, a `budget` event with `code: "no_ceiling"` and `enforceable: false`,
+  and the run ended `completed`. After: 400 carrying the weekly sentence,
+  status `stopped`, no spawn. Caveat: the stub stands in for the CLI, so this
+  measures the loop's decision to spawn and not a billed cycle, and the reading
+  was empty because the scratch home had no transcripts and no provider
+  percentage, not because a real endpoint was down.
+
 ## Not yet verified by hand
 
 - **The process budget has never refused a real child in a browser, nor

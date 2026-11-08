@@ -317,16 +317,17 @@ describe("checkout slot naming", () => {
  * set is either two agents in one working tree, or a run queued behind
  * something that will never move.
  *
- * Array order is the contract — `activeRuns()` sorts by `created_at`, and these
- * fixtures stand in for that.
+ * Creation order is the contract — these rows carry no `created_at`, so `seq`
+ * decides, and it is the order each case makes them in, as `rowid` is the order
+ * `activeRuns()` breaks a shared millisecond on.
  */
 describe("promotion", () => {
-  type Row = import("./orchestrator").RunRow;
+  type Row = import("./orchestrator").ActiveRunRow;
   let seq = 0;
-  // Only three fields are read. A complete row would be thirty nulls per case
+  // Only four fields are read. A complete row would be thirty nulls per case
   // and would need editing every time a column is added.
   const row = (status: Row["status"], dir: string): Row =>
-    ({ id: `r${++seq}`, status, folder: dir, work_dir: dir }) as Row;
+    ({ id: `r${++seq}`, seq, status, folder: dir, work_dir: dir }) as Row;
 
   it("starts a queued run in a folder only a parked run holds", () => {
     const parked = row("paused", `${ws}/RepoOne`);
@@ -393,12 +394,12 @@ describe("promotion", () => {
  * their own words, and what must not drift is which of the three they are given.
  */
 describe("queue blockers", () => {
-  type Row = import("./orchestrator").RunRow;
+  type Row = import("./orchestrator").ActiveRunRow;
   let seq = 0;
-  // `created_at` matters here where it did not above: the ahead-count reads
-  // `queueCompare`, and rows without one tie on NaN and count nobody.
+  // `created_at` rises with `seq`, so the rows are in one order whichever key
+  // of `queueCompare`'s decides it.
   const row = (status: Row["status"], dir: string, created_at = ++seq): Row =>
-    ({ id: `r${seq}`, status, folder: dir, work_dir: dir, created_at }) as Row;
+    ({ id: `r${seq}`, seq, status, folder: dir, work_dir: dir, created_at }) as Row;
 
   it("names the cap, not the folder, when the folder is free", () => {
     // The shipped defect, in one case: nothing is in RepoOne, nothing is queued
@@ -497,10 +498,10 @@ describe("queue blockers", () => {
  * park the Claude runs behind it for a shortage on another machine.
  */
 describe("local model slots", () => {
-  type Row = import("./orchestrator").RunRow;
+  type Row = import("./orchestrator").ActiveRunRow;
   let seq = 0;
   const row = (status: Row["status"], dir: string, provider: Row["provider"] = null): Row =>
-    ({ id: `l${++seq}`, status, folder: dir, work_dir: dir, created_at: seq, provider }) as Row;
+    ({ id: `l${++seq}`, seq, status, folder: dir, work_dir: dir, created_at: seq, provider }) as Row;
 
   it("holds a second local run, and the Claude run behind it still starts", () => {
     const live = row("running", `${ws}/A`, "local");
@@ -9421,8 +9422,9 @@ describe("listRunsPage", () => {
       );
       // Holds the folder, so nothing reached from elsewhere starts the queue.
       insert.run("ceiling-running", ceiling, "running", now - 48 * hour, now - 48 * hour, null);
-      // Inserted last to first, so the rowid order SQLite falls back on inside
-      // a shared millisecond is the reverse of the id order the page promises.
+      // Inserted last to first, so the write order the page promises inside a
+      // shared millisecond is the reverse of id order, and an `id` tiebreak
+      // fails. `runWriteOrder.test.ts` holds the case a missing one fails.
       for (let i = QUEUED - 1; i >= 0; i--) {
         const created = now - hour + Math.floor(i / 5);
         insert.run(`ceiling-queued-${pad(i)}`, ceiling, "queued", created, null, null);
@@ -9449,11 +9451,14 @@ describe("listRunsPage", () => {
 
       const queue = listRunsPage({ q: ceiling, statuses, limit: 200, order: "queue" });
       assert.equal(queue.total, QUEUED);
-      // `queueCompare`'s order: the raised run, then age, then id inside a
-      // shared millisecond.
+      // `queueCompare`'s order: the raised run, then age, then write order
+      // inside a shared millisecond — each group of five, last index first.
       assert.deepEqual(ids(queue), [
         `ceiling-queued-${pad(QUEUED - 1)}`,
-        ...Array.from({ length: 199 }, (_, i) => `ceiling-queued-${pad(i)}`),
+        ...Array.from(
+          { length: 199 },
+          (_, j) => `ceiling-queued-${pad(5 * Math.floor(j / 5) + 4 - (j % 5))}`,
+        ),
       ]);
     });
 

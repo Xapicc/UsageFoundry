@@ -288,8 +288,10 @@ export function fmtWaitingFor(
 
 export function fmtTokens(n: number): string {
   if (!Number.isFinite(n)) return "—";
-  // `signedUSD`'s minus, for its reason: the composition legend prints a
-  // deficit in a column of these, and a hyphen is a different width.
+  // Defensive: every caller passes a count, a limit or a sum of them, so
+  // nothing reaches this branch today. It is here so that a difference printed
+  // through this later is scaled like a positive one, and signed with U+2212
+  // because a hyphen is a different width in a column of figures.
   if (n < 0) {
     // A deficit under half a token rounds to "0", and zero has no sign.
     const magnitude = fmtTokens(-n);
@@ -379,24 +381,19 @@ export function fmtUSD(n: number): string {
 }
 
 /**
- * A netted figure, signed.
+ * A 0–1 fraction as a percentage to one decimal.
  *
- * U+2212 rather than a hyphen so the minus is the same width as the plus and a
- * column of these does not shift by a pixel as a figure crosses zero. A figure
- * that rounds to zero at `fmtUSD`'s precision is written without either sign,
- * as `fmtTokens` writes it: "+$0.0000" and "−$0.0000" both claim a direction
- * the figure no longer has.
+ * Every caller passes a share, a window fraction or a configured limit, so
+ * nothing reaches the negative branch today. `Meter` clamps the bar it draws
+ * but prints its `fraction` through this unclamped, which makes this the one
+ * place that decides what a ratio below zero would look like. Written to match
+ * `fmtUSD`: U+2212 rather than a hyphen, and the sign is chosen after the
+ * magnitude has rounded, because a figure that is written as zero has none.
  */
-export function signedUSD(n: number): string {
-  const figure = fmtUSD(n);
-  // The minus is already on a negative; only a positive that survived rounding
-  // needs its plus. "—" has no digit and so no sign either.
-  return n > 0 && /[1-9]/.test(figure) ? `+${figure}` : figure;
-}
-
 export function fmtPct(f: number | null): string {
   if (f === null || !Number.isFinite(f)) return "—";
-  return `${(f * 100).toFixed(1)}%`;
+  const written = (Math.abs(f) * 100).toFixed(1);
+  return `${f < 0 && Number(written) !== 0 ? "−" : ""}${written}%`;
 }
 
 /**

@@ -24,6 +24,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 
 - A gate is a block that waits for a person, and it is a ledger row that never has a turn.
 - It is `waiting` the whole time, and `held_at` is the only thing that says it was reached.
+- A gate is reached while its edges are satisfied, not once for ever, so a predecessor that is picked up again un-reaches it.
 - A gate hands on no runs, and that is the cost the diagram pays.
 - A restart spares an instance with a held gate, and a block the restart failed releases nothing beside it.
 - Whether a chat may propose one: yes.
@@ -65,12 +66,15 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - The instance total is a fourth reading, and the door telemetry reaches it through is the same one, widened by one caller.
 - A dollar limit over members whose provider reports no cost is said rather than passed in silence, and where it would bound repetition it is refused.
 - A person sets an instance budget, and there is nothing on the wire that could.
+- A retried deciding turn is asked the instance budget like the first, and the attempt before it is already in the total.
+- A loop asked to stop after its pass is still bounded by the instance guard through that whole pass.
 
 ## [Schedules](workflows-and-schedules/schedules.md)
 
 - A schedule is the first thing here that starts an agent with no person present at all, and every property that makes that defensible is somewhere else.
 - No instance limit is the bound of a press whose blocks report no cost.
 - A missed window is not made up, an overlap is skipped rather than queued, and both are on the page.
+- A window that passes under the install-wide hold is recorded as missed on the tick that sees it, and the cursor moves past it — it is never left behind for the grace.
 - The zone is stored with the schedule, and an unknown one is refused rather than replaced.
 - One timer per process, `globalThis`-pinned, lazily started and stopped.
 - A schedule can now start an instance that stops at a gate with nobody present, and nothing on the schedule card bounds that.
@@ -96,6 +100,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - A landing section may end in an in-folder tail.
 - Why the tail is safe, and what that rests on.
 - The tail must leave the folder clean, and the loop refuses a pass over what it left rather than committing for it.
+- Only a tail that worked in a repository the pass's merges land into is asked, and Save does not refuse a tail that works anywhere else.
 - A link out of a merge may not be `on-finish` on any path to the tail, and the sentence says why.
 - Any path, not only a direct merge-to-tail link.
 - A merge block drawn at the end of an in-folder section is answered by `graphRefusal`'s merge rule, and a second refusal for it in `loopBodyRefusal` would be wrong.
@@ -109,8 +114,8 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 
 - A loop's exit conditions are five, and the first of them is what the agents said rather than what a row says.
 - A pass that reported it could not finish ends the loop, and the rung above it is why that works at all.
-- The guards are read again for every pass, and a pass whose guards no longer match the section it was accepted as is blocked, not carried on.
 - A loop's two caps are termini, not guards, and that is why they are allowed on a node at all.
+- The guards are read again for every pass, and a pass whose guards no longer match the section it was accepted as is blocked, not carried on.
 - "Stop after this pass" is a terminus read when the pass settles, never a halt, and it sits between what the pass did and what a limit says.
 - Whether a failed loop can carry on is read twice, and only the press reads the folder.
 
@@ -129,6 +134,8 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - `passMemberId` owns the spelling of a member id and `passNumberOf` is the only thing that reads one back.
 - `looping` is the one exception to "a block adds no status", and it is an exception rather than a precedent.
 - A loop that settles inside its own release does not end that advance, because the plan it was released by is already stale.
+- A pass asked to be the last is stepped exactly like any other, and no pass is opened after it.
+- The card's cost figure is the shown reading with the pass blocks' turns added, and it says what the limit is checked against instead of showing it.
 
 ## [The workflow canvas and block layout](workflows-and-schedules/canvas-and-layout.md)
 
@@ -141,6 +148,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 
 - A loop is made by framing blocks and unmade by deleting the frame, which is why it is in no palette and in no kind picker.
 - Taking a block out of a frame splices rather than cuts, and that is the whole of `linksWithoutMember`.
+- A flat block put behind a merge an either-way link reaches is refused at the press, and the section is left as it was.
 - A loop's inspector holds what a loop has and nothing else, because a control for a refused field is a trap.
 - A loop's six fields are hidden rather than disabled, on the inspector, the canvas card and `/workflows/[id]` alike, and nothing has to come back.
 - Put in is the link tool's own two gestures over a second relation, down to `resolveLinkRelease` deciding both releases.

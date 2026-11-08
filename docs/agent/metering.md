@@ -56,10 +56,13 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - The cycle in flight is on the row, in its own column, and it is not a count.
 - What a run is spending *now* is a third reading on the dashboard, never a correction to the meters.
 - Nothing a telemetry record says may lower a spend figure, because whoever posts it is not trusted to be the exporter.
-- What each repository cost is a fifth reading, and it is a report rather than a source.
-- What runs on each repository keep re-deriving is a report beside it, and two of its three readings are not money at all.
 - A Codex run's spend is tokens wherever a report shows spend, and it is never folded into a dollar figure.
 - A loop's cost limit is checked on the guard figure and its card shows the floor with the pass blocks' turns added, and the card says so rather than showing the difference.
+
+## [What each repository cost, and what its runs keep re-deriving](metering/repository-spend-and-reading.md)
+
+- What each repository cost is a fifth reading, and it is a report rather than a source.
+- What runs on each repository keep re-deriving is a report beside it, and two of its three readings are not money at all.
 
 ## [A Codex cycle that never reports its tokens](metering/codex-killed-cycles.md)
 

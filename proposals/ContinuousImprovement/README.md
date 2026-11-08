@@ -37,9 +37,10 @@ last line but one says `STOPS the pointer`, revert `b748ac0d`.
 | Phase 4, the readback | **Built, over the export tables and never `run_events`.** `holdoutReadback.ts`, at `/api/holdout-readback` and in a dashboard band: compliance (each cycle's logged list, both arms, files the brief also named set aside), displacement (distinct main-thread reads before the first edit and in the whole run, counted the same in both arms) and outcome (second-cycle share, `ending_code`, `runs.spent_usd` as the one spend source) as three results sharing no figure. Read only for settled, non-continuation runs on a fixed snapshot with `paths > 0`; every other considered run is counted under one reason, per arm. Each section says how many each arm needs before a difference is significant. **Not computed:** the plan's regression-adjusted estimate, its interference diagnostics and its two O'Brien-Fleming looks. The earlier rolling-list period is not read. | `f54d1f49` |
 
 The measurements are in `docs/verification/run-lifecycle-hooks-and-endings.md`
-and `docs/verification/metering-and-cost.md`. The decisions are in
-`docs/agent/run-lifecycle/prior-read-pointer.md` and
-`docs/agent/metering/run-spend-readings.md`.
+and `docs/verification/metering-and-cost-run-spend.md`. The decisions are in
+`docs/agent/run-lifecycle/prior-read-pointer.md`,
+`docs/agent/metering/run-spend-readings.md` and
+`docs/agent/metering/repository-spend-and-reading.md`.
 
 ## Changes to the holdout, 2026-10-31
 
