@@ -150,6 +150,20 @@ describe("what a run read", () => {
     assert.deepEqual(got, { beforeEdit: 1, wholeRun: 1, edited: false });
   });
 
+  it("takes a NotebookEdit for the first edit, and a NotebookRead for no `Read`", () => {
+    // The export keeps both (they name `notebook_path`). `EDIT_TOOLS` counts the
+    // edit, so the files read after it fall out of "before the first edit"; the
+    // displacement count is of `Read` calls, as the ranking is, so the
+    // notebook's own read is not one of them.
+    const got = readback.readingOf([
+      call("Read", "/r/a.ts"),
+      call("NotebookRead", "/r/n.ipynb"),
+      call("NotebookEdit", "/r/n.ipynb"),
+      call("Read", "/r/b.ts"),
+    ]);
+    assert.deepEqual(got, { beforeEdit: 1, wholeRun: 2, edited: true });
+  });
+
   it("says a run that never edited read everything before its first edit, and that it never edited", () => {
     assert.deepEqual(readback.readingOf([call("Read", "/r/a.ts"), call("Read", "/r/b.ts")]), {
       beforeEdit: 2,
