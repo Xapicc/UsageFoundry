@@ -74,9 +74,13 @@ function writeStubs(dir: string): { claude: string; codex: string } {
     `#!/usr/bin/env node
 const fs = require("node:fs");
 const args = process.argv.slice(2);
+// The real CLI takes its program options (--settings, --setting-sources) ahead of
+// the subcommand, and refuses them behind it, so "auth" is not always args[0].
+const authAt = args.indexOf("auth");
+const sub = authAt < 0 ? undefined : args[authAt + 1];
 const state = process.env.CLAUDE_STUB_STATE;
 const loggedIn = process.env.CLAUDE_STUB_LOGGED_IN === "1" || fs.existsSync(state);
-if (args[0] === "auth" && args[1] === "status") {
+if (sub === "status") {
   if (process.env.STUB_STATUS_FAIL === "1") {
     process.stdout.write("segfault-ish garbage\\n");
     process.exit(1);
@@ -89,7 +93,7 @@ if (args[0] === "auth" && args[1] === "status") {
   }, Number(process.env.STUB_STATUS_DELAY_MS || 0));
   return;
 }
-if (args[0] === "auth" && args[1] === "logout") {
+if (sub === "logout") {
   if (process.env.CLAUDE_STUB_FAIL === "1") {
     process.stdout.write("Logout failed\\n");
     process.exit(1);
@@ -98,7 +102,7 @@ if (args[0] === "auth" && args[1] === "logout") {
   process.stdout.write("Signed out\\n");
   process.exit(0);
 }
-if (args[0] === "auth" && args[1] === "login") {
+if (sub === "login") {
   if (process.env.CLAUDE_STUB_FAIL === "1") {
     process.stdout.write("Could not reach the authorization server\\n");
     process.exit(1);

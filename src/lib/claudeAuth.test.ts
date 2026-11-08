@@ -17,18 +17,21 @@ import { after, describe, it, mock } from "node:test";
  * way a CLI that hit a network error or crashed does. Every line it reads goes
  * into `received.log` against its pid; under `STUB_EXCHANGE` it redeems only
  * `code-<its own pid>` and fails anything else the way a verifier mismatch
- * does, with a 400 and an exit.
+ * does, with a 400 and an exit. Its argv goes into `argv.log`, one line per
+ * start with the arguments split by `\u001f` so an empty one survives.
  */
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-claude-auth-")));
 const pidsDir = path.join(tmp, "pids");
 fs.mkdirSync(pidsDir);
 const stub = path.join(tmp, "claude");
 const receivedLog = path.join(tmp, "received.log");
+const argvLog = path.join(tmp, "argv.log");
 fs.writeFileSync(
   stub,
   [
     "#!/bin/sh",
     `echo $$ > "${pidsDir}/$$"`,
+    `printf '%s\\037' "$@" >> "${argvLog}"; echo >> "${argvLog}"`,
     'if [ -n "$STUB_HOLD" ]; then while [ ! -e "$STUB_HOLD" ]; do sleep 0.02; done; fi',
     'echo "Open https://claude.ai/oauth/authorize?state=$$"',
     'if [ -n "$STUB_EXIT_AFTER_LINK" ]; then sleep 0.2; exit 0; fi',
@@ -64,8 +67,11 @@ const {
   normalizeCode,
   parseAuthStatus,
   pendingLogin,
+  readAuthStatus,
+  signOut,
   submitCode,
 } = require("./claudeAuth") as typeof import("./claudeAuth");
+const { PINNED_CYCLE_ENV } = require("./cycleInvocation") as typeof import("./cycleInvocation");
 
 /**
  * Three parsers reading another program's console output, captured from the
@@ -471,5 +477,71 @@ describe("a code pasted from a superseded sign-in link", () => {
       delete process.env.STUB_EXCHANGE;
       cancelLogin();
     }
+  });
+});
+
+/**
+ * A planted `$CLAUDE_CONFIG_DIR/settings.json` whose `env` names a proxy is
+ * applied to the sign-in's own requests unless the child is told otherwise:
+ * on 2.1.310 the token exchange of `auth login` went to the proxy, authorization
+ * code and PKCE verifier in the body, and `auth logout` sent three CONNECTs to
+ * it. Nothing but the argv tells the CLI to ignore the file, and a stub that
+ * ignores its argv cannot show a missing flag, so these read what the child
+ * was started with.
+ *
+ * The flags lead the argv because the CLI exits 1 with `unknown option` for
+ * either one placed after `auth <subcommand>`. `auth status` takes the pins
+ * rather than dropping the file: it answers for the credential runs get, and a
+ * work cycle loads a user-scope `ANTHROPIC_API_KEY` that `--setting-sources ""`
+ * would hide from it.
+ */
+describe("the settings flags an auth child starts with", () => {
+  const SEPARATOR = "\u001f";
+
+  function startsRecorded(subcommand: string): string[][] {
+    const text = fs.existsSync(argvLog) ? fs.readFileSync(argvLog, "utf8") : "";
+    return text
+      .split("\n")
+      .filter((line) => line !== "")
+      .map((line) => line.split(SEPARATOR).slice(0, -1))
+      .filter((argv) => argv.includes(subcommand));
+  }
+
+  it("keeps a sign-in out of every settings file", async () => {
+    fs.rmSync(argvLog, { force: true });
+    const started = await beginLogin();
+    try {
+      assert.ok(started.ok, JSON.stringify(started));
+      assert.deepEqual(startsRecorded("login"), [["--setting-sources", "", "auth", "login"]]);
+    } finally {
+      cancelLogin();
+    }
+  });
+
+  it("keeps a sign-out out of every settings file", async () => {
+    fs.rmSync(argvLog, { force: true });
+    await signOut();
+    assert.deepEqual(startsRecorded("logout"), [["--setting-sources", "", "auth", "logout"]]);
+  });
+
+  it("pins the status read's endpoint variables to the ones the server was started with", async () => {
+    fs.rmSync(argvLog, { force: true });
+    process.env.HTTPS_PROXY = "http://server-proxy.test:3128";
+    delete process.env.ANTHROPIC_BASE_URL;
+    try {
+      await readAuthStatus();
+    } finally {
+      delete process.env.HTTPS_PROXY;
+    }
+    const [argv] = startsRecorded("status");
+    assert.ok(argv, "no status child was started");
+    assert.deepEqual([argv[0], argv[2], argv[3], argv[4]], ["--settings", "auth", "status", "--json"]);
+    assert.equal(argv.length, 5);
+    const overlay = JSON.parse(argv[1]) as { env: Record<string, string> };
+    assert.deepEqual([...Object.keys(overlay.env)].sort(), [...PINNED_CYCLE_ENV].sort());
+    assert.equal(overlay.env.HTTPS_PROXY, "http://server-proxy.test:3128");
+    // A variable the server does not set is pinned to "", which is what stops
+    // the planted file's value from standing.
+    assert.equal(overlay.env.ANTHROPIC_BASE_URL, "");
   });
 });

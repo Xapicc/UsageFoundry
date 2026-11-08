@@ -5,6 +5,7 @@ import {
 } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { CLAUDE_BIN, spawnCommand } from "./config";
+import { cycleEnvPins } from "./cycleInvocation";
 import { childCredentials } from "./privsep";
 import { agentEnvironment } from "./stacks";
 
@@ -300,7 +301,8 @@ export function authEnv(): NodeJS.ProcessEnv {
 }
 
 /**
- * Spawn options shared by all three commands.
+ * Spawn options shared by all three commands, over the one `env` the caller
+ * also reads its settings flags off.
  *
  * `childCredentials()` is load-bearing here in a way it is not at the other
  * spawn sites, where it is a containment measure. The CLI writes
@@ -310,24 +312,68 @@ export function authEnv(): NodeJS.ProcessEnv {
  * panel reports as signed in, and no agent can open. The failure would be a
  * fleet of runs ending on `Not logged in` under a page saying the opposite.
  */
-function spawnOptions(): SpawnOptions {
+function spawnOptions(env: NodeJS.ProcessEnv): SpawnOptions {
   return {
-    env: authEnv(),
+    env,
     ...childCredentials(),
     stdio: ["pipe", "pipe", "pipe"],
   };
 }
 
+type AuthSubcommand = "login" | "status" | "logout";
+
+/**
+ * The settings flags an auth child leads with, ahead of `auth`.
+ *
+ * `$CLAUDE_CONFIG_DIR/settings.json` is writable by every work cycle unless
+ * `UF_LOCK_CLAUDE_HOME` is on, and its `env` is applied to an auth child as it
+ * is to a cycle. Measured on 2.1.310 against loopback listeners that answered
+ * every CONNECT with a 403: a planted `HTTPS_PROXY` took `auth login`'s token
+ * exchange (`platform.claude.com`, where the authorization code and the PKCE
+ * verifier go), `auth logout`'s three connections and `auth status`'s one. Both
+ * flags beat the file for all three subcommands. Placed after the subcommand
+ * either one exits 1 with `unknown option`, so they lead the argv.
+ *
+ * Login and logout drop every settings source: they have no use for one, and
+ * naming no source closes them by construction rather than by a list that
+ * must stay complete. A planted `CLAUDE_CODE_CUSTOM_OAUTH_URL` is refused as
+ * not an approved endpoint and breaks the sign-in before it prints a link,
+ * which pins would not have stopped.
+ *
+ * Status takes the pins instead, because it answers for the credential runs
+ * actually get and a work cycle loads the user scope: with a user-scope
+ * `ANTHROPIC_API_KEY`, `--setting-sources ""` reported the claude.ai login
+ * while `--settings` reported `api_key`, as a cycle would bill. The pins are
+ * read off the `env` the child is spawned with, never a second call, because
+ * `agentEnvironment`'s cached stack exports can refresh between two.
+ *
+ * Both cost the operator a gateway or proxy configured only in the user
+ * settings file, as they do for cycles: `cycle-settings-env.md`.
+ */
+function authArgv(
+  subcommand: AuthSubcommand,
+  env: Readonly<Record<string, string | undefined>>,
+  rest: readonly string[] = [],
+): string[] {
+  const settings =
+    subcommand === "status"
+      ? ["--settings", JSON.stringify({ env: cycleEnvPins(env) })]
+      : ["--setting-sources", ""];
+  return [...settings, "auth", subcommand, ...rest];
+}
+
 /** Run one auth command to completion. Never throws; a failure is a value. */
 function runAuth(
-  args: string[],
+  subcommand: Exclude<AuthSubcommand, "login">,
+  rest: readonly string[],
   timeoutMs: number,
 ): Promise<{ code: number | null; output: string; spawnError: string | null }> {
   return new Promise((resolve) => {
     let child: ChildProcess;
     try {
-      const cli = spawnCommand(CLAUDE_BIN, args);
-      child = spawn(cli.command, cli.args, spawnOptions());
+      const env = authEnv();
+      const cli = spawnCommand(CLAUDE_BIN, authArgv(subcommand, env, rest));
+      child = spawn(cli.command, cli.args, spawnOptions(env));
     } catch (err) {
       resolve({
         code: null,
@@ -364,7 +410,7 @@ function runAuth(
       done({
         code: null,
         output,
-        spawnError: `\`${CLAUDE_BIN} ${args.join(" ")}\` did not answer within ${Math.round(timeoutMs / 1000)}s`,
+        spawnError: `\`${CLAUDE_BIN} ${["auth", subcommand, ...rest].join(" ")}\` did not answer within ${Math.round(timeoutMs / 1000)}s`,
       });
     }, timeoutMs);
     timer.unref?.();
@@ -412,7 +458,7 @@ function readFreshAuthStatus(): Promise<ClaudeAuthResult<ClaudeAuthStatus>> {
 }
 
 async function statusOnce(): Promise<ClaudeAuthResult<ClaudeAuthStatus>> {
-  const res = await runAuth(["auth", "status", "--json"], COMMAND_TIMEOUT_MS);
+  const res = await runAuth("status", ["--json"], COMMAND_TIMEOUT_MS);
   if (res.spawnError) {
     return {
       ok: false,
@@ -480,8 +526,9 @@ export async function beginLogin(): Promise<StartOutcome> {
 
   let child: ChildProcess;
   try {
-    const cli = spawnCommand(CLAUDE_BIN, ["auth", "login"]);
-    child = spawn(cli.command, cli.args, spawnOptions());
+    const env = authEnv();
+    const cli = spawnCommand(CLAUDE_BIN, authArgv("login", env));
+    child = spawn(cli.command, cli.args, spawnOptions(env));
   } catch (err) {
     return {
       ok: false,
@@ -810,7 +857,7 @@ function after(ms: number): Promise<void> {
  */
 export async function signOut(): Promise<ChangeOutcome> {
   cancelLogin();
-  const res = await runAuth(["auth", "logout"], COMMAND_TIMEOUT_MS);
+  const res = await runAuth("logout", [], COMMAND_TIMEOUT_MS);
   if (res.spawnError) {
     return {
       ok: false,
