@@ -70,6 +70,9 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - A workflow's deliver block is the second caller, and it asks nothing the button does not.
 - Deliver refuses a branch that can still move, in Land's own words.
 - The Land card offers it once, and states every refusal instead of discovering one. (was lines 149–165)
+
+## [A seeded file on a branch, and why neither exit takes it](isolation-and-landing/seeded-file-on-a-branch.md)
+
 - A branch whose history carries a file seeding copied in leaves by neither exit, and the handoff card offers no merge command for it.
 
 ## [Projects: the inventory, Push and Fetch](isolation-and-landing/projects-push-and-fetch.md)
