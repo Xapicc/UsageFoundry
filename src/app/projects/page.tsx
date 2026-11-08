@@ -27,6 +27,7 @@ import { Card, CardTitle, Empty, SkeletonText } from "@/components/ui/Card";
 import { Disclosure } from "@/components/ui/Disclosure";
 import { Hint, type HintTone } from "@/components/ui/Hint";
 import { ListGroup } from "@/components/ui/List";
+import { ProjectTokenEconomizer } from "@/components/ProjectTokenEconomizer";
 import { Notice } from "@/components/ui/Notice";
 import { Sheet } from "@/components/ui/Sheet";
 
@@ -358,6 +359,7 @@ export default function Projects() {
                     onFetch={() => void press(p, "fetch")}
                     onPush={() => setConfirming(p)}
                     onAsk={() => setAsk({ text: askAbout(p) })}
+                    tokenEconomizer={data.tokenEconomizer === "on"}
                   />
                 ))}
               </ul>
@@ -474,6 +476,7 @@ function ProjectRow({
   onFetch,
   onPush,
   onAsk,
+  tokenEconomizer,
 }: {
   p: ProjectDTO;
   mount: string;
@@ -483,6 +486,8 @@ function ProjectRow({
   onPush: () => void;
   /** Drafts a message about this project in the panel; never sends one. */
   onAsk: () => void;
+  /** Whether TokenEconomizer is on, so the row offers its record. */
+  tokenEconomizer: boolean;
 }) {
   const unmerged = p.runBranches.length + p.otherBranches.length;
   return (
@@ -519,6 +524,7 @@ function ProjectRow({
               <UnmergedBranches p={p} />
             </Disclosure>
           )}
+          {tokenEconomizer && <ProjectTokenEconomizer mountId={p.mountId} folder={p.folder} />}
         </>
       )}
     </li>

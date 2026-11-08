@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import { DEFAULTS, type Settings } from "./settings";
 import {
   denyListToSeed,
+  repoReportOf,
   TOKENECONOMIZER_HOME,
   TOKENECONOMIZER_PLUGIN_DIR,
   tokenEconomizerEnv,
@@ -151,5 +152,91 @@ describe("tokenEconomizerFor", () => {
       assert.equal(cycle.kind, present ? "ready" : "unavailable");
       if (cycle.kind === "ready") assert.equal(cycle.pluginDir, TOKENECONOMIZER_PLUGIN_DIR);
     }
+  });
+});
+
+/**
+ * The Project manager's record of one repository, off `te status --json` and
+ * the applied-tools record. A field read off the wrong key renders as 0, and a
+ * 0 there reads as "the plugin did nothing" — a claim about the plugin that is
+ * really a misread here.
+ */
+describe("repoReportOf", () => {
+  /** `te status --json` as the plugin at `cb42207` prints it, trimmed to what is read. */
+  const status = {
+    config: {
+      toolprune: { toolprune: "auto" },
+      microskills: { microskills: "envfacts+distiller" },
+      loopguard: { loopguard: "nudge" },
+    },
+    microskills: { profile: "envfacts+distiller", injected_lines: 3 },
+    toolprune: { mode: "auto", proposal: ["TodoWrite", "NotebookEdit"], applied: ["NotebookEdit"] },
+    loopguard: { mode: "nudge" },
+    ledger: {
+      sessions: 14,
+      priced_sessions: 12,
+      overhead_frac: 0.021,
+      nudges: 2,
+      aborts: 1,
+      injected_sessions: 9,
+    },
+  };
+  const record = {
+    by_path: {
+      "/w/.uf-worktrees/r-1/.claude/settings.local.json": ["NotebookEdit", "WebFetch"],
+      "/w/.uf-worktrees/r-2/.claude/settings.local.json": ["NotebookEdit"],
+      "/w/.uf-worktrees/r-3/.claude/settings.local.json": [],
+    },
+    kept: { "/w/r/.claude/settings.local.json": ["WebSearch"] },
+  };
+
+  it("reads every figure off the key the plugin writes it under", () => {
+    assert.deepEqual(repoReportOf(status, record), {
+      sessions: 14,
+      toolprune: {
+        mode: "auto",
+        leftOut: ["NotebookEdit", "WebFetch"],
+        // A checkout whose list is empty carries nothing it wrote.
+        checkouts: 2,
+        proposed: ["NotebookEdit", "TodoWrite"],
+        givenBack: ["WebSearch"],
+      },
+      // The plugin's `envfacts+distiller` is this app's `on`.
+      microskills: { mode: "on", facts: 3, injectedSessions: 9 },
+      loopguard: { mode: "nudge", redirects: 2, stillStuck: 1 },
+      overheadShare: 0.021,
+    });
+  });
+
+  it("reads an empty repository as nothing done, with no overhead figure at all", () => {
+    const report = repoReportOf({ ledger: { sessions: 0, priced_sessions: 0, overhead_frac: 0 } }, null);
+    assert.equal(report.sessions, 0);
+    assert.deepEqual(report.toolprune.leftOut, []);
+    assert.equal(report.toolprune.checkouts, 0);
+    // No priced session is no figure, which is not the same claim as 0%.
+    assert.equal(report.overheadShare, null);
+    assert.equal(report.toolprune.mode, "off");
+  });
+
+  it("takes nothing of the wrong type from a state file any cycle can write", () => {
+    const report = repoReportOf(
+      {
+        ledger: { sessions: "14", nudges: -3, aborts: Number.NaN, priced_sessions: 1, overhead_frac: 7 },
+        toolprune: { proposal: "TodoWrite" },
+        microskills: { injected_lines: null },
+        config: { loopguard: { loopguard: "stop" } },
+      },
+      { by_path: { a: "NotebookEdit", b: [1, "Grep"] }, kept: [] },
+    );
+    assert.equal(report.sessions, 0);
+    assert.equal(report.loopguard.redirects, 0);
+    assert.equal(report.loopguard.stillStuck, 0);
+    assert.deepEqual(report.toolprune.proposed, []);
+    assert.deepEqual(report.toolprune.leftOut, ["Grep"]);
+    assert.equal(report.microskills.facts, 0);
+    // A share is a fraction: anything past 1 is clamped rather than drawn as 700%.
+    assert.equal(report.overheadShare, 1);
+    // `stop` is read by the plugin and acts as `nudge`.
+    assert.equal(report.loopguard.mode, "nudge");
   });
 });

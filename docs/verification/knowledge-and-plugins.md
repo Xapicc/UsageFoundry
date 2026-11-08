@@ -172,6 +172,16 @@
   afterwards. Caveat: no work cycle ran, so that the CLI drops the two tools
   from a session's tool list is the plugin's own measurement, not this one.
 
+- **The Project manager's TokenEconomizer route answers for listed projects
+  only, 2026-11-08.** In the rebuilt container with the switch on,
+  `/api/projects` answered `tokenEconomizer: "on"`. `GET
+  /api/projects/token-economizer?mountId=github&folder=Dockrac` and
+  `folder=UsageFoundry` each answered `200 {"state":"ready"}`, with a record of
+  0 sessions, nothing left out and no overhead figure, because no session has
+  used the plugin yet. `folder=../../etc` answered 404 ("not a git folder
+  listed in the github mount"), and a missing folder 400. Asking created no
+  repository state. Caveat: an empty record only; no browser drew the fold.
+
 ## Not yet verified by hand
 
 - **The pending figures have never rendered.** Settings' *Still downloading*
@@ -272,3 +282,8 @@
   its log for the "now leaves out" line and its slot's
   `.claude/settings.local.json`.
 - **The loop guard's side calls are assumed invisible to `runs.spent_usd` (2026-11-08).** Read from the plugin (a `claude -p --no-session-persistence` Haiku call, written to no transcript), not measured, which is why `tokenEconomizerLoopguard` ships `off`. Settle: with the loop guard on `nudge`, provoke a failing loop in a run, then compare `runs.spent_usd` and the telemetry card against the plan's usage percentage before and after.
+- **No browser has drawn the Project manager's TokenEconomizer fold
+  (2026-11-08).** `npm run smoke-pages` runs without the plugin, so the fold is
+  hidden there. Settle: with the switch on in the container, open `/projects`,
+  expand **TokenEconomizer** on a row whose repository has run with it, at
+  390px and 1280px, in both skins.

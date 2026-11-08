@@ -69,6 +69,8 @@ src/lib/
                    Python package baked into the image), loaded as one more
                    `--plugin-dir` on Claude cycles when its Settings switch is
                    on; state on its own named volume. Off by default
+  tokenEconomizerReport.ts  one repository's TokenEconomizer record for the
+                   Project manager's fold — what it did, never a saving
   notify.ts        the outbound webhook: one signed, vendor-neutral, six-field
                    JSON body per ending that needs a person, fire-and-forget
                    beside `logLifecycle` and never awaited; off unless the

@@ -1,5 +1,6 @@
 import { projectInventory } from "@/lib/projects";
 import { jsonMaybeGzipped } from "@/lib/http";
+import { tokenEconomizerSwitch } from "@/lib/tokenEconomizerReport";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,11 +17,11 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(req: Request) {
   const params = new URL(req.url).searchParams;
-  return jsonMaybeGzipped(
-    req,
-    await projectInventory({
+  return jsonMaybeGzipped(req, {
+    ...(await projectInventory({
       offset: Number(params.get("offset") ?? 0),
       limit: Number(params.get("limit") ?? 0),
-    }),
-  );
+    })),
+    tokenEconomizer: tokenEconomizerSwitch(),
+  });
 }

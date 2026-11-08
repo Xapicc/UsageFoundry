@@ -8,6 +8,7 @@ import {
   TOKENECONOMIZER_TOOLPRUNE,
   type RunProviderDTO,
   type TokenEconomizerLoopguard,
+  type TokenEconomizerRepoReportDTO,
   type TokenEconomizerMicroskills,
   type TokenEconomizerToolprune,
 } from "./apiTypes";
@@ -376,43 +377,88 @@ async function seedSlot(o: {
   env: NodeJS.ProcessEnv;
   credentials: { uid?: number; gid?: number };
 }): Promise<SlotSeed> {
-  const run = { env: o.env, credentials: o.credentials, cwd: o.slot, timeoutMs: SEED_STEP_TIMEOUT_MS };
-  const status = await runTe(["--cwd", o.slot, "--host", "claude", "status", "--json"], run);
-  if (status.code !== 0) return { kind: "failed", reason: teFailure("status", status) };
-
-  let state: unknown;
-  let alreadyHere: unknown;
-  try {
-    const parsed = JSON.parse(status.stdout) as { state?: unknown; toolprune?: { applied?: unknown } };
-    state = parsed.state;
-    alreadyHere = parsed.toolprune?.applied;
-  } catch {
-    return { kind: "failed", reason: "`te status --json` did not print JSON" };
-  }
-  // Read here, as this process, and only from under the state root this app
-  // named: the path comes out of a child the agent uid runs.
-  if (typeof state !== "string" || !isInside(TOKENECONOMIZER_HOME, state)) {
-    return { kind: "failed", reason: "`te status --json` named no state directory under the state root" };
-  }
-  let record: { by_path?: unknown; kept?: unknown };
-  try {
-    record = JSON.parse(fs.readFileSync(path.join(state, "untool_applied.json"), "utf8"));
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { kind: "nothing" };
-    return { kind: "failed", reason: "the plugin's record of applied tools could not be read" };
-  }
+  const status = await readTeStatus(o.slot, o);
+  if (!status.ok) return { kind: "failed", reason: status.reason };
+  const record = readAppliedRecord(status.state);
+  if (!record.ok) return { kind: "failed", reason: record.reason };
+  if (record.record === null) return { kind: "nothing" };
+  const applied = (status.json.toolprune as { applied?: unknown } | undefined)?.applied;
   const tools = denyListToSeed({
-    appliedByPath: record.by_path,
-    keptByPath: record.kept,
-    alreadyHere: Array.isArray(alreadyHere)
-      ? alreadyHere.filter((t): t is string => typeof t === "string")
+    appliedByPath: record.record.by_path,
+    keptByPath: record.record.kept,
+    alreadyHere: Array.isArray(applied)
+      ? applied.filter((t): t is string => typeof t === "string")
       : [],
   });
   if (tools.length === 0) return { kind: "nothing" };
 
-  const apply = await runTe(["--cwd", o.slot, "--host", "claude", "toolprune", "apply", ...tools], run);
+  const apply = await runTe(["--cwd", o.slot, "--host", "claude", "toolprune", "apply", ...tools], {
+    env: o.env,
+    credentials: o.credentials,
+    cwd: o.slot,
+    timeoutMs: SEED_STEP_TIMEOUT_MS,
+  });
   if (apply.code !== 0) return { kind: "failed", reason: teFailure("toolprune apply", apply) };
   return { kind: "seeded", tools };
+}
+
+/**
+ * `te status --json` for one checkout, run as the agent uid, with the state
+ * directory it names proved to be under the state root. That path comes out of
+ * a child the agent uid runs, and this process reads files under it.
+ *
+ * Asking settles the checkout in the plugin's index, as any session there
+ * would: the plugin keys a repository by its remote or main checkout, so a
+ * repository no session has used gets an empty state directory and nothing
+ * more.
+ */
+export async function readTeStatus(
+  checkout: string,
+  o: { env: NodeJS.ProcessEnv; credentials: { uid?: number; gid?: number } },
+): Promise<{ ok: true; state: string; json: Record<string, unknown> } | { ok: false; reason: string }> {
+  const res = await runTe(["--cwd", checkout, "--host", "claude", "status", "--json"], {
+    env: o.env,
+    credentials: o.credentials,
+    cwd: checkout,
+    timeoutMs: SEED_STEP_TIMEOUT_MS,
+  });
+  if (res.code !== 0) return { ok: false, reason: teFailure("status", res) };
+  let json: unknown;
+  try {
+    json = JSON.parse(res.stdout);
+  } catch {
+    return { ok: false, reason: "`te status --json` did not print JSON" };
+  }
+  if (!json || typeof json !== "object" || Array.isArray(json)) {
+    return { ok: false, reason: "`te status --json` did not print an object" };
+  }
+  const state = (json as { state?: unknown }).state;
+  if (typeof state !== "string" || !isInside(TOKENECONOMIZER_HOME, state)) {
+    return { ok: false, reason: "`te status --json` named no state directory under the state root" };
+  }
+  return { ok: true, state, json: json as Record<string, unknown> };
+}
+
+/**
+ * The plugin's record of what it added to which checkout's settings file and
+ * what was given back — `untool_applied.json`, read because no command reports
+ * it across checkouts. Null when the plugin has applied nothing yet.
+ */
+export function readAppliedRecord(
+  state: string,
+): { ok: true; record: { by_path?: unknown; kept?: unknown } | null } | { ok: false; reason: string } {
+  try {
+    const parsed: unknown = JSON.parse(
+      fs.readFileSync(path.join(state, "untool_applied.json"), "utf8"),
+    );
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { ok: false, reason: "the plugin's record of applied tools is not an object" };
+    }
+    return { ok: true, record: parsed as { by_path?: unknown; kept?: unknown } };
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { ok: true, record: null };
+    return { ok: false, reason: "the plugin's record of applied tools could not be read" };
+  }
 }
 
 function isInside(root: string, candidate: string): boolean {
@@ -425,4 +471,76 @@ function teFailure(what: string, res: TeResult): string {
   if (res.signal) return `\`te ${what}\` was stopped by ${res.signal}`;
   const said = (res.stdout.trim() || res.stderr.trim()).split("\n").pop()?.slice(0, 200);
   return `\`te ${what}\` exited ${res.code}${said ? `: ${said}` : ""}`;
+}
+
+/* ------------------------------------------------------------------ */
+/* The Project manager's record of one repository                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * `te status --json` and the applied-tools record, as the page's DTO.
+ *
+ * Pure and tested because every misread is silent: a field read off the wrong
+ * key renders as a zero, and a zero here reads as "it did nothing", which is a
+ * claim about the plugin rather than about this app's parsing. Every value is
+ * checked for type, because the record is in a directory every work cycle can
+ * write.
+ */
+export function repoReportOf(
+  status: Record<string, unknown>,
+  record: { by_path?: unknown; kept?: unknown } | null,
+): TokenEconomizerRepoReportDTO {
+  const obj = (v: unknown): Record<string, unknown> =>
+    v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  const count = (v: unknown): number =>
+    typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0;
+  const names = (v: unknown): string[] =>
+    Array.isArray(v) ? [...new Set(v.filter((t): t is string => typeof t === "string"))].sort() : [];
+  const lists = (byPath: unknown): string[][] =>
+    Object.values(obj(byPath)).map(names).filter((l) => l.length > 0);
+
+  const toolprune = obj(status.toolprune);
+  const microskills = obj(status.microskills);
+  const loopguard = obj(status.loopguard);
+  const ledger = obj(status.ledger);
+  const config = obj(status.config);
+
+  const applied = lists(record?.by_path);
+  const givenBack = [...new Set(lists(record?.kept).flat())].sort();
+  const toolMode = obj(config.toolprune).toolprune ?? toolprune.mode;
+  const skillMode = obj(config.microskills).microskills ?? microskills.profile;
+  const guardMode = obj(config.loopguard).loopguard ?? loopguard.mode;
+  const overhead = ledger.overhead_frac;
+
+  return {
+    sessions: count(ledger.sessions),
+    toolprune: {
+      mode: isTokenEconomizerToolprune(toolMode) ? toolMode : "off",
+      leftOut: [...new Set(applied.flat())].sort(),
+      checkouts: applied.length,
+      proposed: names(toolprune.proposal),
+      givenBack,
+    },
+    microskills: {
+      // The plugin's `envfacts+distiller` is what this app calls `on`.
+      mode:
+        skillMode === "envfacts+distiller" || skillMode === "distiller"
+          ? "on"
+          : isTokenEconomizerMicroskills(skillMode)
+            ? skillMode
+            : "off",
+      facts: count(microskills.injected_lines),
+      injectedSessions: count(ledger.injected_sessions),
+    },
+    loopguard: {
+      // `stop` is read by the plugin and acts as `nudge`.
+      mode: guardMode === "stop" ? "nudge" : isTokenEconomizerLoopguard(guardMode) ? guardMode : "off",
+      redirects: count(ledger.nudges),
+      stillStuck: count(ledger.aborts),
+    },
+    overheadShare:
+      count(ledger.priced_sessions) > 0 && typeof overhead === "number" && Number.isFinite(overhead)
+        ? Math.min(Math.max(overhead, 0), 1)
+        : null,
+  };
 }

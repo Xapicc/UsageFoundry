@@ -3886,10 +3886,65 @@ export interface ProjectInventoryDTO {
   mounts: WorkspaceMountDTO[];
   /** Git folders across every mount; the page is `offset` and `limit` into them. */
   total: number;
+  /** Whether rows offer the TokenEconomizer section. */
+  tokenEconomizer: TokenEconomizerSwitchDTO;
   offset: number;
   limit: number;
   notShown: number;
 }
+
+/**
+ * Whether the Project manager offers a TokenEconomizer section per project:
+ * `unavailable` when the image does not carry the plugin, `off` when Settings
+ * has it switched off, `on` otherwise.
+ */
+export type TokenEconomizerSwitchDTO = "unavailable" | "off" | "on";
+
+/**
+ * What TokenEconomizer has recorded for one repository — what it did, never
+ * what it saved. Nothing in it is compared against runs without the plugin, so
+ * no figure here is a saving, and none is ever added to spend.
+ */
+export interface TokenEconomizerRepoReportDTO {
+  /** Sessions it has learned from, its own; history imported before it is left out. */
+  sessions: number;
+  toolprune: {
+    mode: TokenEconomizerToolprune;
+    /** Every tool it has denied in any checkout of the repository. */
+    leftOut: string[];
+    /** Checkouts whose settings file carries a list it wrote. */
+    checkouts: number;
+    /** Tools it would deny next, waiting for the quiet period. */
+    proposed: string[];
+    /** Tools somebody gave back with `toolprune restore`, never denied again. */
+    givenBack: string[];
+  };
+  microskills: {
+    mode: TokenEconomizerMicroskills;
+    /** Facts it currently states at a session's start. */
+    facts: number;
+    /** Sessions that were given them. */
+    injectedSessions: number;
+  };
+  loopguard: {
+    mode: TokenEconomizerLoopguard;
+    /** Turns it judged stuck and redirected. */
+    redirects: number;
+    /** Turns still stuck after the redirect, which it reported and did not stop. */
+    stillStuck: number;
+  };
+  /**
+   * Its own model calls as a share of these sessions' tokens, on its own
+   * cache-weighted measure. Null when no session could be priced.
+   */
+  overheadShare: number | null;
+}
+
+/** `GET /api/projects/token-economizer?mountId=&folder=`. */
+export type ProjectTokenEconomizerDTO =
+  | { state: "unavailable" | "off" }
+  | { state: "failed"; reason: string }
+  | { state: "ready"; report: TokenEconomizerRepoReportDTO };
 
 /** `POST /api/projects/fetch`. */
 export interface ProjectTargetRequest {

@@ -175,6 +175,14 @@ tokenEconomizer.ts
                 period (TE_TOOLPRUNE_QUIET_MINUTES) is a setting at 60 because
                 every cache write here is the one-hour kind. Limits are in
                 docs/agent/security/token-economizer.md
+tokenEconomizerReport.ts
+                what the Project manager shows of the plugin, one repository at
+                a time: `te status --json` in the listed checkout plus the
+                applied-tools record, parsed by repoReportOf (in
+                tokenEconomizer.ts, so it is testable without the run loop).
+                Counts of what the plugin did and never a saving — nothing a
+                live install records is compared against runs without it.
+                Read on a fold's first open, never per page
 fileCostNotice.ts
                 what a Read of this repository's largest files costs, ranked on
                 tokens x how often this fleet has read each one, generated once
