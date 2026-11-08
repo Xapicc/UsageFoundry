@@ -28,7 +28,6 @@ import {
   resolveLiveModel,
   runPageNotes,
   runTokenFigures,
-  signedUSD,
   storedFolderState,
   taskProjectDraft,
   taskProjectPayload,
@@ -422,11 +421,12 @@ test("containment does not read as a third way of waiting", () => {
 /**
  * A deficit is a token figure like any other in the column it sits in.
  *
- * The composition legend prints the residual beside five positive bands, and
- * the residual is negative on any reading whose estimates over-explain the
- * window. The unsigned formatter fell through every threshold on a negative
- * and printed the raw integer: `-81822` under `182.2k`, a figure in a different
- * unit on the same list, with nothing to say it was.
+ * No caller passes a negative today, so the branch is defensive. The one that
+ * did was the context composition legend, which printed a residual beside five
+ * positive bands and has since been removed: the unsigned formatter fell
+ * through every threshold on a negative and printed the raw integer, `-81822`
+ * under `182.2k`, a figure in a different unit on the same list, with nothing
+ * to say it was.
  */
 test("a negative token figure is scaled and signed like a positive one", () => {
   assert.equal(fmtTokens(-81_822), "−81.8k");
@@ -529,32 +529,6 @@ test("a dollar figure keeps its precision, and a negative one leads with U+2212"
   // figure, so a fix that dropped the sign under a cent would pass the cases
   // above and fail this one.
   assert.equal(fmtUSD(-0.0001), "−$0.0001");
-});
-
-/**
- * A netted figure carries a sign only while it still has a direction.
- *
- * The sign was picked from `n >= 0` and then the magnitude was rounded, so
- * `-0.00001` printed `−$0.0000` and `0.00001` printed `+$0.0000`: a direction
- * on a figure that had rounded to none. Zero is neither, and `fmtTokens`
- * already writes it without one.
- */
-test("a signed dollar figure has no sign once it rounds to zero", () => {
-  assert.equal(signedUSD(0.5), "+$0.50");
-  assert.equal(signedUSD(-0.5), "−$0.50");
-  assert.equal(signedUSD(0.0001), "+$0.0001");
-  assert.equal(signedUSD(-0.0001), "−$0.0001");
-  assert.equal(signedUSD(1234.567), "+$1234.57");
-
-  assert.equal(signedUSD(0.00001), "$0.0000");
-  assert.equal(signedUSD(-0.00001), "$0.0000");
-  assert.equal(signedUSD(0), "$0.00");
-  assert.equal(signedUSD(-0), "$0.00");
-
-  // Not a number is not a direction either; it was "+—" and "−—".
-  assert.equal(signedUSD(Number.NaN), "—");
-  assert.equal(signedUSD(Number.POSITIVE_INFINITY), "—");
-  assert.equal(signedUSD(Number.NEGATIVE_INFINITY), "—");
 });
 
 /**
