@@ -104,6 +104,15 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - A vault whose path reads as a glob pattern gets no skill rather than a writable one.
 - What is still open.
 
+## [The file tools' write boundary](security/file-tool-write-boundary.md)
+
+- Every Claude work cycle refuses a file-tool write outside its working directories, and the CLI enforces that, not the sandbox.
+- The working directories are the cwd, each `--add-dir` and each `permissions.additionalDirectories` entry, and the sandbox write set is not among them.
+- The temporary directory is made a working directory through `permissions.additionalDirectories`, never `--add-dir`, because `--add-dir` loads what is in it.
+- A settings file is refused even inside the checkout.
+- What it does not cover.
+- What is still open.
+
 ## [Middleware, login and sessions](security/middleware-login-and-sessions.md)
 
 - A monitor must not be handed the credential that starts agents. (was line 27)

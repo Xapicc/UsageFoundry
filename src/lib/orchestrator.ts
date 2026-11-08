@@ -7202,13 +7202,12 @@ const BUILD_CACHE_DIRS = [
  * shows up as a dashboard of zeros rather than an error. `docs/verification.md`
  * carries it as the dependency it is.
  *
- * **And what nothing here settles either way:** whether the CLI's sandbox wraps
- * the whole session or only Bash (`09-implementation-sketch.md`, Phase 1
- * question 3, never executed). If it is Bash-only, a model using `Edit` against
- * a sibling's path is unconfined whatever this names. The evidence points both
- * ways — the Bash tool's own prompt says "your command will be run in a
- * sandbox", and a `getFsReadConfig` export is the shape a file tool consults —
- * so this asserts neither.
+ * **And it confines `Bash` and nothing else**, measured
+ * (`docs/agent/security/vault-write-boundary.md`): `Write` and `Edit` wrote
+ * where bwrap refused. What holds the file tools to a run's checkout is the
+ * CLI's `blockWritesOutsideWorkingDirectories` in the same overlay, which
+ * `buildArgs` sets and which reads the working directories rather than this
+ * set (`docs/agent/security/file-tool-write-boundary.md`).
  *
  * Pure, and unit-tested on `CLAUDE.md`'s rule: both ways of being wrong are
  * silent. Too narrow fails inside a tool call the run loop does not read, which
@@ -12115,6 +12114,10 @@ export async function startRun(id: string): Promise<void> {
         // and the usage figures, to a host the repository names.
         // `PINNED_CYCLE_ENV` has the measurements.
         envPins: cycleEnvPins(cycleEnv({}, local)),
+        // The same temporary directory `writeSet` names, and for the same
+        // reason in the file tools' terms: it is where scratch goes, and the
+        // overlay refuses every file-tool write outside a working directory.
+        scratchDir: os.tmpdir(),
         // Ignored by Claude Code, which has no such flag. See `runIteration`
         // for why the file is preferred over the stream where it exists, and
         // why it is removed before the spawn rather than after the read.

@@ -75,6 +75,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Security and sandboxing | [security-and-sandboxing-chat-config.md](verification/security-and-sandboxing-chat-config.md) — what the chat child loads from files a work cycle writes |
 | Security and sandboxing | [security-and-sandboxing-server-git.md](verification/security-and-sandboxing-server-git.md): what this app's own git runs from a repository a work cycle wrote |
 | Security and sandboxing | [security-and-sandboxing-telemetry-token.md](verification/security-and-sandboxing-telemetry-token.md): who can read a work cycle's telemetry ingest token, the headers helper, and binding ingest to the CLI's process |
+| Security and sandboxing | [security-and-sandboxing-file-tool-writes.md](verification/security-and-sandboxing-file-tool-writes.md) — what `blockWritesOutsideWorkingDirectories` refuses a work cycle's file tools, and what counts as a working directory |
 | Container and environment | [container-and-environment-resources.md](verification/container-and-environment-resources.md) — memory, CPU, cgroup limits, OOM and the (removed) filter launcher |
 | Container and environment | [container-and-environment-stacks.md](verification/container-and-environment-stacks.md) — the stacks carrier, its installs, receipts and invocation counts |
 | Container and environment | [container-and-environment-deployment.md](verification/container-and-environment-deployment.md) — the image, network, volumes, backup and health |

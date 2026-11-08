@@ -4027,11 +4027,14 @@ describe("cycleEnvPins — the endpoint a checkout's settings cannot move", () =
     // A stock install, which has no managed sandbox and is every install by
     // default: the pins and the empty `apiKeyHelper`, and still no write set
     // naming a sandbox that is not on.
+    // The file tools' write boundary rides along on every install; its own
+    // describe below pins it.
+    const permissions = { blockWritesOutsideWorkingDirectories: true };
     const stock = overlayOf(buildArgs({ ...base, envPins: pins, writableRoots: null }));
-    assert.deepEqual(stock, { env: pins, apiKeyHelper: "" });
+    assert.deepEqual(stock, { env: pins, apiKeyHelper: "", permissions });
 
-    // Neither pins nor a write set: the overlay is the `apiKeyHelper` pin alone.
-    assert.deepEqual(overlayOf(buildArgs({ ...base, writableRoots: null })), { apiKeyHelper: "" });
+    // Neither pins nor a write set: the `apiKeyHelper` pin and the boundary.
+    assert.deepEqual(overlayOf(buildArgs({ ...base, writableRoots: null })), { apiKeyHelper: "", permissions });
   });
 
   it("is never handed to Codex, which reads no .claude/settings.json", () => {
@@ -4058,6 +4061,78 @@ describe("cycleEnvPins — the endpoint a checkout's settings cannot move", () =
     };
     const local = cycleEnvPins(cycleEnv({}, { signIn, model: "qwen" }));
     assert.equal(local.ANTHROPIC_BASE_URL, "http://192.168.1.5:1234");
+  });
+});
+
+/**
+ * The file tools' write boundary, which the sandbox's write set is not: that
+ * set confines `Bash` alone, so before this an isolated run's `Write` and
+ * `Edit` reached the main checkout it was isolated from (measured on 2.1.319,
+ * `docs/agent/security/file-tool-write-boundary.md`). Both ways of getting it
+ * wrong are silent. Dropped, the hole is back and every run still works.
+ * Spelled as `--add-dir`, the shared temporary directory's `.claude/skills`
+ * load into every run's context, measured on the same CLI.
+ */
+describe("blockWritesOutsideWorkingDirectories — the file tools' write boundary", () => {
+  const roots = ["/w/repo", "/w/repo/.git", "/tmp"];
+  const base = {
+    prompt: "do the thing",
+    model: null,
+    permissionMode: "acceptEdits" as const,
+    resumeSessionId: null,
+    isolated: true,
+    maxRunCostUSD: null,
+    spentGuardUSD: 0,
+    headroomUSD: null,
+  };
+  const reader = { pluginDir: "/p/vault", vaultPath: "/v" };
+  const overlayOf = (args: string[]) => {
+    assert.equal(args.filter((a) => a === "--settings").length, 1, "one --settings, or one half is dropped");
+    return JSON.parse(args[args.indexOf("--settings") + 1]) as {
+      permissions?: { blockWritesOutsideWorkingDirectories?: unknown; additionalDirectories?: unknown };
+      sandbox?: { filesystem: { allowWrite: string[]; denyWrite?: string[] } };
+    };
+  };
+
+  it("is on in every Claude cycle's one --settings, sandbox or none", () => {
+    for (const opts of [
+      { writableRoots: null },
+      { writableRoots: roots, envPins: cycleEnvPins({}) },
+      { writableRoots: roots, permissionMode: "bypassPermissions" as const },
+      { writableRoots: null, resumeSessionId: "session-1" },
+      { writableRoots: roots, vaultSkill: reader },
+      { writableRoots: roots, vaultSkill: { ...reader, writable: true } },
+    ]) {
+      assert.equal(overlayOf(buildArgs({ ...base, ...opts })).permissions?.blockWritesOutsideWorkingDirectories, true);
+    }
+  });
+
+  it("makes the scratch directory a working directory in the overlay, never an --add-dir", () => {
+    const args = buildArgs({ ...base, writableRoots: roots, vaultSkill: reader, scratchDir: "/tmp" });
+    assert.deepEqual(overlayOf(args).permissions, {
+      blockWritesOutsideWorkingDirectories: true,
+      additionalDirectories: ["/tmp"],
+    });
+    const addDirs = args.flatMap((arg, i) => (arg === "--add-dir" ? [args[i + 1]] : []));
+    assert.deepEqual(addDirs, ["/v"]);
+
+    // Absent, the setting stays on and nothing else is named.
+    assert.deepEqual(overlayOf(buildArgs(base)).permissions, { blockWritesOutsideWorkingDirectories: true });
+  });
+
+  it("leaves a vault reader both of its denies, which the setting does not replace", () => {
+    // `--add-dir` makes the vault a working directory, so the setting lets the
+    // file tools write it: measured, a vault writer's `Write` into the vault
+    // landed with the setting on.
+    const args = buildArgs({ ...base, writableRoots: roots, vaultSkill: reader, scratchDir: "/tmp" });
+    assert.equal(args.includes("Edit(//v/**)"), true);
+    assert.deepEqual(overlayOf(args).sandbox?.filesystem.denyWrite, ["/v"]);
+  });
+
+  it("is never handed to Codex", () => {
+    const args = buildCodexArgs({ ...base, workDir: "/w/repo", writableRoots: ["/w/repo"], scratchDir: "/tmp" });
+    assert.doesNotMatch(args.join("\n"), /blockWritesOutsideWorkingDirectories|additionalDirectories/);
+    assert.equal(args.includes("/tmp"), false);
   });
 });
 
