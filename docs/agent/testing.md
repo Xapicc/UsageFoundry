@@ -366,14 +366,19 @@ Its cases are in `orchestrator.test.ts`; see that file's row above.
 | `mcpStatus.test.ts` |  |
 | `notify.test.ts` |  |
 | `review.test.ts` | [pricing], [landing], [stacks], [argv] |
-| `liveStream.test.ts` |  |
-| `liveSubagents.test.ts` |  |
-| `liveTiles.test.ts` |  |
 | `toolComposition.test.ts` |  |
 
 Units that are about no test file in the tree:
 
 - `rateLimitEvent.test.ts` is gone, with the module it covered: the provider's own utilisation off the `stream-json` stream fed one dashboard card and nothing else, and card and parser were removed …
+
+## [The live page: its stream, tiles and sub-agent roster](testing/live-page-folds.md)
+
+| Test file | Also in |
+|---|---|
+| `liveStream.test.ts` |  |
+| `liveSubagents.test.ts` |  |
+| `liveTiles.test.ts` |  |
 
 ## [The model decider](testing/model-decider.md)
 
@@ -597,3 +602,4 @@ It prints nothing as this is written. Whoever owns a file it names owes that fil
 [decider]: testing/model-decider.md
 [delivery]: testing/delivery.md
 [projects]: testing/projects-push-and-fetch.md
+[live]: testing/live-page-folds.md
