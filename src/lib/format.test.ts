@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   EDGE_CHIP_LABEL,
   EDGE_OPTION_LABEL,
+  fmtBytes,
   fmtCycleInFlight,
   fmtCycles,
   fmtDateTimeInZone,
@@ -430,6 +431,49 @@ test("a negative token figure is scaled and signed like a positive one", () => {
   assert.equal(fmtTokens(-5), "−5");
   assert.equal(fmtTokens(0), "0");
   assert.equal(fmtTokens(81_822), "81.8k");
+});
+
+/**
+ * A figure that rounds up to the next unit is written in that unit.
+ *
+ * The unit was chosen from the raw number and the digits after it, so 999,950
+ * tokens chose `k` and then rounded to `1000.0k`: a figure a decade larger than
+ * any other row in the column that says nothing was wrong. A deficit goes
+ * through the same function, so it is covered by the same threshold.
+ */
+test("a token figure that rounds up to the next unit is written in it", () => {
+  assert.equal(fmtTokens(999), "999");
+  assert.equal(fmtTokens(999.6), "1.0k");
+  assert.equal(fmtTokens(999_949), "999.9k");
+  assert.equal(fmtTokens(999_950), "1.00M");
+  assert.equal(fmtTokens(999_999), "1.00M");
+  assert.equal(fmtTokens(999_994_999), "999.99M");
+  assert.equal(fmtTokens(999_995_000), "1.00B");
+  assert.equal(fmtTokens(999_999_999), "1.00B");
+  // Nothing above B to roll into, so it keeps counting in B.
+  assert.equal(fmtTokens(1_500_000_000_000), "1500.00B");
+
+  assert.equal(fmtTokens(-999_950), "−1.00M");
+  assert.equal(fmtTokens(-999_995_000), "−1.00B");
+  assert.equal(fmtTokens(-999_949), "−999.9k");
+});
+
+/**
+ * `du -h` prints `1.0M` for a store a hair under 1024 KB, and the docblock
+ * promises its units, so a figure that rounds to 1024 of one unit is one of the
+ * next. The boundary is the same at every step, and the last unit has nowhere
+ * to roll into.
+ */
+test("a byte figure that rounds up to 1024 of a unit is written in the next", () => {
+  assert.equal(fmtBytes(1023), "1023 B");
+  assert.equal(fmtBytes(1023.6), "1.0 KB");
+  assert.equal(fmtBytes(1024), "1.0 KB");
+  assert.equal(fmtBytes(1024 * 1023.4), "1023 KB");
+  assert.equal(fmtBytes(1024 * 1023.6), "1.0 MB");
+  assert.equal(fmtBytes(1024 ** 2 * 1023.6), "1.0 GB");
+  assert.equal(fmtBytes(1024 ** 3 * 1023.6), "1.0 TB");
+  assert.equal(fmtBytes(1024 ** 4 * 2000), "2000 TB");
+  assert.equal(fmtBytes(-1), "—");
 });
 
 /**

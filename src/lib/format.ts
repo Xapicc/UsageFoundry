@@ -291,10 +291,15 @@ export function fmtTokens(n: number): string {
   // `signedUSD`'s minus, for its reason: the composition legend prints a
   // deficit in a column of these, and a hyphen is a different width.
   if (n < 0) return `−${fmtTokens(-n)}`;
-  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(Math.round(n));
+  // Each unit is taken only if its *rounded* figure is under 1000, not as soon
+  // as the raw number reaches it: 999,950 reaches `k` and rounds to `1000.0k`,
+  // a figure in a unit it has already outgrown.
+  if (Math.round(n) < 1_000) return String(Math.round(n));
+  const thousands = (n / 1_000).toFixed(1);
+  if (Number(thousands) < 1_000) return `${thousands}k`;
+  const millions = (n / 1_000_000).toFixed(2);
+  if (Number(millions) < 1_000) return `${millions}M`;
+  return `${(n / 1_000_000_000).toFixed(2)}B`;
 }
 
 /**
@@ -336,11 +341,13 @@ export function fmtBankedTokens(banked: number): string {
  */
 export function fmtBytes(n: number): string {
   if (!Number.isFinite(n) || n < 0) return "—";
-  if (n < 1024) return `${Math.round(n)} B`;
+  if (Math.round(n) < 1024) return `${Math.round(n)} B`;
   const units = ["KB", "MB", "GB", "TB"];
   let value = n / 1024;
   let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
+  // Compared after rounding, as `du -h` does: 1023.6 KB is written `1024 KB`,
+  // which is `1.0 MB` in the unit it has already reached.
+  while (Math.round(value) >= 1024 && unit < units.length - 1) {
     value /= 1024;
     unit++;
   }
