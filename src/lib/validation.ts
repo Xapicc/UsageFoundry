@@ -385,25 +385,41 @@ function validationPreamble(): string {
 /**
  * What the judge is told about commits the server found in the branch's history.
  *
- * Only ever appended to an **empty** branch diff, and only when the server
- * found commits (`validationHistory.ts`), so every prompt that has none is
- * byte-for-byte the one the preamble above was measured on. The framing says
- * what the trailer proves and, as plainly, what it does not: a run holding two
- * tasks stamps both ids on every commit, so a commit being listed is no
- * evidence that it contains *this* task's deliverable, and a judge that took it
- * for that would round "something was committed for this task" up to
- * `finished`. Like the preamble it says nothing of what an answer causes.
+ * Appended only when the server found commits (`validationHistory.ts`), so every
+ * prompt that has none is byte-for-byte the one the preamble above was measured
+ * on. The framing says what the trailer proves and, as plainly, what it does
+ * not: a run holding two tasks stamps both ids on every commit, so a commit
+ * being listed is no evidence that it contains *this* task's deliverable, and a
+ * judge that took it for that would round "something was committed for this
+ * task" up to `finished`. Like the preamble it says nothing of what an answer
+ * causes.
+ *
+ * Two openings and two closings, because the diff above is one of two things.
+ * Empty: the work reached the branch another way, and the commits are all there
+ * is to read. Not empty: the diff is this run's share of a task worked across
+ * more than one run, and the judge reads the diff and the commits together —
+ * under the empty-diff opening it would be told the diff is empty beside a diff
+ * that is not. The middle paragraph is shared and is what the two measurements
+ * (`completion-validation-history.md`) have in common.
  */
-function historyEvidence(history: AlreadyDelivered): string {
+function historyEvidence(history: AlreadyDelivered, diffIsEmpty: boolean): string {
   const count = history.commits.length;
   return [
     "",
     "## Commits already in this branch's history for this task",
     "",
-    "The branch's own diff above is empty. That is what a run that did nothing",
-    "leaves, and it is also what a run leaves when the work reached the branch",
-    "some other way — through the target branch it was updated from, or because",
-    "the branch was started after the work landed.",
+    ...(diffIsEmpty
+      ? [
+          "The branch's own diff above is empty. That is what a run that did nothing",
+          "leaves, and it is also what a run leaves when the work reached the branch",
+          "some other way — through the target branch it was updated from, or because",
+          "the branch was started after the work landed.",
+        ]
+      : [
+          "The diff above is this branch's own, and it may be only part of the work:",
+          "when a task is worked across more than one run, the earlier run's commits",
+          "are in the history the branch starts from and not in the diff.",
+        ]),
     "",
     `The server searched the history the branch starts from and found ${count}`,
     `commit${count === 1 ? "" : "s"} carrying a trailer that names this task. The server writes that`,
@@ -413,10 +429,19 @@ function historyEvidence(history: AlreadyDelivered): string {
     "every commit, so a commit being listed here is not evidence that it contains",
     "this task's deliverable.",
     "",
-    "Judge the task against these commits as you would against a diff. Every",
-    "deliverable the task names must be present in them; commits that cover only",
-    "part of the task, or a different task, leave the rest absent. If they cannot",
-    "settle it, the answer is **unjudgeable**.",
+    ...(diffIsEmpty
+      ? [
+          "Judge the task against these commits as you would against a diff. Every",
+          "deliverable the task names must be present in them; commits that cover only",
+          "part of the task, or a different task, leave the rest absent. If they cannot",
+          "settle it, the answer is **unjudgeable**.",
+        ]
+      : [
+          "Judge the task against the diff above and these commits together. Every",
+          "deliverable the task names must be present in one or the other; commits that",
+          "cover only part of the task, or a different task, leave the rest absent. If",
+          "they cannot settle it, the answer is **unjudgeable**.",
+        ]),
     history.truncated
       ? "The patches below were cut to fit. The file lists and the counts are complete."
       : "",
@@ -449,7 +474,7 @@ export function buildValidationPrompt(o: {
   diffText: string;
   /** Set when the patch was cut to fit; the diffstat above it is still whole. */
   truncated: boolean;
-  /** Commits the server found in the history of a branch whose own diff is empty. */
+  /** Commits the server found in the history the branch's diff starts from. */
   history?: AlreadyDelivered | null;
 }): string {
   const { task, diff } = o;
@@ -504,7 +529,7 @@ export function buildValidationPrompt(o: {
     "<diff>",
     o.diffText || "(the diff is empty — nothing was committed to this branch)",
     "</diff>",
-    o.history ? historyEvidence(o.history) : "",
+    o.history ? historyEvidence(o.history, diff.filesChanged === 0) : "",
   ]
     .filter((part) => part !== "")
     .join("\n");
@@ -671,26 +696,47 @@ export async function completeTaskWithValidation(
 }
 
 /**
- * The commits already in the branch's history that carry this task's trailer,
- * for a branch whose own diff is empty, or null.
+ * The commit whose history is searched for this task's earlier commits, or null.
  *
- * Only an empty diff asks: with a diff to judge the question is already
- * answered by what the run committed, and a task worked in two runs would show
- * the judge the earlier run's half and the later one's as if one were the
- * other's. `diff.head` is the sha the diff was read at, so the history is read
- * from the same commit the empty diff was.
+ * An empty diff searches from `diff.head`, the sha the empty diff was read at.
+ * A diff with files searches from where it *starts* — the target commit it is
+ * measured from, else the run's base — and never from its head: the commits
+ * from there on are the diff, and searching them would show the judge the same
+ * work twice, once as the diff and once as another run's history. What lies
+ * before that start is exactly what a task worked across two runs has in the
+ * earlier run's share (board task `813c54f5`). Pure, so the choice is pinned
+ * without a repository.
+ */
+export function historySearchStart(diff: RunDiff): string | null {
+  if (diff.kind !== "range") return null;
+  if (diff.filesChanged === 0) return diff.head;
+  return diff.measuredFrom?.commit ?? diff.base;
+}
+
+/**
+ * The commits already in the history the branch's diff starts from that carry
+ * this task's trailer, or null.
+ *
+ * Asked for every diff, empty or not. With nothing to judge, the commits are the
+ * evidence there is (`17be140e`); with a diff, they are what an earlier run
+ * delivered of a task this run finished (`813c54f5`), and the framing the prompt
+ * gives them differs for that reason. Measured before it was widened: the later
+ * half of a task alone was never read as `finished`, with the earlier commits
+ * beside it 5 of 6 times, and unrelated commits beside it moved no verdict
+ * (`completion-validation-history.md`).
  */
 async function deliveredBefore(
   run: RunRow,
   task: Task,
   diff: RunDiff,
 ): Promise<AlreadyDelivered | null> {
-  if (diff.kind !== "range" || diff.filesChanged !== 0 || !diff.head || !run.repo_root) return null;
+  const start = historySearchStart(diff);
+  if (!start || !run.repo_root) return null;
   const repoRoot = repoPathFor(run.repo_root);
   if (!repoRoot) return null;
   return alreadyDeliveredFor({
     repoRoot,
-    head: diff.head,
+    head: start,
     taskId: task.id,
     runId: run.id,
     budgetBytes: VALIDATION_DIFF_BYTES,
@@ -817,7 +863,11 @@ async function startCheck(
     if (history) {
       logRun(
         runId,
-        `This branch's own diff is empty, so the check was also shown ${history.commits.length} commit(s) already in its history that carry “${task.title}”'s task id: ${history.commits.map((c) => c.sha.slice(0, 8)).join(", ")}.`,
+        `${
+          diff.filesChanged === 0
+            ? "This branch's own diff is empty, so the check was also shown"
+            : "Beside this branch's diff, the check was also shown"
+        } ${history.commits.length} commit(s) already in its history that carry “${task.title}”'s task id: ${history.commits.map((c) => c.sha.slice(0, 8)).join(", ")}.`,
       );
     }
 

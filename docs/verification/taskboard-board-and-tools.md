@@ -246,3 +246,7 @@
   branch, `wholeCommitDiff` on a real commit, and the run-log line that says
   which commits were shown. Settle with a run whose branch starts after another
   run's commit for the same task, then read `run_reviews` and the run's log.
+  The same for a diff with files (widened 2026-11-08): a second run on the same
+  task that commits only its share, whose `runs.worktree_base` and diff start
+  are unobserved; if that base is the original fork point the earlier share is
+  already in the diff and the search finds nothing new.

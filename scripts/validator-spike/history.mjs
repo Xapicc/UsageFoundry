@@ -29,11 +29,14 @@
 // A second family, `--arms split` (board task 813c54f5), asks the other half of
 // the same question: a task worked across two runs, where the later run commits
 // only its half and the earlier commits are in the history. The branch diff is
-// non-empty there, so the framing `historyEvidence` ships ("the branch's own
-// diff above is empty") would be false beside it, and the arms append a
-// candidate framing written for that case instead; nothing in src/ changes
-// unless the numbers say so. Built from real commits of multi-commit `finished`
-// cases, read from the repositories the cases were reconstructed from:
+// non-empty there, so `historyEvidence` frames it with its second opening ("the
+// diff above is this branch's own, and it may be only part of the work") and not
+// the first ("the branch's own diff above is empty"). The 27 requests judged on
+// 2026-11-08 were composed with that text appended by this script before it moved
+// into src/lib/validation.ts; they compared byte-identical with what the shipped
+// `buildValidationPrompt` composes, which is what this now calls. Built from real
+// commits of multi-commit `finished` cases, read from the repositories the cases
+// were reconstructed from:
 //
 //   splitToday      the later commits' diff alone. What the judge sees today.
 //                   Truth: finished (the whole branch is).
@@ -170,41 +173,6 @@ function requests(buildDir) {
   return out;
 }
 
-/** The framing candidate for a history beside a NON-empty diff. Same register as `historyEvidence`: what the trailer proves and no more, nothing about what an answer causes. */
-function splitFraming(history) {
-  const count = history.commits.length;
-  return [
-    "",
-    "## Commits already in this branch's history for this task",
-    "",
-    "The diff above is this branch's own, and it may be only part of the work:",
-    "when a task is worked across more than one run, the earlier run's commits",
-    "are in the history the branch starts from and not in the diff.",
-    "",
-    `The server searched the history the branch starts from and found ${count}`,
-    `commit${count === 1 ? "" : "s"} carrying a trailer that names this task. The server writes that`,
-    "trailer after a run's process has ended, for a run its own records show was",
-    "started for this task; the run being judged did not make these commits. The",
-    "trailer says that and nothing more: a run holding two tasks stamps both on",
-    "every commit, so a commit being listed here is not evidence that it contains",
-    "this task's deliverable.",
-    "",
-    "Judge the task against the diff above and these commits together. Every",
-    "deliverable the task names must be present in one or the other; commits that",
-    "cover only part of the task, or a different task, leave the rest absent. If",
-    "they cannot settle it, the answer is **unjudgeable**.",
-    history.truncated
-      ? "The patches below were cut to fit. The file lists and the counts are complete."
-      : "",
-    "",
-    "<history>",
-    history.text,
-    "</history>",
-  ]
-    .filter((line, i, all) => line !== "" || all[i - 1] !== "")
-    .join("\n");
-}
-
 /** `git` with the agent shell's GIT_* overrides removed, which outrank repo config. */
 function gitIn(repo, args) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("GIT_")));
@@ -261,13 +229,13 @@ async function splitRequests(buildDir) {
       const repoOfHistory = from === null ? null : loadCase(from).repo;
       const { diff, diffText, truncated } = diffOf(c, diffCommits);
       const history = historyCommits ? await historyFor(prod, repoOfHistory, historyCommits) : null;
-      const base = prod.buildValidationPrompt({ task, runPrompt: null, diff, diffText, truncated, history: null });
+
       out.push({
         name: `${arm}-${String(n).padStart(2, "0")}`, arm, n, historyFrom: from,
         diffCommits: diffCommits.map((x) => x.sha.slice(0, 8)),
         historyCommits: history ? history.commits.map((x) => x.sha.slice(0, 8)) : [],
         historyTruncated: history ? history.truncated : null, diffTruncated: truncated,
-        prompt: history ? `${base}\n${splitFraming(history)}` : base,
+        prompt: prod.buildValidationPrompt({ task, runPrompt: null, diff, diffText, truncated, history }),
       });
     }
   }
