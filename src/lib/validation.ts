@@ -41,10 +41,11 @@ import {
  * same string, so there are two figures and neither is a clean A/B against the
  * other: `prompt.md` scored 34 of 37 on the held-out set on Sonnet 4.5, and
  * this preamble (`VERDICT_PREFERENCE`) scored 32 of 37 on Sonnet 5.5, each with
- * zero false-finished and one sample per case. The judge model changed between
- * them, so the two lost cases are not shown to be the preamble's. The
+ * zero false-finished. The judge model changed between them, so the two lost
+ * cases are not shown to be the preamble's. `prompt.md` was judged once per case;
+ * the preamble three times, 32, 31 and 32 of 37, with two cases moving. The
  * reading, the control and what neither measured are in
- * `scripts/validator-spike/RESULT.md`.
+ * `scripts/validator-spike/RESULT.md` and `repeat-report-shipped.md` beside it.
  *
  * ## Where this design departs from the pitch, and why it had to
  *
