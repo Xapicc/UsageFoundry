@@ -390,8 +390,9 @@ read no `.claude/settings*.json` from the folder they stand in. And they run no
 hooks at all, yours included, because an enabled plugin's hook file stays the
 agents' even with `UF_LOCK_CLAUDE_HOME=1`. So the answer is not simply "set the
 lock", but the lock is still needed: the chat does read `~/.claude/settings.json`
-itself, including its environment and `apiKeyHelper`, and with the lock off a
-run can edit that file. One git route stays open, by decision, because git has
+itself, including its permission rules and any environment key the endpoint
+pins do not name (its `apiKeyHelper` is emptied), and with the lock off a run
+can edit that file. One git route stays open, by decision, because git has
 no setting that closes it. A `diff.external`, or a filter, `textconv` or diff
 driver named in a repository's `.git/info/attributes`, runs when the chat runs
 `git status`, `diff`, `show` or `blame` there. An orchestrator block standing in

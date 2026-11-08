@@ -552,8 +552,24 @@ describe("the chat child's own configuration", () => {
         env: cycleEnvPins(spawnEnv),
         ...overlay,
         disableAllHooks: true,
+        apiKeyHelper: "",
       });
     }
+  });
+
+  it("empties apiKeyHelper in that one --settings, with or without a write set", () => {
+    // `--setting-sources user` keeps `$CLAUDE_CONFIG_DIR/settings.json`, which
+    // a work cycle writes unless `UF_LOCK_CLAUDE_HOME` holds. Measured on
+    // 2.1.310 through `sendChatMessage`: a helper planted there ran, and on an
+    // OAuth login its key replaced the operator's on the request outright. `""`
+    // stopped it; `null` and an absent key do not, so nothing else passes.
+    const settingsOf = (args: string[]) => {
+      assert.equal(args.filter((arg) => arg === "--settings").length, 1);
+      return JSON.parse(args[args.indexOf("--settings") + 1]) as { apiKeyHelper?: unknown };
+    };
+    assert.equal(settingsOf(chat.chatSettingsArgs(null, {})).apiKeyHelper, "");
+    const overlay = { sandbox: { filesystem: { allowWrite: ["/workspace"] } } };
+    assert.equal(settingsOf(chat.chatSettingsArgs(overlay, {})).apiKeyHelper, "");
   });
 
   it("pins the endpoint a user settings file could move, at the values the chat is spawned with", async () => {
