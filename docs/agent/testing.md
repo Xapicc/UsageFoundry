@@ -163,6 +163,11 @@ Twenty-three are renderings rather than functions — every `*.test.tsx` in the 
 | `haltedMembers.test.ts` |  |
 | `instanceReading.test.ts` |  |
 | `runWorkflowOrigin.test.ts` |  |
+
+## [Workflow schedules, Duplicate and the workflow routes](testing/workflow-schedules-and-routes.md)
+
+| Test file | Also in |
+|---|---|
 | `scheduleFire.test.ts` |  |
 | `schedulePut.test.ts` |  |
 | `src/app/api/workflows/[id]/route.test.ts` |  |
@@ -194,7 +199,7 @@ Twenty-three are renderings rather than functions — every `*.test.tsx` in the 
 |---|---|
 | `loopMergeOwnership.test.ts` |  |
 | `loopSection.test.ts` | [fleet], [loop-endings] |
-| `workflows.test.ts` | [argv], [pricing], [workflows], [decider], [pick-ups], [cycle], [loop-board], [loop-endings] |
+| `workflows.test.ts` | [argv], [pricing], [workflows], [decider], [pick-ups], [cycle], [loop-board], [loop-endings], [schedule-routes] |
 
 Units that are about no test file in the tree:
 
@@ -579,6 +584,7 @@ It prints nothing as this is written. Whoever owns a file it names owes that fil
 [pruning]: testing/context-pruning.md
 [ceiling]: testing/context-samples-and-ceiling.md
 [workflows]: testing/workflow-instances.md
+[schedule-routes]: testing/workflow-schedules-and-routes.md
 [loops]: testing/workflow-loops.md
 [loop-board]: testing/workflow-loop-board.md
 [loop-endings]: testing/workflow-loop-endings.md
