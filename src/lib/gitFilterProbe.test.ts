@@ -28,8 +28,10 @@ const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-git-probe
 const modeFile = path.join(root, "mode");
 /** The program the plant modes write into a repository's configuration. */
 const plantFile = path.join(root, "plant");
-/** Where `plant-include` writes the included file, absolute. */
-const includeFile = path.join(root, "include-target");
+/** Where `plant-include` and `rewrite` write, absolute. */
+const writeTarget = path.join(root, "write-target");
+/** What `rewrite` writes there. */
+const rewriteContent = path.join(root, "rewrite-content");
 const realGit = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
 const gitStub = path.join(root, "git");
 
@@ -58,10 +60,14 @@ fs.writeFileSync(
     '        cat "$out"; rm -f "$out"; exit $status ;;',
     "    esac",
     "  fi",
-    // An included file written after the probe has named it, while the index
-    // is listed.
-    `  if [ "$arg" = "ls-files" ] && [ "$mode" = "plant-include" ]; then`,
-    `    printf '[filter "x"]\\n\\tclean = %s\\n' "$(cat '${plantFile}')" > "$(cat '${includeFile}')"`,
+    // What the probe read, changed after it while the index is listed: an
+    // included file written, HEAD moved, or any other file rewritten.
+    `  if [ "$arg" = "ls-files" ]; then`,
+    '    case "$mode" in',
+    `      plant-include) printf '[filter "x"]\\n\\tclean = %s\\n' "$(cat '${plantFile}')" > "$(cat '${writeTarget}')" ;;`,
+    `      flip-head) '${realGit}' symbolic-ref HEAD refs/heads/uf/x ;;`,
+    `      rewrite) cat '${rewriteContent}' > "$(cat '${writeTarget}')" ;;`,
+    "    esac",
     "  fi",
     "done",
     `exec '${realGit}' "$@"`,
@@ -951,7 +957,7 @@ describe("a driver written between the probe and the call is refused", () => {
   it("git(): an included file written after the probe named it refuses the call", async () => {
     const { repo, marker } = namedButUndefinedRepo();
     plain(repo, ["config", "include.path", "evil.inc"]);
-    fs.writeFileSync(includeFile, path.join(repo, ".git", "evil.inc"));
+    fs.writeFileSync(writeTarget, path.join(repo, ".git", "evil.inc"));
     setMode("plant-include");
     const res = await git(repo, ["add", "-A"]);
     setMode("pass");
@@ -970,7 +976,7 @@ describe("a driver written between the probe and the call is refused", () => {
       const sub = path.join(repo, "sub");
       fs.mkdirSync(sub);
       plain(repo, ["config", "include.path", "evil.inc"]);
-      fs.writeFileSync(includeFile, path.join(repo, ".git", "evil.inc"));
+      fs.writeFileSync(writeTarget, path.join(repo, ".git", "evil.inc"));
       setMode("plant-include");
       const res = viaSync ? gitSync(sub, ["add", "-A"]) : await git(sub, ["add", "-A"]);
       setMode("pass");
@@ -990,7 +996,7 @@ describe("a driver written between the probe and the call is refused", () => {
       const { repo, marker } = namedButUndefinedRepo();
       const target = homeTarget(home);
       plain(repo, ["config", "include.path", `~${home.user}/${path.relative(home.home, target)}`]);
-      fs.writeFileSync(includeFile, target);
+      fs.writeFileSync(writeTarget, target);
       setMode("plant-include");
       const res = viaSync ? gitSync(repo, ["add", "-A"]) : await git(repo, ["add", "-A"]);
       setMode("pass");
@@ -1030,5 +1036,124 @@ describe("a driver written between the probe and the call is refused", () => {
     );
     plain(viaInclude.repo, ["add", "-A"]);
     assert.equal(fs.existsSync(viaInclude.marker), true, "the planted included driver did not fire");
+  });
+});
+
+/**
+ * An `includeIf` condition is evaluated by the call as well as by the probe,
+ * and what it reads is not configuration: `onbranch:` reads the branch HEAD
+ * names, through any symbolic ref behind it, and `gitdir:` the git directory
+ * found from where git runs. A flip of either between the probe and the call
+ * made live in the call a driver the probe never saw (board task 9d44342d:
+ * 41 of 200 calls against a checkout loop, 2.39.5). The stub flips each while
+ * the index is listed, so the race is deterministic.
+ */
+describe("an include condition flipped between the probe and the call is refused", () => {
+  /**
+   * A repository whose filter `x` is defined only behind
+   * `includeIf "<condition>"`, which does not hold yet, with a stat-dirty file
+   * its clean filter would be run on.
+   */
+  function conditionalRepo(condition: (repo: string) => string): { repo: string; marker: string } {
+    const name = `repo${count++}`;
+    const repo = path.join(root, name);
+    committedRepo(repo, "f.txt");
+    plain(repo, ["branch", "uf/x"]);
+    const { prog, marker } = plantProgram(name);
+    fs.writeFileSync(path.join(repo, ".git", "evil.inc"), `[filter "x"]\n\tclean = ${prog}\n`);
+    plain(repo, ["config", `includeIf.${condition(repo)}.path`, "evil.inc"]);
+    fs.mkdirSync(path.join(repo, ".git", "info"), { recursive: true });
+    fs.writeFileSync(path.join(repo, ".git", "info", "attributes"), "* filter=x\n");
+    fs.writeFileSync(path.join(repo, "f.txt"), "two\n");
+    return { repo, marker };
+  }
+
+  /**
+   * Two linked worktrees of a repository whose filter is included only for
+   * the second one's git directory; the call runs in the first, whose `.git`
+   * file `pointAtOther` would aim at the second's.
+   */
+  function twoWorktrees(): { tree: string; pointAtOther: string; marker: string } {
+    let other = "";
+    const { repo, marker } = conditionalRepo((repo) => {
+      other = path.join(repo, ".git", "worktrees", `${path.basename(repo)}-w2`);
+      return `gitdir:${other}`;
+    });
+    const tree = `${repo}-w1`;
+    plain(repo, ["worktree", "add", "-q", "--detach", tree]);
+    plain(repo, ["worktree", "add", "-q", "--detach", `${repo}-w2`]);
+    fs.writeFileSync(path.join(tree, "f.txt"), "two\n");
+    return { tree, pointAtOther: `gitdir: ${other}\n`, marker };
+  }
+
+  const add =async (cwd: string, viaSync: boolean) =>
+    viaSync ? gitSync(cwd, ["add", "-A"]) : await git(cwd, ["add", "-A"]);
+
+  after(() => setMode("pass"));
+
+  it("git() and gitSync(): HEAD moved onto a branch an onbranch: include matches refuses the call", async () => {
+    for (const viaSync of [false, true]) {
+      const { repo, marker } = conditionalRepo(() => "onbranch:uf/**");
+      setMode("flip-head");
+      const res = await add(repo, viaSync);
+      setMode("pass");
+
+      ranNothing(marker);
+      assert.equal(res.ok, false, `${viaSync ? "gitSync" : "git"}() ran the call`);
+      assert.match(res.stderr, /\.git\/HEAD changed while the filter probe read it/);
+    }
+  });
+
+  it("git() and gitSync(): the branch HEAD names made a symbolic ref to one onbranch: matches refuses the call", async () => {
+    for (const viaSync of [false, true]) {
+      const { repo, marker } = conditionalRepo(() => "onbranch:uf/**");
+      fs.writeFileSync(writeTarget, path.join(repo, ".git", "refs", "heads", "main"));
+      fs.writeFileSync(rewriteContent, "ref: refs/heads/uf/x\n");
+      setMode("rewrite");
+      const res = await add(repo, viaSync);
+      setMode("pass");
+
+      ranNothing(marker);
+      assert.equal(res.ok, false, `${viaSync ? "gitSync" : "git"}() ran the call`);
+      assert.match(res.stderr, /refs\/heads\/main changed while the filter probe read it/);
+    }
+  });
+
+  it("git() and gitSync(): a worktree's .git pointed at a git directory a gitdir: include matches refuses the call", async () => {
+    for (const viaSync of [false, true]) {
+      const { tree, pointAtOther, marker } = twoWorktrees();
+      fs.writeFileSync(writeTarget, path.join(tree, ".git"));
+      fs.writeFileSync(rewriteContent, pointAtOther);
+      setMode("rewrite");
+      const res = await add(tree, viaSync);
+      setMode("pass");
+
+      ranNothing(marker);
+      assert.equal(res.ok, false, `${viaSync ? "gitSync" : "git"}() ran the call`);
+      assert.match(res.stderr, /-w1\/\.git changed while the filter probe read it/);
+    }
+  });
+
+  it("control: each flip runs the driver under plain git, and nothing runs before it", () => {
+    const head = conditionalRepo(() => "onbranch:uf/**");
+    plain(head.repo, ["add", "-A"]);
+    assert.equal(fs.existsSync(head.marker), false, "the onbranch: include held before HEAD moved");
+    plain(head.repo, ["symbolic-ref", "HEAD", "refs/heads/uf/x"]);
+    fs.writeFileSync(path.join(head.repo, "f.txt"), "three\n");
+    plain(head.repo, ["add", "-A"]);
+    assert.equal(fs.existsSync(head.marker), true, "HEAD on uf/x did not run the driver");
+
+    const ref = conditionalRepo(() => "onbranch:uf/**");
+    fs.writeFileSync(path.join(ref.repo, ".git", "refs", "heads", "main"), "ref: refs/heads/uf/x\n");
+    plain(ref.repo, ["add", "-A"]);
+    assert.equal(fs.existsSync(ref.marker), true, "main as a symbolic ref to uf/x did not run the driver");
+
+    const worktrees = twoWorktrees();
+    plain(worktrees.tree, ["add", "-A"]);
+    assert.equal(fs.existsSync(worktrees.marker), false, "the gitdir: include held in the first worktree");
+    fs.writeFileSync(path.join(worktrees.tree, ".git"), worktrees.pointAtOther);
+    fs.writeFileSync(path.join(worktrees.tree, "f.txt"), "three\n");
+    plain(worktrees.tree, ["add", "-A"]);
+    assert.equal(fs.existsSync(worktrees.marker), true, "the first worktree aimed at the second's git directory did not run the driver");
   });
 });

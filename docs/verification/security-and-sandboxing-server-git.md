@@ -266,6 +266,26 @@
   at `60db46c4` and were refused with the change. Caveat: one user database,
   the container's `/etc/passwd`.
 
+- **An `includeIf` condition flips on HEAD, on the ref behind it and on a
+  worktree's `.git` file, and fingerprinting those stops a nonstop flip and
+  not a paced one, 2026-11-08.** Board task `9d44342d`, `main` at
+  `60db46c4`, git 2.39.5 under `env -i`. With filter `x` only behind
+  `includeIf "onbranch:uf/**"`, plain `add -A` ran it after `symbolic-ref
+  HEAD refs/heads/uf/x`, and after `.git/refs/heads/main` was rewritten as
+  `ref: refs/heads/uf/x` with HEAD left on main. With it behind
+  `gitdir:**/worktrees/w2`, `add -A` in worktree `w1` ran it once `w1/.git`
+  named `w2`'s git directory. git also followed a branch made a symbolic ref
+  through `main-worktree/HEAD`, `worktrees/w2/HEAD` and a per-worktree
+  `refs/worktree/x`. Through this app's compiled `git()` and `gitSync()`,
+  `gitFilterProbe.test.ts`'s three flip cases ran the plant at `60db46c4`
+  and were refused with the change. A writer looping `symbolic-ref` between
+  `uf/x` and `main` against 200 `git()` `add -A` calls: nonstop, 42, 42 and
+  47 driver runs at `60db46c4` and 0, 0 and 0 with the change (199 to 200
+  refused); 20 ms between flips, 7 and 7 against 5 and 3 (13 and 15
+  refused). The suite ran 53 of 54 on a built 2.56.0, the one failure the
+  merge-preview wording case that fails there at `60db46c4` too. Caveat: one
+  container, the paced runs within noise of each other.
+
 ## Not yet verified by hand
 
 - **Whether a work cycle can race this app's git on `.git/config` in

@@ -595,8 +595,10 @@ function populatedGitlinks(dir: string, output: string): string[] {
 const MAX_PROBE_SITES = 64;
 
 /**
- * A site's own configuration files, absolute (`config` and `config.worktree`),
- * then the way up from the site to the top of its work tree.
+ * Where a site's configuration is and what its include conditions read, one
+ * absolute path a line: `config`, `config.worktree`, the site's own `HEAD`
+ * (`onbranch:`), its git directory (`gitdir:`) and the common one, where the
+ * branches are; then the way up from the site to the top of its work tree.
  *
  * The way up is what the probe's relative origins are relative to: from a
  * subdirectory git names the repository's own file `file:.git/config`, as
@@ -613,6 +615,10 @@ const SITE_PATHS = [
   "config",
   "--git-path",
   "config.worktree",
+  "--git-path",
+  "HEAD",
+  "--absolute-git-dir",
+  "--git-common-dir",
   "--show-cdup",
 ];
 
@@ -647,6 +653,10 @@ const placeUnderUser = (value: string) => [
  * 2.39 cannot be handed the configuration the probe read, so nothing here
  * closes that; `prepareContentCall` refuses a call when a file the probe read
  * changed between the moment before the probe and the moment before the call.
+ * HEAD is read this way too, though it is not configuration: the branch it
+ * names decides an `onbranch:` include, and a writer moving it after the
+ * probe made a driver the probe never saw live in the call (board task
+ * 9d44342d: 41 of 200 calls against a checkout loop, 2.39.5).
  *
  * The inode and ctime rather than mtime, because `utimes` sets mtime to
  * anything and ctime only to now, and a rename replaces the inode: a file
@@ -661,6 +671,97 @@ function configFingerprint(file: string): string {
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     return code === "ENOENT" ? "absent" : `unreadable (${code})`;
+  }
+}
+
+/**
+ * Whether a loose ref is a symbolic ref and to what, which is all an
+ * `onbranch:` condition reads of a ref behind HEAD: git follows the chain and
+ * tests the last name, so a branch HEAD names, rewritten as `ref:
+ * refs/heads/uf/x`, flipped `onbranch:uf/**` without HEAD moving (measured,
+ * 2.39.5).
+ *
+ * Not `configFingerprint`, because every commit on a branch rewrites its file,
+ * and a stat of it would refuse each call that overlapped an agent's commit;
+ * what a commit writes is never what the condition tests. The cost is that a
+ * ref rewritten as a symbolic ref only while the probe read it, and back
+ * before the check, is not seen. A ref that is absent is packed or unborn, and
+ * `packed-refs` holds no symbolic ref, so absent and plain read the same.
+ */
+function symrefFingerprint(file: string): string {
+  try {
+    const content = fs.readFileSync(file, "utf8");
+    return content.startsWith("ref:") ? `ref: ${content.slice("ref:".length).trim()}` : "not a symbolic ref";
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return code === "ENOENT" ? "not a symbolic ref" : `unreadable (${code})`;
+  }
+}
+
+/** git's own bound on a chain of symbolic refs (`SYMREF_MAXDEPTH`). */
+const SYMREF_MAX_DEPTH = 5;
+
+/**
+ * Where the files backend keeps the ref `name`, as git reads it from the
+ * site's git directory: another worktree's ref through `main-worktree/` or
+ * `worktrees/<id>/`, the per-worktree namespaces in the site's own git
+ * directory, and every other ref under `refs/`, branches among them, in the
+ * common one. git follows a branch made a symbolic ref through each of the
+ * three (measured, 2.39.5).
+ */
+function refFile(name: string, gitDir: string, commonDir: string): string {
+  const main = /^main-worktree\/(.+)$/.exec(name);
+  if (main) return path.join(commonDir, main[1]);
+  const other = /^worktrees\/([^/]+)\/(.+)$/.exec(name);
+  if (other) return path.join(commonDir, "worktrees", other[1], other[2]);
+  const perWorktree = !name.startsWith("refs/") || /^refs\/(?:worktree|bisect|rewritten)\//.test(name);
+  return path.join(perWorktree ? gitDir : commonDir, name);
+}
+
+/** The loose ref files git reads behind `head` to tell which branch it is on. */
+function refsBehindHead(head: string, gitDir: string, commonDir: string): string[] {
+  const files: string[] = [];
+  let read = symrefFingerprint(head);
+  while (files.length < SYMREF_MAX_DEPTH && read.startsWith("ref: ")) {
+    const file = refFile(read.slice("ref: ".length), gitDir, commonDir);
+    files.push(file);
+    read = symrefFingerprint(file);
+  }
+  return files;
+}
+
+/**
+ * What a `.git` entry or a git directory is, as a string that changes when it
+ * is pointed elsewhere, since which git directory git finds is what a
+ * `gitdir:` condition reads: a worktree's `.git` file rewritten to name a
+ * sibling's git directory flipped `gitdir:` onto that one (measured, 2.39.5).
+ *
+ * A `.git` file is fingerprinted as configuration is. A directory only by
+ * where it resolves to and its inode, because git adds and removes a lock file
+ * in a git directory on every write, which moves its ctime, and a stat of it
+ * would refuse each call that overlapped one.
+ */
+function locationFingerprint(file: string): string {
+  try {
+    const stat = fs.statSync(file, { bigint: true });
+    if (!stat.isDirectory()) return configFingerprint(file);
+    return `${fs.realpathSync(file)} ${stat.dev}:${stat.ino}`;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return code === "ENOENT" ? "absent" : `unreadable (${code})`;
+  }
+}
+
+/**
+ * Every `.git` git looks at on its way up from `dir` to the top of the work
+ * tree, where it found the one it used: one created between them would be
+ * found first, and name another git directory.
+ */
+function discoveryEntries(dir: string, top: string): string[] {
+  const entries: string[] = [];
+  for (let at = path.resolve(dir); ; at = path.dirname(at)) {
+    entries.push(path.join(at, ".git"));
+    if (at === top || at === path.dirname(at)) return entries;
   }
 }
 
@@ -763,9 +864,12 @@ type Prepared =
  * lives, fingerprinted before the probe runs; the probe; and, for every
  * subcommand but `merge-tree`, which writes no work tree, the index listing its
  * populated submodules, which become sites. An include under `~user/` costs
- * one more, to place it, and the common configuration has none. Then every
- * watched file is fingerprinted again, last thing before the caller spawns the
- * call, and one that changed refuses it.
+ * one more, to place it, and the common configuration has none. Before the
+ * probe, each site's configuration files, HEAD and the refs behind it, and the
+ * `.git` entries and git directory it was found through are fingerprinted, and
+ * after it every include target. Then every watched file is fingerprinted
+ * again, last thing before the caller spawns the call, and one that changed
+ * refuses it.
  */
 function* prepareContentCall(
   cwd: string,
@@ -777,9 +881,9 @@ function* prepareContentCall(
   const filters = new Set<string>();
   const merges = new Set<string>();
   const hooks = new Set<string>();
-  const watched = new Map<string, string>();
-  const watch = (file: string) => {
-    if (!watched.has(file)) watched.set(file, configFingerprint(file));
+  const watched = new Map<string, { fingerprint: (file: string) => string; before: string }>();
+  const watch = (file: string, fingerprint = configFingerprint) => {
+    if (!watched.has(file)) watched.set(file, { fingerprint, before: fingerprint(file) });
   };
   const queue = [...sites.dirs];
   const seen = new Set<string>();
@@ -807,8 +911,19 @@ function* prepareContentCall(
     if (located.code !== 0 || located.overflowed) {
       return { ok: false, reason: probeFailure(located, dir, args, SITE_PATHS) };
     }
-    const [config, worktreeConfig, cdup = ""] = located.stdout.split("\n");
-    for (const file of [config, worktreeConfig]) if (file) watch(file);
+    const [config, worktreeConfig, head, gitDir, commonDir, cdup = ""] = located.stdout.split("\n");
+    if (!config || !worktreeConfig || !head || !gitDir || !commonDir) {
+      return {
+        ok: false,
+        reason:
+          `The filter probe failed in ${dir}, so git ${args[0]} was not run: git ${SITE_PATHS.join(" ")} ` +
+          `printed ${JSON.stringify(located.stdout)}, not the five paths it was asked for`,
+      };
+    }
+    const top = path.resolve(dir, cdup);
+    for (const file of [config, worktreeConfig, head]) watch(file);
+    for (const ref of refsBehindHead(head, gitDir, commonDir)) watch(ref, symrefFingerprint);
+    for (const entry of [...discoveryEntries(dir, top), gitDir]) watch(entry, locationFingerprint);
 
     const probe = yield { dir, args: FILTER_PROBE };
     const read = readFilterProbe(probe, dir, args);
@@ -817,7 +932,7 @@ function* prepareContentCall(
     for (const name of names.filters) filters.add(name);
     for (const name of names.merges) merges.add(name);
     for (const name of names.hooks) hooks.add(name);
-    for (const target of includeTargets(path.resolve(dir, cdup), read.records)) {
+    for (const target of includeTargets(top, read.records)) {
       if ("file" in target) {
         watch(target.file);
         continue;
@@ -838,13 +953,13 @@ function* prepareContentCall(
     queue.push(...populatedGitlinks(dir, index.stdout));
   }
 
-  for (const [file, before] of watched) {
-    if (configFingerprint(file) !== before) {
+  for (const [file, { fingerprint, before }] of watched) {
+    if (fingerprint(file) !== before) {
       return {
         ok: false,
         reason:
           `${file} changed while the filter probe read it, so git ${args[0]} was not run in ${cwd}: ` +
-          "a driver or hook written there then would have run unblanked.",
+          "a driver or hook the change brought into its configuration would have run unblanked.",
       };
     }
   }
