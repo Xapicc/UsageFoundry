@@ -37,6 +37,24 @@
 > it. Measured at 1280×800 over a mocked `/api/usage`, the common state ends
 > 27px short of the scroll.
 >
+> **2026-11-08, last: `/` says what is waiting on the operator.** One line
+> between the banner and the window card (`WaitingOnYou`, from
+> `GET /api/waiting`), in words and counts only: runs in `needs-review`,
+> runs `failed` in the last 24 hours, branches the branches page offers a tick
+> box for (`isQueueableBranch`, the one rule both read), chat proposals still
+> `pending`, and open operator-only tasks. A count of zero is left out; when
+> every count was read in full and every one is zero the line is "Nothing is
+> waiting on you."; a count that could not be read is named as unknown and is
+> never drawn as zero, and neither is a floor of zero. `waitingView` is the
+> pure rule and `waiting-on-you.md` under `docs/agent/testing/` is its test. It
+> adds no chart, meter or badge, and the held-fleet sentence stays in the
+> banner. Neither `/runs` nor `/tasks` takes the filter from its URL (`/runs`
+> refuses a `?status=` that is not in flight; the board keeps its operator-only
+> lane in the browser), so every link opens the whole page. The line cost 32px
+> and the page had 19px, so the grid's foot margin now applies only while a
+> notice follows it (`has-[+*]:mb-4`), which was 16px of dead space under the
+> window card in the common state; `/` still fits 1280×800 by 3px.
+>
 > **All five runs have landed. §8 is the record of what each one actually did**
 > — including the one change that landed partially and the deviations from the
 > text above. Read it before acting on anything in §3 as though it describes
