@@ -156,10 +156,11 @@ Notes that are part of the rule, not commentary:
 
 Each of these is a thing a build run would plausibly reach for. None is allowed.
 
-1. **A thirteenth pane.** `panes.ts` is twelve rows against ⌘1–⌘9, read by
-   four things (`panes.ts:3-18`). The digits are spent: the tenth, eleventh and
-   twelfth rows — Dreaming, API account and Settings — already have none, and a
-   thirteenth would be a fourth row you cannot reach from the keyboard. New
+1. **A fourteenth pane.** `panes.ts` is thirteen rows against ⌘1–⌘9, read by
+   four things (`panes.ts:3-18`). The digits are spent: the eleventh, twelfth
+   and thirteenth rows — Dreaming, API account and Settings — and Usage, the
+   second, already have none, and a fourteenth would be a fifth row you cannot
+   reach from the keyboard. New
    destinations are sub-routes under an existing pane.
 
    *This read "a ninth pane" until `/knowledge` was built, and "a tenth" until
@@ -177,8 +178,10 @@ Each of these is a thing a build run would plausibly reach for. None is allowed.
    ground an append does. The heading above read "a twelfth pane" rather than
    "an eleventh" because of that insertion, and it now reads "a thirteenth"
    because Project manager went in under Branches on 2026-10-16, at the
-   operator's own request, taking Dreaming's digit; it will move again the next
-   time any pane is added, wherever in the list it lands.
+   operator's own request, taking Dreaming's digit; it read "a thirteenth"
+   until Usage went in second on 2026-11-08, also at the operator's request,
+   and it will move again the next time any pane is added, wherever in the
+   list it lands.
    `/knowledge` earned a row rather than a sub-route because it is not *about*
    any existing pane: a vault is neither a run, a workflow nor a setting, and
    filing it under Settings would have made a destination out of a
@@ -197,6 +200,15 @@ Each of these is a thing a build run would plausibly reach for. None is allowed.
    holds ⌘9 today and Dreaming, the tenth row, has none. See `docs/agent/dreaming.md` for the
    first of those two trades and for why the compromise (moving the row,
    keeping the digits) is the one arrangement that is forbidden.
+
+   **Usage is the one row whose missing digit the operator chose rather than
+   the order.** It went in second, under Dashboard, on 2026-11-08 with no
+   digit, so nothing under it was renumbered and Dreaming became the eleventh
+   row. That is not the forbidden compromise: no reader names a digit for the
+   row above the one it lands on, because every reader prints a row's own
+   `shortcut` or nothing, so the digits now count the rows that carry one.
+   Renumbering ⌘2–⌘9 is what left docs naming stale digits twice (board tasks
+   44bf21f8 and 5af3d6ea); `panes.ts`' header carries the reasoning.
 2. **An accordion** — a *coordinated* set where opening one panel closes
 another. It is cards with extra clicks and a lost scroll position, and the
 coordination is a second state machine nothing else here has. **Independent

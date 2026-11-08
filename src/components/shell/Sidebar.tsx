@@ -193,8 +193,8 @@ export function Sidebar({
                   // The same computation that picks the fill, said so a screen
                   // reader gets it too.
                   aria-current={current ? "page" : undefined}
-                  // Absent past the ninth row: `panes.ts` has nine digits and
-                  // twelve destinations. Unguarded, this announced a shortcut
+                  // Absent on four rows: `panes.ts` has nine digits and
+                  // thirteen destinations. Unguarded, this announced a shortcut
                   // that does not exist — `Meta+undefined` — to a screen reader.
                   aria-keyshortcuts={pane.shortcut ? `Meta+${pane.shortcut}` : undefined}
                   onClick={onNavigate}

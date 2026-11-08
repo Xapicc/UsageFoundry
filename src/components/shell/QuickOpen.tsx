@@ -215,7 +215,7 @@ export function QuickOpen({
       group: "Panes",
       label: pane.label,
       // `QuickItem.detail` is optional and its render site is already
-      // conditional, so a row past the ninth simply draws no chip. Unguarded,
+      // conditional, so a row with no digit simply draws no chip. Unguarded,
       // this printed the string "⌘undefined" beside it.
       detail: pane.shortcut ? `⌘${pane.shortcut}` : undefined,
       href: pane.href,
