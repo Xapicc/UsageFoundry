@@ -215,6 +215,32 @@
   `f3122092`). That a work cycle can make either move beside one of this
   app's calls is inferred from its writing the common `.git`, not driven.
 
+- **A call naming its git directory with a leading `--git-dir=` is probed in
+  that one, and `readGitDir`'s listing asks no probe, 2026-11-08.** Board
+  task `507d7792`, branch at `5a81fa7b`, git 2.39.5 and the `v2.56.0` build.
+  A repository `A` with `filter.x.clean` in `A/.git/config` and `* filter=x`
+  in its `info/attributes`, and a separate repository `B` with a modified
+  file and no driver: under plain git `--git-dir=A/.git add -A` from `B` ran
+  `A`'s driver. Through this app's compiled `git()` and `gitSync()` at
+  `d271d406` the same call ran it too, through each alone, because every
+  probe step ran in `B` by discovery and read `B`'s configuration; with the
+  change it runs nothing and succeeds, and with the probe broken
+  (`gitFilterProbe.test.ts`'s stub mode `refused`) it fails naming the
+  probe. `readGitDir`'s `--git-dir=<common> config --list --show-scope
+  --show-origin -z --includes`, run from inside `A/.git` through a `GIT_BIN`
+  that logs each invocation, spawned 4 git children through each at
+  `d271d406` and 1 with the change, and with the probe broken it failed at
+  `d271d406` and lists `A`'s `local` records with the change. Cutting the
+  flag from the steps, leaving everything behind it unprobed, or restoring
+  the old gate in the compiled change each failed one of the three cases.
+  The file passed 73 of 83 with 10 skipped on 2.39.5 and 83 of 83 on 2.56.0,
+  and `gitDirRead.test.ts` and `gitDirWatch.test.ts` 11 and 30 of theirs.
+  Caveat: no production caller puts a content subcommand behind
+  `--git-dir=`, and the gate understands no other leading option: `-C A add
+  -A`, and `--git-dir A/.git --work-tree A add -A` as separate words, from
+  `B` still ran `A`'s driver through each on both gits, probed in `B` (board
+  task `c011fcd1`).
+
 ## Not yet verified by hand
 
 - **Whether a work cycle can race this app's git on `.git/config` in
