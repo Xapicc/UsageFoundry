@@ -361,22 +361,37 @@ export function fmtBytes(n: number): string {
   return `${Number(tenths) < 10 ? tenths : Math.round(value)} ${units[unit]}`;
 }
 
+/**
+ * Dollars, at the precision the figure needs.
+ *
+ * Every caller passes a spend, a limit or a rate, which cannot be negative, so
+ * nothing reaches the negative branch today; it is written to match
+ * `fmtTokens` so that a difference printed through it later does not come out
+ * as `$-0.50`, a hyphen after the dollar sign. The sign is chosen after the
+ * magnitude has rounded: a figure that is written as zero has none.
+ */
 export function fmtUSD(n: number): string {
   if (!Number.isFinite(n)) return "—";
   if (n === 0) return "$0.00";
-  if (Math.abs(n) < 0.01) return `$${n.toFixed(4)}`;
-  return `$${n.toFixed(2)}`;
+  const magnitude = Math.abs(n);
+  const written = magnitude.toFixed(magnitude < 0.01 ? 4 : 2);
+  return `${n < 0 && Number(written) !== 0 ? "−" : ""}$${written}`;
 }
 
 /**
  * A netted figure, signed.
  *
  * U+2212 rather than a hyphen so the minus is the same width as the plus and a
- * column of these does not shift by a pixel as a figure crosses zero. Here
- * rather than in a component because both context-control surfaces print one.
+ * column of these does not shift by a pixel as a figure crosses zero. A figure
+ * that rounds to zero at `fmtUSD`'s precision is written without either sign,
+ * as `fmtTokens` writes it: "+$0.0000" and "−$0.0000" both claim a direction
+ * the figure no longer has.
  */
 export function signedUSD(n: number): string {
-  return `${n >= 0 ? "+" : "−"}${fmtUSD(Math.abs(n))}`;
+  const figure = fmtUSD(n);
+  // The minus is already on a negative; only a positive that survived rounding
+  // needs its plus. "—" has no digit and so no sign either.
+  return n > 0 && /[1-9]/.test(figure) ? `+${figure}` : figure;
 }
 
 export function fmtPct(f: number | null): string {
