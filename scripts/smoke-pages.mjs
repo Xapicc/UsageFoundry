@@ -522,6 +522,7 @@ function routes({ runId, workflowId, instanceId, taskId }) {
     "/tasks",
     "/tasks/new",
     `/tasks/${taskId}`,
+    "/usage",
     "/workflows",
     "/workflows/new",
     `/workflows/${workflowId}`,

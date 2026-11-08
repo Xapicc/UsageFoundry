@@ -4,8 +4,10 @@
 
 Read before editing `src/app/tasks/page.tsx` or the pane list in `src/components/shell/panes.ts`.
 
-**The pane sits directly under Runs, and two panes now go without a digit.**
-`panes.ts` is a closed, ordered list whose number shortcut follows a row's
+**The pane sits directly under Runs, and inserting it left two panes without a digit.**
+Four go without one today: Project manager's insertion took Dreaming's, and
+Usage went in under Dashboard on 2026-11-08 with none by the operator's
+decision (`panes.ts` says why). `panes.ts` is a closed, ordered list whose number shortcut follows a row's
 *position* rather than its age, so inserting Taskboard fourth renumbered
 everything below it — Workflows to ⌘5, Agents ⌘6, Branches ⌘7, Knowledge ⌘8,
 Dreaming ⌘9 — and pushed the account pane off the end beside Settings. ⌘1…⌘9 is
