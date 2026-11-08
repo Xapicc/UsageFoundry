@@ -987,8 +987,10 @@ type Prepared =
  * `%(prefix)/` costs one more, to place it, and the common configuration has
  * none. Before the probe, each site's configuration files, its git directory's
  * `commondir`, HEAD and the refs behind it, the `.git` entries and git
- * directory it was found through, and what would make a directory below the
- * top a git directory are fingerprinted, and after it every include target. Then every watched file is fingerprinted again, last thing
+ * directory it was found through, the `objects/` and `refs/` that keep that
+ * one a git directory, and what would make a directory below the top a git
+ * directory are fingerprinted, and after it every include target. Then every
+ * watched file is fingerprinted again, last thing
  * before the caller spawns the call, and one that changed refuses it.
  */
 function* prepareContentCall(
@@ -1050,6 +1052,17 @@ function* prepareContentCall(
     for (const ref of refsBehindHead(head, gitDir, commonDir)) watch(ref, symrefFingerprint);
     for (const file of reftableFiles(gitDir, commonDir)) watch(file);
     for (const entry of [...discoveryEntries(dir, top), gitDir]) watch(entry, locationFingerprint);
+    // git takes the directory it found for a git directory only while the
+    // common one holds `objects/` and `refs/`: with either moved away, its
+    // discovery climbed past it to an enclosing repository and ran a filter
+    // only that one's configuration defined (board task 9ef321d6, measured,
+    // 2.39.5). By `locationFingerprint`, as `gitDirectoryInputs` watches them
+    // below the top, because every commit writes inside both and `git stash`
+    // writes `refs/stash` in `refs/` itself, so their ctime moves on writes
+    // that leave the repository where it was.
+    for (const entry of [path.join(commonDir, "objects"), path.join(commonDir, "refs")]) {
+      watch(entry, locationFingerprint);
+    }
     const below = gitDirectoryInputs(dir, top);
     for (const file of below.asConfig) watch(file);
     for (const entry of below.asLocation) watch(entry, locationFingerprint);

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -28,7 +29,7 @@ const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-git-probe
 const modeFile = path.join(root, "mode");
 /** The program the plant modes write into a repository's configuration. */
 const plantFile = path.join(root, "plant");
-/** Where `plant-include` and `rewrite` write, and what `make-dir` makes, absolute. */
+/** Where `plant-include` and `rewrite` write, what `make-dir` makes and what `move-away` moves, absolute. */
 const writeTarget = path.join(root, "write-target");
 /** What `rewrite` writes there. */
 const rewriteContent = path.join(root, "rewrite-content");
@@ -68,6 +69,7 @@ fs.writeFileSync(
     `      flip-head) '${realGit}' symbolic-ref HEAD refs/heads/uf/x ;;`,
     `      rewrite) cat '${rewriteContent}' > "$(cat '${writeTarget}')" ;;`,
     `      make-dir) mkdir -p "$(cat '${writeTarget}')" ;;`,
+    `      move-away) mv "$(cat '${writeTarget}')" "$(cat '${writeTarget}').away" ;;`,
     // Real git with the arguments in a file, for a write that is not a file's: a ref update in a reftable.
     `      run-git) '${realGit}' $(cat '${root}/run-git-args') ;;`,
     "    esac",
@@ -1643,6 +1645,100 @@ describe("a subdirectory made a git directory between the probe and the call is 
       assert.equal(plain(sub, ["rev-parse", "--absolute-git-dir"]).trim(), way.candidate(sub), way.says);
       plain(sub, ["add", "-A"]);
       assert.equal(fs.existsSync(marker), true, `${way.says}: the driver did not run`);
+    }
+  });
+});
+
+/**
+ * git's discovery takes a directory for a git directory only while it has a
+ * `HEAD`, `objects/` and `refs/`, so the one the probe found stops being one
+ * when its `objects/` or `refs/` is moved away, and git climbs past it to the
+ * next repository up and reads that one's configuration, which the probe never
+ * did (board task 9ef321d6, measured, 2.39.5). Each case moves one away while
+ * the index is listed.
+ */
+describe("a git directory the probe found that stops being one is refused", () => {
+  /**
+   * A repository `outer` whose configuration defines filter `x` for every path,
+   * and inside it a separate committed repository `inner`, with a modified file
+   * and no driver of its own.
+   */
+  function nestedRepo(): { inner: string; outer: string; marker: string } {
+    const name = `repo${count++}`;
+    const outer = path.join(root, name);
+    committedRepo(outer, "f.txt");
+    const { prog, marker } = plantProgram(name);
+    plantInGitDir(path.join(outer, ".git"), [["filter.x.clean", prog]]);
+    const inner = path.join(outer, "r");
+    committedRepo(inner);
+    fs.writeFileSync(path.join(inner, "s.txt"), "two\n");
+    return { inner, outer, marker };
+  }
+
+  /** A file whose blob would be the first object in its fan-out directory, so writing it changes `objects/` itself. */
+  function blobInNewFanOut(inner: string): string {
+    for (let n = 0; ; n++) {
+      const content = `blob ${n}\n`;
+      const id = createHash("sha1").update(`blob ${Buffer.byteLength(content)}\0${content}`).digest("hex");
+      if (fs.existsSync(path.join(inner, ".git", "objects", id.slice(0, 2)))) continue;
+      const file = path.join(root, `${path.basename(path.dirname(inner))}.blob`);
+      fs.writeFileSync(file, content);
+      return file;
+    }
+  }
+
+  after(() => setMode("pass"));
+
+  for (const part of ["objects", "refs"]) {
+    it(`git() and gitSync(): its ${part}/ moved away refuses the call`, async () => {
+      for (const viaSync of [false, true]) {
+        const { inner, marker } = nestedRepo();
+        const moved = path.join(inner, ".git", part);
+        fs.writeFileSync(writeTarget, moved);
+        setMode("move-away");
+        const res = viaSync ? gitSync(inner, ["add", "-A"]) : await git(inner, ["add", "-A"]);
+        setMode("pass");
+
+        ranNothing(marker);
+        assert.equal(fs.existsSync(moved), false, "the stub did not move it");
+        assert.equal(res.ok, false, `${viaSync ? "gitSync" : "git"}() ran the call`);
+        const named = moved.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        assert.match(res.stderr, new RegExp(`${named} changed while the filter probe read it`));
+      }
+    });
+  }
+
+  it("git() and gitSync(): a ref or an object written straight into them still runs the call", async () => {
+    // Every commit writes inside both, and `git stash` writes `refs/stash` in
+    // `refs/` itself, so a watch on their ctime would refuse each call that
+    // overlapped either. The fixture checks that the write did move the ctime.
+    for (const viaSync of [false, true]) {
+      for (const part of ["refs", "objects"]) {
+        const { inner, marker } = nestedRepo();
+        const dir = path.join(inner, ".git", part);
+        const write = part === "refs" ? "update-ref refs/stash HEAD" : `hash-object -w ${blobInNewFanOut(inner)}`;
+        fs.writeFileSync(path.join(root, "run-git-args"), write);
+        const ctime = fs.statSync(dir, { bigint: true }).ctimeNs;
+        setMode("run-git");
+        const res = viaSync ? gitSync(inner, ["add", "-A"]) : await git(inner, ["add", "-A"]);
+        setMode("pass");
+
+        ranNothing(marker);
+        assert.notEqual(fs.statSync(dir, { bigint: true }).ctimeNs, ctime, `${write} left ${part}/ as it was`);
+        assert.equal(res.ok, true, `${viaSync ? "gitSync" : "git"}() after ${write}: ${res.stderr}`);
+      }
+    }
+  });
+
+  it("control: under plain git, either moved away sends add -A to the enclosing repository and its driver", () => {
+    for (const part of ["objects", "refs"]) {
+      const { inner, outer, marker } = nestedRepo();
+      plain(inner, ["add", "-A"]);
+      assert.equal(fs.existsSync(marker), false, `${part}: the driver ran before anything moved`);
+      fs.renameSync(path.join(inner, ".git", part), path.join(inner, ".git", `${part}.away`));
+      assert.equal(plain(inner, ["rev-parse", "--show-toplevel"]).trim(), outer, part);
+      plain(inner, ["add", "-A"]);
+      assert.equal(fs.existsSync(marker), true, `${part}: the enclosing repository's driver did not run`);
     }
   });
 });
