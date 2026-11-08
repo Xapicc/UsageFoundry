@@ -69,7 +69,8 @@ measurement under *Verified* and cut the item down to what is still open.
 | Security and sandboxing | [security-and-sandboxing-claude-home-lock.md](verification/security-and-sandboxing-claude-home-lock.md) — the `UF_LOCK_CLAUDE_HOME` lock on `~/.claude` and the OAuth refresh under it |
 | Security and sandboxing | [security-and-sandboxing-config-dir-binds.md](verification/security-and-sandboxing-config-dir-binds.md) — the CLI's config-directory binds, and which `~/.claude` files it replaces by rename |
 | Security and sandboxing | [security-and-sandboxing-stacks.md](verification/security-and-sandboxing-stacks.md) — a stack's tool grants and permissions |
-| Security and sandboxing | [security-and-sandboxing-sign-in-and-bearer.md](verification/security-and-sandboxing-sign-in-and-bearer.md) — the sign-in limiter, the gate's bearer budget, the `claude auth` children's settings and the Codex children's `config.toml` |
+| Security and sandboxing | [security-and-sandboxing-sign-in-and-bearer.md](verification/security-and-sandboxing-sign-in-and-bearer.md) — the sign-in limiter, the gate's bearer budget and the `claude auth` children's settings |
+| Security and sandboxing | [security-and-sandboxing-codex-config.md](verification/security-and-sandboxing-codex-config.md) — what `$CODEX_HOME/config.toml` does to the server's Codex children, what writes it, and the root-owned file |
 | Security and sandboxing | [security-and-sandboxing-cross-origin.md](verification/security-and-sandboxing-cross-origin.md) — which browser requests the session cookie authorises |
 | Security and sandboxing | [security-and-sandboxing-name-lookup.md](verification/security-and-sandboxing-name-lookup.md) — root's `PATH`, the agents' `PATH` and what a dropped process runs by name |
 | Security and sandboxing | [security-and-sandboxing-chat-config.md](verification/security-and-sandboxing-chat-config.md) — what the chat child loads from files a work cycle writes |
