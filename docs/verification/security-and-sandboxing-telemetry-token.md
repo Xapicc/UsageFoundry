@@ -143,6 +143,35 @@
   environment's in `x-api-key`. The validation completed. Caveat: which of
   the two keys the real API honours was not measured.
 
+- **On an OAuth login, a checkout's `apiKeyHelper` replaces the operator's
+  credential outright, on 2.1.310, 2026-11-08.** Board task `d704ceae`. A
+  rebuilt rig: compiled modules in a scratch process with a scratch
+  `DATA_DIR`, `CLAUDE_CONFIG_DIR` and `HOME`, `startAssist` with
+  `kind: "validate"`, a `CLAUDE_BIN` wrapping 2.1.310, and a loopback stub
+  logging `x-api-key` and `authorization`. The checkout's
+  `settings.local.json` named a helper that wrote a marker and printed a fake
+  key. With a fake `CLAUDE_CODE_OAUTH_TOKEN`, and again with a fake
+  `.credentials.json` in the scratch config directory, the helper ran and its
+  key was in both headers; the operator's token was in neither. Without the
+  helper, the token arrived as `authorization: Bearer`. Caveat: fake
+  credentials, the validator only.
+
+- **`"apiKeyHelper": ""` in the assist's one `--settings` stops a checkout's
+  helper and leaves the operator's credential, on 2.1.310, 2026-11-08.** Same
+  rig, the wrapper setting one value on `apiKeyHelper` inside the one
+  `--settings`, the helper in `settings.local.json`, a fake
+  `ANTHROPIC_API_KEY`. Unset, the helper ran and its key sat beside the
+  environment's, as above. `""`: no marker, only the environment's key.
+  `null`: the helper ran. `"true"`: no marker, but an empty
+  `authorization: Bearer` beside the key. With `""`, a helper in
+  `settings.json` or `$CLAUDE_CONFIG_DIR/settings.json` did not run, nothing
+  planted left the request unchanged, and on both OAuth credentials above the
+  operator's bearer was the only one sent. Rebuilt with `assistSettingsArgs`
+  emitting `""` and the wrapper passing through, the same seven cases gave the
+  same results. Every validation completed. Caveat: the validator only (the
+  reviewer and resolver share its spawn), fake credentials, not as root with a
+  uid drop, not under `UF_SANDBOX`, not through winnow.
+
 - **A route handler can learn its request's peer port, but only through
   `diagnostics_channel`, on Next 15.5.24, 2026-10-25.** Board task
   `ef579cdc`. `NextRequestAdapter.fromNodeNextRequest` builds the handler's
@@ -241,3 +270,10 @@
   start a review from a run page and send one chat message, then restore the
   file. Both completing means the pins hold there; either failing to connect
   to port 9 means they do not.
+
+- **The assist's empty `apiKeyHelper` on a real login.** Measured only with
+  fake credentials against a stub. Settle: in a booted container, as the
+  agent uid, write `{"apiKeyHelper":"touch /tmp/uf-akh-ran; echo x"}` to a
+  finished run's checkout `.claude/settings.local.json` and start a review
+  from its run page. A review that completes with no `/tmp/uf-akh-ran` means
+  the pin holds there and the login still serves the assist.
