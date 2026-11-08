@@ -237,6 +237,54 @@ describe("a record that would lower the live guard's figure", () => {
   });
 });
 
+describe("a record whose event time is the unset fixed64", () => {
+  // proto3 JSON writes an unset `fixed64` as "0", which `??` does not skip, so
+  // the record was stored at ts=0 and `ts >= since` dropped its cost from the
+  // cycle's figure with nothing thrown. The four fixtures above all send a real
+  // `timeUnixNano`, which is why nothing caught it.
+  it("dates a zero timeUnixNano by observedTimeUnixNano, then by the arrival", async () => {
+    const run = "run-unset-time";
+    const bearer = otlp.ingestTokenFor(run);
+    const cycleStart = Date.now() - 60_000;
+    const observed = Date.now() - 1000;
+    const unset = (requestId: string, rest: Record<string, string | number>) => ({
+      ...record(requestId, { cost_usd: 1, input_tokens: "100" }, 0),
+      ...rest,
+    });
+
+    const res = await post(
+      payload(
+        unset("req_observed", { timeUnixNano: "0", observedTimeUnixNano: String(BigInt(observed) * 1_000_000n) }),
+        unset("req_observed_number", { timeUnixNano: 0, observedTimeUnixNano: observed * 1_000_000 }),
+        unset("req_both_zero", { timeUnixNano: "0", observedTimeUnixNano: "0" }),
+        unset("req_no_observed", { timeUnixNano: "0" }),
+      ),
+      bearer,
+    );
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { partialSuccess: {}, seen: 4, inserted: 4 });
+
+    const stored = dbMod
+      .db()
+      .prepare("SELECT request_id, ts FROM otlp_requests WHERE run_id = ? ORDER BY request_id")
+      .all(run) as { request_id: string; ts: number }[];
+    const byId = Object.fromEntries(stored.map((r) => [r.request_id, r.ts]));
+    assert.ok(
+      Math.abs(byId.req_observed - observed) < 1,
+      `observed time ignored: stored at ${byId.req_observed}`,
+    );
+    assert.ok(Math.abs(byId.req_observed_number - observed) < 1, "a numeric zero was not skipped either");
+    for (const id of ["req_both_zero", "req_no_observed"]) {
+      assert.ok(byId[id] > cycleStart, `${id} fell back to the epoch, not the arrival: ${byId[id]}`);
+    }
+    assert.deepEqual(otlp.telemetrySpendSince(run, cycleStart), {
+      requests: 4,
+      costUSD: 4,
+      tokens: 400,
+    });
+  });
+});
+
 describe("a record that would raise another run's figure", () => {
   it("adds no more to the install and workflow figures than the forging cycle could have spent", async () => {
     const installBudget = await import("../../../../../lib/installBudget");

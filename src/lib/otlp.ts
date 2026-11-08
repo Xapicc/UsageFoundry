@@ -349,8 +349,13 @@ export function parseLogsPayload(
           continue;
         }
 
-        const nano = rec.timeUnixNano ?? rec.observedTimeUnixNano;
-        const ts = nano ? Math.round(Number(nano) / 1e6) : receivedAt;
+        // proto3 JSON writes an unset fixed64 as "0", which `??` does not skip
+        // and which is truthy as a string: the record was stored at ts=0 and
+        // `ts >= since` left its cost out of the cycle's figure and the window.
+        const nano = [rec.timeUnixNano, rec.observedTimeUnixNano]
+          .map(Number)
+          .find((n) => n > 0);
+        const ts = nano ? Math.round(nano / 1e6) : receivedAt;
 
         out.push({
           requestId,
