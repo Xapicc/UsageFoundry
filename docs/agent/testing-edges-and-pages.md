@@ -121,6 +121,7 @@ This page is the second half of the index at [testing.md](testing.md), which hol
 | `UsageNotices.test.tsx` |  |
 | `UsagePeriods.test.tsx` | [ui-kit] |
 | `windowCardNotes.test.ts` |  |
+| `windowOutlook.test.ts` |  |
 
 ## [Stacks, the tool inventory and the end of the function list](testing/stacks-and-tool-inventory.md)
 

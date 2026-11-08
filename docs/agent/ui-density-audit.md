@@ -11,14 +11,31 @@
 > totals`, `What each repository cost`, the *What runs keep re-deriving* and
 > *Does the prior-read pointer change what runs do* regions, and the
 > provenance strip. `/` keeps the banner, `FirstRun`, the window card with
-> `CodexWindows`, `LiveTelemetry`, the burn rate and projected exhaustion as a
-> card titled `Rate`, `InstallSpendCard` and the plan label. **Do not
+> `CodexWindows`, `LiveTelemetry`, the burn rate and projected exhaustion (a
+> card titled `Rate` until the note below), `InstallSpendCard` and the plan
+> label. **Do not
 > "restore" any of the moved cards to `/` from §3.E.1**: that section, and
 > every `src/app/page.tsx` line it cites, describes the page before this
 > move, and "nothing here is a feature cull" below was a premise of these
 > five runs, not a rule about the dashboard. Both pages render the same
 > `SourceRegion` and the same `UsageNotices`, so §5.1's region boundaries
 > hold on each.
+>
+> **2026-11-08, later: the `Rate` card is gone and `/` fits one screen.** Each
+> window in the window card now reads what is left of it, when it resets
+> (absolute, then relative), its meter, and one line saying whether it runs
+> out before that reset at the current burn — the burn rate rides on that
+> line. `projectedExhaustionAt` is the earliest instant across both windows,
+> and `windowOutlooks` (`src/components/windowOutlook.ts`) works out whose it
+> is, or says "session or week" when the snapshot cannot tell. Codex windows
+> use the same layout without a projection, because Codex reports no rate.
+> The prose that explained each reading moved into one `How these are read`
+> fold at the foot of the card, under §1.1's rule 5. A pinned reset and a
+> per-model wall stay visible, because they change what a meter means.
+> `LiveTelemetry` is one line while no run is working. `InstallSpendCard`, in
+> its own `What this app spent` region, moved into the right-hand column under
+> it. Measured at 1280×800 over a mocked `/api/usage`, the common state ends
+> 27px short of the scroll.
 >
 > **All five runs have landed. §8 is the record of what each one actually did**
 > — including the one change that landed partially and the deviations from the
@@ -1980,7 +1997,7 @@ Three readings of overlapping money, and **any sum double-counts**:
 
 | Reading | What it is | Where it renders today |
 |---|---|---|
-| **A** | this app's price table over every Claude Code transcript on the machine (`buildSnapshot`) | the dashboard's window card and `Rate`; on `/usage`, `Usage by period`, *Where it went*, *What filled the context*, `Recent 5-hour blocks` and `Totals`; `RunAgentCost`'s rows |
+| **A** | this app's price table over every Claude Code transcript on the machine (`buildSnapshot`) | the dashboard's window card, burn rate and run-out lines included; on `/usage`, `Usage by period`, *Where it went*, *What filled the context*, `Recent 5-hour blocks` and `Totals`; `RunAgentCost`'s rows |
 | **B** | `runs.spent_usd` — what a work cycle's own `result` event reported | dashboard `This install…`; `What each repository cost` on `/usage`; the run page's `Spent` stat |
 | **C** | OTLP telemetry — Claude Code's own per-request cost | `LiveTelemetry` on the dashboard; `Telemetry — first-party` on the run page |
 

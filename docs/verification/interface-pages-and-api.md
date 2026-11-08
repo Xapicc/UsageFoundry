@@ -127,6 +127,18 @@ The runs list, the run inspector and `/runs/live` are in
   summaries rest on `npm run smoke-pages` (96/96) and on the mark count above,
   not on a search typed in the page.
 
+- **`/` fits 1280×800 in the common state, 2026-11-08** (branch
+  `uf/usagefoundry-721638d11c0b-1-7bda2526`, after `5d53ab75`). The built
+  standalone server was run over a scratch install in headless Chromium, with
+  `GET /api/usage` answered by a patched copy of its own response. The common
+  state had both windows on the provider's reading, a run working, one Codex
+  sign-in and no notice. `main`'s content ended 27px above its 748px viewport,
+  counting the 48px bottom padding. The same layout with no run working left
+  19px; with no telemetry and a trailing week, 157px. It overflowed by 18px
+  with the fleet-held notice and a per-model wall line showing. Nothing ran
+  sideways at 1280 or 390, and the console was clean. **Caveat:** the data was
+  mocked, not read from transcripts, and only 1280 and 390 were measured.
+
 ## Not yet verified by hand
 
 - **No after-change payload from the 2026-08-23 pass has been read from a
@@ -145,10 +157,11 @@ The runs list, the run inspector and `/runs/live` are in
   `npm test` (1,660 tests / 245 suites / 0 failures) and the build at `a34e56b`.
   No page tests, jsdom or CI browser.
 
-- **The dashboard's top row has not been seen as the real page**, with
-  transcripts behind it: its composition, the ragged bottom edge under
-  `items-start` at 1920 and the `lg`-to-`xl` band with content are unlooked-at.
-  Open `/` at 1920 and about 1100 with a run in flight.
+- **The dashboard's top row has not been seen over real transcripts.** Its
+  composition at 1280 and 390 was measured over a mocked `/api/usage` (above).
+  Still unseen: 1920 and the `lg`-to-`xl` band with real figures, and a real
+  run's telemetry switching between the card and the idle line. Open `/` at
+  1920 and about 1100 with a run in flight.
 
 - **The live-telemetry card has not been seen in the real row (2026-09-04)**:
   its bottom edge beside the 16rem tile, and the phone case with a six-run list
