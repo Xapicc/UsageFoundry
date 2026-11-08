@@ -243,7 +243,7 @@ Cases in `loopSection.test.ts` and `workflows.test.ts`, each listed under its ow
 
 | Test file | Also in |
 |---|---|
-| `src/app/api/mcp/route.test.ts` | [delivery] |
+| `src/app/api/mcp/route.test.ts` | [projects] |
 | `taskComments.test.ts` |  |
 | `taskDepGraph.test.ts` |  |
 | `taskDeps.test.ts` |  |
@@ -293,6 +293,11 @@ Cases in `loopSection.test.ts` and `workflows.test.ts`, each listed under its ow
 | `deliverMovedBranch.test.ts` |  |
 | `deliverRun.test.ts` |  |
 | `delivery.test.ts` |  |
+
+## [Projects: Push, fetch and the inventory](testing/projects-push-and-fetch.md)
+
+| Test file | Also in |
+|---|---|
 | `projectPush.test.ts` |  |
 | `projects.test.ts` |  |
 
@@ -604,3 +609,4 @@ It prints nothing as this is written. Whoever owns a file it names owes that fil
 [harnesses]: testing/test-harnesses.md
 [decider]: testing/model-decider.md
 [delivery]: testing/delivery.md
+[projects]: testing/projects-push-and-fetch.md
