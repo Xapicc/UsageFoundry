@@ -13,16 +13,19 @@ import { after, describe, it, mock } from "node:test";
  * The stub records its pid and prints a link and a one-time code carrying it,
  * then polls the way the real CLI does — by sitting there, since `beginLogin`
  * closes its stdin. `STUB_HOLD`, read at spawn time, makes it wait for that file
- * before printing.
+ * before printing. Started as `app-server` it appends its arguments to
+ * `argv.log`, one start per line split on `\u001f`, and exits before answering.
  */
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-codex-auth-")));
 const pidsDir = path.join(tmp, "pids");
 fs.mkdirSync(pidsDir);
+const argvLog = path.join(tmp, "argv.log");
 const stub = path.join(tmp, "codex");
 fs.writeFileSync(
   stub,
   [
     "#!/bin/sh",
+    `if [ "$1" = app-server ]; then printf '%s\\037' "$@" >> "${argvLog}"; echo >> "${argvLog}"; exit 0; fi`,
     `echo $$ > "${pidsDir}/$$"`,
     'if [ -n "$STUB_HOLD" ]; then while [ ! -e "$STUB_HOLD" ]; do sleep 0.02; done; fi',
     "echo '1. Open this link in your browser and sign in to your account'",
@@ -59,6 +62,7 @@ const {
   pendingLogin,
   redactSecrets,
 } = require("./codexAuth") as typeof import("./codexAuth");
+const { listCodexModels } = require("./codexAccount") as typeof import("./codexAccount");
 
 /**
  * `claudeAuth.test.ts`'s argument for the other provider, with one addition it
@@ -306,6 +310,52 @@ async function driveUntilSettled<T>(promise: Promise<T>): Promise<T> {
   }
   return promise;
 }
+
+/**
+ * `claudeAuth.test.ts`'s `the settings flags an auth child starts with`, for
+ * the one Codex child a planted `$CODEX_HOME/config.toml` was measured to
+ * steer: `codexAccount.ts`'s app server, which sent the stored ChatGPT bearer
+ * wherever the file's `chatgpt_base_url`, `openai_base_url` or
+ * `model_provider` pointed. Drop an override and every read still works and
+ * the stub's output is the same, so only the argv shows it. The exact array is
+ * asserted because each value is the one measured to send the child where the
+ * unplanted CLI sends it, and a changed value is a new measurement.
+ */
+describe("the config overrides the app-server child starts with", () => {
+  it("pins every endpoint key a planted config.toml was measured to move", async () => {
+    fs.mkdirSync(config.CODEX_HOME, { recursive: true });
+    fs.writeFileSync(path.join(config.CODEX_HOME, "auth.json"), "{}");
+    fs.rmSync(argvLog, { force: true });
+    try {
+      const read = await listCodexModels();
+      assert.equal(read.ok, false, "the stub exits before answering, so the read must fail");
+    } finally {
+      fs.rmSync(path.join(config.CODEX_HOME, "auth.json"), { force: true });
+    }
+    const starts = fs
+      .readFileSync(argvLog, "utf8")
+      .split("\n")
+      .filter((line) => line !== "")
+      .map((line) => line.split("\u001f").slice(0, -1));
+    assert.deepEqual(starts, [
+      [
+        "app-server",
+        "-c",
+        'chatgpt_base_url="https://chatgpt.com/backend-api/"',
+        "-c",
+        'openai_base_url=""',
+        "-c",
+        'model_provider="openai"',
+        "-c",
+        'otel.exporter="none"',
+        "-c",
+        'otel.trace_exporter="none"',
+        "-c",
+        'otel.metrics_exporter="none"',
+      ],
+    ]);
+  });
+});
 
 /** `PENDING_TIMEOUT_MS` in `codexAuth.ts`. The last assertions below fail if it drifts. */
 const PENDING_TIMEOUT_MS = 16 * 60_000;

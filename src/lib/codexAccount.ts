@@ -96,6 +96,45 @@ interface PendingCall {
 }
 
 /**
+ * `-c` overrides that send the app server's requests where the pinned CLI
+ * sends them with no `config.toml` at all.
+ *
+ * `$CODEX_HOME/config.toml` is a file the agents' uid can create, since
+ * `CODEX_HOME` is writable by their group for the sign-in's sake, and once it
+ * exists is theirs to rewrite; nothing in the image or this app writes it.
+ * And `app-server`, unlike `codex exec`, refuses `--ignore-user-config`.
+ * Measured on 0.153.4 with a planted file and a loopback listener:
+ * `chatgpt_base_url` took the rate-limit read and
+ * the plugin listings, each carrying the stored ChatGPT access token and the
+ * account id; `openai_base_url` or a planted `model_provider` took
+ * `model/list`'s refresh with the same bearer; an `[otel]` exporter took the
+ * child's logs and traces. A `-c` is applied over the file, and with these the
+ * same child sent every connection to the hosts it does unplanted.
+ * `openai_base_url = ""` reads as unset there, which keeps the default that
+ * depends on the sign-in's kind; a planted `[model_providers.openai]` is
+ * ignored by the CLI as a reserved id, so `model_provider` is all that needs
+ * naming. The login, logout and status children take none of this: no key
+ * above moved any of their connections.
+ *
+ * A list of keys stops only the ones somebody measured, which is the gap
+ * `docs/agent/security/cycle-settings-env.md` records under "What is still open".
+ */
+const APP_SERVER_CONFIG_PINS = [
+  "-c",
+  'chatgpt_base_url="https://chatgpt.com/backend-api/"',
+  "-c",
+  'openai_base_url=""',
+  "-c",
+  'model_provider="openai"',
+  "-c",
+  'otel.exporter="none"',
+  "-c",
+  'otel.trace_exporter="none"',
+  "-c",
+  'otel.metrics_exporter="none"',
+];
+
+/**
  * One conversation with a fresh `codex app-server`: `initialize`, then
  * whatever `work` asks, then stdin's EOF, which is how the child is told to
  * exit.
@@ -108,7 +147,7 @@ interface PendingCall {
 async function withAppServer<T>(work: (call: RpcCall) => Promise<T>): Promise<T> {
   let child: ChildProcess;
   try {
-    const cli = spawnCommand(CODEX_BIN, ["app-server"]);
+    const cli = spawnCommand(CODEX_BIN, ["app-server", ...APP_SERVER_CONFIG_PINS]);
     child = spawn(cli.command, cli.args, {
       env: codexAccountEnv(),
       ...childCredentials(),

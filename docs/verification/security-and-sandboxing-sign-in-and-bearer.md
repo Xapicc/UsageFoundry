@@ -1,4 +1,4 @@
-# Verification: Security and sandboxing — the sign-in limiter, the gate's bearer budget and the `claude auth` children's settings
+# Verification: Security and sandboxing — the sign-in limiter, the gate's bearer budget, the `claude auth` children's settings and the Codex children's `config.toml`
 
 [← Verification index](../verification.md)
 
@@ -78,6 +78,48 @@
   a cycle bills the planted key is `cycle-settings-env.md`'s reading of the
   cycle's argv and was not re-run here.
 
+- **A planted `$CODEX_HOME/config.toml` steers `codex app-server`'s bearer and
+  none of the sign-in children, 2026-11-08.** codex-cli 0.153.4, a scratch
+  `CODEX_HOME` under `$TMPDIR` holding a made-up API key or a made-up ChatGPT
+  `auth.json` (unsigned JWTs), the spawn environment's `HTTPS_PROXY` at
+  loopback listener P with `NO_PROXY=127.0.0.1`, and a planted file naming
+  listener E; each logged every connection and answered 403. Unplanted, P took
+  everything: `login status` nothing, `logout` and `login --device-auth` one
+  CONNECT each to `auth.openai.com`, and `app-server` through `initialize`,
+  `account/read`, `account/rateLimits/read` and `model/list` 18 to
+  `chatgpt.com`. Planted `chatgpt_base_url` sent `app-server`'s `wham/usage`,
+  `wham/rate-limit-reset-credits` and six plugin listings to E, each with the
+  stored access token as `Authorization: Bearer` and `chatgpt-account-id`;
+  `openai_base_url`, or `model_provider` naming a planted
+  `[model_providers.*]`, sent `/v1/models` there with the same bearer; an
+  `[otel]` exporter sent logs and traces. None of the four moved a connection
+  of `login status`, `logout` or `login --with-api-key`, nor of `login
+  --device-auth` driven to `Successfully logged in` through a stub issuer
+  (`--experimental_issuer`), which took the user-code, token and `oauth/token`
+  requests while E took nothing. A planted `[model_providers.openai]`,
+  `[mcp_servers.*]` `url`, `experimental_thread_store_endpoint` or legacy
+  `profile` left `app-server` as unplanted. In this container `CODEX_HOME` is
+  1770, group `node`, with an owner the sandbox does not map (root, by the
+  Dockerfile's `chown root:node`), and its `config.toml` is `node:node 0600`
+  (`stat` only; the real home was never opened). Caveat: one run per cell; the CONNECTs were refused, so what the
+  tunnels would have carried is not seen; only the keys named were tried.
+
+- **`-c` pins after `app-server` put all of it back, and no Codex subcommand
+  this app runs takes `--ignore-user-config`, 2026-11-08.** Same harness, a
+  file planting `chatgpt_base_url`, `openai_base_url`, `model_provider` with
+  its table and all three `[otel]` exporters at E. With `-c
+  chatgpt_base_url="https://chatgpt.com/backend-api/"`, `-c
+  openai_base_url=""`, `-c model_provider="openai"` and `-c` setting
+  `otel.exporter`, `otel.trace_exporter` and `otel.metrics_exporter` to
+  `"none"`, the ChatGPT-mode child sent 18 CONNECTs to `chatgpt.com` at P and
+  none to E, with the same four answers; without `openai_base_url=""`,
+  `/v1/models` still reached E. `""` reads as unset: with no planted file the
+  pins changed neither the connections nor the answers, in ChatGPT mode or with
+  an API key. `--ignore-user-config` before or after `app-server`, `login`, `login
+  status` or `logout` exits with `unexpected argument`. Caveat: no real
+  sign-in, so a token refresh under the pins was not seen; not in a booted
+  container as root.
+
 ## Not yet verified by hand
 
 - **That the bearer budget survives a dev-server reload of `middleware.ts`.**
@@ -94,3 +136,10 @@
   `.credentials.json` owned by `UF_AGENT_UID`, and the proxy's port never
   dialled (`ss -tn` or a listener on it); then Sign out and expect signed out.
 
+- **That the app-server pins hold against a real sign-in in a booted
+  container.** Every measurement above used made-up tokens and refused
+  CONNECTs. Settle as root in a container signed in to Codex: as the agent uid,
+  put `chatgpt_base_url = "http://127.0.0.1:9/backend-api/"` and `openai_base_url
+  = "http://127.0.0.1:9/v1"` in `$CODEX_HOME/config.toml`, keep a listener on
+  port 9, load `/` and Settings → Codex, and expect the Codex windows and model
+  list to read while the listener takes nothing; then remove the two lines.
