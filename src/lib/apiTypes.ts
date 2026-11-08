@@ -3998,6 +3998,70 @@ export interface HoldoutComplianceArmDTO {
   share: number | null;
 }
 
+/** The pointer minus held-out difference with repositories weighted by their size, so none can move the arms apart by being dealt unevenly. */
+export interface HoldoutStratifiedDTO {
+  difference: number | null;
+  /** The approximate 95% interval of `difference`. */
+  low: number | null;
+  high: number | null;
+  /** `difference` over its standard error: what the looks' boundaries are on. */
+  z: number | null;
+  /** Runs in the estimate, per arm. */
+  runs: Record<HoldoutArmDTO, number>;
+  strata: number;
+  /** Runs in a repository where an arm held fewer than two, which has no variance to weight. */
+  setAside: number;
+}
+
+/** A two-sided studentised permutation p-value, re-dealing arms within each repository. */
+export interface HoldoutPermutationDTO {
+  p: number | null;
+  /** Arm assignments it was taken over: all of them when `exact`, otherwise a seeded sample. */
+  assignments: number;
+  exact: boolean;
+}
+
+/** One of the two looks, at the data as it stood when the smaller arm first held `perArm` runs. */
+export interface HoldoutLookDTO {
+  stage: "interim" | "final";
+  perArm: number;
+  /** The two-sided O'Brien-Fleming boundary on `z`. */
+  boundary: number;
+  /** When the smaller arm first held `perArm` settled runs; null until it does. */
+  reachedAt: number | null;
+  /** In the look's data, or what each arm holds so far when not reached. */
+  runs: Record<HoldoutArmDTO, number>;
+  z: number | null;
+  /** Null until the look is reached. */
+  crossed: boolean | null;
+}
+
+export type HoldoutLookVerdict =
+  | "before-interim"
+  | "continue"
+  | "difference-at-interim"
+  | "difference-at-final"
+  | "none-at-final";
+
+/** Whether the held-out arm's reading moves with the treated share of one set of neighbouring runs. */
+export interface HoldoutInterferenceDTO {
+  exposure: "preceding" | "overlapping" | "live";
+  /** Held-out runs in the regression. */
+  runs: number;
+  /** Held-out runs with no neighbour of known arm, or alone in their repository. */
+  setAside: number;
+  /** Spread of the treated share within a repository: how little the exposure varies. */
+  exposureSd: number | null;
+  /** Files per unit of treated share (0 to 1). */
+  slope: number | null;
+  /** HC2 95% interval of `slope`. */
+  low: number | null;
+  high: number | null;
+  /** Permutation p-value against arms re-dealt by the real rule. */
+  p: number | null;
+  draws: number;
+}
+
 /** Why a run the pointer considered is not in a reading. A run is counted under the first that applies. */
 export type HoldoutLeftOutReason =
   | "arm-derived"
@@ -4035,7 +4099,16 @@ export interface HoldoutReadbackDTO {
     /** Runs with no edit, whose pre-edit reading is their whole run. */
     neverEdited: Record<HoldoutArmDTO, number>;
     targets: HoldoutTargetDTO[];
+    /** The plan's primary: the whole-run reading, stratified by repository, read at two looks. */
+    primary: {
+      estimate: HoldoutStratifiedDTO;
+      permutation: HoldoutPermutationDTO;
+      looks: HoldoutLookDTO[];
+      verdict: HoldoutLookVerdict;
+    };
   };
+  /** The plan's step 4: is the held-out arm a clean baseline, or does it move with the treated share around it. */
+  interference: HoldoutInterferenceDTO[];
   outcome: {
     /** The share of runs that reached a second work cycle. */
     secondCycle: HoldoutContrastDTO;

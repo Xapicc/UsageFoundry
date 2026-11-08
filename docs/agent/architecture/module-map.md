@@ -118,6 +118,12 @@ holdoutReadback.ts  the prior-read holdout read back from those tables: who is
                 counted, what a run read, which (cycle, path) pairs are scored
                 and the arms' difference; compliance, displacement and outcome
                 share no figure. Reporting, never a guard
+holdoutInference.ts  the plan's primary, looks and interference check, pure over
+                rows the readback hands it: a difference stratified by
+                repository with a studentised permutation p-value, two
+                O'Brien-Fleming looks on the data as it stood when the smaller
+                arm reached its size, and a held-out run's reading regressed on
+                the treated share around it. Deterministic; never a guard
 fleet.ts        the three controls that act on the whole install — stop
                 everything, hold new work, pick several runs back up. It owns no
                 transition of its own: it composes stopInstance, stopRun,

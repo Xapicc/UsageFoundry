@@ -25,6 +25,17 @@
   three consecutive scans, so a one-off cost of having read the tree rather than
   a growth term, and interning took it to ~71 MB as well.
 
+- **The holdout card's primary, looks and interference sections render at 390 and
+  1280 px, and the interference draws cost 0.6 s at fifteen hundred runs,
+  2026-11-08.** A standalone build served over a scratch `DATA_DIR`, with
+  `/api/holdout-readback` answered by a hand-written payload (before a look and
+  after both), shown no console error and no sideways scroll at either width, the
+  looks table stacking as the other tables do. The cost is 400 re-deals of 1,500
+  runs by the real `inHoldout`, 600,000 SHA-256 hashes, measured at 575 ms alone
+  and 638 ms for the whole preceding-hundred regression over 721 held-out runs;
+  the stratified permutation over the same 1,500 runs took 73 ms. Synthetic ids
+  and readings, so it bounds the readback's CPU and says nothing about the figures.
+
 ## Not yet verified by hand
 
 - **The retention sweep under a CLI that names transcripts differently.** On a
@@ -50,3 +61,11 @@
   runs read, its compliance pairs, and the runs left out by reason. Check that the
   two arms lose alike: a lopsided *No file to name* would mean the list is not
   dealt alike. The figure to copy for the sample size is `population.read`.
+
+- **The holdout's primary, looks and interference check on real runs.** Built and
+  tested on scratch exports. On the first real reading, record how many runs the
+  stratified estimate set aside (`displacement.primary.estimate.setAside`), the
+  smaller arm's count against 205 and 410, each look's `z` and whether it crossed,
+  `queryMs` (the 0.6 s above assumed fifteen hundred runs on one repository), and
+  the interference rows' `exposureSd` and `runs`: `live` is empty until runs
+  started after 2026-10-31 settle.

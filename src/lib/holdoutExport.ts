@@ -44,6 +44,8 @@ const LAST_EXPORT_KEY = "holdout.lastExport";
  * Any other call that names a `file_path` is kept too (`MultiEdit`, an MCP tool
  * that opens a file): the compliance join counts a file as opened by whatever
  * opened it, and an export narrower than that would score a different number.
+ * `NotebookEdit` and `NotebookRead` name `notebook_path` instead, and
+ * `EDIT_TOOLS` counts the first as an edit, so the query keeps those as well.
  */
 const TOOL_NAMES = ["Read", "Grep", "Glob", "Edit", "Write"] as const;
 
@@ -547,7 +549,8 @@ function exportRun(id: string, now: number, vaultRootNow: string | null, counter
         WHERE run_id = ? AND kind = 'tool'
           AND json_extract(payload, '$.name') IS NOT NULL
           AND (json_extract(payload, '$.name') IN (${TOOL_NAMES.map(() => "?").join(",")})
-               OR json_extract(payload, '$.input.file_path') IS NOT NULL)
+               OR json_extract(payload, '$.input.file_path') IS NOT NULL
+               OR json_extract(payload, '$.input.notebook_path') IS NOT NULL)
         ORDER BY id`,
     )
     .all(id, ...TOOL_NAMES) as Array<{
