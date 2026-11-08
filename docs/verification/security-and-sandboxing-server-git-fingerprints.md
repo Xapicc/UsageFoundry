@@ -241,6 +241,26 @@
   `B` still ran `A`'s driver through each on both gits, probed in `B` (board
   task `c011fcd1`).
 
+- **A probed call behind `-C <dir>` or a two-word `--git-dir <dir>` is
+  refused before any git child runs, 2026-11-08.** Board task `c011fcd1`,
+  branch at `fb373398`, git 2.39.5 only. The `A`/`B` pair of the entry
+  above: under plain git, `-C A add -A` and `--git-dir A/.git --work-tree A
+  add -A` from `B` each ran `A`'s driver. Through this app's compiled
+  `git()` and `gitSync()` at `fb373398`, a scratch script (not committed)
+  ran `A`'s driver with `ok: true` on all four, and `--git-dir=A/.git add -A`
+  on neither; the new `gitFilterProbe.test.ts` case failed there on its
+  first call. With the change all four return `ok: false` naming the option
+  (`-C`, `--git-dir`), `A`'s driver does not run, stub mode `log-calls`
+  records no git child spawned before the refusal, and the `--git-dir=` call
+  still succeeds and blanks. The file passed 75 of 85 with 10 skipped, and
+  `git`, `gitDirRead`, `gitDirWatch`, `blockStartupGit` and
+  `checkoutGitClock` 62 of 69 with 7 skipped. Caveat: not run on a 2.56.0
+  build. Every other leading option is refused the same way, a read behind
+  one included; that no production caller writes one rests on a multiline
+  grep of `src/` for a `git(`/`gitSync(` argument list opening with `-` or a
+  spread (only `-c` and `--git-dir=`), and an argument list built in a
+  variable was not traced.
+
 ## Not yet verified by hand
 
 - **Whether a work cycle can race this app's git on `.git/config` in

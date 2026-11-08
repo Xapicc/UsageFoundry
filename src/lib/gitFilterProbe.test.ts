@@ -45,6 +45,8 @@ fs.writeFileSync(
   [
     "#!/bin/sh",
     `mode="$(cat '${modeFile}')"`,
+    // Every git child this app spawns, one argv a line.
+    `if [ "$mode" = "log-calls" ]; then printf '%s\\n' "$*" >> '${root}/calls'; fi`,
     'for arg in "$@"; do',
     '  if [ "$arg" = "--get-regexp" ]; then',
     '    case "$mode" in',
@@ -354,6 +356,50 @@ describe("a filter probe that failed does not read as 'no filters'", () => {
     fs.writeFileSync(path.join(elsewhere, "s.txt"), "two\n");
     plain(elsewhere, [`--git-dir=${path.join(repo, ".git")}`, "add", "-A"]);
     assert.equal(fs.existsSync(marker), true, "the named git directory's driver did not run");
+  });
+
+  /** A call from `cwd` that reads `repo` instead, by `-C` or by `--git-dir` and `--work-tree` as two words each. */
+  const otherRepositoryShapes = (repo: string): [string, string[]][] => [
+    ["-C", ["-C", repo, "add", "-A"]],
+    ["--git-dir", ["--git-dir", path.join(repo, ".git"), "--work-tree", repo, "add", "-A"]],
+  ];
+
+  it("a content subcommand behind `-C <dir>` or a two-word `--git-dir <dir>` is refused before any git runs", async () => {
+    // Either makes the call read a repository other than the one the probe
+    // reads in cwd, so that one's drivers were never listed and ran unblanked
+    // (board task c011fcd1).
+    const calls = path.join(root, "calls");
+    for (const viaSync of [false, true]) {
+      const via = viaSync ? "gitSync" : "git";
+      const { repo, marker } = plantedRepo();
+      const elsewhere = path.join(root, `repo${count++}`);
+      committedRepo(elsewhere);
+      fs.writeFileSync(path.join(elsewhere, "s.txt"), "two\n");
+      for (const [option, args] of otherRepositoryShapes(repo)) {
+        fs.rmSync(calls, { force: true });
+        setMode("log-calls");
+        const res = viaSync ? gitSync(elsewhere, args) : await git(elsewhere, args);
+        setMode("pass");
+
+        ranNothing(marker);
+        assert.equal(res.ok, false, `${via}() ran git ${args.join(" ")}`);
+        assert.ok(res.stderr.includes(`${option} ahead of the subcommand`), `${via}(): ${res.stderr}`);
+        const spawned = fs.existsSync(calls) ? fs.readFileSync(calls, "utf8") : "";
+        assert.equal(spawned, "", `${via}() spawned git before refusing git ${args.join(" ")}`);
+      }
+    }
+  });
+
+  it("control: under plain git, `-C <dir>` and a two-word `--git-dir <dir>` each run that repository's driver", () => {
+    for (const index of [0, 1]) {
+      const { repo, marker } = plantedRepo();
+      const elsewhere = path.join(root, `repo${count++}`);
+      committedRepo(elsewhere);
+      fs.writeFileSync(path.join(elsewhere, "s.txt"), "two\n");
+      const [option, args] = otherRepositoryShapes(repo)[index];
+      plain(elsewhere, args);
+      assert.equal(fs.existsSync(marker), true, `${option}: the other repository's driver did not run`);
+    }
   });
 
   it("a read that is not a content subcommand never asks the probe, so a broken probe cannot fail it", async () => {

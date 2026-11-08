@@ -1015,6 +1015,14 @@ type Prepared =
  * were blanked and the named one's ran (board task 507d7792, measured, 2.39.5).
  * A flag naming no git directory fails the first step, and so the call. The
  * special cases below read the subcommand past the leading options.
+ *
+ * Any other option ahead of the subcommand refuses the call before a step
+ * runs. `-C <dir>` and a two-word `--git-dir <dir>` each made the call read a
+ * repository other than the one the probe read in `cwd`, and that one's driver
+ * ran (board task c011fcd1, measured, 2.39.5). Refused rather than replayed on
+ * each step, because `-C` composes with `--git-dir` and `--work-tree`, and
+ * with relative paths, in ways the probe would have to repeat exactly; no
+ * caller here writes one.
  */
 function* prepareContentCall(
   cwd: string,
@@ -1022,6 +1030,15 @@ function* prepareContentCall(
 ): Generator<PrepareStep, Prepared, ProbeEnding> {
   const { at, gitDir: namedGitDir } = leadingOptions(call);
   const args = call.slice(at);
+  if (args[0]?.startsWith("-")) {
+    return {
+      ok: false,
+      reason:
+        `git was not run in ${cwd}: ${args[0]} ahead of the subcommand can make it read a repository ` +
+        "other than the one the filter probe reads there, whose drivers would run unblanked. " +
+        "Name the git directory with a leading --git-dir=<path>, or run the call in that repository.",
+    };
+  }
   const sites = probeSites(cwd, args);
   if (!sites.ok) return sites;
 
