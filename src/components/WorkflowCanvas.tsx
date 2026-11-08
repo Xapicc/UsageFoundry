@@ -21,6 +21,7 @@ import {
   linkKey,
   linkRefusal,
   markedAfterPress,
+  memberRefusal,
   nodeBox,
   regionBounds,
   resolveLinkRelease,
@@ -815,6 +816,13 @@ export function WorkflowCanvas({
     const block = blocks.find((b) => b.id === id);
     if (block?.kind === "loop") {
       setNotice(`${blockLabel(block)} is a loop, and a loop cannot be inside another one.`);
+      return true;
+    }
+    // Said at the press, with the frame still armed, because the alternative is
+    // Save refusing a link this press never drew.
+    const refusal = memberRefusal(loopId, id, blocks, links, isolation);
+    if (refusal !== null) {
+      setNotice(refusal);
       return true;
     }
     setNotice(null);
