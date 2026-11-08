@@ -9,6 +9,7 @@ import { LiveTelemetry } from "@/components/LiveTelemetry";
 import { Meter } from "@/components/Meter";
 import { SourceRegion } from "@/components/SourceRegion";
 import { UsageNotices } from "@/components/UsageNotices";
+import { WaitingOnYou } from "@/components/WaitingOnYou";
 import { WindowHead, resetText } from "@/components/WindowHead";
 import {
   isProjectable,
@@ -256,6 +257,7 @@ export default function Dashboard() {
    * request and the agent is competing for the same CPU.
    */
   const working = (data?.telemetry?.workingRunCount ?? 0) > 0;
+  const pollMs = working ? POLL_WORKING_MS : POLL_IDLE_MS;
 
   useEffect(() => {
     let alive = true;
@@ -336,6 +338,11 @@ export default function Dashboard() {
     </div>
   );
 
+  // Read on its own route and at the cadence above, so it is the same element
+  // at the same place in all three states below and is never remounted by the
+  // first response: nothing in it waits on a transcript.
+  const waiting = <WaitingOnYou intervalMs={pollMs} />;
+
   if (!data) {
     return (
       <>
@@ -343,6 +350,7 @@ export default function Dashboard() {
           {pollError ? "Could not read usage." : "Reading transcripts…"}
         </PageHeader>
         {banner}
+        {waiting}
         {!pollError && <DashboardSkeleton />}
       </>
     );
@@ -397,6 +405,7 @@ export default function Dashboard() {
       <>
         {header}
         {banner}
+        {waiting}
         <FirstRun
           transcriptDir={shortPath(meta.transcriptDir, 3)}
           fileCount={meta.fileCount}
@@ -409,6 +418,7 @@ export default function Dashboard() {
     <>
       {header}
       {banner}
+      {waiting}
 
       {/* Two columns from `lg`: the windows, and beside them what this app's
           own runs are doing — live telemetry, then the install limit. Both
@@ -423,7 +433,7 @@ export default function Dashboard() {
           `items-start` so a short right column keeps its own height rather
           than being stretched to the window card's. Below `lg` it is one
           column in the same reading order. */}
-      <div className="mb-4 grid gap-4 lg:grid-cols-2 lg:items-start">
+      <div className="grid gap-4 has-[+*]:mb-4 lg:grid-cols-2 lg:items-start">
         {/* The one `primary` card on the screen. Both windows live in it
             because they are one subject — what may be spent — and inside it
             the session leads: it refills on its own, so it is the allowance an
@@ -609,6 +619,10 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* The gap above is on the grid and only while something follows it:
+          with no notice to show it was 16px of dead space at the foot of the
+          page, which is what the waiting line above the cards was paid for
+          out of at 1280×800. */}
       {/* Under the meters, not above them: each of these explains something the
           reader has just looked at — a hatched bar, a span past the fill, a
           figure that is a floor. Stacked above, they were a wall of prose
