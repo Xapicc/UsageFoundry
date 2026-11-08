@@ -16,7 +16,7 @@ import {
   settingsDefaults,
   type Settings,
 } from "../../../lib/settings";
-import { budgetNumberRefusal, normalizePolicy } from "../../../lib/budget";
+import { budgetNumberRefusal, normalizePolicy, policyNumberRefusal } from "../../../lib/budget";
 import {
   jsonMaybeGzipped,
   optionalObjectField,
@@ -810,6 +810,12 @@ async function applySettingsPut(body: Record<string, unknown>): Promise<Response
         { status: 400 },
       );
     }
+
+    // Before the fold below, which reads "5O", "$5" and -5 as no limit: every
+    // chat proposal without a template inherits this budget, so a typo here is
+    // a run with no spending limit for each one that is approved.
+    const numberRefusal = policyNumberRefusal(rawBudget, "chatDefaultGuards.budget");
+    if (numberRefusal) throw new FieldRefusal(numberRefusal);
 
     const budget = normalizePolicy(rawBudget);
     // The same pair `POST /api/runs` and `normalizeTemplateInput` refuse, and
