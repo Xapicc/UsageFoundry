@@ -182,6 +182,23 @@
   listed in the github mount"), and a missing folder 400. Asking created no
   repository state. Caveat: an empty record only; no browser drew the fold.
 
+- **TokenEconomizer's hooks fire in real work cycles and the catalog refresh
+  succeeds, 2026-11-08.** Three FoundryCode runs (`1f327f20`, `71fde0ca`,
+  `8e310f74`), worktree-isolated, one cycle each, run one after another in slot
+  `-1` on CLI 2.1.319 with the switch on. Each `init` listed `tokeneconomizer`
+  among its plugins with its 7 slash commands. `te toolprune refresh-catalog`
+  logged `token_economizer.catalog_refreshed ok` at 16:55:29, 2 s before the
+  first `init`, and recorded 32 tools for 2.1.319. The state root then held the
+  FoundryCode repository with 3 folded sessions, one ledger line each and
+  `catalog_source: probe+observed`. Tools unused in all three (CronCreate,
+  NotebookEdit, PushNotification and others) carried streaks of 3; no list
+  formed, because 3 sessions of 1 prompt each is under the evidence bar. The
+  micro-skill proposer ran once, at the second session (39,527 of its effective
+  tokens, 0.46% of the three sessions), and wrote no fact yet. No `errors.log`,
+  no plugin process left running, and no TokenEconomizer line in any run's log,
+  which is the seed answering `nothing`. Caveat: the proposer's cost is the
+  plugin's own figure; that `runs.spent_usd` misses it is still open.
+
 ## Not yet verified by hand
 
 - **The pending figures have never rendered.** Settings' *Still downloading*
@@ -271,8 +288,6 @@
   first prompt of the next run whose log names a vault note: its pick line
   should carry `status`, `updated` and, for a tagged note, `contradicted`.
 
-- **No Claude cycle has been seen to fire TokenEconomizer's hooks (2026-11-08).** Everything about the argv and environment is unit tested, but whether the CLI registers a `--plugin-dir` plugin's hooks on a headless cycle, resumed ones included, and whether they write state, is unmeasured. Settle: switch **TokenEconomizer** on in Settings, run one Claude cycle, then `docker compose exec usagefoundry ls -la /home/node/.tokeneconomizer` and the `te ... cli repos` command `docs/install.md` gives (as the agent user, with `TOKENECONOMIZER_HOME` set); an empty state directory after a cycle means the hooks never ran.
-- **`te toolprune refresh-catalog` has not been seen to succeed as the agent uid in the container (2026-11-08).** `ensureTokenEconomizerCatalog` never fails a cycle, so a failure is only a line in the operations log. Settle: after the first cycle with the switch on, look for the ops event `token_economizer.catalog_refreshed` (and its absence of a failure sibling) in the operations log; without it tool pruning only ever proposes deferred tools.
 - **No list the plugin produced itself has been seen land (2026-11-08).** The
   seeding is measured (entry above) on a list applied by hand. Unseen: the
   plugin forming a proposal from real runs, writing it after the quiet period

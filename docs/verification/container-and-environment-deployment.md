@@ -103,6 +103,12 @@
   `sandboxMountPoints.test.ts` passed 21 of 21 inside the container against
   its linux 2.1.319 binary. Caveat: no work cycle has run on this image.
 
+- **Work cycles complete on the 2.1.319 pin, 2026-11-08.** Three FoundryCode
+  runs, one cycle each, ended `done` with `spent_usd` of $2.81, $5.96 and
+  $4.67 and no error event, so the `init` and `result` lines parsed and the
+  spend reached the row. Caveat: one cycle per run, so no resume, and nothing
+  below was read off them.
+
 ## Not yet verified by hand
 
 - **That a rename from a namespace where the mount is absent goes through**
@@ -248,11 +254,9 @@
   alpine chown -R 0:0 /v`, restart, and read `stat -c %u:%g
   /home/node/.tokeneconomizer` in the container.
 
-- **No work cycle has run on the 2.1.319 pin (moved 2026-11-08 from
-  2.1.310).** The image is built and the pin-bump checks passed (entries
-  under *Security*, *Run lifecycle* and *Agents, templates and models*). Not
-  checked: any `stream-json` line beyond `init` and `result`, an OTLP record,
-  a compaction boundary, a hook event, a background task, and TokenEconomizer,
-  whose README tests it on 2.1.300 to 2.1.310 only. Chosen as npm's `latest`;
-  `stable` was 2.1.311. Settle: one real cycle with TokenEconomizer on, then
-  its run page and its telemetry card.
+- **What a 2.1.319 cycle emits beyond `init` and `result` is unread (pin
+  moved 2026-11-08 from 2.1.310).** Cycles complete on it (entry above). Not
+  checked: an OTLP record, a compaction boundary, a resumed cycle, a
+  background task's events, and TokenEconomizer past the 2.1.300 to 2.1.310
+  its README tests. Settle: a multi-cycle run with live telemetry on, then its
+  run page and its telemetry card.
