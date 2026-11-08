@@ -113,6 +113,25 @@
   `runTasks` keeps such a task anyway when a `background_tasks_changed` snapshot
   lists it or a patch says `is_backgrounded: true`.
 
+- **A 2.1.319 background Bash task's events, as far as a failed start,
+  2026-11-08.** `scripts/cli-capture/` against a stub, with a fake key; plan e7
+  issued a `run_in_background` Bash ten times. The CLI emitted, in order:
+  - `system:background_tasks_changed`;
+  - `system:task_started`, with `task_id`, `tool_use_id`, `description`,
+    `is_backgrounded: true` and `task_type: "local_bash"`;
+  - `system:task_updated`, with `patch: {status: "failed", end_time}`;
+  - `system:task_notification`, with `status: "failed"`, `output_file` and the
+    summary `Background command "…" failed with exit code 1`;
+  - `system:background_tasks_changed` with an empty list.
+
+  The notification then opened another turn in the same process. Replayed
+  through `startRun`, `runTasks` reduced the run's events to all ten tasks,
+  each `state: "ended"` and `statusWord: "failed"`, with its summary and
+  output file. Caveat: every task failed to start, because the CLI's bwrap
+  cannot nest in this sandbox (10 of 10 tries). So a task that runs, and the
+  `killed` and `stopped` states `stoppedTasksNotice` acts on, are still not
+  measured on 2.1.319.
+
 ## Not yet verified by hand
 
 - **A real, billed cycle with a background sub-agent has not met the ceiling.**
@@ -135,3 +154,11 @@
   kill is unmeasured.** The stub's was 0 bytes. The next cycle's note says
   "whatever they wrote" and promises nothing; settle with the real run above and
   `wc -c` on the path the `task_notification` names.
+
+- **No 2.1.319 background task that ran, or was stopped at the ceiling, has
+  been captured.** Every capture above failed at start. Settle where the CLI's
+  sandbox can start, which is the container and not a nested sandbox:
+  `node scripts/cli-capture/plans.mjs e7 <dir>` with `drive.mjs`, then
+  `replay.cjs <root> <build> bg`. Expect `task_updated` with `completed`, or
+  with `killed` and then `stopped` under a short
+  `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS`.

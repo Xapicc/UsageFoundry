@@ -203,6 +203,21 @@
   variant`, and both of its values restrict. Caveat: fake tokens, a stub
   issuer, one run per cell.
 
+- **`credential_expires_at` is on a 2.1.319 `stream-json` `result` only for a
+  stored claude.ai sign-in with a refresh-token expiry, 2026-11-08.**
+  `scripts/cli-capture/` plan e3: a stub API and made-up credentials in a
+  scratch `CLAUDE_CONFIG_DIR`. A stored `.credentials.json` whose
+  `claudeAiOauth` carried `refreshTokenExpiresAt` 20 days ahead produced
+  `credential_expires_at: "2026-11-28T20:12:44.631Z"`, that instant, on both a
+  plain cycle's `result` and a compacting cycle's. It was absent under
+  `ANTHROPIC_API_KEY`, under `CLAUDE_CODE_OAUTH_TOKEN`, and under a stored
+  sign-in without `refreshTokenExpiresAt`. The binary reads the same way:
+  `q6n()` answers null unless the provider is first-party, the session is a
+  claude.ai login, and the stored token has a refresh token with a valid
+  `refreshTokenExpiresAt`. The schema carries the field on success and error
+  results alike. Nothing in this app reads it yet. Caveat: whether a real
+  sign-in's file carries `refreshTokenExpiresAt` was not seen.
+
 ## Not yet verified by hand
 
 - **That the bearer budget survives a dev-server reload of `middleware.ts`.**

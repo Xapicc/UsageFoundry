@@ -254,9 +254,21 @@
   alpine chown -R 0:0 /v`, restart, and read `stat -c %u:%g
   /home/node/.tokeneconomizer` in the container.
 
-- **What a 2.1.319 cycle emits beyond `init` and `result` is unread (pin
-  moved 2026-11-08 from 2.1.310).** Cycles complete on it (entry above). Not
-  checked: an OTLP record, a compaction boundary, a resumed cycle, a
-  background task's events, and TokenEconomizer past the 2.1.300 to 2.1.310
-  its README tests. Settle: a multi-cycle run with live telemetry on, then its
-  run page and its telemetry card.
+- **What a 2.1.319 cycle emits beyond `init` and `result` is read against a
+  stub only (pin moved 2026-11-08 from 2.1.310).** Cycles complete on it
+  (entry above). Read on 2026-11-08 from this container's linux-arm64 2.1.319
+  against a stub API and replayed through the run loop:
+  - OTLP and resumed cycles: [run-lifecycle-cli-output.md](run-lifecycle-cli-output.md);
+  - compaction: [context-control-pruning.md](context-control-pruning.md);
+  - a background task's start: [run-lifecycle-background-work.md](run-lifecycle-background-work.md);
+  - endings: [run-lifecycle-hooks-and-endings.md](run-lifecycle-hooks-and-endings.md);
+  - `credential_expires_at`: [security-and-sandboxing-sign-in-and-bearer.md](security-and-sandboxing-sign-in-and-bearer.md).
+
+  Still open:
+  - those shapes from the real API through a live run in the container;
+  - a background task that runs or is stopped;
+  - the full-disk exit on `stream-json`;
+  - TokenEconomizer past the 2.1.300 to 2.1.310 its README tests.
+
+  Settle the first with board task `d3c81e18` (operator-only): a multi-cycle
+  run with live telemetry on, then its run page and its telemetry card.

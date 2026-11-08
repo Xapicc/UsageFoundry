@@ -36,6 +36,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Budgets and guards | [budgets-and-guards.md](verification/budgets-and-guards.md) |
 | Run lifecycle | [run-lifecycle.md](verification/run-lifecycle.md) |
 | Run lifecycle | [run-lifecycle-background-work.md](verification/run-lifecycle-background-work.md) — a work cycle's wait for background tasks, and what stopping one tells the next cycle |
+| Run lifecycle | [run-lifecycle-cli-output.md](verification/run-lifecycle-cli-output.md) — what a pinned CLI's `stream-json` and OTLP carry beyond `init` and `result`, and what this app's readers make of it |
 | Run lifecycle | [run-lifecycle-live-activity.md](verification/run-lifecycle-live-activity.md) — what a running cycle is inside: the open-call strip and the `/runs/live` sub-agent roster |
 | Run lifecycle | [run-lifecycle-resume-and-transcripts.md](verification/run-lifecycle-resume-and-transcripts.md) — what a resume finds in the session transcript: the 30-day sweep, a transcript gone, one truncated mid-turn, and a cycle the API refused |
 | Run lifecycle | [run-lifecycle-hooks-and-endings.md](verification/run-lifecycle-hooks-and-endings.md) — what a cycle reports about its hooks, the prompt fold on a cycle's row, the prior-read pointer and its holdout, and `runs.ending_code` |

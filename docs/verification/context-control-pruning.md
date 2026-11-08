@@ -191,6 +191,53 @@
   `setInterval` shape was seen failing `poll.test.ts` instead, and an action's
   own reload on `/runs` is a request beside the poll and was not measured.
 
+- **What a compaction looks like on 2.1.319, and `readCompactions` reads it,
+  2026-11-08.** Three compactions were captured with `scripts/cli-capture/`
+  against a stub, with a fake key:
+  - a manual `/compact` on a resumed session (e1);
+  - an automatic one at 190,079 reported tokens, with
+    `CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000` set (e2);
+  - an automatic one after the stub's long-context 429, under a stored
+    claude.ai sign-in (e3, the entry below).
+
+  The stream now carries the compaction itself, in three events:
+  - `system:status` with `status: "compacting"`;
+  - `system:status` with `compact_result: "success"`;
+  - `system:compact_boundary`, whose `compact_metadata` holds `trigger`,
+    `pre_tokens`, `post_tokens`, `cumulative_dropped_tokens` and
+    `duration_ms`.
+
+  The transcript's `compact_boundary` record keeps the camelCase
+  `compactMetadata` fields `parseCompactionBoundary` reads, beside
+  `timestamp`, `sessionId` and `version: "2.1.319"`. `readCompactions`
+  returned each boundary with its trigger and token counts, and returned
+  nothing when bounded to a later window. `compactionNotice` worded all three
+  as a hypothesis, because its table is pinned to 2.1.198. Replayed through
+  `startRun`, the stream events were logged as plain `system:status` and
+  `system:compact_boundary` lines and the cycle completed. The comment on the
+  post-cycle read said the CLI "says nothing about it on the stream"; that was
+  corrected. Caveats: the summary is the stub's, and the reader's window was
+  set by hand rather than by a live cycle's clock.
+
+- **On 2.1.319 a long-context 429 compacts under a claude.ai sign-in and ends
+  the cycle on an API key, 2026-11-08.** Same harness. The stub answered a
+  tool round reporting 190,079 tokens with HTTP 429 `Extra usage is required
+  for long context requests.`, which is one of the two strings the binary's
+  `xne` test matches.
+  - **Stored sign-in:** the CLI compacted (`trigger: "auto"`), carried on and
+    exited 0. Replayed, the run completed.
+  - **API key:** the CLI ended the cycle with a `result` of
+    `subtype: "success"`, `is_error: true`, `api_error_status: 429` and the
+    text `API Error: Request rejected (429) · Extra usage is required for long
+    context requests.`, and exited 1. Replayed, the run ended `failed` with
+    `ending_code: refusal`, through the `<synthetic>` message rather than the
+    `result`.
+
+  With no override, 190,079 reported tokens did not trigger auto-compaction on
+  `claude-sonnet-4-5` or `claude-haiku-4-5` with an API key, and
+  `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=50` did not either. Caveat: the 429 body is
+  the stub's; the real API's wording was not seen.
+
 ## Not yet verified by hand
 
 - **The compaction summariser's call is billed and in no ledger, 2026-08-22.**
@@ -200,11 +247,11 @@
   Docker run logging `effectiveWindow` would show the operating point) and
   whether the firing arithmetic holds for another model.
 
-- **No compaction notice has been seen on a run log, and its field names hold
-  only on CLI `2.1.226`.** `preTokens`, `postTokens`, `durationMs`, `trigger`
-  come from 23 records, all `2.1.226` (`Dockerfile:215`); a rename renders as
-  zero. Watch `/runs/<id>` for `Claude Code compacted this run's conversation`.
-  The survival table is Anthropic's docs (`v2.1.198`), never a measurement.
+- **No compaction notice has been seen on a live run's log.** The field names
+  hold on `2.1.226` (23 records) and on `2.1.319` (three captured against a stub,
+  entry above), and the notice has only been built from captured records. Watch
+  `/runs/<id>` for `Claude Code compacted this run's conversation`. The survival
+  table is Anthropic's docs (`v2.1.198`), never a measurement.
 
 - **`freshStartContextTokens`' net saving is unmeasured.** Its prices are: a
   two-cycle run averaged $19.19 against $10.05 for one, 12.0c a call early

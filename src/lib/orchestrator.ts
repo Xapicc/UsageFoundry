@@ -12406,10 +12406,13 @@ export async function startRun(id: string): Promise<void> {
       // Did the CLI summarise this run's conversation while the cycle ran?
       //
       // Read here rather than watched for, and after the row is written rather
-      // than before it. The CLI compacts a `-p` session unprompted and says
-      // nothing about it on the stream, but it writes a full `compact_boundary`
-      // record to the transcript — so this is a reading of a completed
-      // compaction, arriving a couple of minutes after the fact, and not a
+      // than before it. The CLI compacts a `-p` session unprompted. 2.1.319's
+      // stream does announce it (`system:status`, then a
+      // `system:compact_boundary` carrying no `version` and no `timestamp`;
+      // measured 2026-11-08), but only the transcript's `compact_boundary`
+      // record names the CLI version `compactionNotice` compares against, and
+      // the timestamp this read is bounded by — so this is a reading of a
+      // completed compaction, arriving a couple of minutes after the fact, and not a
       // warning that one is about to happen. Nothing here acts on it: no
       // threshold, no flag, no guard, no `sessionId` cleared. A `PreCompact`
       // hook is the only way to learn it in advance and nothing in this app
