@@ -1042,9 +1042,9 @@ test("the runs started for a task are counted whole and listed capped", () => {
   // the list is what fits beside it. A row that showed five and said nothing
   // would report a task worked eight times as one worked five.
   // Distinct `created_at` values, because "newest first" is what the query
-  // orders on and the id beside it is a tiebreak for determinism rather than a
-  // second ordering. Eight rows written in one millisecond would be testing the
-  // tiebreak and calling it the order.
+  // orders on and the `rowid` beside it is a tiebreak for determinism rather than
+  // a second ordering. Eight rows written in one millisecond would be testing
+  // the tiebreak and calling it the order — the next case does exactly that.
   const ids: string[] = [];
   for (let n = 0; n < 8; n += 1) {
     const run = seedRun(`run-for-task-${n}`, Date.now() + n);
@@ -1069,6 +1069,26 @@ test("the runs started for a task are counted whole and listed capped", () => {
   assert.equal(after.status, "open");
   assert.equal(after.claimedByRunId, null);
   assert.equal(after.completedByRunId, null);
+});
+
+test("runs created for one task in one millisecond list newest-created first", () => {
+  const task = file({ title: "Fanned out" });
+
+  // `emit_runs` writes every run it names in one synchronous pass, so runs for
+  // one task share a `created_at`, and the id beside it is a random UUID. Ids
+  // that ascend with the write order make the old `r.id` tiebreak return the
+  // oldest first and the cap keep the wrong five, which a run of random UUIDs
+  // would only do by chance.
+  const ids = Array.from({ length: 8 }, (_, n) => `fan-out-${n}`);
+  for (const id of ids) {
+    seedRun(id, 1_700_000_000_000);
+    recordRunTasks(id, [task.id]);
+  }
+
+  assert.deepEqual(
+    runLinksForTasks([task.id]).get(task.id)?.runIds,
+    ids.slice(-MAX_TASK_RUN_LINKS).reverse(),
+  );
 });
 
 test("a run whose task was deleted still names it", () => {
