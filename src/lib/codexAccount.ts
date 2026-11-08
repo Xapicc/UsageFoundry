@@ -116,6 +116,15 @@ interface PendingCall {
  * naming. The login, logout and status children take none of this: no key
  * above moved any of their connections.
  *
+ * `features.plugins=false` because a planted `[marketplaces.<name>]` with a
+ * git source made the child start `git` and fetch from the host it named, on
+ * every read and in both sign-in modes. Pinning the table cannot stop that:
+ * `-c marketplaces={}` is merged with the file and the planted entry still
+ * fetched, and its name is the planter's. With the feature off nothing
+ * reached that host and the four answers this module reads were unchanged;
+ * the child also stopped its own marketplace sync, a `git` to `github.com`
+ * under an API key and six plugin listings carrying the ChatGPT bearer.
+ *
  * A list of keys stops only the ones somebody measured, which is the gap
  * `docs/agent/security/cycle-settings-env.md` records under "What is still open".
  */
@@ -132,6 +141,8 @@ const APP_SERVER_CONFIG_PINS = [
   'otel.trace_exporter="none"',
   "-c",
   'otel.metrics_exporter="none"',
+  "-c",
+  "features.plugins=false",
 ];
 
 /**

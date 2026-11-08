@@ -150,6 +150,59 @@
   sign-in, so a token refresh under the pins was not seen; not in a booted
   container as root.
 
+- **A planted `[marketplaces.*]` git source makes `codex app-server` start
+  `git` against the host it names, and only `features.plugins=false` stops it,
+  2026-11-08.** Board task `de468a72`, codex-cli 0.153.4, the harness above
+  with the six endpoint pins on. Unplanted, the API-key child already ran
+  `git` (user agent `git/2.39.5`) to `github.com` and the ChatGPT-mode child
+  did not. A planted `source_type = "git"` marketplace whose `source` was an
+  `http://` URL at listener E got `GET
+  /evil/repo.git/info/refs?service=git-upload-pack` from `git` in both modes,
+  with no `Authorization`. `-c marketplaces={}` left that fetch in place,
+  since `-c` merges with the file. With `-c features.plugins=false` E took
+  nothing, the API-key child made no connection at all and the ChatGPT one 12
+  CONNECTs to `chatgpt.com` rather than 18. Through the app's own spawn
+  (`codexUsage` and `listCodexModels` from the compiled `codexAccount.js`, two
+  children per case), the build without the pin gave E two fetches per case.
+  The build with it gave none, and its answers were byte-identical to the old
+  build's, unplanted and planted, in both modes. Caveat: fake credentials, so
+  the rate-limit read failed in every case; E refused, so what a served
+  repository would go on to do is not seen.
+
+- **No planted command runs during `codex app-server`'s four reads,
+  2026-11-08.** Same harness and pins, each case lingering 8 s after
+  `model/list` before stdin's EOF, in both sign-in modes. Each command
+  appended to a marker file: `[mcp_servers.*]` `command` with `args`, an HTTP
+  server's `http_headers_helper`, `notify`, `[[hooks.<event>]]` command hooks
+  in `config.toml` for `SessionStart`, `SessionEnd`, `Interrupt` and
+  `PreCompact`, the same and `UserPromptSubmit` and `Stop` in
+  `$CODEX_HOME/hooks.json`, and a local-marketplace plugin installed with
+  `codex plugin add` and enabled, whose `plugin.json` and `.mcp.json` named
+  MCP servers. No marker was written, and the connections went to the
+  unplanted child's hosts in its numbers. Caveat: a turn or thread was never
+  started, which is where these are meant to run; one run per case.
+
+- **`cli_auth_credentials_store`, `forced_login_method` and
+  `forced_chatgpt_workspace_id` deny or lose a Codex sign-in and name no host,
+  2026-11-08.** Same harness against `login --with-api-key`, `login status`,
+  `logout`, `login --device-auth` driven through the stub issuer, and
+  `app-server`. `"keyring"` (no secret service here) failed both logins, the
+  device one after its token exchange; status and logout errored with
+  `auth.json` left in place. `"ephemeral"` answered `Successfully logged in`
+  to both and wrote no `auth.json`, and status answered `Not logged in` over
+  one that existed. `"auto"` saved to the file, but its logout failed on the
+  keyring. `forced_login_method` refused the other kind of login, and a
+  `forced_chatgpt_workspace_id` the token lacked refused the device login.
+  Over a stored login of the other kind or account, both made status say `Not
+  logged in` and `account/read` answer `account: null`, which `"keyring"` and
+  `"ephemeral"` answered over every stored login. Such a child then ran the
+  API-key child's `git` sync to `github.com`, which the plugins pin now stops;
+  no read deleted `auth.json`. On the login children `-c
+  cli_auth_credentials_store="file"` and `-c forced_chatgpt_workspace_id=[]`
+  (or `""`) undid theirs; `-c forced_login_method=""` failed with `unknown
+  variant`, and both of its values restrict. Caveat: fake tokens, a stub
+  issuer, one run per cell.
+
 ## Not yet verified by hand
 
 - **That the bearer budget survives a dev-server reload of `middleware.ts`.**
