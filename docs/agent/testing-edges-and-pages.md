@@ -123,7 +123,6 @@ This page is the second half of the index at [testing.md](testing.md), which hol
 | `InstallSpendCard.test.tsx` |  |
 | `LiveRunFigures.test.tsx` |  |
 | `OpenTasksChart.test.tsx` |  |
-| `RecentBlocksCard.test.tsx` |  |
 | `RunHandoff.test.tsx` |  |
 | `UsageNotices.test.tsx` |  |
 | `UsagePeriods.test.tsx` | [ui-kit] |
