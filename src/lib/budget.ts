@@ -480,8 +480,9 @@ const CODEX_NO_READING_REASON: Record<"weekly" | "session", string> = {
  * The refusal a fraction guard with nothing to read earns **at a door**.
  *
  * `RUN_ENFORCEABLE_CODES` moves this condition out of the pre-cycle guard, so
- * something has to say it where there is still a person: `POST /api/runs` and
- * the reopen route both call this before anything is created. Separate from
+ * something has to say it where there is still a person: `POST /api/runs`, the
+ * reopen route and the fleet pick-up (per run, in `reopenFleet`) call this
+ * before anything is created or put back. Separate from
  * `evaluateBudget` rather than a mode of it, because the door has no progress
  * to evaluate — no cycles used, no clock running, no spend — and putting a
  * zeroed `RunProgress` through the full guard would answer about limits that
