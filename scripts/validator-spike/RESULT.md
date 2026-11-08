@@ -19,12 +19,18 @@ testimony, no repository access.
 | agreement, all 40 answered | 35/40 (87.5%) |
 | trivial validator that always answers `finished` | 29/37 (78.4%) |
 | **false-finished** (said finished, label says not-done) | **0 of 1** held-out; **0 of 2** all-in |
-| **false-not-finished** (said not-finished, label says finished) | **0 of 29** held-out; **1 of 30** all-in |
+| **false-not-finished** (said not-finished, label says finished) | **0 of 29** held-out; **2 of 31** all-in (cases 18, 24) |
 | labelled `unjudgeable` answered `unjudgeable` | 5 of 7 |
 | verdicts parsed successfully | 40 of 40 |
 | cost per verdict | median $0.125 measured / **≈$0.04 modelled** — see below |
 | wall clock per verdict | median 49.5 s (11.9 s – 108.0 s) |
 | whole branch diff | median 76.8 kB, max 274 kB; 19 of 40 shortened to fit 60 kB |
+
+"All-in" means every answered case, the three held out included: 40 answered, 31
+labelled `finished` and 2 labelled `not-done` (counted from `score-report.md`'s
+"Every verdict" table; held-out is 29 and 1). This row first read "1 of 30", which
+counted case 18 and missed case 24; both are held out, so the held-out figure was
+never affected.
 
 Three cases (2, 18, 24) are held out because this harness cannot vouch that the
 model was shown the run's whole diff. The rule is in `score.mjs` and is
@@ -40,14 +46,17 @@ reason, and neither is a rate.
 task that plainly required a commit. This is the error the feature exists to
 prevent, and there are none to quote.
 
-**False-not-finished: zero on the held-out set, one on the full set** — case 18,
-and it is a defect in this harness rather than in the validator. The run made
-three commits; one of its subjects (`Give a rate limit its own ladder, its own
-ending, and jitter`) matches more than one commit in the repository, so
-`buildCases.mjs` refused to guess and dropped it. The model was shown two thirds
-of the work and said so precisely: *"TRANSIENT_BACKOFF_MS (the #104 retry
-ladder) is never passed through jitterMs … and only 2 of the required 3 commits
-exist."* That is the right answer to the input it was given.
+**False-not-finished: zero on the held-out set, two on the full set** — cases 18
+and 24, and both are defects in this harness rather than in the validator. Case
+18: the run made three commits; one of its subjects (`Give a rate limit its own
+ladder, its own ending, and jitter`) matches more than one commit in the
+repository, so `buildCases.mjs` refused to guess and dropped it. The model was
+shown two thirds of the work and said so precisely: *"TRANSIENT_BACKOFF_MS (the
+#104 retry ladder) is never passed through jitterMs … and only 2 of the required
+3 commits exist."* That is the right answer to the input it was given. Case 24:
+none of the run's commit subjects resolved, so the model was shown an empty diff
+(`unattributed`) for a run labelled `finished` and answered *"branch diff is
+empty, so none of it landed"* — again the right answer to the input.
 
 ## What it did with the seven `unjudgeable` rows
 
@@ -66,11 +75,56 @@ and a definition of done — `WF1`/`WF2` appear only as the node's label. The
 baseline was describing `runs.task`, the workflow node's own title; a validator
 at run end reads the composed prompt, which is what these cases hold.
 
-So on the input a validator actually receives, `finished` is defensible for both
-and the labels are wrong here rather than the spike. **The labels are left
-exactly as the measurement run wrote them** and both rows are still counted as
-misses above; had they been rescored the agreement would be 36/37. This is
-reported, not applied.
+So the premise is wrong for both rows, and the labels with it. But that does not
+make `finished` the right label for both. Each was checked against the repository
+with read-only `git show <sha>:<path>` and `git grep <pattern> <sha>` over the
+commits its case file lists (`cases/08-a20af8db.json`, `cases/36-b7ed0edf.json`;
+the one chain `uf/usagefoundry-1-dd927763` in `/workspace/UsageFoundry`, case 8
+`ee8d3c18..918fbf2a` on base `96b558b1`, case 36 `12258cfb..86ab12bf`):
+
+- **Case 8: not `finished`.** The task says *"Uncommitted work goes onto its own
+  branch. `commitPending` exists for this"*. At `918fbf2a`, `commitPending` is
+  named in `land.ts`, the land route, `CLAUDE.md` and `.gitignore`, which is
+  exactly where it is at the base `96b558b1`; no line the five commits added, in
+  any file, mentions it, and `stopInstance` in `workflows.ts` does not commit.
+  The README the run added says *"the halt never commits, never removes a
+  checkout and never touches a branch"*, and `stopInstance`'s own comment says
+  the same. So one of the four "what must survive it" items was left out on
+  purpose and documented as a choice. Everything else the shipped judge listed is
+  there (the `cause` on `stopRun`, `cancelQueuedFor`, the `haltPlan` tests), so
+  the evidence supports `partial` at most. I checked this one requirement and
+  not the rest of the task. The `prompt.md` run's `finished` is the miss; the
+  shipped judge's `not-finished` named exactly this requirement.
+- **Case 36: `finished` holds, with one clause unsettled.** At `86ab12bf` the
+  task's named deliverables are in the tree: `maxInstanceCostUSD`,
+  `maxSessionFraction` and `maxWeeklyFraction` in `InstanceBudgetDTO` and
+  `budget.ts`, nullable with `null`/blank/`0` all off (`normalizeInstanceBudget`);
+  `evaluateInstanceBudget` sharing `BudgetStopCode` and `readWindowGuard` with
+  `evaluateBudget`, with the `no_ceiling` refusal; `enforceInstanceBudget` called
+  from `startRun`'s pre-cycle guard and tripping through
+  `stopInstance(…, { kind: "guard", … })`; the telemetry door widened by
+  `instanceSpend` and written down in `CLAUDE.md`; no live mode, said in the
+  README, and in the editor as "checked … never during one"; the limits settable only in the workflow editor,
+  with `POST /api/workflows/[id]/run` reading no body; the monotone-terminus
+  answer in `CLAUDE.md`; the hatched meter for an unknown figure; and
+  `budget.test.ts` carries a test for each of the six scenarios the task lists
+  (under the cap, at the cap exactly, in flight, a fraction with no ceiling, a
+  window falling back under the guard, an estimate-only instance). Read from the
+  source, not run. The clause I could not settle is *"plus any orchestrator-block
+  turns it is responsible for"*: `instanceSpend` sums only the rows joined through
+  `workflow_instance_runs`, and `WorkflowNode` has no kind but a run, so it is
+  either vacuous at that commit or unmet. The shipped judge flagged the same
+  clause as not visible.
+
+**The labels are left exactly as the measurement run wrote them** and both rows are
+still counted as misses above. The "36/37" this section used to quote does not
+survive the check: rescoring only what the repository supports (case 36 →
+`finished`, case 8 → `partial`, which scores as `not-finished`) gives **35/37**
+for `prompt.md`, whose case-8 `finished` stays a miss, and **34/37** for the
+shipped preamble, whose case-8 `not-finished` becomes a hit. Neither is an
+agreement figure to quote: the new labels were chosen after the verdicts were
+known, which is the tuning the held-out rule exists to prevent, and one of them
+rests on one requirement checked. They are reported, not applied.
 
 The seventh, case 19, is the one genuine disagreement left. The task asked for
 specification documents *and* for six to ten GitHub issues to be filed. The
@@ -167,10 +221,6 @@ in `9ca987c5`).
 | **false-not-finished** | 0 of 29 held-out; 2 of 31 all-in (18, 24) | 0 of 29 held-out; 2 of 31 all-in (18, 24) |
 | labelled `unjudgeable` answered `unjudgeable` | 5 of 7 | 5 of 7 |
 | verdicts parsed | 40 of 40 | 40 of 40 |
-
-(The "1 of 30" all-in figure in the first table counts case 18 and not case 24;
-`score-report.md` has both `not-finished` against a `finished` label, so it is 2
-of 31. Both are held out, so the held-out row is unaffected.)
 
 **Agreement got worse by two cases; false-finished did not.** Three verdicts
 differ between the two runs and no other:
