@@ -8171,8 +8171,12 @@ export function signalTree(
  *
  * Read off the argv rather than passed in, so that a flag added to
  * `buildArgs` reaches this without a second call site having to remember: what
- * the sandbox neutralises is every tree the session can see, and today that is
- * the vault a run gets through `vaultSkill`.
+ * the sandbox neutralises is every tree the session can see. A Claude argv
+ * carries none today. The vault used to be one, and since it moved into the
+ * overlay's `permissions.additionalDirectories` it gets no mount points from
+ * here: measured on 2.1.319, bwrap is handed nothing inside the vault's
+ * `.claude/` under either spelling, only `/dev/null` over a writer's
+ * `<vault>/.mcp.json`, which the writer's own write set lets bwrap create.
  */
 function addDirsIn(args: readonly string[]): string[] {
   const dirs: string[] = [];
