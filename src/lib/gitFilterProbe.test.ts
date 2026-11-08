@@ -339,6 +339,91 @@ describe("a driver name the -c form cannot spell is still blanked", () => {
 });
 
 /**
+ * git reports `[filter ""]` as the key `filter..clean`, and the probe's
+ * patterns wanted at least one character between the dots, so a driver with
+ * an empty name was never blanked and an attributes line `* filter=` (or
+ * `* merge=`) ran its program on this app's `add`, `merge-tree` and `merge`
+ * (board task 582bceef). `[hook ""]` has the same key shape and git 2.56.0
+ * runs it (measured); a git that reads no `hook.*` key skips that case, as
+ * `git.test.ts`'s hook cases do.
+ */
+describe("a driver or hook with an empty name is still blanked", () => {
+  /** A repository whose `[hook ""]` leaves `marker` on every commit. */
+  function emptyHookRepo(): { repo: string; marker: string } {
+    const name = `repo${count++}`;
+    const repo = path.join(root, name);
+    committedRepo(repo, "f.txt");
+    const marker = path.join(root, `${name}.ran`);
+    plain(repo, ["config", "hook..command", `echo ran >> '${marker}'`]);
+    plain(repo, ["config", "hook..event", "pre-commit"]);
+    return { repo, marker };
+  }
+
+  let configHooksRun = false;
+  before(() => {
+    setMode("pass");
+    const { repo, marker } = emptyHookRepo();
+    plain(repo, ["commit", "-q", "--allow-empty", "-m", "probe"]);
+    configHooksRun = fs.existsSync(marker);
+  });
+
+  it("git(): a clean filter with an empty name runs nothing on add", async () => {
+    const { repo, marker } = plantedRepo("");
+    const res = await git(repo, ["add", "-A"]);
+
+    ranNothing(marker);
+    assert.equal(res.ok, true, res.stderr);
+  });
+
+  it("gitSync(): a clean filter with an empty name runs nothing on add", () => {
+    const { repo, marker } = plantedRepo("");
+    const res = gitSync(repo, ["add", "-A"]);
+
+    ranNothing(marker);
+    assert.equal(res.ok, true, res.stderr);
+  });
+
+  it("git(): a merge driver with an empty name runs in neither merge-tree nor merge", async () => {
+    const { repo, marker } = plantedMergeRepo("");
+    const preview = await git(repo, ["merge-tree", "--write-tree", "-z", "main", "side"]);
+    const merged = await git(repo, ["merge", "--no-edit", "side"]);
+
+    ranNothing(marker);
+    assert.equal(preview.ok, false, "a merge the driver was kept out of cannot have succeeded");
+    assert.equal(merged.ok, false);
+  });
+
+  it("gitSync(): a merge driver with an empty name runs nothing in merge-tree", () => {
+    const { repo, marker } = plantedMergeRepo("");
+    const res = gitSync(repo, ["merge-tree", "--write-tree", "-z", "main", "side"]);
+
+    ranNothing(marker);
+    assert.equal(res.ok, false);
+  });
+
+  it("git() and gitSync(): a pre-commit hook with an empty name runs on neither commit", async (t) => {
+    if (!configHooksRun) return t.skip("this git reads no hook defined in config, so there is nothing to switch off");
+    const { repo, marker } = emptyHookRepo();
+
+    const viaGit = await git(repo, ["commit", "--allow-empty", "-m", "t"]);
+    assert.equal(viaGit.ok, true, viaGit.stderr);
+    const viaSync = gitSync(repo, ["commit", "--allow-empty", "-m", "t2"]);
+    assert.equal(viaSync.ok, true, viaSync.stderr);
+    ranNothing(marker);
+  });
+
+  it("control: the filter and merge plants run under plain git", () => {
+    const filter = plantedRepo("");
+    plain(filter.repo, ["add", "-A"]);
+    assert.equal(fs.existsSync(filter.marker), true, "the planted empty-name filter did not fire");
+
+    const merge = plantedMergeRepo("");
+    plain(merge.repo, ["merge-tree", "--write-tree", "-z", "main", "side"]);
+    assert.equal(fs.existsSync(merge.marker), true, "the planted empty-name merge driver did not fire");
+  });
+});
+
+/**
  * A `merge.<x>.driver` paired with `* merge=x` is a program git runs on every
  * three-way content merge of a file, and Land runs two: the `merge-tree` that
  * previews a land, which was not even probed, and the real `merge` (board task

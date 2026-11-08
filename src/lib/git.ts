@@ -308,17 +308,22 @@ function configRecords(output: string): ConfigRecord[] {
  * defines nothing costs nothing and the set of variables git reads there is
  * still growing (`enabled` in 2.54; more after). The greedy capture keeps a
  * dotted name whole, as the driver patterns do.
+ *
+ * Each capture may be empty, because `[filter ""]` is a driver git runs for a
+ * `* filter=` line and reports as `filter..clean`: a capture that wanted one
+ * character never blanked it, and the empty-named filter, merge driver and
+ * hook all ran (board task 582bceef; the hook on 2.56.0).
  */
 function driverNames(records: ConfigRecord[]): { filters: string[]; merges: string[]; hooks: string[] } {
   const filters: string[] = [];
   const merges: string[] = [];
   const hooks: string[] = [];
   for (const { key } of records) {
-    const filter = /^filter\.(.+)\.(?:clean|smudge|process|required)$/i.exec(key);
+    const filter = /^filter\.(.*)\.(?:clean|smudge|process|required)$/i.exec(key);
     if (filter) filters.push(filter[1]);
-    const merge = /^merge\.(.+)\.(?:driver|name|recursive)$/i.exec(key);
+    const merge = /^merge\.(.*)\.(?:driver|name|recursive)$/i.exec(key);
     if (merge) merges.push(merge[1]);
-    const hook = /^hook\.(.+)\.[^.]+$/i.exec(key);
+    const hook = /^hook\.(.*)\.[^.]+$/i.exec(key);
     if (hook) hooks.push(hook[1]);
   }
   return { filters, merges, hooks };

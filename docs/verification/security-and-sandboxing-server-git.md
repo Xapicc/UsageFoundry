@@ -234,6 +234,22 @@
   2.54.0, and after it they passed there and on 2.56.0. Caveat: `fetch`'s gc
   was not driven.
 
+- **A filter, merge driver or configured hook with an empty name runs, and a
+  `--config-env` blank of it stops it, 2026-11-08.** Board task `582bceef`,
+  `main` at `60db46c4`. The container's git 2.39.5 and `v2.56.0` built with
+  `NO_RUST=1` against a scratch zlib under `$TMPDIR`, each under `env -i`. git
+  lists `[filter ""]`, `[merge ""]` and `[hook ""]` as `filter..clean`,
+  `merge..driver` and `hook..command`. On both, `filter..clean` with
+  `* filter=` ran on `add -A` and did not under
+  `--config-env=filter..clean=B`, `B` empty; `merge..driver` with `* merge=`
+  ran on `merge-tree --write-tree`, and blanked it ran nothing and exited 128
+  (2.39.5) or 1 (2.56.0). On 2.56.0 a `[hook ""]` `pre-commit` ran on
+  `commit` and did not under `--config-env=hook..enabled=F` or
+  `-c hook..enabled=false`. Through this app's compiled `git()` and
+  `gitSync()`, `gitFilterProbe.test.ts`'s empty-name cases ran the plant at
+  `60db46c4`, four on 2.39.5 and five on 2.56.0, and none with the change.
+  Caveat: 2.54.0 was not built, and the hook case skips on 2.39.5.
+
 ## Not yet verified by hand
 
 - **Whether a work cycle can race this app's git on `.git/config` in
