@@ -234,6 +234,56 @@ describe("normalizeTemplateInput — budget", () => {
     }
   });
 
+  // `normalizePolicy` reads each of these as no limit — and `true` as 1 — so a
+  // template typed "5O" saved with no spending limit and answered ok. Every
+  // number the policy reads is covered, not the one the report named, because
+  // they are folded by the same `num`.
+  it("refuses a limit that is not a number rather than saving none", () => {
+    for (const [key, sent] of [
+      ["maxRunCostUSD", "5O"],
+      ["maxRunCostUSD", "$5"],
+      ["maxRunCostUSD", -5],
+      ["maxRunCostUSD", true],
+      ["maxRunTokens", "lots"],
+      ["maxRunCostFactor", [2]],
+      ["maxDurationMinutes", "1h"],
+      ["maxIterations", "5O"],
+      ["maxIterations", -1],
+      ["maxSessionFraction", "half"],
+      ["maxWeeklyFraction", true],
+      ["maxWeeklyFraction", -0.5],
+    ] as const) {
+      const message = error({ ...OK, budget: { ...OK.budget, [key]: sent } });
+      assert.ok(
+        message.startsWith(`budget.${key} must be a `) &&
+          message.endsWith(`; got ${JSON.stringify(sent)}.`),
+        `${key}: ${JSON.stringify(sent)} was answered with: ${message}`,
+      );
+    }
+  });
+
+  it("still reads 0 as a limit that is off, and a number typed as text as that number", () => {
+    const v = value({
+      ...OK,
+      budget: {
+        maxIterations: "5",
+        maxRunCostUSD: 0,
+        maxRunTokens: 0,
+        maxRunCostFactor: 0,
+        maxDurationMinutes: "90",
+        maxSessionFraction: 0,
+        maxWeeklyFraction: 0,
+      },
+    });
+    assert.equal(v.budget.maxRunCostUSD, null);
+    assert.equal(v.budget.maxRunTokens, null);
+    assert.equal(v.budget.maxRunCostFactor, null);
+    assert.equal(v.budget.maxSessionFraction, null);
+    assert.equal(v.budget.maxWeeklyFraction, null);
+    assert.equal(v.budget.maxIterations, 5);
+    assert.equal(v.budget.maxDurationMinutes, 90);
+  });
+
   it("refuses an unrecognised enforcement mode rather than downgrading it", () => {
     assert.match(
       error({ ...OK, budget: { ...OK.budget, enforcement: "live-pause" } }),

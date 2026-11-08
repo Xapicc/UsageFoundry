@@ -16,7 +16,7 @@ import {
   settingsDefaults,
   type Settings,
 } from "../../../lib/settings";
-import { normalizePolicy } from "../../../lib/budget";
+import { budgetNumberRefusal, normalizePolicy } from "../../../lib/budget";
 import {
   jsonMaybeGzipped,
   optionalObjectField,
@@ -210,18 +210,12 @@ async function applySettingsPut(body: Record<string, unknown>): Promise<Response
     v: unknown,
     zeroMeansOff: boolean,
   ): number | null => {
+    // The sentence is `budgetNumberRefusal`'s, shared with the doors that
+    // take a run's, a template's and a workflow's limits.
+    const refusal = budgetNumberRefusal(field, v);
+    if (refusal) throw new FieldRefusal(refusal);
     if (v === null || v === undefined || v === "") return null;
-    if (typeof v !== "number" && typeof v !== "string") {
-      throw new FieldRefusal(
-        `${field} must be a number or blank; got ${JSON.stringify(v)}.`,
-      );
-    }
     const n = Number(v);
-    if (!Number.isFinite(n) || n < 0) {
-      throw new FieldRefusal(
-        `${field} must be a non-negative number or blank; got ${JSON.stringify(v)}.`,
-      );
-    }
     return zeroMeansOff && n === 0 ? null : n;
   };
 

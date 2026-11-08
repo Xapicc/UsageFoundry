@@ -869,6 +869,55 @@ describe("normalizeWorkflowInput — name and blocks", () => {
     });
   });
 
+  // `normalizeInstanceBudget` reads each of these as off, and `true` as $1, so
+  // a typo saved a workflow whose pressed Run had no instance limit at all.
+  it("refuses an instance limit that is not a number rather than saving none", () => {
+    for (const [key, sent] of [
+      ["maxInstanceCostUSD", "5O"],
+      ["maxInstanceCostUSD", "abc"],
+      ["maxInstanceCostUSD", -5],
+      ["maxInstanceCostUSD", {}],
+      ["maxInstanceCostUSD", true],
+      ["maxSessionFraction", "half"],
+      ["maxWeeklyFraction", -0.5],
+    ] as const) {
+      const message = error({
+        ...graph([node("a")]),
+        instanceBudget: { [key]: sent },
+      });
+      assert.ok(
+        message.startsWith(`instanceBudget.${key} must be a `) &&
+          message.endsWith(`; got ${JSON.stringify(sent)}.`),
+        `${key}: ${JSON.stringify(sent)} was answered with: ${message}`,
+      );
+    }
+  });
+
+  it("refuses an instance budget that is not an object", () => {
+    for (const instanceBudget of ["5O", 5, true, [12]]) {
+      assert.match(
+        error({ ...graph([node("a")]), instanceBudget }),
+        /^"instanceBudget" has to be an object when it is given; got /,
+      );
+    }
+  });
+
+  it("still reads null, blank and 0 as an instance limit that is off", () => {
+    for (const off of [null, "", 0]) {
+      assert.deepEqual(
+        value({
+          ...graph([node("a")]),
+          instanceBudget: {
+            maxInstanceCostUSD: off,
+            maxSessionFraction: off,
+            maxWeeklyFraction: off,
+          },
+        }).instanceBudget,
+        { maxInstanceCostUSD: null, maxSessionFraction: null, maxWeeklyFraction: null },
+      );
+    }
+  });
+
   it("does not refuse a fraction guard at save for want of a ceiling", () => {
     // The one place this file's "refuse at save what Run refuses" rule does not
     // apply. A ceiling is a Settings value that can be typed at any moment, so
