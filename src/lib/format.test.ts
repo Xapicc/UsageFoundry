@@ -456,6 +456,13 @@ test("a token figure that rounds up to the next unit is written in it", () => {
   assert.equal(fmtTokens(-999_950), "−1.00M");
   assert.equal(fmtTokens(-999_995_000), "−1.00B");
   assert.equal(fmtTokens(-999_949), "−999.9k");
+
+  // A deficit under half a token rounds to nothing, and nothing has no sign:
+  // the recursion wrote the minus before it knew the magnitude was "0".
+  assert.equal(fmtTokens(-0.4), "0");
+  assert.equal(fmtTokens(-0.001), "0");
+  assert.equal(fmtTokens(-0.5), "−1");
+  assert.equal(fmtTokens(-1), "−1");
 });
 
 /**
@@ -474,6 +481,16 @@ test("a byte figure that rounds up to 1024 of a unit is written in the next", ()
   assert.equal(fmtBytes(1024 ** 3 * 1023.6), "1.0 TB");
   assert.equal(fmtBytes(1024 ** 4 * 2000), "2000 TB");
   assert.equal(fmtBytes(-1), "—");
+
+  // The decimal is kept or dropped on the rounded figure, as `du -h` does:
+  // 10,199 bytes is 9.96 KB, which rounds to 10 and is written `10 KB` beside
+  // the `10 KB` of 10,240, not `10.0 KB`.
+  assert.equal(fmtBytes(10_199), "10 KB");
+  assert.equal(fmtBytes(9.96 * 1024), "10 KB");
+  assert.equal(fmtBytes(9.94 * 1024), "9.9 KB");
+  assert.equal(fmtBytes(10 * 1024), "10 KB");
+  assert.equal(fmtBytes(9.96 * 1024 ** 2), "10 MB");
+  assert.equal(fmtBytes(9.94 * 1024 ** 2), "9.9 MB");
 });
 
 /**
