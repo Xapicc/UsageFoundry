@@ -102,6 +102,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - Who is never considered, so is in neither arm.
 - The arm is `inHoldout(id)` of the run's own id, or of its chain, and `inHoldout` must never change.
 - Every session-less cycle the pointer considered records `priorReads: { arm, paths, files, basis, treatment }` on its `iteration` event, in both arms.
+- The holdout is read back from the export tables, as three questions that share no figure (2026-11-08).
 - There is no setting.
 
 ## [The vault pointer and its holdout](run-lifecycle/vault-pointer.md)

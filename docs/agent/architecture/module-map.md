@@ -114,6 +114,10 @@ holdoutExport.ts  both pointer holdouts' evidence, copied out of run_events into
                 tables no sweep reaches, ahead of every event sweep; pure
                 readings of a prompt's blocks and of a call's path, then the
                 pass that keeps a row at least as good as it was
+holdoutReadback.ts  the prior-read holdout read back from those tables: who is
+                counted, what a run read, which (cycle, path) pairs are scored
+                and the arms' difference; compliance, displacement and outcome
+                share no figure. Reporting, never a guard
 fleet.ts        the three controls that act on the whole install — stop
                 everything, hold new work, pick several runs back up. It owns no
                 transition of its own: it composes stopInstance, stopRun,
