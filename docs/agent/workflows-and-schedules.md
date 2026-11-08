@@ -11,11 +11,14 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 
 - A workflow is the third thing here that is form input, and it is not the fourth route to `--permission-mode`.
 - A workflow is instantiated in topological order, in one synchronous pass, all or nothing.
+- One saved graph may run against more than one folder, and every folder it may work in is one a person saved on it.
+- Two presses of one workflow run at the same time only when they share no folder — an authorisation rule, since it decides where unattended agents work side by side.
+
+## [What planInstanceStep decides for an edge](workflows-and-schedules/instance-step-verdicts.md)
+
 - A block that emits nothing blocks what is behind it, and that is a decision rather than a fallout.
 - An `on-failure` link is drawn only out of a run block and only outside a loop, and a node on the branch it did not take is `not-needed` in the ledger as it is in `runs`.
 - A run a restart closed out blocks every edge out of it until it is picked up, and what it holds back is revived rather than failed.
-- One saved graph may run against more than one folder, and every folder it may work in is one a person saved on it.
-- Two presses of one workflow run at the same time only when they share no folder — an authorisation rule, since it decides where unattended agents work side by side.
 
 ## [Gate blocks](workflows-and-schedules/gate-blocks.md)
 
