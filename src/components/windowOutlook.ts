@@ -150,6 +150,19 @@ export function fmtSpan(ms: number): string {
 }
 
 /**
+ * An instant as a wall-clock time, with the date only when it is not today:
+ * "11:18 PM", "Nov 9, 12:28 AM". A reset or a run-out is nearly always within
+ * the day, and a date on every one of them is the width that wrapped the
+ * projection line onto a second row of a card meant to fit one screen.
+ */
+export function fmtInstant(ts: number, now: number): string {
+  const day = (t: number) => new Date(t).toDateString();
+  return day(ts) === day(now)
+    ? new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : fmtDateTime(ts);
+}
+
+/**
  * What is left of a window, from the fraction used: "38% left", or null when
  * there is no reading — an unknown is never "100% left" or "0% left".
  *
@@ -176,7 +189,11 @@ export function fmtLeft(usedFraction: number | null): string | null {
  * `rate` is the burn rate as printed ("$4.10/h"), handed only to the line that
  * carries it so it is said once in the card.
  */
-export function outlookLine(o: WindowOutlook, rate: string | null): string | null {
+export function outlookLine(
+  o: WindowOutlook,
+  rate: string | null,
+  now: number,
+): string | null {
   const at = rate ? ` at ${rate}` : "";
   switch (o.kind) {
     case "nothing-to-project":
@@ -189,7 +206,7 @@ export function outlookLine(o: WindowOutlook, rate: string | null): string | nul
       return null;
     case "runs-out": {
       const subject = o.certain ? "Runs out" : "Session or week runs out";
-      const when = o.inMs < 60_000 ? "now" : `~${fmtDateTime(o.at)} (in ${fmtSpan(o.inMs)})`;
+      const when = o.inMs < 60_000 ? "now" : `~${fmtInstant(o.at, now)} (in ${fmtSpan(o.inMs)})`;
       // Under a minute is "about when it resets" and never "<1m before": the
       // projection is an hour's rate extrapolated, and a margin that precise
       // would be a claim about which side of the reset it lands on.

@@ -1,8 +1,7 @@
 import type { ReactNode } from "react";
 // Relative, not "@/…": `CodexWindows` renders this and is under test, and the
 // test build is plain CommonJS that nothing rewrites the alias in.
-import { fmtDateTime } from "../lib/format";
-import { fmtLeft, fmtSpan } from "./windowOutlook";
+import { fmtInstant, fmtLeft, fmtSpan } from "./windowOutlook";
 
 export type WindowHeadSize = "large" | "default" | "compact";
 
@@ -13,6 +12,17 @@ const LEFT: Record<WindowHeadSize, string> = {
   compact: "text-sm",
 };
 
+/**
+ * The name sits 4px over its figure rather than `CardTitle`'s 12px: they are
+ * one statement ("5-hour session: 38% left"), and the gap, paid twice, was a
+ * share of what kept this card from fitting a 1280×800 screen.
+ */
+const TITLE: Record<WindowHeadSize, string> = {
+  large: "mb-1 flex flex-wrap items-center gap-2 text-sm font-semibold text-ink",
+  default: "mb-1 flex flex-wrap items-center gap-2 text-sm font-semibold text-ink",
+  compact: "text-xs font-medium text-ink",
+};
+
 const RESET: Record<WindowHeadSize, string> = {
   large: "text-sm font-medium text-ink",
   default: "text-sm font-medium text-ink",
@@ -21,12 +31,13 @@ const RESET: Record<WindowHeadSize, string> = {
 
 /**
  * When a window resets, absolute first and relative beside it: "Resets Nov 8,
- * 3:30 PM · in 1h 10m". `estimate` prefixes the instant with "~", for a reset
- * derived from turns rather than reported or pinned.
+ * 3:30 PM · in 1h 10m", the date only when it is not today. `estimate`
+ * prefixes the instant with "~", for a reset derived from turns rather than
+ * reported or pinned.
  */
 export function resetText(resetsAt: number, now: number, estimate = false): string {
   if (resetsAt <= now) return `Reset ${fmtSpan(now - resetsAt)} ago`;
-  return `Resets ${estimate ? "~" : ""}${fmtDateTime(resetsAt)} · in ${fmtSpan(resetsAt - now)}`;
+  return `Resets ${estimate ? "~" : ""}${fmtInstant(resetsAt, now)} · in ${fmtSpan(resetsAt - now)}`;
 }
 
 /**
@@ -55,18 +66,29 @@ export function WindowHead({
   size?: WindowHeadSize;
 }) {
   const left = fmtLeft(used);
+  const figure =
+    left !== null ? (
+      <div className={`font-semibold tabular-nums tracking-tight text-ink ${LEFT[size]}`}>
+        {left}
+      </div>
+    ) : (
+      instead
+    );
   return (
     <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-1">
-      <div className="min-w-0">
-        {title}
-        {left !== null ? (
-          <div className={`font-semibold tabular-nums tracking-tight text-ink ${LEFT[size]}`}>
-            {left}
-          </div>
-        ) : (
-          instead
-        )}
-      </div>
+      {size === "compact" ? (
+        // A size down, the name and its figure share a row: in half the card's
+        // width the reset already takes a row of its own under them.
+        <div className="flex min-w-0 items-baseline gap-2">
+          <h3 className={TITLE.compact}>{title}</h3>
+          {figure}
+        </div>
+      ) : (
+        <div className="min-w-0">
+          <h2 className={TITLE[size]}>{title}</h2>
+          {figure}
+        </div>
+      )}
       {reset && <div className={`tabular-nums ${RESET[size]}`}>{reset}</div>}
     </div>
   );

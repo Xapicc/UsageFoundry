@@ -1,6 +1,8 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
+import { fmtDateTime } from "../lib/format";
 import {
+  fmtInstant,
   fmtLeft,
   fmtSpan,
   isProjectable,
@@ -38,15 +40,15 @@ test("no projection: each window with a basis lasts, a trailing week is not proj
   const o = windowOutlooks(null, NOW, session(), weekly({ resetsAt: null }));
   assert.deepEqual(o.session, { kind: "lasts", trailing: false });
   assert.deepEqual(o.weekly, { kind: "lasts", trailing: true });
-  assert.equal(outlookLine(o.session, "$4.10/h"), "Lasts to reset at $4.10/h");
-  assert.equal(outlookLine(o.weekly, null), "Not projected to run out");
+  assert.equal(outlookLine(o.session, "$4.10/h", NOW), "Lasts to reset at $4.10/h");
+  assert.equal(outlookLine(o.weekly, null, NOW), "Not projected to run out");
 });
 
 test("a window with nothing to project against says so instead of 'lasts'", () => {
   const o = windowOutlooks(null, NOW, session({ projectable: false }), weekly({ projectable: false }));
   assert.equal(o.session.kind, "nothing-to-project");
   assert.equal(o.weekly.kind, "nothing-to-project");
-  assert.equal(outlookLine(o.session, "$4.10/h"), "Nothing to project against");
+  assert.equal(outlookLine(o.session, "$4.10/h", NOW), "Nothing to project against");
 });
 
 test("an instant past the session's reset can only be the week's", () => {
@@ -60,7 +62,7 @@ test("an instant past the session's reset can only be the week's", () => {
     beforeResetMs: 3 * DAY - 5 * HOUR,
     certain: true,
   });
-  assert.match(outlookLine(o.weekly, null) ?? "", /^Runs out ~.* \(in 5h\) — 2d 19h before reset$/);
+  assert.match(outlookLine(o.weekly, null, NOW) ?? "", /^Runs out ~.* \(in 5h\) — 2d 19h before reset$/);
 });
 
 test("before the session's reset with both windows projectable, it is named as either", () => {
@@ -69,9 +71,9 @@ test("before the session's reset with both windows projectable, it is named as e
   assert.equal(o.session.kind, "runs-out");
   assert.equal(o.session.kind === "runs-out" && o.session.certain, false);
   assert.deepEqual(o.weekly, { kind: "named-in-session-line" });
-  assert.equal(outlookLine(o.weekly, null), null);
+  assert.equal(outlookLine(o.weekly, null, NOW), null);
   assert.match(
-    outlookLine(o.session, "$4.10/h") ?? "",
+    outlookLine(o.session, "$4.10/h", NOW) ?? "",
     /^Session or week runs out ~.* \(in 50m\) at \$4\.10\/h — 1h 10m before this reset$/,
   );
 });
@@ -90,10 +92,10 @@ test("the only projectable window owns the instant, whichever one it is", () => 
 test("a projection equal to the reset runs out, at about the reset", () => {
   const o = windowOutlooks(NOW + 2 * HOUR, NOW, session(), weekly({ projectable: false }));
   assert.equal(o.session.kind === "runs-out" && o.session.beforeResetMs, 0);
-  assert.match(outlookLine(o.session, null) ?? "", /\(in 2h\) — about when it resets$/);
+  assert.match(outlookLine(o.session, null, NOW) ?? "", /\(in 2h\) — about when it resets$/);
   // One minute short is a margin, and is printed as one.
   const early = windowOutlooks(NOW + 2 * HOUR - MIN, NOW, session(), weekly({ projectable: false }));
-  assert.match(outlookLine(early.session, null) ?? "", / — 1m before reset$/);
+  assert.match(outlookLine(early.session, null, NOW) ?? "", / — 1m before reset$/);
 });
 
 test("a projection already past is 'now', and the margin runs from now", () => {
@@ -105,14 +107,14 @@ test("a projection already past is 'now', and the margin runs from now", () => {
     beforeResetMs: 2 * HOUR,
     certain: true,
   });
-  assert.equal(outlookLine(o.session, "$9.00/h"), "Runs out now at $9.00/h — 2h before reset");
+  assert.equal(outlookLine(o.session, "$9.00/h", NOW), "Runs out now at $9.00/h — 2h before reset");
 });
 
 test("a window that has already reset says so, and cannot own the instant", () => {
   const reset = session({ resetsAt: NOW - MIN });
   const o = windowOutlooks(NOW + 50 * MIN, NOW, reset, weekly());
   assert.equal(o.session.kind, "reset");
-  assert.equal(outlookLine(o.session, null), "Reset since this reading");
+  assert.equal(outlookLine(o.session, null, NOW), "Reset since this reading");
   assert.equal(o.weekly.kind === "runs-out" && o.weekly.certain, true);
   // A reset at exactly now has happened.
   assert.equal(windowOutlooks(null, NOW, session({ resetsAt: NOW }), weekly()).session.kind, "reset");
@@ -121,7 +123,7 @@ test("a window that has already reset says so, and cannot own the instant", () =
 test("a trailing week owns an instant past the session's reset, with no margin", () => {
   const o = windowOutlooks(NOW + 30 * HOUR, NOW, session(), weekly({ resetsAt: null }));
   assert.equal(o.weekly.kind === "runs-out" && o.weekly.beforeResetMs, null);
-  assert.match(outlookLine(o.weekly, null) ?? "", /^Runs out ~.* \(in 1d 6h\)$/);
+  assert.match(outlookLine(o.weekly, null, NOW) ?? "", /^Runs out ~.* \(in 1d 6h\)$/);
 });
 
 test("projectable mirrors what buildSnapshot projects against", () => {
@@ -157,4 +159,16 @@ test("what is left never rounds to the opposite of the reading", () => {
   assert.equal(fmtLeft(0.996), "<1% left");
   assert.equal(fmtLeft(1), "0% left");
   assert.equal(fmtLeft(1.04), "0% left");
+});
+
+test("an instant is a time today and a date with a time from tomorrow", () => {
+  // Local wall-clock dates, so this holds in whatever zone the suite runs in.
+  const now = new Date(2026, 10, 8, 9, 0).getTime();
+  const time = (t: number) =>
+    new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const lastMinuteToday = new Date(2026, 10, 8, 23, 59).getTime();
+  const midnight = new Date(2026, 10, 9, 0, 0).getTime();
+  assert.equal(fmtInstant(lastMinuteToday, now), time(lastMinuteToday));
+  assert.equal(fmtInstant(midnight, now), fmtDateTime(midnight));
+  assert.notEqual(fmtInstant(midnight, now), time(midnight));
 });

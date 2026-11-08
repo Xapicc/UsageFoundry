@@ -74,7 +74,7 @@ function CodexWindow({
     <div>
       <WindowHead
         size="compact"
-        title={<div className="text-xs font-medium text-ink">{label}</div>}
+        title={label}
         used={r.fraction}
         reset={r.reset}
       />

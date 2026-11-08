@@ -82,7 +82,7 @@ function ceilingDetail(
       ? `Ceiling ${fmtTokens(w.limit ?? 0)} raw tokens: your ${fmtTokens(configured)} less ${fmtPct(reserve)} reserve`
       : `Ceiling ${fmtTokens(w.limit ?? 0)} raw tokens`;
   }
-  return "Set a ceiling in Settings to see a percentage";
+  return "Set a ceiling in Settings";
 }
 
 /** Poll cadence: the second one applies while a run is still working. */
@@ -95,8 +95,16 @@ const POLL_WORKING_MS = 60_000;
  * because it is the one outcome on this card an operator acts on; the words
  * carry it as well, so nothing is said in colour alone.
  */
-function OutlookLine({ outlook, rate }: { outlook: WindowOutlook; rate: string | null }) {
-  const line = outlookLine(outlook, rate);
+function OutlookLine({
+  outlook,
+  rate,
+  now,
+}: {
+  outlook: WindowOutlook;
+  rate: string | null;
+  now: number;
+}) {
+  const line = outlookLine(outlook, rate, now);
   if (line === null) return null;
   return (
     <div
@@ -427,10 +435,10 @@ export default function Dashboard() {
           <WindowHead
             size="large"
             title={
-              <CardTitle>
+              <>
                 {s.session.label}
                 {s.session.agg.entryCount > 0 && <Badge tone="accent">active</Badge>}
-              </CardTitle>
+              </>
             }
             used={s.session.fraction}
             instead={<WindowSpend w={s.session} size="large" />}
@@ -453,7 +461,11 @@ export default function Dashboard() {
             )}
           />
           <div className="mt-2 space-y-1 text-xs">
-            <OutlookLine outlook={outlooks.session} rate={rateOnWeekly ? null : rate} />
+            <OutlookLine
+              outlook={outlooks.session}
+              rate={rateOnWeekly ? null : rate}
+              now={s.now}
+            />
             {/* Visible rather than folded, unlike the other two provenances of
                 this clock: a pinned start changes what the meter counts — and
                 what the guard does — so it is a state, not an explanation. */}
@@ -471,7 +483,7 @@ export default function Dashboard() {
 
           <div className="mt-5 border-t border-line pt-4">
             <WindowHead
-              title={<CardTitle>{s.weekly.label}</CardTitle>}
+              title={s.weekly.label}
               used={s.weekly.fraction}
               instead={<WindowSpend w={s.weekly} size="default" />}
               reset={
@@ -496,7 +508,11 @@ export default function Dashboard() {
               )}
             />
             <div className="mt-2 space-y-1 text-xs">
-              <OutlookLine outlook={outlooks.weekly} rate={rateOnWeekly ? rate : null} />
+              <OutlookLine
+                outlook={outlooks.weekly}
+                rate={rateOnWeekly ? rate : null}
+                now={s.now}
+              />
               {/* A wall that binds without ever reaching this meter: the weekly
                   allowance is split per model family on some plans, so Opus can
                   be full while the all-model window reads a quarter. The guard
