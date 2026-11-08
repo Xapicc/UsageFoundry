@@ -579,7 +579,10 @@ export interface UsageResponse {
      * serves, so nothing that reads this can be looking at one. It rides on the
      * usage payload because that is the page an operator is on when the figures
      * are zero, and "the mount is empty" is the answer to the question they are
-     * about to ask. Computed once at boot, not per request.
+     * about to ask. Computed once at boot, not per request — except for the
+     * one entry `loginExpiryProblems` appends while the stored Claude sign-in is
+     * ten days or less from ending, which is not a variable and arrives while
+     * the server is up.
      */
     configProblems: ConfigProblemDTO[];
   };
@@ -698,6 +701,12 @@ export interface ClaudeAuthDTO {
    * subscription below it, is what a work cycle will bill against.
    */
   apiKeySource: string | null;
+  /**
+   * When the stored claude.ai sign-in ends, epoch ms. Null is unknown, not an
+   * error: the CLI dates only the credential a cycle would use, so it is null
+   * under an API key, a helper or an OAuth-token variable.
+   */
+  loginExpiresAt: number | null;
 }
 
 /** `GET /api/claude-auth`. */

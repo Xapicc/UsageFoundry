@@ -16,6 +16,7 @@ import { telemetryWindow } from "@/lib/otlp";
 import { transcriptCutoff } from "@/lib/retention";
 import { installSpendReport } from "@/lib/installBudget";
 import { PROJECTS_DIR } from "@/lib/config";
+import { loginExpiryProblems } from "@/lib/claudeAuth";
 import { configProblems } from "@/lib/configCheck";
 import { jsonMaybeGzipped } from "@/lib/http";
 
@@ -209,7 +210,10 @@ export async function GET(req: Request) {
         // a stat per mount on every poll. On this page because a wrongly
         // pointed mount and a wrongly pointed CLAUDE_HOME both present as the
         // zeros above it, which is also what a quiet week looks like.
-        configProblems: configProblems(),
+        // Beside it, not in it: the boot list is fixed for the process's life,
+        // and a sign-in running out is a fact that arrives while the server
+        // stays up. Same banner, so the operator looks in one place.
+        configProblems: [...configProblems(), ...loginExpiryProblems(Date.now())],
       },
     });
   } catch (err) {

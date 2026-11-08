@@ -43,6 +43,7 @@ import { parseVerifyCommand } from "@/lib/verifyCommand";
 import { toolCount } from "@/lib/mcpStatus";
 import { actionFailureMessage, jsonRequest } from "@/lib/jsonRequest";
 import { startPoll } from "@/lib/poll";
+import { loginExpiry, loginExpiryText } from "@/lib/loginExpiry";
 import {
   describeAmbientAgents,
   fmtBytes,
@@ -1834,6 +1835,7 @@ function ClaudeAccount() {
 
   const auth = state?.auth ?? null;
   const pending = state?.pending ?? null;
+  const expiry = loginExpiry(auth?.loginExpiresAt ?? null, Date.now());
 
   return (
     <EnvRow label="Claude account">
@@ -1863,6 +1865,18 @@ function ClaudeAccount() {
                   .filter(Boolean)
                   .join(" · ") || auth.method || "no identity reported"}
               </span>
+              {/* Nothing when the CLI reports no date, which is every
+                  credential but a stored claude.ai login and is not a fault.
+                  A badge from ten days out because this is the date after
+                  which every run stops authenticating, with nobody looking. */}
+              {expiry &&
+                (expiry.state === "ok" ? (
+                  <span>sign-in {loginExpiryText(expiry)}</span>
+                ) : (
+                  <Badge tone={expiry.state === "ended" ? "danger" : "warn"}>
+                    sign-in {loginExpiryText(expiry)}
+                  </Badge>
+                ))}
             </>
           ) : (
             <>

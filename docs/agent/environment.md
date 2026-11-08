@@ -21,6 +21,7 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 
 - All process-level config is centralised in `src/lib/config.ts` and fixed at boot. (was line 17)
 - The configuration is checked before the server serves, and exactly one check refuses. (was line 24)
+- The one entry in `meta.configProblems` that is not from boot is the Claude sign-in's end, and it is appended per request.
 - `UF_AUTH_TOKEN` blank disables auth entirely, and the app now **refuses to boot** in that state unless `UF_ALLOW_NO_AUTH=1` says the operator meant it — `authBootSignal` in `authGuard.ts` is that… (was line 15)
 - `UF_BIND_ADDRESS` (default `127.0.0.1`) is compose-only — the app never reads it, so it is outside everything `configCheck.ts` can say. (was line 25)
 - `UF_TRUSTED_PROXY_HOPS` (default 0) has to describe what is actually in front, and nothing here can check it.

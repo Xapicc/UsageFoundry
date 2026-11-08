@@ -32,6 +32,8 @@ fs.writeFileSync(
     "#!/bin/sh",
     `echo $$ > "${pidsDir}/$$"`,
     `printf '%s\\037' "$@" >> "${argvLog}"; echo >> "${argvLog}"`,
+    // `$4` is the subcommand: argv leads with the settings flag and its value.
+    'if [ -n "$STUB_STATUS" ] && [ "$4" = "status" ]; then echo "$STUB_STATUS"; exit 0; fi',
     'if [ -n "$STUB_HOLD" ]; then while [ ! -e "$STUB_HOLD" ]; do sleep 0.02; done; fi',
     'echo "Open https://claude.ai/oauth/authorize?state=$$"',
     'if [ -n "$STUB_EXIT_AFTER_LINK" ]; then sleep 0.2; exit 0; fi',
@@ -64,6 +66,7 @@ const {
   beginLogin,
   cancelLogin,
   extractLoginUrl,
+  loginExpiryProblems,
   normalizeCode,
   parseAuthStatus,
   pendingLogin,
@@ -72,6 +75,7 @@ const {
   submitCode,
 } = require("./claudeAuth") as typeof import("./claudeAuth");
 const { PINNED_CYCLE_ENV } = require("./cycleInvocation") as typeof import("./cycleInvocation");
+const { loginExpiry, loginExpiryMessage } = require("./loginExpiry") as typeof import("./loginExpiry");
 
 /**
  * Three parsers reading another program's console output, captured from the
@@ -169,6 +173,7 @@ describe("parseAuthStatus", () => {
       organization: "NMS",
       plan: "team",
       apiKeySource: null,
+      loginExpiresAt: null,
     });
   });
 
@@ -203,6 +208,60 @@ describe("parseAuthStatus", () => {
     assert.equal(res.ok, true);
     assert.equal(res.ok && res.value.apiKeySource, "ANTHROPIC_API_KEY");
     assert.equal(res.ok && res.value.email, null);
+  });
+
+  /**
+   * `loginExpiresAt` is in the object for every credential and is a date only
+   * for a stored claude.ai login (measured on 2.1.319): an API key, a helper and
+   * `CLAUDE_CODE_OAUTH_TOKEN` answer `null` even with a stored login behind them.
+   * A date is what a dashboard warning is made from, so reading it wrong in
+   * either direction is silent: a wrong date warns for nothing or never warns.
+   */
+  it("reads the end of a stored sign-in as epoch ms", () => {
+    const res = parseAuthStatus(
+      JSON.stringify({
+        loggedIn: true,
+        authMethod: "claude.ai",
+        loginExpiresAt: "2026-12-08T20:06:50.145Z",
+        subscriptionType: "max",
+      }),
+    );
+    assert.equal(res.ok, true);
+    assert.equal(res.ok && res.value.loginExpiresAt, Date.UTC(2026, 11, 8, 20, 6, 50, 145));
+  });
+
+  it("treats a missing or null loginExpiresAt as unknown", () => {
+    for (const status of [
+      { loggedIn: true, authMethod: "claude.ai", subscriptionType: "max" },
+      { loggedIn: true, authMethod: "claude.ai", loginExpiresAt: null },
+      { loggedIn: true, authMethod: "api_key", loginExpiresAt: null, apiKeySource: "ANTHROPIC_API_KEY" },
+      { loggedIn: true, authMethod: "api_key_helper", loginExpiresAt: null, apiKeySource: "apiKeyHelper" },
+      { loggedIn: true, authMethod: "oauth_token", loginExpiresAt: null },
+      { loggedIn: false, authMethod: "none", loginExpiresAt: null },
+    ]) {
+      const res = parseAuthStatus(JSON.stringify(status));
+      assert.equal(res.ok, true, JSON.stringify(status));
+      assert.equal(res.ok && res.value.loginExpiresAt, null, JSON.stringify(status));
+    }
+  });
+
+  // The date is an addition to a status the panel needs whole: a CLI that
+  // changes this one field's shape must not read as signed out or unreadable.
+  it("treats a malformed loginExpiresAt as unknown and keeps the rest of the status", () => {
+    for (const bad of ["soon", "", "2026-13-45", 1794168410139, {}, [], true]) {
+      const res = parseAuthStatus(
+        JSON.stringify({
+          loggedIn: true,
+          authMethod: "claude.ai",
+          email: "someone@example.test",
+          loginExpiresAt: bad,
+        }),
+      );
+      assert.equal(res.ok, true, JSON.stringify(bad));
+      assert.equal(res.ok && res.value.loginExpiresAt, null, JSON.stringify(bad));
+      assert.equal(res.ok && res.value.loggedIn, true, JSON.stringify(bad));
+      assert.equal(res.ok && res.value.email, "someone@example.test", JSON.stringify(bad));
+    }
   });
 
   it("parses past a warning line printed before the object", () => {
@@ -557,5 +616,120 @@ describe("the settings flags an auth child starts with", () => {
     const overlay = JSON.parse(argv[argv.indexOf("--settings") + 1]) as Record<string, unknown>;
     assert.deepEqual(Object.keys(overlay).sort(), ["apiKeyHelper", "env"]);
     assert.equal(overlay.apiKeyHelper, "");
+  });
+});
+
+/**
+ * The warning starts ten days out, inclusive, and a date at or before now is
+ * "ended" rather than a negative count. Both edges move silently: an exclusive
+ * boundary warns a day late on the one day that matters, and a past date read
+ * as "ok" is the lapsed login the whole notice exists to catch.
+ */
+describe("loginExpiry", () => {
+  const DAY = 86_400_000;
+  const now = Date.UTC(2026, 10, 8, 12);
+
+  it("is unknown, and so says nothing, without a date", () => {
+    assert.equal(loginExpiry(null, now), null);
+  });
+
+  it("warns from exactly ten days out and not an instant before", () => {
+    assert.equal(loginExpiry(now + 10 * DAY + 1, now)?.state, "ok");
+    assert.deepEqual(loginExpiry(now + 10 * DAY, now), {
+      state: "soon",
+      endsAt: now + 10 * DAY,
+      daysLeft: 10,
+    });
+  });
+
+  it("rounds a part day up and calls a date at or before now ended", () => {
+    assert.equal(loginExpiry(now + 1, now)?.daysLeft, 1);
+    assert.equal(loginExpiry(now, now)?.state, "ended");
+    assert.deepEqual(loginExpiry(now - 3 * DAY, now), {
+      state: "ended",
+      endsAt: now - 3 * DAY,
+      daysLeft: 0,
+    });
+  });
+
+  it("words a notice only for a sign-in that is ending or ended", () => {
+    const far = loginExpiry(now + 30 * DAY, now);
+    assert.ok(far);
+    assert.equal(loginExpiryMessage(far), null);
+    const soon = loginExpiry(now + 5 * DAY, now);
+    assert.ok(soon);
+    assert.match(loginExpiryMessage(soon) ?? "", /ends 2026-11-13 \(in 5 days\)/);
+    const ended = loginExpiry(now - DAY, now);
+    assert.ok(ended);
+    assert.match(loginExpiryMessage(ended) ?? "", /ended 2026-11-07/);
+  });
+});
+
+/**
+ * What the dashboard's poll costs. The poll is every few seconds and a status
+ * read is a spawned process, so the failure here is not a wrong answer but a
+ * `claude` child per poll — nothing on the page would show it.
+ */
+describe("loginExpiryProblems", () => {
+  const DAY = 86_400_000;
+  const TTL = 10 * 60_000;
+  const held = globalThis as typeof globalThis & { __ufClaudeLoginEndsAt?: unknown };
+
+  function statusSpawns(): number {
+    const text = fs.existsSync(argvLog) ? fs.readFileSync(argvLog, "utf8") : "";
+    return text.split("\n").filter((line) => line.includes("\u001fstatus\u001f")).length;
+  }
+
+  it("answers without waiting, then reads the date once and warns from it", async () => {
+    const now = Date.now();
+    fs.rmSync(argvLog, { force: true });
+    delete held.__ufClaudeLoginEndsAt;
+    process.env.STUB_STATUS = JSON.stringify({
+      loggedIn: true,
+      authMethod: "claude.ai",
+      loginExpiresAt: new Date(now + 5 * DAY).toISOString(),
+    });
+    try {
+      // Nothing held yet: no warning, and the read it started is not awaited.
+      assert.deepEqual(loginExpiryProblems(now), []);
+      assert.deepEqual(loginExpiryProblems(now), []);
+      await readAuthStatus();
+      assert.equal(statusSpawns(), 1, "polls before the read finished must share one child");
+
+      const [problem, ...rest] = loginExpiryProblems(now);
+      assert.deepEqual(rest, []);
+      assert.equal(problem.severity, "warn");
+      assert.equal(problem.variable, "Claude account");
+      assert.match(problem.message, /sign-in ends .* \(in 5 days\)/);
+      assert.equal(statusSpawns(), 1, "a fresh answer starts no read");
+    } finally {
+      delete process.env.STUB_STATUS;
+      delete held.__ufClaudeLoginEndsAt;
+    }
+  });
+
+  it("asks a CLI that cannot answer once per interval, not once per poll", async () => {
+    const now = Date.now();
+    const slot = globalThis as typeof globalThis & { __ufClaudeAuthRead?: Promise<unknown> | null };
+    fs.rmSync(argvLog, { force: true });
+    delete held.__ufClaudeLoginEndsAt;
+    try {
+      // The stub prints a login link for `status`, which is not a status.
+      for (let i = 0; i < 5; i++) assert.deepEqual(loginExpiryProblems(now + i), []);
+      await readAuthStatus();
+      assert.equal(statusSpawns(), 1);
+
+      // A read in flight is what a started spawn looks like from here, and it
+      // is visible the moment `loginExpiryProblems` returns.
+      assert.deepEqual(loginExpiryProblems(now + TTL - 1), []);
+      assert.ok(!slot.__ufClaudeAuthRead, "inside the interval no read may start");
+
+      assert.deepEqual(loginExpiryProblems(now + TTL), []);
+      assert.ok(slot.__ufClaudeAuthRead, "an interval later it asks again");
+      await slot.__ufClaudeAuthRead;
+      assert.equal(statusSpawns(), 2);
+    } finally {
+      delete held.__ufClaudeLoginEndsAt;
+    }
   });
 });
