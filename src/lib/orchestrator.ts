@@ -1210,6 +1210,8 @@ export function getRun(id: string): RunRow | null {
 
 export function listRuns(limit = 50): RunRow[] {
   return db()
+    // No `rowid` tiebreak: the MCP `list_runs` tool is the only reader, a model,
+    // and the plan's `idx_runs_created` scan already returns a tie in one order.
     .prepare("SELECT * FROM runs ORDER BY created_at DESC LIMIT ?")
     .all(limit) as RunRow[];
 }
@@ -1434,11 +1436,15 @@ export function clampRunOffset(offset: number, total: number): number {
  * itself truncated cannot say a run has fallen out of reach, and the hundred-row
  * ceiling this replaces was invisible for the first ninety-nine runs.
  *
- * `id DESC` behind `created_at DESC` is not decoration. `created_at` is a
+ * `rowid DESC` behind `created_at DESC` is not decoration. `created_at` is a
  * millisecond stamp and a fleet admits several runs inside one, so without a
  * tiebreak two rows with the same stamp may order differently between two
  * requests — which on a paged list means one of them appears twice and the other
- * never appears at all.
+ * never appears at all. It was `id DESC`, which is as stable, but `id` is a
+ * random UUID: a batch `createRun` wrote under a held clock was listed in UUID
+ * order, and `rowid` is the order it was written in. SQLite may renumber
+ * `rowid` on a `VACUUM` or a table rebuild; nothing in `src/` runs either, and a
+ * `VACUUM` on 3.53.2 kept every one (measured 2026-11-08).
  *
  * It also needs no index of its own, which was measured rather than assumed:
  * against 50,000 rows in groups of 25 sharing a millisecond, the plan is `SCAN
@@ -1448,7 +1454,11 @@ export function clampRunOffset(offset: number, total: number): number {
  * dedicated `(created_at DESC, id DESC)` index removes the B-tree and brings it
  * to 0.15ms, which is not worth a migration. The two slower shapes are 7.8ms for
  * a status page at offset 20,000 and 4.1ms for a `LIKE` over `prompt`, and
- * neither is on the four-second poll.
+ * neither is on the four-second poll. Re-measured for `rowid` on 2026-11-08 on
+ * the same fixture with 250 queued beside it, median of 101: the same plan, and
+ * 0.240ms against 0.239ms for `id` and 0.186ms for neither. The index does not
+ * serve `rowid DESC` either, since it carries `rowid` ascending behind a
+ * descending key.
  *
  * That poll used to be the unfiltered first page, and the runs page cut its two
  * bands out of it — which lost every active run older than the newest hundred.
@@ -1512,13 +1522,14 @@ export function listRunsPage(query: RunListQuery = {}): RunListPage {
   ).n;
   const offset = clampRunOffset(filters.offset, total);
 
-  // `queueCompare` in SQL, with `id` last for the tiebreak reason above. A
+  // `queueCompare` in SQL, down to `rowid` last, which is its `seq`. A
   // different comparator here would be a band listing the queue in an order
-  // `promoteQueued` does not start it in.
+  // `promoteQueued` does not start it in, and `id ASC` was one: same plan,
+  // 0.476ms against 0.497ms over the fixture above.
   const order =
     filters.order === "queue"
-      ? "priority DESC, created_at ASC, id ASC"
-      : "created_at DESC, id DESC";
+      ? "priority DESC, created_at ASC, rowid ASC"
+      : "created_at DESC, rowid DESC";
   const rows = db()
     .prepare(`SELECT * FROM runs${clause} ORDER BY ${order} LIMIT ? OFFSET ?`)
     .all(...args, filters.limit, offset) as RunRow[];
@@ -4382,12 +4393,27 @@ export interface CreateRunInput {
  * against every unrelated run submitted afterwards, so one four-run chain would
  * stall a repository for the length of the chain.
  */
-export function activeRuns(): RunRow[] {
+export function activeRuns(): ActiveRunRow[] {
   return db()
     .prepare(
-      "SELECT * FROM runs WHERE status IN ('queued','running','paused','waiting-for-stack') ORDER BY created_at",
+      "SELECT *, rowid AS seq FROM runs WHERE status IN ('queued','running','paused','waiting-for-stack') ORDER BY created_at, rowid",
     )
-    .all() as RunRow[];
+    .all() as ActiveRunRow[];
+}
+
+/**
+ * A row as `activeRuns` reads it: with `runs.rowid`, the order the rows were
+ * written in, because `queueCompare` breaks a shared `created_at` on it.
+ *
+ * Carried rather than left to the order the rows arrive in, because without it
+ * that order was the plan's: `idx_runs_status` is sought one status at a time,
+ * so a shared millisecond came back grouped by status and then by rowid
+ * (measured with `EXPLAIN QUERY PLAN`, 2026-11-08), and the walk's tie order was
+ * whatever a stable sort kept of that.
+ */
+export interface ActiveRunRow extends RunRow {
+  /** `rowid`, which `SELECT *` does not return. No other read of `runs` has it. */
+  seq: number;
 }
 
 /**
@@ -5294,10 +5320,15 @@ export function queueOrder<T extends QueueRank>(runs: readonly T[]): T[] {
   return [...runs].sort(queueCompare);
 }
 
-/** What `queueOrder` needs of a row: its lever and its age. */
+/** What `queueOrder` needs of a row: its lever, its age and its write order. */
 export interface QueueRank {
   priority?: number | null;
   created_at: number;
+  /**
+   * `runs.rowid`, which `activeRuns` reads as `seq`. Required, so a walk over
+   * rows read any other way is a compile error rather than a tie on `undefined`.
+   */
+  seq: number;
 }
 
 /**
@@ -5314,9 +5345,19 @@ export interface QueueRank {
  * Negative means `a` is considered first. Age still breaks every tie and the
  * default priority is 0, so an install that sets none is ordered and counted
  * exactly as it was.
+ *
+ * Write order breaks a shared millisecond, and the queue band's SQL in
+ * `listRunsPage` ends on the same `rowid`. A fan-out creates its runs in one
+ * synchronous pass, so they can share a `created_at`; the band broke that tie on
+ * the random `id` while the walk took whatever order `activeRuns` returned, and
+ * a held-clock batch of eight was listed in one order and started in another.
  */
 export function queueCompare(a: QueueRank, b: QueueRank): number {
-  return (b.priority ?? 0) - (a.priority ?? 0) || a.created_at - b.created_at;
+  return (
+    (b.priority ?? 0) - (a.priority ?? 0) ||
+    a.created_at - b.created_at ||
+    a.seq - b.seq
+  );
 }
 
 /**
@@ -5465,17 +5506,17 @@ function aheadForFolder(
       r.id !== self.id &&
       r.status === "queued" &&
       // `queueCompare`, not `created_at`, so the number shown is a count over
-      // the same order `walkQueue` actually promotes in. `<= 0` keeps the tie
-      // behaviour this had before priority existed: two runs created in the
-      // same millisecond each count the other as ahead.
-      queueCompare(r, self) <= 0 &&
+      // the same order `walkQueue` actually promotes in. That order is total,
+      // so of two runs created in the same millisecond only the one written
+      // first is ahead; both used to count the other.
+      queueCompare(r, self) < 0 &&
       overlaps(key, keys.get(r.id) ?? conflictKey(workDirOf(r))),
   ).length;
 }
 
 /** The ids `promoteQueued` may start. `walkQueue` with the reasons dropped. */
 export function selectPromotable(
-  runs: readonly RunRow[],
+  runs: readonly QueueMember[],
   cap: number | null,
   newWorkPaused = false,
   localCap: number | null = null,
@@ -6261,6 +6302,8 @@ export function releaseDependents(): boolean {
  * queue.
  */
 function releasePass(holdReleases: boolean = newWorkPaused()): boolean {
+  // Ties left to the plan: `releasableRuns` decides each run on its own edges,
+  // and what it releases is then ordered by `queueCompare`, not by this.
   const waiting = db()
     .prepare("SELECT * FROM runs WHERE status = 'waiting' ORDER BY created_at")
     .all() as RunRow[];
@@ -13783,6 +13826,9 @@ export async function sweepPaused(): Promise<void> {
     // re-queued comes off the slots the parked runs get.
     const forStack = releaseStackWaits();
 
+    // Ties left to the plan: which of a shared millisecond resumes first under
+    // the per-tick bound is shown nowhere, and the queue it joins is ordered by
+    // `queueCompare`.
     const paused = db()
       .prepare("SELECT * FROM runs WHERE status = 'paused' ORDER BY created_at")
       .all() as RunRow[];
@@ -14004,6 +14050,8 @@ export function releaseStackWaits(
   receipts: readonly StackReceipt[] = readReceipts().receipts,
 ): { released: number; waiting: number } {
   if (!mayWriteDataDir()) return { released: 0, waiting: 0 };
+  // Ties left to the plan, for `sweepPaused`'s reason: what is released joins
+  // a queue `queueCompare` orders.
   const waiting = db()
     .prepare("SELECT id FROM runs WHERE status = 'waiting-for-stack' ORDER BY created_at")
     .all() as { id: string }[];
@@ -15250,6 +15298,8 @@ const RESTART_CLOSED_OUTSTANDING = `${restartClosedSql()} AND set_aside_at IS NU
  */
 export function restartClosedRuns(): RunRow[] {
   return db()
+    // Ties left to the plan: they reach the page only as the order of a
+    // pick-up's refusals, and the runs it re-queues are ordered by `queueCompare`.
     .prepare(
       `SELECT * FROM runs WHERE ${RESTART_CLOSED_OUTSTANDING} ORDER BY created_at`,
     )
@@ -15393,6 +15443,8 @@ export function costBaselineFor(run: RunRow): CostBaseline | null {
       // are both written `completed`. `needs-review` is deliberately not here —
       // it is a run that reached a judgement about the *task*, and what it spent
       // getting there is not what doing the task costs.
+      // No `rowid` tiebreak: which runs of a shared millisecond fill the last
+      // places of the window moves a median by at most one sample.
       "SELECT spent_usd FROM runs WHERE task_signature = ? AND id != ? " +
         "AND status = 'completed' AND spent_usd > 0 " +
         "ORDER BY created_at DESC LIMIT ?",

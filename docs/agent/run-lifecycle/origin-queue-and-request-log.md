@@ -11,7 +11,13 @@ Read before editing `runs.origin` or `runs.priority` in `src/lib/orchestrator.ts
 **What the queue is allowed to consider besides age.** `runs.priority` is an
 integer, higher first, and `created_at` breaks every tie — so an install that
 never sets one queues exactly as it did before the column existed, which is the
-property that makes it safe to have. `queueOrder` is the single definition of
+property that makes it safe to have. `rowid`, the write order, breaks a shared
+millisecond, which a fan-out's one synchronous pass of `createRun` can produce:
+`queueCompare` reads it as `seq` off `activeRuns`, and the queue band's SQL in
+`listRunsPage` ends on the same `rowid`, so the band lists a batch in the order
+the walk starts it. It used to end on `id`, a random UUID, while the walk kept
+whatever order the plan returned. `rowid` is SQLite's to renumber on a `VACUUM`
+or a table rebuild; nothing in `src/` runs either. `queueOrder` is the single definition of
 that ordering and `selectPromotable` is its only caller, so "what runs next" has
 one answer rather than one per query. Priority is clamped to ±100 by
 `setRunPriority`: an unbounded integer invites `MAX_SAFE_INTEGER` as a way of
