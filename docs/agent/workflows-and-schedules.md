@@ -50,6 +50,7 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 
 - A workflow instance is halted through one door, and the door is closed before anything is signalled.
 - Four of an instance's six readings are derived, and `started` is not a word for a press of Run that is over.
+- Ending a loop after its pass is not a second halt, and it never reaches `stopInstance`.
 - A held gate leaves the instance `started`, and it is the operator's to end — Continue lets it through, Stop halts through the same door as every other halt.
 
 ## [Picking up a stuck workflow run](workflows-and-schedules/instance-pick-ups.md)
