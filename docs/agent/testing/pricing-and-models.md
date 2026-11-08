@@ -88,7 +88,7 @@ module and test were removed with winnow on 2026-11-08). Both
 observed time-dependence through the only entry that had any, and with the table
 flat there is nothing either can assert that is not a restatement of the code.
 The rule they protected is not gone — `resolvePrice`'s note and `metering.md`
-both say a new dated rate goes in that shape and turns over at a UTC midnight —
+both say a new dated rate goes in that shape —
 and a case for each comes back with the next one. Sonnet 5.5's dated cache read (below) is that next one, and both came back: the same two names, rewritten over Sonnet 5.5's cut. Both have since gone again with the code they tested — see below.
 
 **A point release the table has no row for earned its own block, because a bare

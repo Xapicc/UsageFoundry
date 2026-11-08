@@ -31,10 +31,10 @@ templates.ts    saved run configurations — form input, never a run
 toolComposition.ts
                 what is *in* the contexts this machine paid for — a second reader
                 over the same transcripts, in parseCompactionBoundary's shape,
-                denominated in characters of tool output. Not a sixth breakdown
+                denominated in characters of tool output. Not a fourth breakdown
                 and not a cost source: a tool_result carries no usage block, so
                 it reconciles to itself and never to a window total, and its type
-                is an object of rows so nothing written for the five compiles
+                is an object of rows so nothing written for the three compiles
                 against it
 contextSamples.ts
                 how full a live run's context is, sampled off its own transcript

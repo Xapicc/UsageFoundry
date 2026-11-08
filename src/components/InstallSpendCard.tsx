@@ -3,7 +3,7 @@
 import Link from "next/link";
 // Relative, not "@/…": tsconfig.test.json emits plain CommonJS and nothing
 // rewrites the path alias at runtime, so a tested component has to import the
-// way `Meter` and `RecentBlocksCard` already do.
+// way `Meter` and `UsagePeriods` already do.
 import type { InstallSpendDTO } from "../lib/apiTypes";
 import { fmtTokens, fmtUSD } from "../lib/format";
 import { Meter } from "./Meter";

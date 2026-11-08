@@ -26,9 +26,8 @@ import { TBody, THead, Table, Td, Th, Tr } from "./ui/Table";
  * ceiling beside it.
  *
  * The two meters on the dashboard answer "may I start a run right
- * now"; this answers "what has this been costing me", which is a question the
- * 5-hour block table could only be read sideways to answer. Nothing here feeds
- * a guard — see `buildPeriods`.
+ * now"; this answers "what has this been costing me". Nothing here feeds a
+ * guard — see `buildPeriods`.
  *
  * The load-bearing copy is the ceiling sentence. Anthropic enforces a 5-hour
  * window and a weekly one and nothing in between, so a day's and a month's

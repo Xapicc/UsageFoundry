@@ -160,6 +160,20 @@ The runs list, the run inspector and `/runs/live` are in
   page in their own browser; and that repository was tiny, so the 50ms says
   nothing about the install's real checkouts.
 
+- **`/api/usage` is a third smaller without the deleted breakdowns,
+  2026-11-08** (branch `uf/usagefoundry-721638d11c0b-1-eae17dcd`, `a08a9be4`
+  against `94540ece`). Both standalone builds were served over the same scratch
+  copy of 708 transcripts from this install (8,374 turns), each answering
+  `GET /api/usage?tz=UTC` twice, with the second answer recorded. The response
+  went from 39,600 bytes to 26,796 plain (−32%) and from 7,863 to 6,122
+  gzipped (−22%). `blocks` was 11,171 bytes of that, with 12 rows;
+  `bySkill`, `byEffort`, `counterfactualModel` and the per-row
+  `counterfactualUSD` were the remaining 1,631. Over the same data in headless
+  Chromium at 1280 and 390, *Where it went* offered Model, Project and Agent,
+  the Agent table's columns were Agent, Cost, Tokens and Share, no block table
+  rendered, and the console was clean. **Caveat:** a 30-day install keeps up to
+  48 blocks, so the saving there is larger than this sample's 12 rows show.
+
 ## Not yet verified by hand
 
 - **No after-change payload from the 2026-08-23 pass has been read from a

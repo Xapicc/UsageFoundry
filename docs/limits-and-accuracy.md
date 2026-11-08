@@ -197,12 +197,10 @@ a run stopped before the visible bar looks full is explained rather than
 mysterious. Nothing shown as a dollar amount is ever the fallback rate.
 
 **Cost attribution.** Beyond model and project, each turn is broken down by
-**reasoning effort**, **agent**, and **skill** — all three recorded by Claude
-Code on the transcript record itself, so the tables cover full history rather
-than starting from the day they were added. Turns carrying no agent name or no
-skill get explicit `(main thread)` / `(no skill)` buckets, so every column
-reconciles to the window total instead of quietly omitting a remainder. Effort is
-typically the largest single lever.
+**agent**, which Claude Code records on the transcript record itself, so the
+table covers full history rather than starting from the day it was added. Turns
+carrying no agent name get an explicit `(main thread)` bucket, so the column
+reconciles to the window total instead of quietly omitting a remainder.
 
 That column was *Sub-agent* while the only way a name could reach it was a turn
 the main thread handed off. A run can now be **started as** an agent, so a name
@@ -215,8 +213,8 @@ record's own sidechain flag, which is a genuinely delegated turn, and the origin
 chip beside a row says only where **this install** found a definition for that
 name.
 
-**What filled the context is a sixth reading and is deliberately not a sixth
-breakdown.** The five above answer *who* spent the money; that card answers what
+**What filled the context is a reading of its own and is deliberately not a
+fourth breakdown.** The three above answer *who* spent the money; that card answers what
 the money was spent carrying — tool results, which an agent puts into a session
 once and then pays to re-read on every later turn. It cannot be a breakdown,
 because a tool result is not a billable turn: it carries no usage block, no
@@ -228,15 +226,6 @@ it. What it does carry is a price for *placing* a token — the window's whole
 bill over the tokens that entered a context in it, beside how many times the
 average one was read back — and that price is a floor rather than an estimate,
 because a re-written cache prefix counts twice in its denominator.
-
-**The counterfactual column beside the agent breakdown is arithmetic, not a
-forecast.** On the agent view each row carries a second dollar figure — these
-exact turns, the same input, output and cache tokens, repriced at one tier-down
-model's rate on the day each one ran. It says nothing about whether the same
-task on that model would have taken the same number of turns; it cannot, since
-those turns do not exist. The page says so under the table rather than leaving
-it to be inferred, because a second dollar figure with nothing beside it is a
-figure somebody will quote as a saving.
 
 **Usage by period (day / week / month).** The two meters answer *may I start a
 run right now*; the **Usage by period** card answers *what has this been

@@ -289,8 +289,7 @@ function canonicalModelId(model: string): string {
  * cannot know. An unknown rate takes the dearest plausible shape here
  * (`UNKNOWN_MODEL_PRICE`, `guardCostOf`), so all of the 7th keeps the 0.10x it
  * launched at and the cut starts at the UTC midnight after it: at worst a day's
- * cache reads overstated by 2x, never understated. It is also a UTC midnight,
- * which `windows.ts`'s per-day price memo requires of every dated rate.
+ * cache reads overstated by 2x, never understated.
  */
 const SONNET_5_5_CACHE_READ_CUT_AT = Date.UTC(2026, 9, 8);
 

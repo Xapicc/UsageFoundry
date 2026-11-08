@@ -7,7 +7,7 @@
 > the fleet is held or the reading is broken — and moved everything else to a
 > page of its own. `/usage` (`src/app/usage/page.tsx`, the Usage pane) carries
 > `Usage by period`, *Where it went*, *What filled the context*, `Recent
-> 5-hour blocks`, the cache-read and lifetime rows of what was `Rate and
+> 5-hour blocks` (since deleted; see below), the cache-read and lifetime rows of what was `Rate and
 > totals`, `What each repository cost`, the *What runs keep re-deriving* and
 > *Does the prior-read pointer change what runs do* regions, and the
 > provenance strip. `/` keeps the banner, `FirstRun`, the window card with
@@ -54,6 +54,20 @@
 > and the page had 19px, so the grid's foot margin now applies only while a
 > notice follows it (`has-[+*]:mb-4`), which was 16px of dead space under the
 > window card in the common state; `/` still fits 1280×800 by 3px.
+>
+> **2026-11-08, after that: three things on `/usage` are deleted, by the
+> operator's decision.** `Recent 5-hour blocks` (`RecentBlocksCard`); the
+> *Effort* and *Skill* slices of *Where it went*, which now offers *Model*,
+> *Project* and *Agent*; and the *On {model}* cheaper-model column the
+> *Agent* slice carried, with the sentence under the table that qualified it.
+> Deleted rather than folded, hidden or moved, because the complaint was
+> clutter and moving the cards had only relocated it: the block table repeated
+> `Usage by period`. The data went with them — `bySkill`, `byEffort`,
+> `counterfactualUSD`, `counterfactualModel` and the per-turn `effort` and
+> `skill` fields — and `/api/usage` no longer ships `blocks`, which stay on
+> `UsageSnapshot` only because the orchestrator's `lastSpendingWindowEnd`
+> reads them. **Do not restore any of the three**: §3.E.1 and §8 describe the
+> page before this.
 >
 > **All five runs have landed. §8 is the record of what each one actually did**
 > — including the one change that landed partially and the deviations from the
@@ -2015,7 +2029,7 @@ Three readings of overlapping money, and **any sum double-counts**:
 
 | Reading | What it is | Where it renders today |
 |---|---|---|
-| **A** | this app's price table over every Claude Code transcript on the machine (`buildSnapshot`) | the dashboard's window card, burn rate and run-out lines included; on `/usage`, `Usage by period`, *Where it went*, *What filled the context*, `Recent 5-hour blocks` and `Totals`; `RunAgentCost`'s rows |
+| **A** | this app's price table over every Claude Code transcript on the machine (`buildSnapshot`) | the dashboard's window card, burn rate and run-out lines included; on `/usage`, `Usage by period`, *Where it went*, *What filled the context* and `Totals`; `RunAgentCost`'s rows |
 | **B** | `runs.spent_usd` — what a work cycle's own `result` event reported | dashboard `This install…`; `What each repository cost` on `/usage`; the run page's `Spent` stat |
 | **C** | OTLP telemetry — Claude Code's own per-request cost | `LiveTelemetry` on the dashboard; `Telemetry — first-party` on the run page |
 
