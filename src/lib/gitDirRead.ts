@@ -27,7 +27,7 @@ import {
  *
  * Reading must run nothing the repository chose. Configuration is read with
  * `git config --list`, which was measured running no `core.fsmonitor`, hook or
- * filter (`docs/verification/git-and-review.md`), through `git()`, which
+ * filter (`docs/verification/git-and-review-repository-config.md`), through `git()`, which
  * carries `gitArgs`' cleared `core.fsmonitor` and `core.hooksPath` anyway. Hooks
  * and `info/attributes` are read as files, never through git, opened without
  * following a symlink and without blocking on a FIFO: this server reads them as

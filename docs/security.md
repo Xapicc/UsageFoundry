@@ -183,7 +183,7 @@ read — reaches something that is not this run's business.
   measured on 2026-10-25 on macOS with OrbStack: a plain `git status` on the
   host ran a fsmonitor a work cycle planted, and `git checkout -b` ran its
   hook. Docker Desktop and Linux hosts are not yet measured;
-  `docs/verification/git-and-review.md` carries the probe. This app's own git
+  `docs/verification/git-and-review-repository-config.md` carries the probe. This app's own git
   and the chat's ignore `core.fsmonitor` and hooks, but yours does not. This
   app's own git also blanks every filter and merge driver before a command that
   could run one, reading the names from the repository and from each populated

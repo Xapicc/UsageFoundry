@@ -57,6 +57,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Isolation and landing | [isolation-and-landing-contention.md](verification/isolation-and-landing-contention.md): a land meeting another git process's lock in the operator's checkout, and the retry |
 | Isolation and landing | [commit-trailers.md](verification/commit-trailers.md): the trailers a run's commits carry, and what git does with the messages they ride on |
 | Git and review | [git-and-review.md](verification/git-and-review.md) |
+| Git and review | [git-and-review-repository-config.md](verification/git-and-review-repository-config.md) — what a repository's own configuration, hooks and filters can make this app's git run |
 | Git and review | [git-and-review-command-keys.md](verification/git-and-review-command-keys.md): which git configuration keys run a command, for the run's git-directory check |
 | Agents, templates and models | [agents-templates-and-models.md](verification/agents-templates-and-models.md) |
 | Other providers | [other-providers.md](verification/other-providers.md) — Codex, and the local provider |
