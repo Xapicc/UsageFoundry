@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { ZERO_TOKENS, costOf, resolvePrice } from "./pricing";
+import { ZERO_TOKENS } from "./pricing";
 import type { UsageEntry } from "./transcripts";
 import type { ToolCall } from "./toolComposition";
 import {
@@ -1169,180 +1169,11 @@ describe("agent attribution", () => {
 });
 
 /**
- * The cheaper-model counterfactual on the agent column.
- *
- * It earns a test because everything about it is quiet. It is arithmetic over
- * every turn in the window against a *second* price table lookup, priced per
- * turn at the rate in force on the day that turn ran, and it is rendered as a
- * dollar figure beside a real one. Every way of getting it wrong produces a
- * plausible number: a bucket missed in the second pass reads as work that would
- * have been free, and `null` collapsing to `0` says the same thing about the
- * whole column on the guard path — which is the one caller that never asks.
- *
- * The per-day memo key is pinned against Claude Sonnet 5.5's cache read, the one
- * dated rate `pricing.ts` has: it turns over at a UTC midnight, which is the
- * only reason keying the memo on the UTC day is exact. It was pinned once
- * against Sonnet 5's introductory rate, went with that rate when Anthropic
- * cancelled the increase, and came back with this one.
- */
-describe("cheaper-model counterfactual", () => {
-  const tokenEntry = (
-    ts: number,
-    agent: string | undefined,
-    input: number,
-  ): UsageEntry => ({
-    ...entry(ts, 0),
-    agent,
-    tokens: { ...ZERO_TOKENS, input },
-  });
-
-  it("leaves the figure unasked when no model is named", () => {
-    const snap = buildSnapshot(
-      [tokenEntry(now - HOUR, "Reviewer", 1_000_000)],
-      NO_LIMITS,
-      now,
-    );
-    // Null is "nobody asked", which is the orchestrator's guard path. A 0 there
-    // would read as "the same work would have cost nothing".
-    assert.equal(snap.counterfactualModel, null);
-    assert.equal(snap.byAgent[0].counterfactualUSD, null);
-  });
-
-  it("reprices every bucket, and the buckets still add up to the window", () => {
-    const at = now - HOUR;
-    const entries = [
-      tokenEntry(at, undefined, 1_000_000),
-      tokenEntry(at + 1, "Reviewer", 2_000_000),
-      tokenEntry(at + 2, "Reviewer", 1_000_000),
-    ];
-    const snap = buildSnapshot(
-      entries,
-      NO_LIMITS,
-      now,
-      null,
-      null,
-      null,
-      [],
-      "claude-sonnet-5",
-    );
-
-    assert.equal(snap.counterfactualModel, "claude-sonnet-5");
-    const perToken = costOf(
-      { ...ZERO_TOKENS, input: 1_000_000 },
-      resolvePrice("claude-sonnet-5", { at }),
-    );
-    const byName = new Map(snap.byAgent.map((r) => [r.agent, r]));
-    assert.equal(byName.get(MAIN_THREAD_BUCKET)?.counterfactualUSD, perToken);
-    assert.equal(byName.get("Reviewer")?.counterfactualUSD, perToken * 3);
-
-    // The same reconciliation the cost column makes: every turn is in exactly
-    // one bucket, so the rows add to what the whole window would have cost.
-    assert.equal(
-      snap.byAgent.reduce((s, r) => s + (r.counterfactualUSD ?? 0), 0),
-      perToken * 4,
-    );
-  });
-
-  it("picks a prompt-length tier from each turn, not from the bucket's sum", () => {
-    // Claude Haiku 5.5 charges $0.10/MTok of input up to a 100,000-token prompt
-    // and $0.50 above it. Two 60,000-token turns in one bucket are two cheap
-    // ones, though the bucket holds 120,000; a 100,001-token turn is one dear
-    // one. The memo above keys on speed and day only, so this also pins that
-    // it does not need a prompt-size key.
-    const at = now - HOUR;
-    const snap = buildSnapshot(
-      [
-        tokenEntry(at, undefined, 60_000),
-        tokenEntry(at + 1, undefined, 60_000),
-        tokenEntry(at + 2, "Reviewer", 100_001),
-      ],
-      NO_LIMITS,
-      now,
-      null,
-      null,
-      null,
-      [],
-      "claude-haiku-5-5",
-    );
-    const byName = new Map(snap.byAgent.map((r) => [r.agent, r]));
-    const main = byName.get(MAIN_THREAD_BUCKET)?.counterfactualUSD ?? NaN;
-    const reviewer = byName.get("Reviewer")?.counterfactualUSD ?? NaN;
-    assert.ok(Math.abs(main - 120_000 * 0.1e-6) < 1e-12, `main thread: ${main}`);
-    assert.ok(Math.abs(reviewer - 100_001 * 0.5e-6) < 1e-12, `reviewer: ${reviewer}`);
-  });
-
-  it("prices each turn at the rate in force on the day it ran", () => {
-    // Claude Sonnet 5.5 reads its cache at 0.10x of a $2 input before
-    // 2026-10-08T00:00:00Z and 0.05x from it, so a million reads are $0.20 on
-    // one side and $0.10 on the other — the same tokens at two prices. Dropping
-    // `at` from the lookup prices every turn at today's rate, and a memo keyed
-    // on anything coarser than the UTC day hands the first turn's price to all
-    // the rest; either way the figure is a plausible dollar amount beside a real
-    // one. The pair at the cut is the point: the last millisecond of the 7th and
-    // the first of the 8th are different days, and the memo has to say so.
-    // Every instant is fixed: a wall-clock one would pass or fail depending on
-    // which side of the cut the day it ran fell.
-    const reads = (ts: number, agent: string): UsageEntry => ({
-      ...entry(ts, 0),
-      agent,
-      tokens: { ...ZERO_TOKENS, cacheRead: 1_000_000 },
-    });
-    const later = Date.UTC(2026, 9, 9, 12);
-    const snap = buildSnapshot(
-      [
-        reads(Date.UTC(2026, 9, 6, 12), "days before"),
-        reads(Date.UTC(2026, 9, 7, 0), "start of the 7th"),
-        reads(Date.UTC(2026, 9, 7, 23, 59, 59, 999), "last millisecond before the cut"),
-        reads(Date.UTC(2026, 9, 8, 0), "the cut itself"),
-        reads(Date.UTC(2026, 9, 8, 12), "midday after the cut"),
-      ],
-      NO_LIMITS,
-      later,
-      null,
-      null,
-      null,
-      [],
-      "claude-sonnet-5-5",
-    );
-
-    const byName = new Map(snap.byAgent.map((r) => [r.agent, r.counterfactualUSD]));
-    assert.equal(byName.get("days before"), 0.2);
-    assert.equal(byName.get("start of the 7th"), 0.2);
-    assert.equal(byName.get("last millisecond before the cut"), 0.2);
-    assert.equal(byName.get("the cut itself"), 0.1);
-    assert.equal(byName.get("midday after the cut"), 0.1);
-  });
-
-  it("reprices a turn upwards when the target is dearer than what ran", () => {
-    // Correct, and the reason the actual figure stays beside it rather than
-    // being replaced: this is a comparison, not a correction.
-    const at = now - HOUR;
-    const haiku: UsageEntry = {
-      ...tokenEntry(at, "cheap", 1_000_000),
-      model: "claude-haiku-4-5",
-      costUSD: 1,
-    };
-    const snap = buildSnapshot(
-      [haiku],
-      NO_LIMITS,
-      now,
-      null,
-      null,
-      null,
-      [],
-      "claude-sonnet-5",
-    );
-    assert.equal(snap.byAgent[0].agg.costUSD, 1);
-    assert.equal((snap.byAgent[0].counterfactualUSD ?? 0) > 1, true);
-  });
-});
-
-/**
  * The composition reading reaching the snapshot.
  *
  * What this pins is the boundary rather than the arithmetic, which
  * `toolComposition.test.ts` covers: that `byTool` is scoped to the same window
- * the five breakdowns are, that its placement rates come from that window's own
+ * the three breakdowns are, that its placement rates come from that window's own
  * aggregate, and that a caller who supplies no calls gets an empty reading
  * rather than a wrong one. The failure it guards against is the quiet kind — a
  * card of tool shares over one span sitting under a table of costs over

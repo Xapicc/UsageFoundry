@@ -89,7 +89,7 @@ observed time-dependence through the only entry that had any, and with the table
 flat there is nothing either can assert that is not a restatement of the code.
 The rule they protected is not gone — `resolvePrice`'s note and `metering.md`
 both say a new dated rate goes in that shape and turns over at a UTC midnight —
-and a case for each comes back with the next one. Sonnet 5.5's dated cache read (below) is that next one, and both are back: the same two names, rewritten over Sonnet 5.5's cut.
+and a case for each comes back with the next one. Sonnet 5.5's dated cache read (below) is that next one, and both came back: the same two names, rewritten over Sonnet 5.5's cut. Both have since gone again with the code they tested — see below.
 
 **A point release the table has no row for earned its own block, because a bare
 `startsWith` gave it its predecessor's row.** `claude-sonnet-5` is a string
@@ -143,20 +143,18 @@ a call with no instant gets.
 
 The two consumer-side tests came back with it, each over fixed instants and each
 asserting both sides of the cut, because a one-sided assertion passes on a lookup
-that read the wall clock, whichever side of the cut the clock is on.
+that read the wall clock, whichever side of the cut the clock is on. Neither is
+left, and both went with the code they tested rather than by weakening.
 `windows.test.ts`'s *prices each turn at the rate in force on the day it ran*
-puts five Sonnet 5.5 turns, one agent each, across the cut, with the last
-millisecond of the 7th and the first of the 8th as the pair: $0.20 and $0.10 for
-a million reads. It fails with `at` dropped from `counterfactualByAgent`'s
-lookup, and with the memo's day part removed or narrowed to three to six days.
-It cannot fail for a 2-, 7- or 14-day bucket, and that is correct rather than a
-gap: 2026-10-08 is day 20,734, a multiple of 14, so those buckets break exactly
-at the cut and the memo is still exact for them. The companion case in
-`contextPruning.test.ts`, which gave `netReceipt` a Sonnet 5.5 row at two instants
-either side of the cut, was removed with winnow on 2026-11-08, and so was the
-approximation it stood next to (a prune's saving priced at the receipt's own
-instant rather than each later turn's); no code prices a counterfactual that way
-now, so the caveat has nothing left to attach to.
+pinned `counterfactualByAgent`'s `at` and its per-day memo key, and was deleted
+with that function on 2026-11-08, when the operator removed the cheaper-model
+column from `/usage`. The companion case in `contextPruning.test.ts`, which gave
+`netReceipt` a Sonnet 5.5 row at two instants either side of the cut, was removed
+with winnow the same day, and so was the approximation it stood next to (a
+prune's saving priced at the receipt's own instant rather than each later
+turn's); no code prices a counterfactual that way now, so the caveat has nothing
+left to attach to. The one remaining caller that passes `at`, `transcripts.ts`'s
+`parseLine`, has no case pinning that it does.
 
 **Claude Haiku 5.5 earned a block, because its trap is the sum rather than a
 neighbour.** It is the first row priced by each request's prompt length: $0.10
@@ -173,8 +171,7 @@ size at the high tier and `costOf` at the low, and that a request known short is
 not charged the ceiling. The id cases are the same set as Sonnet 5.5's plus
 `claude-haiku-5-6` and the bare `claude-haiku-5` at null, and `[1m]` costing what
 its base costs for the same request. Flipping `>` to `>=` in `rateFor` fails four
-of them. Beside it, `windows.test.ts` pins that the counterfactual's tier follows
-each turn and not the bucket's sum, `chatStream.test.ts` that a turn's guard
+of them. Beside it, `chatStream.test.ts` pins that a turn's guard
 figure is a sum of per-response prices (the one place that used to price a sum),
 and `transcriptPromptTier.test.ts` that the scan asks for the tier at all —
 `parseLine` is the one call site where forgetting `"request"` is silent, since

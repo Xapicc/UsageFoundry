@@ -2116,9 +2116,8 @@ function migrate(db: Database.Database) {
   // the payback test reads — that one wants `tokens_before`, the suffix as it
   // stood before the cut (contextPruning.ts's `paybackTurns`).
   //
-  // `model` so a receipt can be priced at the rate that actually applied, on
-  // `byAgent.counterfactualUSD`'s rule: a rate looked up at read time prices
-  // last week's prune at this week's list.
+  // `model` so a receipt can be priced at the rate that actually applied: a
+  // rate looked up at read time prices last week's prune at this week's list.
   db.exec(`
     CREATE TABLE IF NOT EXISTS prune_receipts (
       id             INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -5,8 +5,8 @@ import { billableWeightedTokens, type TokenCounts } from "./pricing";
  * transcripts `scanUsage` prices.
  *
  * **This is a composition reading and never a cost source.** Everything in
- * `windows.ts` reconciles: `byModel`, `byProject`, `byAgent`, `bySkill` and
- * `byEffort` each put every turn in exactly one bucket, so every column adds
+ * `windows.ts` reconciles: `byModel`, `byProject` and `byAgent` each put
+ * every turn in exactly one bucket, so every column adds
  * back to the window total and a missing bucket is visible as a gap rather than
  * silently absorbed. `byTool` **cannot** do that, and no amount of care would
  * make it: a `tool_result` is not a billable turn. It carries no `usage` block,
@@ -25,7 +25,7 @@ import { billableWeightedTokens, type TokenCounts } from "./pricing";
  * reader therefore keeps its own type, its own dedupe key and its own rollup,
  * and shares nothing with the metering path but the file the lines came from.
  *
- * Why it is worth reading at all: the five breakdowns say *who* spent the money
+ * Why it is worth reading at all: the three breakdowns say *who* spent the money
  * and *what model* spent it, and none of them says what the money was spent
  * carrying. On this install cache reads are ~57% of the weekly bill, which is
  * the cost of re-reading a context, and the largest thing in that context is
@@ -207,7 +207,7 @@ export interface ToolCompositionRow {
  * What filled the contexts in one window, and what filling one costs.
  *
  * An object with `rows` rather than an array, and that shape is load-bearing:
- * it sits on `UsageSnapshot` beside five breakdowns that *are* arrays of
+ * it sits on `UsageSnapshot` beside three breakdowns that *are* arrays of
  * `{ …, agg: Aggregate }`, and anything written to walk one of those over this
  * fails to compile instead of quietly reporting characters as dollars.
  *

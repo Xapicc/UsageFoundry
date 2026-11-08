@@ -12,7 +12,7 @@ import type { UsageSnapshot } from "./windows";
  * `scanUsage` coalesces the *file reads* and nothing coalesced what comes after
  * them, which is the expensive half on a large history: a filter and a full
  * allocation per caller, then `buildSessionBlocks` plus two more filters plus
- * five `groupBy` rollups over every entry the process has ever parsed. The
+ * three `groupBy` rollups over every entry the process has ever parsed. The
  * pre-cycle guard is the path every run takes, so N runs reaching a cycle
  * boundary together did N full-history aggregations back to back on the one
  * event loop — `liveGuardTick` states that exact property one function over and

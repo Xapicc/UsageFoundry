@@ -210,7 +210,7 @@ export interface ToolCompositionRowDTO {
  * Mirror of `ToolComposition` — what filled the contexts, and what filling one
  * costs.
  *
- * **Not a cost source and never summed with one.** The five breakdowns beside
+ * **Not a cost source and never summed with one.** The three breakdowns beside
  * it on `SnapshotDTO` reconcile to the window total because every turn lands in
  * exactly one bucket; this cannot, because a `tool_result` is not a billable
  * turn and carries no usage block at all. Its rows are denominated in
@@ -234,21 +234,10 @@ export interface ToolCompositionDTO {
   costPerMillionPlacedUSD: number | null;
 }
 
-export interface SessionBlockDTO {
-  startsAt: number;
-  endsAt: number;
-  lastActivityAt: number;
-  isActive: boolean;
-  agg: AggregateDTO;
-  models: string[];
-  projects: string[];
-}
-
 export interface SnapshotDTO {
   now: number;
   session: WindowStateDTO;
   weekly: WindowStateDTO;
-  blocks: SessionBlockDTO[];
   burnTokensPerHour: number;
   burnCostPerHour: number;
   projectedExhaustionAt: number | null;
@@ -259,20 +248,7 @@ export interface SnapshotDTO {
     agg: AggregateDTO;
     /** Null when nothing looked the names up — not the same as `unknown`. */
     origin: AgentOriginDTO | null;
-    /**
-     * The same recorded turns repriced at `counterfactualModel`'s rates, or
-     * null when nobody asked.
-     *
-     * A counterfactual over the tokens that were actually produced, **not** a
-     * forecast: the same task on a smaller model may take more turns, and this
-     * figure does not know that. Anything rendering it has to say so.
-     */
-    counterfactualUSD: number | null;
   }>;
-  bySkill: Array<{ skill: string; agg: AggregateDTO }>;
-  byEffort: Array<{ effort: string; agg: AggregateDTO }>;
-  /** Which model the counterfactual above was priced at. Null when none was. */
-  counterfactualModel: string | null;
   /** A composition reading, never a cost source — see `ToolCompositionDTO`. */
   byTool: ToolCompositionDTO;
   totalCostUSD: number;

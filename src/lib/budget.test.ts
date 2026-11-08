@@ -82,8 +82,6 @@ function snapshot(sessionFraction: number | null, weeklyFraction: number | null)
     byModel: [],
     byProject: [],
     byAgent: [],
-    bySkill: [],
-    byEffort: [],
     totalCostUSD: 0,
   } as unknown as UsageSnapshot;
 }

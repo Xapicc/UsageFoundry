@@ -23,26 +23,6 @@ import { jsonMaybeGzipped } from "@/lib/http";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/**
- * The model the `byAgent` counterfactual is priced at.
- *
- * Named here rather than inside `windows.ts` because what makes a target right
- * is what an operator could plausibly point an agent at, which is a product
- * decision and not a metering one — the rollup takes it as an argument for the
- * same reason `agentNames` is an argument. Sonnet 5 is the one that earns it:
- * it is the next tier down from the `claude-opus-5` every recorded run here
- * used, `pricing.ts` has real rates for it, and an agent carrying
- * `"model": "sonnet"` selected with `--agent` is the whole of the mechanism —
- * no schema change, and no reading of `run_templates.model`, which is a real
- * column now but names what a *template* would start rather than what any run
- * on this figure actually ran on.
- *
- * A constant rather than a setting: nothing acts on this figure, one target is
- * enough to answer "is this worth trying", and a picker would be a control that
- * changes a number nobody is billed for.
- */
-const COUNTERFACTUAL_MODEL = "claude-sonnet-5";
-
 export async function GET(req: Request) {
   try {
     const settings = getSettings();
@@ -90,7 +70,6 @@ export async function GET(req: Request) {
       plan,
       agentNames,
       toolCalls,
-      COUNTERFACTUAL_MODEL,
     );
 
     // Calendar buckets are wrong at every edge if they are cut in the wrong
@@ -134,8 +113,12 @@ export async function GET(req: Request) {
     // calendar bucket over the same entries repeat their keys on every one, and
     // this is the answer `/` and `/usage` both poll. The error branch below is
     // one sentence and stays plain.
+    // `blocks` stays on the snapshot for the orchestrator's
+    // `lastSpendingWindowEnd` and goes no further: no page draws it, and it was
+    // the largest field on this answer that nothing read.
+    const { blocks: _unshipped, ...shippedSnapshot } = snapshot;
     return jsonMaybeGzipped(req, {
-      snapshot,
+      snapshot: shippedSnapshot,
       periods,
       telemetry,
       // Unconditional, unlike `telemetry`: the ceiling is what the operator
