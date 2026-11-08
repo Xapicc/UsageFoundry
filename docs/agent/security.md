@@ -16,14 +16,17 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - A repository nested below a mount root that is itself a repository is isolated only while the outer repository's own ignore rules keep the store out.
 - The agent is spawned with an argument array and `stdio: ["ignore", "pipe", "pipe"]`, **never a shell**, so prompt metacharacters are inert. (was line 14)
 - A review block's verify command is argv and never a shell, and only a person saves one.
+- `gitArgs` also passes `safe.directory=*`, and the image sets it system-wide for the agent's own git. (was line 15)
+- `permissionMode` is narrowed against the four literals in `POST /api/runs` before it reaches `--permission-mode`. (was line 17)
+- `bypassPermissions` is offered in the new-run form with a warning; the default stays `acceptEdits`. (was line 35)
+
+## [What this app's own git runs from a repository a work cycle wrote](security/server-git.md)
+
 - `gitArgs` pins the signing programs and neutralises the repository's filter drivers, for the same reason it clears `core.hooksPath`.
 - A conditional include is probed where the child git reads it.
 - A submodule is probed where its own child git reads it, and none the probe has not read is recursed into.
 - The probe and the call still read configuration separately; a fingerprint narrows the window between them and does not close it.
 - A hook defined in config is switched off by name on every call that can fire one, because `core.hooksPath=/dev/null` does not reach it and git has no switch that does.
-- `gitArgs` also passes `safe.directory=*`, and the image sets it system-wide for the agent's own git. (was line 15)
-- `permissionMode` is narrowed against the four literals in `POST /api/runs` before it reaches `--permission-mode`. (was line 17)
-- `bypassPermissions` is offered in the new-run form with a warning; the default stays `acceptEdits`. (was line 35)
 
 ## [Agent definitions](security/agent-definitions.md)
 
