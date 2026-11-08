@@ -494,6 +494,8 @@ describe("buildValidationPrompt", () => {
       // the block may only ever be added, never change what is sent without it.
       assert.equal(prompt({ ...empty, history: null }), prompt(empty));
       assert.ok(!/<history>/.test(prompt(empty)));
+      // Before the block existed the evidence ended at the diff's closing tag.
+      assert.ok(prompt(empty).endsWith("</diff>"));
     });
 
     it("still never tells the judge that the run claims to be finished", () => {

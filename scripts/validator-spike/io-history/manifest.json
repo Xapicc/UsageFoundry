@@ -1,0 +1,226 @@
+[
+  {
+    "name": "today-03",
+    "arm": "today",
+    "n": 3,
+    "historyFrom": null,
+    "bytes": 10927,
+    "expected": "finished"
+  },
+  {
+    "name": "match-03",
+    "arm": "match",
+    "n": 3,
+    "historyFrom": 3,
+    "bytes": 15203,
+    "expected": "finished"
+  },
+  {
+    "name": "mismatch-03",
+    "arm": "mismatch",
+    "n": 3,
+    "historyFrom": 4,
+    "bytes": 38679,
+    "expected": "not-finished"
+  },
+  {
+    "name": "mismatchB-03",
+    "arm": "mismatchB",
+    "n": 3,
+    "historyFrom": 35,
+    "bytes": 31143,
+    "expected": "not-finished"
+  },
+  {
+    "name": "today-04",
+    "arm": "today",
+    "n": 4,
+    "historyFrom": null,
+    "bytes": 10859,
+    "expected": "finished"
+  },
+  {
+    "name": "match-04",
+    "arm": "match",
+    "n": 4,
+    "historyFrom": 4,
+    "bytes": 38611,
+    "expected": "finished"
+  },
+  {
+    "name": "mismatch-04",
+    "arm": "mismatch",
+    "n": 4,
+    "historyFrom": 5,
+    "bytes": 28577,
+    "expected": "not-finished"
+  },
+  {
+    "name": "mismatchB-04",
+    "arm": "mismatchB",
+    "n": 4,
+    "historyFrom": 3,
+    "bytes": 15135,
+    "expected": "not-finished"
+  },
+  {
+    "name": "today-05",
+    "arm": "today",
+    "n": 5,
+    "historyFrom": null,
+    "bytes": 10873,
+    "expected": "finished"
+  },
+  {
+    "name": "match-05",
+    "arm": "match",
+    "n": 5,
+    "historyFrom": 5,
+    "bytes": 28591,
+    "expected": "finished"
+  },
+  {
+    "name": "mismatch-05",
+    "arm": "mismatch",
+    "n": 5,
+    "historyFrom": 35,
+    "bytes": 31089,
+    "expected": "not-finished"
+  },
+  {
+    "name": "mismatchB-05",
+    "arm": "mismatchB",
+    "n": 5,
+    "historyFrom": 4,
+    "bytes": 38625,
+    "expected": "not-finished"
+  },
+  {
+    "name": "today-11",
+    "arm": "today",
+    "n": 11,
+    "historyFrom": null,
+    "bytes": 11292,
+    "expected": "finished"
+  },
+  {
+    "name": "match-11",
+    "arm": "match",
+    "n": 11,
+    "historyFrom": 11,
+    "bytes": 17147,
+    "expected": "finished"
+  },
+  {
+    "name": "mismatch-11",
+    "arm": "mismatch",
+    "n": 11,
+    "historyFrom": 13,
+    "bytes": 24257,
+    "expected": "not-finished"
+  },
+  {
+    "name": "mismatchB-11",
+    "arm": "mismatchB",
+    "n": 11,
+    "historyFrom": 30,
+    "bytes": 26972,
+    "expected": "not-finished"
+  },
+  {
+    "name": "today-13",
+    "arm": "today",
+    "n": 13,
+    "historyFrom": null,
+    "bytes": 8745,
+    "expected": "finished"
+  },
+  {
+    "name": "match-13",
+    "arm": "match",
+    "n": 13,
+    "historyFrom": 13,
+    "bytes": 21710,
+    "expected": "finished"
+  },
+  {
+    "name": "mismatch-13",
+    "arm": "mismatch",
+    "n": 13,
+    "historyFrom": 30,
+    "bytes": 24425,
+    "expected": "not-finished"
+  },
+  {
+    "name": "mismatchB-13",
+    "arm": "mismatchB",
+    "n": 13,
+    "historyFrom": 11,
+    "bytes": 14600,
+    "expected": "not-finished"
+  },
+  {
+    "name": "today-30",
+    "arm": "today",
+    "n": 30,
+    "historyFrom": null,
+    "bytes": 10806,
+    "expected": "finished"
+  },
+  {
+    "name": "match-30",
+    "arm": "match",
+    "n": 30,
+    "historyFrom": 30,
+    "bytes": 26486,
+    "expected": "finished"
+  },
+  {
+    "name": "mismatch-30",
+    "arm": "mismatch",
+    "n": 30,
+    "historyFrom": 3,
+    "bytes": 15082,
+    "expected": "not-finished"
+  },
+  {
+    "name": "mismatchB-30",
+    "arm": "mismatchB",
+    "n": 30,
+    "historyFrom": 13,
+    "bytes": 23771,
+    "expected": "not-finished"
+  },
+  {
+    "name": "today-35",
+    "arm": "today",
+    "n": 35,
+    "historyFrom": null,
+    "bytes": 10732,
+    "expected": "finished"
+  },
+  {
+    "name": "match-35",
+    "arm": "match",
+    "n": 35,
+    "historyFrom": 35,
+    "bytes": 30948,
+    "expected": "finished"
+  },
+  {
+    "name": "mismatch-35",
+    "arm": "mismatch",
+    "n": 35,
+    "historyFrom": 5,
+    "bytes": 28450,
+    "expected": "not-finished"
+  },
+  {
+    "name": "mismatchB-35",
+    "arm": "mismatchB",
+    "n": 35,
+    "historyFrom": 30,
+    "bytes": 26412,
+    "expected": "not-finished"
+  }
+]
