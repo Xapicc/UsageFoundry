@@ -142,6 +142,48 @@
   about 21%; not `spawnAssist`'s child; the shipped preamble was scored on
   these empty-diff inputs only, not on the spike's 40.
 
+- **The shipped judge preamble scored on the spike's 40 cases, 2026-11-08**,
+  `score.mjs --shipped` over production `buildValidationPrompt` from a build at
+  `4fd7c103`, the judge a Claude Code subagent on Sonnet 5.5 with no repository
+  access, one sample per case (`scripts/validator-spike/RESULT.md`,
+  `score-report-shipped.md`, `io-shipped/`). **32/37** on the held-out set
+  against `prompt.md`'s 34/37; false-finished **0 of 1** (0 of 2 all-in) as
+  before; false-not-finished 0 of 29 held-out as before; 5 of 7 labelled
+  `unjudgeable` answered so, as before. Agreement is two cases lower: cases 7 and
+  20, both with patch bodies dropped to fit, moved from `finished` to
+  `unjudgeable`, and case 8 (labelled `unjudgeable`) from `finished` to
+  `not-finished`. A control re-judging those three by this judge gave the same
+  answers under `prompt.md`, so the preamble is not shown to be the cause; case
+  20 answered `finished` on a second sample under the shipped preamble. Caveat:
+  not `spawnAssist`'s child under `plan` mode, and the subagent's tools could
+  not be restricted to the one file it was told to read; the older 34/37 was
+  Sonnet 4.5 so the two are not a clean A/B; `runs.task` stands in for the
+  board's title and brief; 16 of 40 replies were saved by hand from chat.
+
+- **A task worked across two runs: the later half as the branch diff beside the
+  earlier commits, 2026-11-08**, production `buildValidationPrompt` from a build
+  at `4fd7c103` plus a candidate framing appended by the script, the judge a
+  Claude Code subagent on Sonnet 5.5 with no repository access, 27 requests
+  (`scripts/validator-spike/history.mjs --arms split`, `history-split-report.md`,
+  `io-history-split/`). Six multi-commit cases the spike labelled `finished` and
+  the shipped preamble also called `finished` whole (12, 16, 17, 25, 33, 37) were
+  cut in two with each commit's real diff read from its repository
+  (`wholeCommitDiff`). The later half alone, as today: **0 of 6** `finished`,
+  3 `not-finished` (12, 17, 37, where the diff plainly lacked files the task
+  names) and 3 `unjudgeable`. The later half with the earlier commits: **5 of 6**
+  `finished`, 1 `unjudgeable` (12, whose `page.tsx` patch was cut). The later
+  half with another case's earlier commits, two pairings: **0 of 12**
+  `finished`, each the verdict that case's diff alone had got. A diff skipping the
+  middle commits with only the first as history, 3 cases: 0 `finished`. Caveat:
+  false-finished 0 of 15 bounds the rate below about 18% and no tighter; n = 6 an
+  arm, one sample per request; the splits cut one run's commits in two, so no
+  task worked across two real runs was observed; the six were chosen after
+  seeing the whole-branch verdicts (7 and 19, which the preamble could not
+  settle whole, and 14 and 29, whose earlier commit is larger than the history
+  budget, were not run); 3 of the 12 mismatch pairs touch a file the task's own
+  work touched; not `spawnAssist`'s child; 5 of 27 replies were saved by hand
+  from chat.
+
 ## Not yet verified by hand
 
 - **No model has called the board tools over stdio**; that needs a billed run.
@@ -153,9 +195,12 @@
   to non-operators, chat live view, Backups, sign-out, queue priority, Open PR.
 
 - **The external validator, end to end.** No verdict has come from the pinned
-  CLI via `spawnAssist`. It rests on a spike's 34 of 37, zero false-finished
-  (subagent transport, one sample per case, 40 runs judged against `runs.task`)
-  on a prompt since replaced; the shipped prompt has never been scored.
+  CLI via `spawnAssist`. It rests on the spike's 40 cases, 34 of 37 on
+  `prompt.md` and 32 of 37 on the shipped preamble, zero false-finished in both
+  (subagent transport, one sample per case, judged against `runs.task`); what
+  is unmeasured is the real CLI's answer under `plan` mode, a repeat of any case
+  to put a variance on those two, and a same-model `prompt.md`-versus-shipped
+  comparison over more than the three cases the control covered.
 
 - **`get_my_task` has never been called by a model.** What it was added to
   replace — a run told to read its brief in full digging the body out of
@@ -201,3 +246,7 @@
   branch, `wholeCommitDiff` on a real commit, and the run-log line that says
   which commits were shown. Settle with a run whose branch starts after another
   run's commit for the same task, then read `run_reviews` and the run's log.
+  The same for a diff with files (widened 2026-11-08): a second run on the same
+  task that commits only its share, whose `runs.worktree_base` and diff start
+  are unobserved; if that base is the original fork point the earlier share is
+  already in the diff and the search finds nothing new.

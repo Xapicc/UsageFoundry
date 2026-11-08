@@ -52,6 +52,7 @@ after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 const {
   buildValidationPrompt,
   grantsAnotherCycle,
+  historySearchStart,
   parseVerdict,
   validationPushback,
   validationSkipReason,
@@ -508,6 +509,54 @@ describe("buildValidationPrompt", () => {
     it("says when the patches were cut", () => {
       assert.match(prompt({ ...empty, history: { ...history, truncated: true } }), /patches below were cut/);
     });
+
+    it("frames them as the earlier run's share beside a diff that has files", () => {
+      // Fail-first: the framing was written for an empty diff and said so —
+      // "The branch's own diff above is empty" — which, put under a diff with
+      // files, tells the judge the evidence above it is not there. A task
+      // worked across two runs was judged on the later run's half alone
+      // (board task `813c54f5`); the prompt below is what the measurement
+      // behind widening it was run on.
+      const text = prompt({ history });
+      assert.ok(!/diff above is empty/.test(text), "a diff with files was called empty");
+      assert.match(text, /The diff above is this branch's own, and it may be only part of the work/);
+      assert.match(text, /against the diff above and these commits together/);
+      assert.match(text, /not evidence that it contains\s+this task's deliverable/);
+      assert.match(text, /unjudgeable/);
+      assert.ok(text.endsWith("</history>"));
+      // The empty-diff opening is untouched by the second one.
+      assert.match(prompt({ ...empty, history }), /The branch's own diff above is empty/);
+    });
+  });
+});
+
+describe("historySearchStart", () => {
+  const base: RunDiff = {
+    kind: "range", reason: null, base: "b".repeat(40), branch: "uf/run-1", measuredFrom: null,
+    head: "h".repeat(40), files: [], filesChanged: 2, added: 3, deleted: 1, omittedPatches: 0,
+    patchFailure: null, uncommitted: [], caveat: null,
+  };
+
+  it("searches an empty diff from the sha it was read at", () => {
+    assert.equal(historySearchStart({ ...base, filesChanged: 0, added: 0, deleted: 0 }), "h".repeat(40));
+  });
+
+  it("searches a diff with files from where it starts, never from its head", () => {
+    // Fail-first: the old rule returned no search at all for a diff with files.
+    // From the head, the diff's own commits would be shown a second time as
+    // another run's history, when what is wanted is what lies before them.
+    assert.equal(historySearchStart(base), "b".repeat(40));
+  });
+
+  it("starts from the target commit when the diff is measured from a merge of it", () => {
+    const measuredFrom = { merge: "m".repeat(40), commit: "t".repeat(40), target: "main" };
+    assert.equal(historySearchStart({ ...base, measuredFrom }), "t".repeat(40));
+  });
+
+  it("has nowhere to search when there is no range or no base", () => {
+    assert.equal(historySearchStart({ ...base, kind: "worktree" }), null);
+    assert.equal(historySearchStart({ ...base, base: null }), null);
+    assert.equal(historySearchStart({ ...base, filesChanged: 0, head: null }), null);
   });
 });
 
@@ -614,6 +663,27 @@ describe("alreadyDeliveredFor", () => {
     assert.match(found.text, /\+lock\(\)/);
     assert.ok(!/Body names/.test(found.text));
     assert.equal(found.truncated, false);
+  });
+
+  it("searched from where a diff starts, shows the earlier run's commit and not the diff's own", async () => {
+    // The pair `historySearchStart` makes: a task whose earlier share is below
+    // the diff's start and whose later share, stamped by a second run the
+    // install also started for it, is inside the diff. From the head both would
+    // be listed, the second a duplicate of what the judge is already reading.
+    startedFor("later-run", TASK);
+    const earlier = commit("Earlier run's share", { "e.txt": "e\n" }, "UF-Run: earlier", `UF-Task: ${TASK}`);
+    const inDiff = commit("Inside the diff", { "d.txt": "d\n" }, "UF-Run: later-run", `UF-Task: ${TASK}`);
+    const start = historySearchStart({
+      kind: "range", reason: null, base: earlier, branch: "b", measuredFrom: null, head: inDiff,
+      files: [], filesChanged: 1, added: 1, deleted: 0, omittedPatches: 0, patchFailure: null,
+      uncommitted: [], caveat: null,
+    });
+    assert.equal(start, earlier);
+    const found = await ask(start!);
+    assert.ok(found);
+    assert.ok(found.commits.some((c) => c.sha === earlier));
+    assert.ok(!found.commits.some((c) => c.sha === inDiff));
+    assert.ok((await ask(inDiff))!.commits.some((c) => c.sha === inDiff), "from the head the diff's own commit is listed");
   });
 
   it("is null for the run's own stamp, which its diff already carries", async () => {

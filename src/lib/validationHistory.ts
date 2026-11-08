@@ -15,6 +15,11 @@ import { RUN_TRAILER, TASK_TRAILER } from "./runTrailers";
  * diff, so "already done by someone else" and "did nothing" were the same
  * evidence (board task `17be140e`).
  *
+ * The same search serves a branch whose diff is not empty — a task worked across
+ * two runs, the later one committing only its share (`813c54f5`). `head` is then
+ * the commit the diff starts from, so the diff's own commits are never shown
+ * twice (`historySearchStart` in `validation.ts`).
+ *
  * ## What counts as evidence, and why the run's word is not in it
  *
  * A commit is evidence only if **the server wrote a trailer on it naming this
@@ -114,6 +119,7 @@ function runStartedFor(runId: string, taskId: string): boolean {
  * their diffs, or null when there are none or any read failed.
  *
  * `repoRoot` is the caller's, already proved inside its mount (`repoPathFor`).
+ * `head` is the commit whose history is searched, not necessarily the branch's.
  * `budgetBytes` is shared by every commit's patch together.
  */
 export async function alreadyDeliveredFor(o: {

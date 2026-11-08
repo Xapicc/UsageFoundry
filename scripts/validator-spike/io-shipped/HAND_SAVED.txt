@@ -1,0 +1,1 @@
+Replies saved by hand, verbatim with the harness's indentation removed, because the judge subagent answered in chat instead of writing its file: 04 09 11 12 13 17 20 23 25 26 27 30 33 36 38 39 (16 of 40; the other 24 were written by the judge).

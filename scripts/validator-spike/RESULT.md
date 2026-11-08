@@ -145,6 +145,95 @@ runs cost dollars each, not twelve cents.
 - **Repeatability.** Each case was judged once. No verdict was sampled twice, so
   none of these numbers carries a variance.
 
+## The shipped preamble on the same 40
+
+Everything above is about `prompt.md`. The prompt that ships is
+`buildValidationPrompt` in `src/lib/validation.ts`, whose preamble replaces
+"be suspicious rather than generous" with `VERDICT_PREFERENCE`, and it had never
+been scored. `score.mjs --shipped` composes each case through that function
+(`shippedPrompt.mjs`; the case's `runs.task` as the task body, no history, the
+production `diffAsText` rendering the files), `io-shipped/` holds the 40 replies
+and `score-report-shipped.md` is the generated tally with the 40-row table.
+2026-11-08, judge a Claude Code subagent on **Sonnet 5.5** with no repository
+access, one sample per case, composed from `validation.ts` as of `4fd7c103` (last changed
+in `9ca987c5`).
+
+| | `prompt.md` (above) | shipped preamble |
+|---|---|---|
+| agreement, held-out set | **34/37 (91.9%)** | **32/37 (86.5%)** |
+| agreement, all 40 | 35/40 (87.5%) | 33/40 (82.5%) |
+| trivial validator that always answers `finished` | 29/37 | 29/37 |
+| **false-finished** | **0 of 1** held-out; 0 of 2 all-in | **0 of 1** held-out; 0 of 2 all-in |
+| **false-not-finished** | 0 of 29 held-out; 2 of 31 all-in (18, 24) | 0 of 29 held-out; 2 of 31 all-in (18, 24) |
+| labelled `unjudgeable` answered `unjudgeable` | 5 of 7 | 5 of 7 |
+| verdicts parsed | 40 of 40 | 40 of 40 |
+
+(The "1 of 30" all-in figure in the first table counts case 18 and not case 24;
+`score-report.md` has both `not-finished` against a `finished` label, so it is 2
+of 31. Both are held out, so the held-out row is unaffected.)
+
+**Agreement got worse by two cases; false-finished did not.** Three verdicts
+differ between the two runs and no other:
+
+- **7** (`finished`): `finished` → `unjudgeable`. The patch for `settings/page.tsx`,
+  where most of the task lives, was dropped to fit; the judge says it cannot check
+  the guard-set lead or the save states.
+- **20** (`finished`): `finished` → `unjudgeable`. Eight of 22 files' bodies were
+  dropped, including `referential.go` and `pr.go`, and the acceptance criteria are
+  in issue bodies the judge cannot read.
+- **8** (labelled `unjudgeable`, so wrong either way): `finished` → `not-finished`.
+  The task requires uncommitted work to go onto its own branch via `commitPending`;
+  the README the run added says "the halt never commits", and no visible file calls
+  it. `workflows.ts`, where `stopInstance` lives, was among the files dropped from the
+  patch. Read afterwards in `/workspace/UsageFoundry` at the case's last commit: that
+  file has no `commitPending`, and none of the lines the five commits added, in any
+  file, mentions it. So the `not-finished` named a requirement the branch does not
+  meet, which is the validator doing its job on a case the label called
+  unjudgeable; the earlier run's `finished` is the one that missed it. Whether the
+  deviation matters to the operator, the README states it as a choice, was not
+  assessed.
+
+**Whether the preamble caused the two lost cases is not shown, and a control says
+it probably did not.** Between the two runs the judge model (Sonnet 4.5 → 5.5), the
+sender's system prompt and the preamble all changed, with one sample each. So the
+three changed cases were re-judged by this run's judge twice more:
+`io-control-promptmd/` with `prompt.md` and `io-control-shipped2/` with the shipped
+preamble again.
+
+| case | `prompt.md`, Sonnet 4.5 (recorded) | `prompt.md`, this judge | shipped, this judge | shipped, this judge, again |
+|---|---|---|---|---|
+| 7 | finished | unjudgeable | unjudgeable | unjudgeable |
+| 8 | finished | not-finished | not-finished | not-finished |
+| 20 | finished | unjudgeable | unjudgeable | **finished** |
+
+With `prompt.md` the present judge gives the same three answers the shipped
+preamble gets, so these differences are not attributable to the preamble; the
+older run's `finished` on all three is what is out of line, and the likeliest
+reasons are the judge model and the sampling. Case 20 flipped under the same
+prompt on a second sample, so a single verdict there is a coin the size of the
+doubt. This is n = 3 with one or two samples each: it bounds nothing, and it does
+not show the preamble is neutral, only that these 40 do not show it is not.
+
+**What the 40 do show about the preamble's intent.** `VERDICT_PREFERENCE` routes
+unsupported doubt to `unjudgeable`, and where a verdict moved in either run it
+was between `finished` and `unjudgeable` on a case whose patch was shortened; in
+production `unjudgeable` closes the task without a pickup, so those two would
+have closed exactly as `finished` does. Neither run produced a false-finished,
+and on 29 held-out `finished` rows neither produced a `not-finished`.
+
+**What this did not measure**, beyond the list above: `spawnAssist`'s child under
+`plan` mode (the judge was the harness's subagent path, whose tool access could
+not be restricted to the one file it was told to read; the three-call judge for
+case 14 and four-call control for case 20 read more than the two-call norm, which
+is consistent with paging a large request and is not checked); the board's
+title/brief split (the case's `runs.task` stands in for the task body, with a
+placeholder title); the "this branch carries more than one run" note `validate.mjs`
+adds for the 11 chained cases, which production's evidence does not have and
+this run therefore omits; and per-file +/- counts for a file whose patch was
+dropped (the `[TRUNCATED]` notice reads `(+? −?)`). 16 of the 40 replies, and 2
+of the 3 repeats, reached me in the subagent's chat message and were saved
+verbatim by hand (`HAND_SAVED.txt` beside them names which).
+
 ## The already-on-main arms
 
 `history.mjs` and `history-report.md` beside this file add one input the 40
@@ -156,3 +245,9 @@ the cases above, labelled `finished`, are re-built three ways and judged by the
 with another case's commit, `not-finished` for 14 of 14. None of these numbers
 extends the 34 of 37, which are about `prompt.md`; the reading, its caveats and
 how to re-run are in `docs/agent/taskboard/completion-validation-history.md`.
+
+`history.mjs --arms split` adds the other half of that question, a non-empty branch
+diff that is only the later run's share of a task, over six multi-commit cases
+(`history-split-report.md`): the later half alone, as today, 0 of 6 `finished`; with
+the earlier commits as history, 5 of 6; with another case's commits, 0 of 12; the
+rest is in the same document and in `docs/verification/taskboard-board-and-tools.md`.

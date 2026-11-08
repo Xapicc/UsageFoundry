@@ -20,10 +20,18 @@
 // Usage:
 //   node scripts/validator-spike/score.mjs --emit    [--io-dir <dir>] [--with-testimony]
 //   node scripts/validator-spike/score.mjs --collect [--io-dir <dir>] [--with-testimony] [--out <file>]
+//
+// By default the prompt is prompt.md, the spike's. `--shipped` composes each case
+// with the production `buildValidationPrompt` from a compiled build instead
+// (`npx tsc -p tsconfig.test.json --outDir .test-build/spike`, then
+// `--build-dir .test-build/spike`), which is the string RESULT.md's 34 of 37 is
+// NOT about. Use a separate --io-dir for it: a request file for a case with no
+// reply is overwritten.
 
 import fs from "node:fs";
 import path from "node:path";
 import { validate, arg } from "./validate.mjs";
+import { shippedComposer } from "./shippedPrompt.mjs";
 
 const HERE = import.meta.dirname;
 const CASES = path.join(HERE, "cases");
@@ -104,6 +112,7 @@ async function main() {
     model: arg(argv, "--model", "claude-sonnet-4-5"),
     ioDir: arg(argv, "--io-dir", path.join(HERE, "io")),
     withTestimony: argv.includes("--with-testimony"),
+    compose: argv.includes("--shipped") ? shippedComposer(arg(argv, "--build-dir", ".test-build/spike")) : null,
   };
   const emitOnly = argv.includes("--emit");
   const measuredUsage = readMeasuredUsage(options.ioDir);
@@ -173,7 +182,7 @@ async function main() {
 
   say(`# Validator spike — score against git show a74a1bb:"proposals/implemented - ExternalValidator/validator-baseline.md" §3`);
   say();
-  say(`model: ${options.model} · transport: ${options.transport} · testimony: ${options.withTestimony ? "given" : "withheld"}`);
+  say(`model: ${options.model} · transport: ${options.transport} · prompt: ${options.compose ? "shipped (buildValidationPrompt)" : "prompt.md"} · testimony: ${options.withTestimony ? "given" : "withheld"}`);
   say();
   say(`cases: ${results.length} · answered: ${answered.length} · unparseable: ${results.filter((r) => r.status === "unparseable").length} · awaiting: ${results.filter((r) => r.status === "awaiting-response").length}`);
   const heldOut = answered.filter((r) => r.reconstructionFailure);

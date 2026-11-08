@@ -1,0 +1,9 @@
+The task names five in-scope files and four treatments: meters, tables into list views, breakdowns behind a segmented control, and live telemetry plus run cards as a native list. The branch diff touches only two files, `src/app/page.tsx` and `src/components/UsagePeriods.tsx`. Those two carry the single lead `primary` card holding both windows, the grouped "Rate and totals" list, the `SegmentedControl` replacing the tab strip, and the sticky-head list views. The one earlier commit carrying this task's trailer (a2383b4b) changes only `Meter.tsx`, and only to take the fill's motion from the kit's tokens. No hairline track, gradient removal or tabular-figure change to the meter is visible anywhere. `LiveTelemetry.tsx` and `RunCard.tsx` appear in neither the diff nor the history, although the task explicitly asks for them to be restyled as a native list of running work, status glyph, folder and figures. The new comments in `page.tsx` and `UsagePeriods.tsx` even say `LiveTelemetry` draws a list view, yet that file is not in the diffstat. The page diff is truncated, but the diffstat lists only two files, so the missing files are not hidden in the cut. Several deliverables the task names are therefore absent: the `LiveTelemetry` and `RunCard` restyle, and the meter level-indicator treatment beyond motion timing.
+
+```json
+{
+  "verdict": "not-finished",
+  "reason": "Diffstat touches only page.tsx and UsagePeriods.tsx; LiveTelemetry.tsx and RunCard.tsx are untouched, and Meter.tsx only got a motion-token change, so named deliverables are absent.",
+  "evidence": ["diffstat: 2 files changed (src/app/page.tsx, src/components/UsagePeriods.tsx)", "src/components/LiveTelemetry.tsx and src/components/RunCard.tsx absent from diff and history", "history a2383b4b changes src/components/Meter.tsx only for FILL_MOTION; no hairline track or tabular figures", "task bullet: live telemetry and run cards as a native list"]
+}
+```

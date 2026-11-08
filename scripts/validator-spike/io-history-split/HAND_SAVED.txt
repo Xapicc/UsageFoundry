@@ -1,0 +1,1 @@
+Replies saved by hand, verbatim with the harness indentation removed, because the judge subagent answered in chat instead of writing its file: splitToday-16 splitMismatch-16 splitHistory-25 splitToday-33 splitMismatch-33 (5 of 27).

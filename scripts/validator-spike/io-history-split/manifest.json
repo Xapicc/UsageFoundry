@@ -1,0 +1,475 @@
+[
+  {
+    "name": "splitToday-12",
+    "arm": "splitToday",
+    "n": 12,
+    "historyFrom": null,
+    "diffCommits": [
+      "e42e3b32"
+    ],
+    "historyCommits": [],
+    "historyTruncated": null,
+    "diffTruncated": false,
+    "bytes": 50820,
+    "expected": "finished"
+  },
+  {
+    "name": "splitHistory-12",
+    "arm": "splitHistory",
+    "n": 12,
+    "historyFrom": 12,
+    "diffCommits": [
+      "e42e3b32"
+    ],
+    "historyCommits": [
+      "30c3e9bf",
+      "00844530",
+      "a2383b4b"
+    ],
+    "historyTruncated": false,
+    "diffTruncated": false,
+    "bytes": 62232,
+    "expected": "finished"
+  },
+  {
+    "name": "splitMismatch-12",
+    "arm": "splitMismatch",
+    "n": 12,
+    "historyFrom": 16,
+    "diffCommits": [
+      "e42e3b32"
+    ],
+    "historyCommits": [
+      "c9669074"
+    ],
+    "historyTruncated": false,
+    "diffTruncated": false,
+    "bytes": 73986,
+    "expected": "not-finished"
+  },
+  {
+    "name": "splitMismatchB-12",
+    "arm": "splitMismatchB",
+    "n": 12,
+    "historyFrom": 37,
+    "diffCommits": [
+      "e42e3b32"
+    ],
+    "historyCommits": [
+      "12c57782"
+    ],
+    "historyTruncated": false,
+    "diffTruncated": false,
+    "bytes": 56377,
+    "expected": "not-finished"
+  },
+  {
+    "name": "splitPartial-12",
+    "arm": "splitPartial",
+    "n": 12,
+    "historyFrom": 12,
+    "diffCommits": [
+      "e42e3b32"
+    ],
+    "historyCommits": [
+      "a2383b4b"
+    ],
+    "historyTruncated": false,
+    "diffTruncated": false,
+    "bytes": 53788,
+    "expected": "not-finished"
+  },
+  {
+    "name": "splitToday-16",
+    "arm": "splitToday",
+    "n": 16,
+    "historyFrom": null,
+    "diffCommits": [
+      "6de41700"
+    ],
+    "historyCommits": [],
+    "historyTruncated": null,
+    "diffTruncated": false,
+    "bytes": 41654,
+    "expected": "finished"
+  },
+  {
+    "name": "splitHistory-16",
+    "arm": "splitHistory",
+    "n": 16,
+    "historyFrom": 16,
+    "diffCommits": [
+      "6de41700"
+    ],
+    "historyCommits": [
+      "c9669074"
+    ],
+    "historyTruncated": false,
+    "diffTruncated": false,
+    "bytes": 64820,
+    "expected": "finished"
+  },
+  {
+    "name": "splitMismatch-16",
+    "arm": "splitMismatch",
+    "n": 16,
+    "historyFrom": 37,
+    "diffCommits": [
+      "6de41700"
+    ],
+    "historyCommits": [
+      "12c57782"
+    ],
+    "historyTruncated": false,
+    "diffTruncated": false,
+    "bytes": 47211,
+    "expected": "not-finished"
+  },
+  {
+    "name": "splitMismatchB-16",
+    "arm": "splitMismatchB",
+    "n": 16,
+    "historyFrom": 12,
+    "diffCommits": [
+      "6de41700"
+    ],
+    "historyCommits": [
+      "30c3e9bf",
+      "00844530",
+      "a2383b4b"
+    ],
+    "historyTruncated": false,
+    "diffTruncated": false,
+    "bytes": 53066,
+    "expected": "not-finished"
+  },
+  {
+    "name": "splitToday-17",
+    "arm": "splitToday",
+    "n": 17,
+    "historyFrom": null,
+    "diffCommits": [
+      "03507bbe"
+    ],
+    "historyCommits": [],
+    "historyTruncated": null,
+    "diffTruncated": false,
+    "bytes": 27957,
+    "expected": "finished"
+  },
+  {
+    "name": "splitHistory-17",
+    "arm": "splitHistory",
+    "n": 17,
+    "historyFrom": 17,
+    "diffCommits": [
+      "03507bbe"
+    ],
+    "historyCommits": [
+      "7400aee0"
+    ],
+    "historyTruncated": true,
+    "diffTruncated": false,
+    "bytes": 87546,
+    "expected": "finished"
+  },
+  {
+    "name": "splitMismatch-17",
+    "arm": "splitMismatch",
+    "n": 17,
+    "historyFrom": 16,
+    "diffCommits": [
+      "03507bbe"
+    ],
+    "historyCommits": [
+      "c9669074"
+    ],
+    "historyTruncated": false,
+    "diffTruncated": false,
+    "bytes": 51123,
+    "expected": "not-finished"
+  },
+  {
+    "name": "splitMismatchB-17",
+    "arm": "splitMismatchB",
+    "n": 17,
+    "historyFrom": 37,
+    "diffCommits": [
+      "03507bbe"
+    ],
+    "historyCommits": [
+      "12c57782"
+    ],
+    "historyTruncated": false,
+    "diffTruncated": false,
+    "bytes": 33514,
+    "expected": "not-finished"
+  },
+  {
+    "name": "splitToday-25",
+    "arm": "splitToday",
+    "n": 25,
+    "historyFrom": null,
+    "diffCommits": [
+      "ed0a45de",
+      "e8971db7",
+      "c806f183",
+      "dc139e31",
+      "8876467f",
+      "b1ba3705",
+      "7c5ed66e",
+      "b8d1ed7e",
+      "e9a24698"
+    ],
+    "historyCommits": [],
+    "historyTruncated": null,
+    "diffTruncated": true,
+    "bytes": 66610,
+    "expected": "finished"
+  },
+  {
+    "name": "splitHistory-25",
+    "arm": "splitHistory",
+    "n": 25,
+    "historyFrom": 25,
+    "diffCommits": [
+      "ed0a45de",
+      "e8971db7",
+      "c806f183",
+      "dc139e31",
+      "8876467f",
+      "b1ba3705",
+      "7c5ed66e",
+      "b8d1ed7e",
+      "e9a24698"
+    ],
+    "historyCommits": [
+      "a4acced3",
+      "074a770d",
+      "595c3655",
+      "bc6ee135",
+      "fbb3e989"
+    ],
+    "historyTruncated": true,
+    "diffTruncated": true,
+    "bytes": 125711,
+    "expected": "finished"
+  },
+  {
+    "name": "splitMismatch-25",
+    "arm": "splitMismatch",
+    "n": 25,
+    "historyFrom": 33,
+    "diffCommits": [
+      "ed0a45de",
+      "e8971db7",
+      "c806f183",
+      "dc139e31",
+      "8876467f",
+      "b1ba3705",
+      "7c5ed66e",
+      "b8d1ed7e",
+      "e9a24698"
+    ],
+    "historyCommits": [
+      "dc7d5519",
+      "99ed4b09"
+    ],
+    "historyTruncated": true,
+    "diffTruncated": true,
+    "bytes": 88164,
+    "expected": "not-finished"
+  },
+  {
+    "name": "splitMismatchB-25",
+    "arm": "splitMismatchB",
+    "n": 25,
+    "historyFrom": 17,
+    "diffCommits": [
+      "ed0a45de",
+      "e8971db7",
+      "c806f183",
+      "dc139e31",
+      "8876467f",
+      "b1ba3705",
+      "7c5ed66e",
+      "b8d1ed7e",
+      "e9a24698"
+    ],
+    "historyCommits": [
+      "7400aee0"
+    ],
+    "historyTruncated": true,
+    "diffTruncated": true,
+    "bytes": 126199,
+    "expected": "not-finished"
+  },
+  {
+    "name": "splitPartial-25",
+    "arm": "splitPartial",
+    "n": 25,
+    "historyFrom": 25,
+    "diffCommits": [
+      "b1ba3705",
+      "7c5ed66e",
+      "b8d1ed7e",
+      "e9a24698"
+    ],
+    "historyCommits": [
+      "595c3655",
+      "bc6ee135",
+      "fbb3e989"
+    ],
+    "historyTruncated": false,
+    "diffTruncated": false,
+    "bytes": 76671,
+    "expected": "not-finished"
+  },
+  {
+    "name": "splitToday-33",
+    "arm": "splitToday",
+    "n": 33,
+    "historyFrom": null,
+    "diffCommits": [
+      "f23d23f8"
+    ],
+    "historyCommits": [],
+    "historyTruncated": null,
+    "diffTruncated": false,
+    "bytes": 14279,
+    "expected": "finished"
+  },
+  {
+    "name": "splitHistory-33",
+    "arm": "splitHistory",
+    "n": 33,
+    "historyFrom": 33,
+    "diffCommits": [
+      "f23d23f8"
+    ],
+    "historyCommits": [
+      "dc7d5519",
+      "99ed4b09"
+    ],
+    "historyTruncated": true,
+    "diffTruncated": false,
+    "bytes": 35833,
+    "expected": "finished"
+  },
+  {
+    "name": "splitMismatch-33",
+    "arm": "splitMismatch",
+    "n": 33,
+    "historyFrom": 25,
+    "diffCommits": [
+      "f23d23f8"
+    ],
+    "historyCommits": [
+      "a4acced3",
+      "074a770d",
+      "595c3655",
+      "bc6ee135",
+      "fbb3e989"
+    ],
+    "historyTruncated": true,
+    "diffTruncated": false,
+    "bytes": 73380,
+    "expected": "not-finished"
+  },
+  {
+    "name": "splitMismatchB-33",
+    "arm": "splitMismatchB",
+    "n": 33,
+    "historyFrom": 12,
+    "diffCommits": [
+      "f23d23f8"
+    ],
+    "historyCommits": [
+      "30c3e9bf",
+      "00844530",
+      "a2383b4b"
+    ],
+    "historyTruncated": false,
+    "diffTruncated": false,
+    "bytes": 25691,
+    "expected": "not-finished"
+  },
+  {
+    "name": "splitPartial-33",
+    "arm": "splitPartial",
+    "n": 33,
+    "historyFrom": 33,
+    "diffCommits": [
+      "f23d23f8"
+    ],
+    "historyCommits": [
+      "99ed4b09"
+    ],
+    "historyTruncated": false,
+    "diffTruncated": false,
+    "bytes": 24345,
+    "expected": "not-finished"
+  },
+  {
+    "name": "splitToday-37",
+    "arm": "splitToday",
+    "n": 37,
+    "historyFrom": null,
+    "diffCommits": [
+      "ef051986"
+    ],
+    "historyCommits": [],
+    "historyTruncated": null,
+    "diffTruncated": false,
+    "bytes": 20702,
+    "expected": "finished"
+  },
+  {
+    "name": "splitHistory-37",
+    "arm": "splitHistory",
+    "n": 37,
+    "historyFrom": 37,
+    "diffCommits": [
+      "ef051986"
+    ],
+    "historyCommits": [
+      "12c57782"
+    ],
+    "historyTruncated": false,
+    "diffTruncated": false,
+    "bytes": 26259,
+    "expected": "finished"
+  },
+  {
+    "name": "splitMismatch-37",
+    "arm": "splitMismatch",
+    "n": 37,
+    "historyFrom": 17,
+    "diffCommits": [
+      "ef051986"
+    ],
+    "historyCommits": [
+      "7400aee0"
+    ],
+    "historyTruncated": true,
+    "diffTruncated": false,
+    "bytes": 80291,
+    "expected": "not-finished"
+  },
+  {
+    "name": "splitMismatchB-37",
+    "arm": "splitMismatchB",
+    "n": 37,
+    "historyFrom": 16,
+    "diffCommits": [
+      "ef051986"
+    ],
+    "historyCommits": [
+      "c9669074"
+    ],
+    "historyTruncated": false,
+    "diffTruncated": false,
+    "bytes": 43868,
+    "expected": "not-finished"
+  }
+]
