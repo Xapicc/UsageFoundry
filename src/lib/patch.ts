@@ -23,7 +23,10 @@ export type PatchRowKind =
   | "add"
   | "del"
   | "context"
-  /** git's `\ No newline at end of file`, which belongs to neither side. */
+  /**
+   * git's `\ No newline at end of file`, or the marker `truncatePatch` ends a
+   * shortened patch with: neither belongs to a side of the file.
+   */
   | "note";
 
 export interface PatchRow {
@@ -44,12 +47,31 @@ export interface PatchRow {
  */
 const HUNK_HEADER = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 
+/**
+ * What `truncatePatch` appends in place of the lines it dropped. Written here
+ * beside `TRUNCATION_MARKER`, which reads it back, so the two cannot drift: the
+ * marker has no `+`, `-` or `\` prefix, and a copy of its wording that fell out
+ * of step would be numbered as a line of the file.
+ */
+export function patchTruncationMarker(dropped: number): string {
+  return `… ${dropped} more line${dropped === 1 ? "" : "s"} not shown`;
+}
+
+/**
+ * Only the last line is ever looked at. A line of the file that reads like this
+ * one reaches `patchRows` with git's leading space on it, so it does not match.
+ */
+const TRUNCATION_MARKER = /^… \d+ more lines? not shown$/;
+
 export function patchRows(text: string): PatchRow[] {
   const lines = text.split("\n");
   // A patch ends with a newline, so the split leaves one empty tail element.
   // Counted as a context line it would advance both sides by one and put every
   // later file's numbering out by one.
   if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  // Taken off before the loop: inside a hunk a line with no prefix is context,
+  // which would hand the marker the next line number.
+  const marker = TRUNCATION_MARKER.test(lines[lines.length - 1] ?? "") ? lines.pop() : undefined;
 
   const rows: PatchRow[] = [];
   let oldLine = 0;
@@ -103,6 +125,9 @@ export function patchRows(text: string): PatchRow[] {
     });
   }
 
+  if (marker !== undefined) {
+    rows.push({ kind: "note", oldLine: null, newLine: null, text: marker });
+  }
   return rows;
 }
 
