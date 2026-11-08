@@ -80,8 +80,11 @@
 ## Not yet verified by hand
 
 - **What an authenticated work cycle replaces under `~/.claude` is unwatched,
-  2026-09-27.** *Verified* above reads each deny-listed file's write method off
-  the binary and reproduces the strip on `.config.json`, but both scratch runs
+  2026-09-27.** *Verified* in
+  [security-and-sandboxing-config-dir-binds.md](security-and-sandboxing-config-dir-binds.md)
+  reads each
+  deny-listed file's write method off the binary and reproduces the strip on
+  `.config.json`, but both scratch runs
   stopped at "Not logged in", so two things rest on the binary alone: that an
   authenticated headless cycle never rewrites `settings.json`, and that an OAuth
   refresh strips `.credentials.json`'s read-deny bind. Settle from an
