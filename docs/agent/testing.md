@@ -263,14 +263,19 @@ Cases in `loopSection.test.ts` and `workflows.test.ts`, each listed under its ow
 
 | Test file | Also in |
 |---|---|
-| `deleteBranch.test.ts` |  |
-| `diffSlotReuse.test.ts` |  |
-| `landAfterSquash.test.ts` | [resolution] |
 | `landAfterVerify.test.ts` | [contention] |
 | `landMovedBranch.test.ts` |  |
 | `landUnwind.test.ts` | [contention] |
 | `landView.test.ts` | [cards] |
 | `repoLock.test.ts` |  |
+
+## [Deleting a landed branch, a squashed chain's second land and a reused slot](testing/branch-deletion-and-slot-reuse.md)
+
+| Test file | Also in |
+|---|---|
+| `deleteBranch.test.ts` |  |
+| `diffSlotReuse.test.ts` |  |
+| `landAfterSquash.test.ts` | [resolution] |
 
 ## [The verify gate in front of Land](testing/land-verify-gate.md)
 
@@ -609,3 +614,4 @@ It prints nothing as this is written. Whoever owns a file it names owes that fil
 [projects]: testing/projects-push-and-fetch.md
 [live]: testing/live-page-folds.md
 [chat-thread]: testing/chat-thread-page-readings.md
+[branch-delete]: testing/branch-deletion-and-slot-reuse.md
