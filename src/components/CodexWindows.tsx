@@ -5,7 +5,7 @@ import { Badge } from "./ui/Badge";
 import { CardTitle } from "./ui/Card";
 import type { CodexUsageDTO, PlanWindowDTO } from "../lib/apiTypes";
 import { currentCodexReading } from "../lib/codexReading";
-import { fmtDateTime, fmtRelative } from "../lib/format";
+import { WindowHead, resetText } from "./WindowHead";
 
 const DAY_MINUTES = 24 * 60;
 
@@ -26,40 +26,61 @@ export function codexWindowName(minutes: number | null, fallback: string): strin
   return `${minutes}-minute`;
 }
 
-function resetLine(window: PlanWindowDTO, minutes: number | null, now: number): string | undefined {
-  if (window.resetsAt === null) return undefined;
-  // A day or longer reads as a date; "in 137h 12m" is not a time anybody plans by.
-  const long = minutes !== null && minutes >= DAY_MINUTES;
-  return long
-    ? `Resets ${fmtDateTime(window.resetsAt)}`
-    : `Resets ${fmtRelative(window.resetsAt, now)} · ${fmtDateTime(window.resetsAt)}`;
-}
-
 /**
- * One window's meter: its figure while open, unknown once it has reset.
+ * One window's reading: its figure and reset while open, unknown once it has
+ * reset.
  *
  * `reported` is the window as the cached reading holds it and `open` is what
  * `currentCodexReading` kept, so the two differ only for a window whose reset
  * has passed — which says so rather than "not reported", because it was.
  */
-function windowMeter(
+function windowReading(
   reported: PlanWindowDTO | null,
   open: PlanWindowDTO | null,
-  minutes: number | null,
   now: number,
-): { fraction: number | null; unknownHint: string; detail: string | undefined } {
+): { fraction: number | null; unknownHint: string; reset: string | null } {
   if (open) {
     return {
       fraction: open.utilization,
       unknownHint: "not reported",
-      detail: resetLine(open, minutes, now),
+      reset: open.resetsAt === null ? null : resetText(open.resetsAt, now),
     };
   }
   return {
     fraction: null,
     unknownHint: reported ? "reset since this reading" : "not reported",
-    detail: undefined,
+    reset: null,
   };
+}
+
+/**
+ * One Codex window in the Claude windows' grammar — name, what is left, reset,
+ * meter — a size down. It carries no projection line: Codex reports a
+ * percentage and a reset, and no rate to extrapolate one from.
+ */
+function CodexWindow({
+  label,
+  reported,
+  open,
+  now,
+}: {
+  label: string;
+  reported: PlanWindowDTO | null;
+  open: PlanWindowDTO | null;
+  now: number;
+}) {
+  const r = windowReading(reported, open, now);
+  return (
+    <div>
+      <WindowHead
+        size="compact"
+        title={<div className="text-xs font-medium text-ink">{label}</div>}
+        used={r.fraction}
+        reset={r.reset}
+      />
+      <Meter label={`${label} used`} fraction={r.fraction} unknownHint={r.unknownHint} />
+    </div>
+  );
 }
 
 /**
@@ -68,7 +89,10 @@ function windowMeter(
  * Another provider's percentages, read off the Codex CLI's app server: never
  * added to, compared with or guarded by the Claude meters above them. An
  * unreadable window is the hatched unknown meter, never 0%, and so is one that
- * has reset since the cached reading was taken.
+ * has reset since the cached reading was taken. Where the figures come from —
+ * OpenAI's own, so they match Codex's `/status` — is said in the window card's
+ * fold rather than under the meters, because it is read once and decides
+ * nothing.
  */
 export function CodexWindows({ codex, now }: { codex: CodexUsageDTO; now: number }) {
   const reported = codex.plan;
@@ -87,24 +111,22 @@ export function CodexWindows({ codex, now }: { codex: CodexUsageDTO; now: number
       </div>
 
       {reported && plan ? (
-        <>
-          <div className="mt-2 grid gap-x-6 gap-y-3 sm:grid-cols-2">
-            <Meter
-              label={`${codexWindowName(plan.sessionMinutes, "Short")} window`}
-              {...windowMeter(reported.session, plan.session, plan.sessionMinutes, now)}
-            />
-            <Meter
-              label={`${codexWindowName(plan.weeklyMinutes, "Long")} window`}
-              {...windowMeter(reported.weekly, plan.weekly, plan.weeklyMinutes, now)}
-            />
-          </div>
-          <div className="mt-3 text-xs text-ink-muted">
-            Reported by OpenAI for the signed-in account, so it matches Codex&rsquo;s{" "}
-            <span className="mono">/status</span>.
-          </div>
-        </>
+        <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+          <CodexWindow
+            label={`${codexWindowName(plan.sessionMinutes, "Short")} window`}
+            reported={reported.session}
+            open={plan.session}
+            now={now}
+          />
+          <CodexWindow
+            label={`${codexWindowName(plan.weeklyMinutes, "Long")} window`}
+            reported={reported.weekly}
+            open={plan.weekly}
+            now={now}
+          />
+        </div>
       ) : (
-        <div className="mt-2 text-xs text-ink-muted">
+        <div className="text-xs text-ink-muted">
           No reading{codex.error ? `: ${codex.error}` : ""}
         </div>
       )}

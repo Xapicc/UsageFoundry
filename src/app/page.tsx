@@ -9,9 +9,16 @@ import { LiveTelemetry } from "@/components/LiveTelemetry";
 import { Meter } from "@/components/Meter";
 import { SourceRegion } from "@/components/SourceRegion";
 import { UsageNotices } from "@/components/UsageNotices";
+import { WindowHead, resetText } from "@/components/WindowHead";
+import {
+  isProjectable,
+  outlookLine,
+  windowOutlooks,
+  type WindowOutlook,
+} from "@/components/windowOutlook";
 import { Badge } from "@/components/ui/Badge";
 import { Card, CardTitle, Stat, StatSub } from "@/components/ui/Card";
-import { ListGroup, ListRow } from "@/components/ui/List";
+import { Disclosure } from "@/components/ui/Disclosure";
 import { Notice } from "@/components/ui/Notice";
 import { windowCardNotes } from "@/lib/windowCardNotes";
 import { startPoll } from "@/lib/poll";
@@ -21,8 +28,6 @@ import type {
   WindowStateDTO,
 } from "@/lib/apiTypes";
 import {
-  fmtDateTime,
-  fmtDuration,
   fmtPct,
   fmtRelative,
   fmtTokens,
@@ -32,7 +37,7 @@ import {
 } from "@/lib/format";
 
 /**
- * Describe the ceiling a window's percentage is measured against.
+ * What a window's percentage is measured against, in the meter's detail line.
  *
  * `w.limit` is the *effective* ceiling: `limitConfig()` has already subtracted
  * reserved headroom. Calling that "your configured estimate" named the wrong
@@ -41,6 +46,9 @@ import {
  * with usage. The arithmetic was never wrong; the label was, and a meter that
  * disagrees with the value you set reads as a broken calculation. So say both
  * numbers whenever a reserve is in force.
+ *
+ * A raw-token reading behind a cost meter rides on the same line: it is the
+ * other ceiling the run-out line below may have been projected from.
  */
 function ceilingDetail(
   w: WindowStateDTO,
@@ -52,26 +60,29 @@ function ceilingDetail(
   const reduced = reserve > 0 && configured !== null;
 
   // The provider's own percentage has no ceiling behind it to describe, so
-  // this says where it came from and how old it is instead. Both matter: it
-  // covers surfaces the dollar figure above it cannot see, and it is cached
-  // for up to five minutes, so a reader reconciling it against a window that
-  // just moved needs to know they are looking at a reading, not a live tap.
+  // this says whose it is and how old: it is cached for up to five minutes,
+  // and a reader reconciling it against a window that just moved needs to
+  // know they are looking at a reading, not a live tap.
   if (w.fractionMetric === "plan") {
-    const age = plan ? ` Read ${fmtRelative(plan.fetchedAt, now)}.` : "";
-    return `Anthropic's reading for this account, across every Claude surface that shares the allowance.${age}`;
+    return plan
+      ? `Anthropic’s reading, ${fmtRelative(plan.fetchedAt, now)}`
+      : "Anthropic’s reading";
   }
 
   if (w.fractionMetric === "cost") {
-    return reduced
-      ? `Ceiling: ${fmtUSD(w.limit ?? 0)} equivalent API cost — your ${fmtUSD(configured)} estimate less ${fmtPct(reserve)} reserved headroom.`
-      : `Ceiling: ${fmtUSD(w.limit ?? 0)} equivalent API cost — your configured estimate.`;
+    const ceiling = reduced
+      ? `Ceiling ${fmtUSD(w.limit ?? 0)} API-equivalent: your ${fmtUSD(configured)} less ${fmtPct(reserve)} reserve`
+      : `Ceiling ${fmtUSD(w.limit ?? 0)} API-equivalent, your estimate`;
+    return w.tokenFraction !== null
+      ? `${ceiling} · token ceiling ${fmtPct(w.tokenFraction)}`
+      : ceiling;
   }
   if (w.fractionMetric === "tokens") {
     return reduced
-      ? `Ceiling: ${fmtTokens(w.limit ?? 0)} raw tokens — your ${fmtTokens(configured)} estimate less ${fmtPct(reserve)} reserved headroom.`
-      : `Ceiling: ${fmtTokens(w.limit ?? 0)} raw tokens.`;
+      ? `Ceiling ${fmtTokens(w.limit ?? 0)} raw tokens: your ${fmtTokens(configured)} less ${fmtPct(reserve)} reserve`
+      : `Ceiling ${fmtTokens(w.limit ?? 0)} raw tokens`;
   }
-  return "Set a ceiling in Settings to see a percentage.";
+  return "Set a ceiling in Settings to see a percentage";
 }
 
 /** Poll cadence: the second one applies while a run is still working. */
@@ -79,15 +90,40 @@ const POLL_IDLE_MS = 120_000;
 const POLL_WORKING_MS = 60_000;
 
 /**
- * The figure at the right of a grouped row.
- *
- * Tabular for the reason every figure on this page is: the whole card re-renders
- * on every poll, and a proportional digit set moves the right edge of the
- * column each time a 1 becomes an 8.
+ * The line under a Claude window's meter that answers whether it runs out
+ * before it resets. A run-out is set in the ink colour rather than muted,
+ * because it is the one outcome on this card an operator acts on; the words
+ * carry it as well, so nothing is said in colour alone.
  */
-function ListValue({ children }: { children: ReactNode }) {
+function OutlookLine({ outlook, rate }: { outlook: WindowOutlook; rate: string | null }) {
+  const line = outlookLine(outlook, rate);
+  if (line === null) return null;
   return (
-    <span className="text-sm font-medium tabular-nums text-ink">{children}</span>
+    <div
+      className={`tabular-nums ${
+        outlook.kind === "runs-out" ? "font-medium text-ink" : "text-ink-muted"
+      }`}
+    >
+      {line}
+    </div>
+  );
+}
+
+/**
+ * In place of "% left" when a window has no reading: what it has spent, so the
+ * slot still says something true and "Volumes and costs above are exact
+ * regardless" in the no-ceiling notice still points at a figure.
+ */
+function WindowSpend({ w, size }: { w: WindowStateDTO; size: "large" | "default" }) {
+  return (
+    <>
+      <Stat size={size}>{fmtUSD(w.costUSD)}</Stat>
+      <StatSub>
+        <span className="tabular-nums">
+          {fmtTokens(w.tokens)} tokens · {w.agg.entryCount.toLocaleString()} turns
+        </span>
+      </StatSub>
+    </>
   );
 }
 
@@ -129,32 +165,25 @@ function PageHeader({ children }: { children: ReactNode }) {
  */
 function DashboardSkeleton() {
   return (
-    <div aria-busy="true">
-      {/* One lead card holding both windows, then a grouped list — the shape
-          the loaded page has, so the first response settles into it. */}
-      <Card emphasis="primary" className="mb-4">
+    <div aria-busy="true" className="grid gap-4 lg:grid-cols-2 lg:items-start">
+      {/* The loaded page's two columns: the window card, and beside it the
+          install limit, so the first response settles into the same shape. */}
+      <Card emphasis="primary">
         <div className="h-3 w-40 rounded-sm bg-inset" />
         <div className="mt-4 h-7 w-32 rounded-sm bg-inset" />
-        <div className="mt-2 h-3 w-48 rounded-sm bg-inset" />
         <div className="mt-5 h-3 w-full rounded-pill bg-inset" />
         <div className="mt-3 h-3 w-3/4 rounded-sm bg-inset" />
         <div className="mt-5 border-t border-line pt-4">
           <div className="h-3 w-28 rounded-sm bg-inset" />
           <div className="mt-4 h-6 w-24 rounded-sm bg-inset" />
-          <div className="mt-2 h-3 w-40 rounded-sm bg-inset" />
           <div className="mt-5 h-2 w-full rounded-pill bg-inset" />
+          <div className="mt-3 h-3 w-2/3 rounded-sm bg-inset" />
         </div>
       </Card>
-      <Card emphasis="quiet">
-        <div className="mb-3 h-3 w-32 rounded-sm bg-inset" />
-        <div className="divide-y divide-line rounded-lg border border-line bg-grouped">
-          {[0, 1, 2, 3].map((i) => (
-            <div key={i} className="flex items-center justify-between px-3.5 py-3">
-              <div className="h-3 w-40 rounded-sm bg-inset" />
-              <div className="h-3 w-16 rounded-sm bg-inset" />
-            </div>
-          ))}
-        </div>
+      <Card>
+        <div className="h-3 w-40 rounded-sm bg-inset" />
+        <div className="mt-5 h-2 w-full rounded-pill bg-inset" />
+        <div className="mt-3 h-3 w-3/4 rounded-sm bg-inset" />
       </Card>
     </div>
   );
@@ -312,40 +341,29 @@ export default function Dashboard() {
   }
 
   const { snapshot: s, meta, telemetry, install } = data;
-  // Spelled out per case rather than assembled from parts. Tailwind scans this
-  // file for literal class strings and emits nothing for a computed one, so a
-  // template built from a variable arrives in the browser as a class with no
-  // rule behind it — and the failure is the silent kind this page is full of:
-  // the row keeps stacking at every width and nothing throws, warns or fails a
-  // typecheck. (Scanning is literal in the other direction too: an arbitrary
-  // value written out in a comment here is compiled into the stylesheet.)
-  //
-  // Which template applies is the same question as which cards render, so the
-  // two conditions are the same ones their call sites carry. A track with no
-  // card in it is not free: the row packs left and the leftover is blank.
-  const topRowColumns = telemetry
-    ? // The cap costs nothing at any width and can start where the row does.
-      "lg:grid-cols-[minmax(0,50%)_minmax(0,1fr)]"
-    : // Nothing beside it, so nothing to make room for. Half a row of white
-      // space to the right of the meters is a worse answer to "this box could
-      // be shorter" than the wide box was.
-      "";
-  // The exhaustion projection extrapolates dollars and tokens per hour, so it
-  // needs an allowance to run them into: a configured ceiling, or a provider
-  // percentage, which implies one from what the window had spent when it was
-  // read. With neither it has to say so in its own terms rather than borrowing
-  // the `noCeilings` that gates `UsageNotices`' "No percentages available".
-  const nothingToProjectAgainst =
-    meta.configuredCeilings.sessionCost === null &&
-    meta.configuredCeilings.weeklyCost === null &&
-    meta.configuredCeilings.sessionTokens === null &&
-    meta.configuredCeilings.weeklyTokens === null &&
-    s.session.planFraction === null &&
-    s.weekly.planFraction === null;
-  // `wkEnd` is `now` itself unless a weekly anchor is configured, so this is a
-  // reading of the window rather than a guess about the setting behind it.
+  // `wkEnd` is `now` itself unless a weekly reset instant is known, so this is
+  // a reading of the window rather than a guess about the setting behind it.
   const weeklyResets = s.weekly.endsAt > s.now;
   const cardNotes = windowCardNotes(s, meta.sessionResetOverrideAt);
+  const sessionResetEstimated = cardNotes.sessionResetSource === "derived";
+  const anyProviderReading =
+    s.session.fractionMetric === "plan" || s.weekly.fractionMetric === "plan";
+
+  // One projected instant, set against the reset of the window it belongs to —
+  // see `windowOutlooks` for how that window is told, and when it cannot be.
+  const outlooks = windowOutlooks(
+    s.projectedExhaustionAt,
+    s.now,
+    { resetsAt: s.session.endsAt, projectable: isProjectable(s.session) },
+    {
+      resetsAt: weeklyResets ? s.weekly.endsAt : null,
+      projectable: isProjectable(s.weekly),
+    },
+  );
+  // The rate the projection extrapolates, said once: on the line that carries
+  // a run-out the week owns, and otherwise on the session's.
+  const rate = `${fmtUSD(s.burnCostPerHour)}/h`;
+  const rateOnWeekly = outlooks.weekly.kind === "runs-out";
 
   // The provenance strip — where the transcripts were read from, how many
   // turns, the heap behind them — moved to `/usage` with the analysis it
@@ -384,77 +402,40 @@ export default function Dashboard() {
       {header}
       {banner}
 
-      {/* Up to two columns: the window card capped at half the row, the
-          live-telemetry card taking the remainder. Which template applies,
-          and from which breakpoint, is `topRowColumns` above.
+      {/* Two columns from `lg`: the windows, and beside them what this app's
+          own runs are doing — live telemetry, then the install limit. Both
+          right-hand cards are about money this app spent, which is why they
+          sit together and apart from the windows; they are still two readings
+          (telemetry and `runs.spent_usd`), each in its own card, and the
+          install card keeps its own region. The right column used to hold
+          telemetry alone with the install card a band below the row, and at
+          1280×800 that put the limit under the fold of a page meant to be read
+          without scrolling.
 
-          The window card used to be `minmax(0,1fr)` against that 16rem alone —
-          about 84% of a 1920px row — and the comment here defended the
-          asymmetry, the objection being that two co-equal cards side by side
-          would say neither leads. That objection stands and so does the answer
-          to it; what changed is which property carries it. `primary` against
-          `default`, and a hero meter against a `text-xl` figure, are what say
-          this card leads. Width was never doing that work: at 84% the extra
-          space went to a `max-w-[68ch]` paragraph in a 1400px box, while the
-          first-party spend figure — the one number on this page that moves
-          *during* a work cycle — sat 5,700px below the fold. Half a row is
-          still the widest box on the page and still the only one an elevation
-          up, so nothing about what leads has changed, and neither aside's
-          conclusion is now reachable only from the bottom of the page.
-
-          Capped at half only where something is in fact beside it. A template
-          with a track no card was rendered for packs the cards left and leaves
-          the rest of the row blank, and a cap with nothing in the space it
-          freed does the same thing on purpose — both read as something that
-          failed to load, which is what `items-start` is here to avoid one axis
-          over.
-
-          `items-start` so the asides keep their own height; stretching them
-          would pad a three-line card out to the meters' and make the empty
-          space look like something failed to load. Below `lg` it is one column
-          and they follow the meters, which is the same reading order. */}
-      <div className={`mb-4 grid gap-4 lg:items-start ${topRowColumns}`}>
-        {/* The one `primary` card on the screen, and the only thing on it sized
-            to be read from across a room. Both windows live in it because they
-            are one subject — what may be spent — and two co-equal cards side by
-            side said neither of them leads. Inside it the session leads: it is
-            the allowance that refills on its own, so it is the one an operator
-            can act on in the next few minutes, and the week sits under the same
-            hairline a grouped list uses. */}
+          `items-start` so a short right column keeps its own height rather
+          than being stretched to the window card's. Below `lg` it is one
+          column in the same reading order. */}
+      <div className="mb-4 grid gap-4 lg:grid-cols-2 lg:items-start">
+        {/* The one `primary` card on the screen. Both windows live in it
+            because they are one subject — what may be spent — and inside it
+            the session leads: it refills on its own, so it is the allowance an
+            operator can act on in the next few minutes. Each window answers
+            three things in order — what is left and when it resets, the meter,
+            and whether it runs out first — and nothing else is drawn unless
+            it changes what the meter means. */}
         <Card emphasis="primary">
-          <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
-            <div>
+          <WindowHead
+            size="large"
+            title={
               <CardTitle>
-                5-hour session window
-                {s.session.agg.entryCount > 0 && (
-                  <Badge tone="accent">active</Badge>
-                )}
+                {s.session.label}
+                {s.session.agg.entryCount > 0 && <Badge tone="accent">active</Badge>}
               </CardTitle>
-              <Stat size="large">{fmtUSD(s.session.costUSD)}</Stat>
-              <StatSub>
-                <span className="tabular-nums">
-                  {fmtTokens(s.session.tokens)} tokens ·{" "}
-                  {s.session.agg.entryCount.toLocaleString()} turns
-                </span>
-              </StatSub>
-            </div>
-            {/* Relative first because that is the decision — whether to start
-                something now or wait. The clock time is the confirmation, and
-                the exact instant is on the title for anyone reconciling with
-                `/usage`. */}
-            <div
-              className="text-right"
-              title={new Date(s.session.endsAt).toLocaleString()}
-            >
-              <div className="text-sm font-medium tabular-nums text-ink">
-                Resets {fmtRelative(s.session.endsAt, s.now)}
-              </div>
-              <div className="mt-0.5 text-xs tabular-nums text-ink-muted">
-                {fmtDateTime(s.session.endsAt)}
-              </div>
-            </div>
-          </div>
-
+            }
+            used={s.session.fraction}
+            instead={<WindowSpend w={s.session} size="large" />}
+            reset={resetText(s.session.endsAt, s.now, sessionResetEstimated)}
+          />
           <Meter
             size="hero"
             label="Session consumed"
@@ -471,78 +452,34 @@ export default function Dashboard() {
               s.now,
             )}
           />
-
-          {/* One block, so the footnotes read as a group belonging to the meter
-              rather than as three unrelated remarks stacked under it. */}
-          <div className="mt-3 max-w-[68ch] space-y-1 text-xs text-ink-muted">
-            {s.session.tokenFraction !== null &&
-              s.session.fractionMetric === "cost" && (
-                <div className="tabular-nums">
-                  Against the raw-token ceiling: {fmtPct(s.session.tokenFraction)}
-                </div>
-              )}
-            {/* Three different provenances for one clock, and they are worth
-                telling apart: the provider's own instant, a pinned one, and a
-                derived one that can sit minutes off `/usage`. Saying nothing
-                makes the third read as a bug rather than as the estimate it
-                is — and makes the first read as an estimate when it is not. */}
-            {cardNotes.sessionResetSource === "provider" ? (
-              <div>
-                Reset instant reported by Anthropic, so it matches{" "}
-                <span className="mono">/usage</span> exactly.
-              </div>
-            ) : cardNotes.sessionResetSource === "pinned" ? (
-              <div>
-                Window start set by a{" "}
-                <Link href="/settings">manual reset</Link>: usage before{" "}
+          <div className="mt-2 space-y-1 text-xs">
+            <OutlookLine outlook={outlooks.session} rate={rateOnWeekly ? null : rate} />
+            {/* Visible rather than folded, unlike the other two provenances of
+                this clock: a pinned start changes what the meter counts — and
+                what the guard does — so it is a state, not an explanation. */}
+            {cardNotes.sessionResetSource === "pinned" && (
+              <div className="text-ink-muted">
+                Window start set by a <Link href="/settings">manual reset</Link>:
+                usage before{" "}
                 <span className="tabular-nums">
                   {new Date(s.session.startsAt).toLocaleString()}
                 </span>{" "}
                 is excluded here and from the budget guard.
               </div>
-            ) : (
-              <div>
-                Reset time derived from your own turns, so it can sit minutes off
-                what <span className="mono">/usage</span> reports.{" "}
-                <Link href="/settings">Pin it</Link> if they disagree.
-              </div>
             )}
           </div>
 
           <div className="mt-5 border-t border-line pt-4">
-            <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
-              <div>
-                <CardTitle>{s.weekly.label}</CardTitle>
-                <Stat>{fmtUSD(s.weekly.costUSD)}</Stat>
-                <StatSub>
-                  <span className="tabular-nums">
-                    {fmtTokens(s.weekly.tokens)} tokens ·{" "}
-                    {s.weekly.agg.entryCount.toLocaleString()} turns
-                  </span>
-                </StatSub>
-              </div>
-              {/* Where the session card puts its reset, so the eye finds both in
-                  one place. Without an anchor this window has no reset instant at
-                  all, and the sentence under the meter is what explains that —
-                  the rail only says which of the two kinds of window it is. */}
-              <div className="text-right">
-                {weeklyResets ? (
-                  // Days out, so the absolute date rather than `fmtRelative`,
-                  // which would render this as "in 137h 12m".
-                  <div
-                    className="text-sm font-medium tabular-nums text-ink"
-                    title={new Date(s.weekly.endsAt).toLocaleString()}
-                  >
-                    Resets {fmtDateTime(s.weekly.endsAt)}
-                  </div>
-                ) : (
-                  <div className="text-sm font-medium text-ink">
-                    Trailing total
-                  </div>
-                )}
-              </div>
-            </div>
-
+            <WindowHead
+              title={<CardTitle>{s.weekly.label}</CardTitle>}
+              used={s.weekly.fraction}
+              instead={<WindowSpend w={s.weekly} size="default" />}
+              reset={
+                weeklyResets
+                  ? resetText(s.weekly.endsAt, s.now)
+                  : "No reset · old turns age out"
+              }
+            />
             <Meter
               label="Weekly consumed"
               fraction={s.weekly.fraction}
@@ -558,29 +495,15 @@ export default function Dashboard() {
                 s.now,
               )}
             />
-
-            <div className="mt-3 max-w-[68ch] space-y-1 text-xs text-ink-muted">
-              {s.weekly.tokenFraction !== null &&
-                s.weekly.fractionMetric === "cost" && (
-                  <div className="tabular-nums">
-                    Against the raw-token ceiling: {fmtPct(s.weekly.tokenFraction)}
-                  </div>
-                )}
-              {/* An operator waiting for this one to clear the way the 5-hour one
-                  does is waiting for nothing, so say what it is instead. */}
-              {!weeklyResets && (
-                <div>
-                  It never resets; old turns age out. Pick a{" "}
-                  <Link href="/settings">weekly reset</Link> day for a fixed week.
-                </div>
-              )}
+            <div className="mt-2 space-y-1 text-xs">
+              <OutlookLine outlook={outlooks.weekly} rate={rateOnWeekly ? rate : null} />
               {/* A wall that binds without ever reaching this meter: the weekly
                   allowance is split per model family on some plans, so Opus can
                   be full while the all-model window reads a quarter. The guard
                   stops on the worst of them, so name them rather than letting a
                   refusal arrive with nothing on screen behind it. */}
               {cardNotes.modelWallLine !== null && (
-                <div className="tabular-nums">{cardNotes.modelWallLine}</div>
+                <div className="tabular-nums text-ink-muted">{cardNotes.modelWallLine}</div>
               )}
             </div>
           </div>
@@ -590,17 +513,84 @@ export default function Dashboard() {
               sign-in: an install that never used Codex is not shown an empty
               section about it. */}
           {data.codex && <CodexWindows codex={data.codex} now={s.now} />}
+
+          {/* Where each figure on this card comes from. Read once, and no
+              decision here is taken against it, which is the one ground
+              `ui-density-audit.md` §1.1 gives for folding an explanation:
+              each line used to sit under the meter it explains, and together
+              they were most of the card's height. The facts that change what a
+              meter means — a pinned start, a per-model wall — stay visible
+              above. */}
+          <Disclosure
+            summary="How these are read"
+            className="mt-4 text-xs text-ink-muted"
+            summaryClassName="w-fit"
+          >
+            <ul className="mt-2 max-w-[68ch] list-disc space-y-1 pl-5 marker:text-ink-faint">
+              {cardNotes.sessionResetSource === "provider" ? (
+                <li>
+                  The 5-hour reset is Anthropic&rsquo;s own instant, so it matches{" "}
+                  <span className="mono">/usage</span> exactly.
+                </li>
+              ) : cardNotes.sessionResetSource === "derived" ? (
+                <li>
+                  The 5-hour reset (marked ~) is derived from your own turns, so it
+                  can sit minutes off what <span className="mono">/usage</span>{" "}
+                  reports. <Link href="/settings">Pin it</Link> if they disagree.
+                </li>
+              ) : null}
+              {anyProviderReading && (
+                <li>
+                  Anthropic&rsquo;s reading covers every Claude surface that shares
+                  the allowance, and is cached for up to five minutes.
+                </li>
+              )}
+              <li>
+                The burn rate is the last hour&rsquo;s spend at this app&rsquo;s
+                prices. A run-out is projected only up to each window&rsquo;s own
+                reset, and only the earliest is reported, so one that falls before
+                the session resets is named as the session&rsquo;s or the
+                week&rsquo;s unless only one of them could be it.
+              </li>
+              {!weeklyResets && (
+                <li>
+                  With no weekly reset known, the week is a trailing total and
+                  never resets. Pick a <Link href="/settings">weekly reset</Link>{" "}
+                  day for a fixed week.
+                </li>
+              )}
+              {data.codex && (
+                <li>
+                  Codex figures are OpenAI&rsquo;s for the signed-in account, so
+                  they match Codex&rsquo;s <span className="mono">/status</span>.
+                  Codex reports no rate, so they carry no run-out projection.
+                </li>
+              )}
+            </ul>
+          </Disclosure>
         </Card>
 
-        {/* Gated on the window itself, and it has to be: `telemetryWindow`
-            answers `null` when agent self-reporting is off or nothing has
-            reported, so an absent card is "no run has reported" rather than
-            "$0.00" — and $0.00 at the top of the dashboard, beside the meters,
-            is a reading an operator would act on. The gate is the setting and
-            what came back on it, never the guard figure. */}
-        {telemetry && (
-          <LiveTelemetry telemetry={telemetry} now={s.now} />
-        )}
+        <div>
+          {/* Gated on the window itself, and it has to be: `telemetryWindow`
+              answers `null` when agent self-reporting is off or nothing has
+              reported, so an absent card is "no run has reported" rather than
+              "$0.00" — and $0.00 beside the meters is a reading an operator
+              would act on. The gate is the setting and what came back on it,
+              never the guard figure. With nothing working it is one line. */}
+          {telemetry && <LiveTelemetry telemetry={telemetry} now={s.now} />}
+
+          <SourceRegion
+            heading="What this app spent"
+            statement="Money runs this app started reported spending."
+          >
+            {/* The install limit stays on `/` when every other reading of
+                this source went to `/usage`: a limit that stops every agent
+                when it trips is a thing to see on landing. What each
+                repository's runs spent is on that page, in the band of the
+                same name. */}
+            <InstallSpendCard install={install} />
+          </SourceRegion>
+        </div>
       </div>
 
       {/* Under the meters, not above them: each of these explains something the
@@ -608,67 +598,6 @@ export default function Dashboard() {
           figure that is a floor. Stacked above, they were a wall of prose
           between the title and the subject of the page. */}
       <UsageNotices meta={meta} snapshot={s} page="dashboard" />
-
-      {/* The rate this page's own price table produces. The two meters above
-          are the same reading; this is how fast it is moving. What it breaks
-          down into is on `/usage`, under the same heading. */}
-      <SourceRegion
-        heading="Your subscription"
-        statement="This app’s price table over every Claude Code transcript on this machine."
-      >
-        {/* The half of what was "Rate and totals" that answers whether the
-            windows above run out before they reset; cache reads and the
-            lifetime total went to `/usage`. A grouped list rather than
-            equally-weighted bordered boxes, because these are derived figures
-            about the window the card above measures, not its peers. */}
-        <Card className="mb-4">
-          <CardTitle>Rate</CardTitle>
-          <ListGroup>
-            {/* The unit rides in the description rather than beside the figure,
-                so the values stay one column of comparable numbers — a dollar
-                figure, a duration. */}
-            <ListRow label="Burn rate" description="Per hour, trailing 60 minutes">
-              <ListValue>{fmtUSD(s.burnCostPerHour)}</ListValue>
-            </ListRow>
-
-            <ListRow
-              label="Projected exhaustion"
-              description={
-                s.projectedExhaustionAt ? (
-                  <span
-                    className="tabular-nums"
-                    title={new Date(s.projectedExhaustionAt).toLocaleString()}
-                  >
-                    At this burn rate, around{" "}
-                    {fmtDateTime(s.projectedExhaustionAt)}
-                  </span>
-                ) : nothingToProjectAgainst ? (
-                  "Needs a configured ceiling"
-                ) : (
-                  "Not projected to run out"
-                )
-              }
-            >
-              <ListValue>
-                {s.projectedExhaustionAt
-                  ? fmtDuration(Math.max(0, s.projectedExhaustionAt - s.now))
-                  : "—"}
-              </ListValue>
-            </ListRow>
-          </ListGroup>
-        </Card>
-      </SourceRegion>
-
-      <SourceRegion
-        heading="What this app spent"
-        statement="Money runs this app started reported spending."
-      >
-        {/* The install limit stays here when every other reading of this
-            source went to `/usage`: a limit that stops every agent when it
-            trips is a thing to see on landing. What each repository's runs
-            spent is on that page, in the band of the same name. */}
-        <InstallSpendCard install={install} />
-      </SourceRegion>
     </>
   );
 }
