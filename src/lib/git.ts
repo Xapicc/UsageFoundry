@@ -140,7 +140,7 @@ export function gitEnv(): NodeJS.ProcessEnv {
  * On git 2.54 and later that covers only the hooks directory: a hook named in
  * config (`hook.<name>.command` plus `.event`) still runs, and git has no switch
  * that turns all of those off (measured on 2.54.0 and 2.56.0,
- * `docs/verification/security-and-sandboxing-server-git.md`). So those are
+ * `docs/verification/security-and-sandboxing-server-git-hooks.md`). So those are
  * switched off one name at a time, on every call that can fire one, by the probe
  * and `neutralizers` below; a flat list here cannot name them.
  *
@@ -268,7 +268,7 @@ const FALSE_VAR = "USAGEFOUNDRY_FALSE";
  * name because git has no other: `core.hooksPath` moves only the hooks
  * directory, and 2.55's per-event `hook.<event>.enabled` is undone by a
  * repository that also defines a hook named after the event (both measured,
- * `docs/verification/security-and-sandboxing-server-git.md`). git 2.39 reads no
+ * `docs/verification/security-and-sandboxing-server-git-hooks.md`). git 2.39 reads no
  * `hook.*` key at all, so on the image's git these switches are inert.
  *
  * The driver name is the subsection, whose case git preserves and which the
@@ -458,7 +458,7 @@ function readFilterProbe(
  * that move content: under `gitArgs`, `branch -D`, `update-ref`, `fetch` and
  * `push` each fired `reference-transaction` and `push` fired `pre-push` too,
  * while every subcommand here fired none of git's events (measured, Apple git
- * 2.54.0, `docs/verification/security-and-sandboxing-server-git.md`). A call
+ * 2.54.0, `docs/verification/security-and-sandboxing-server-git-hooks.md`). A call
  * shape nobody has measured therefore pays for a probe rather than running a
  * planted hook. Adding a subcommand here means measuring both halves: that it
  * fires no hook, and that it never re-hashes a work-tree file through a clean
