@@ -381,6 +381,37 @@ function spawnOptions(): SpawnOptions {
 }
 
 /**
+ * `-c` overrides every child here leads its argv with, ahead of the
+ * subcommand, against a `$CODEX_HOME/config.toml` that a work cycle can create.
+ *
+ * Neither key moves a connection; each denies or loses a sign-in, measured on
+ * 0.153.4. A planted `cli_auth_credentials_store = "ephemeral"` let both
+ * logins answer `Successfully logged in` and write no `auth.json`, and made
+ * `login status` answer `Not logged in` over one that existed; `"keyring"`,
+ * with no secret service in the container, failed both logins and errored
+ * status and logout. Under `"ephemeral"`, `signOut` also answered success and
+ * left `auth.json` in place. A `forced_chatgpt_workspace_id` the token lacked
+ * refused the device login and read a stored ChatGPT login as signed out. Work
+ * cycles run `codex exec --ignore-user-config`, so they should go on using
+ * `auth.json` whatever the file says (inferred from the flag, not run), and
+ * without these the panel reported a sign-in state that was not theirs.
+ * `"file"` is the store cycles read and `[]` names no workspace; with neither
+ * planted, both left every answer as it was.
+ *
+ * `forced_login_method` is not here because it cannot be: `""` fails with
+ * `unknown variant`, and both of its values are themselves restrictions. That
+ * key, and a `-c` that merges with the file rather than replacing it, are why
+ * `docs/agent/security/cycle-settings-env.md` records protecting the whole file
+ * as still open. `APP_SERVER_CONFIG_PINS` (`codexAccount.ts`) carries a copy.
+ */
+const SIGN_IN_CONFIG_PINS = [
+  "-c",
+  'cli_auth_credentials_store="file"',
+  "-c",
+  "forced_chatgpt_workspace_id=[]",
+];
+
+/**
  * Make `CODEX_HOME` exist and writable by the uid that will sign in to it,
  * without handing that uid the directory.
  *
@@ -443,7 +474,7 @@ function runCodex(
   return new Promise((resolve) => {
     let child: ChildProcess;
     try {
-      const cli = spawnCommand(CODEX_BIN, args);
+      const cli = spawnCommand(CODEX_BIN, [...SIGN_IN_CONFIG_PINS, ...args]);
       child = spawn(cli.command, cli.args, spawnOptions());
     } catch (err) {
       resolve({
@@ -651,7 +682,11 @@ export async function beginLogin(): Promise<StartOutcome> {
 
   let child: ChildProcess;
   try {
-    const cli = spawnCommand(CODEX_BIN, ["login", "--device-auth"]);
+    const cli = spawnCommand(CODEX_BIN, [
+      ...SIGN_IN_CONFIG_PINS,
+      "login",
+      "--device-auth",
+    ]);
     child = spawn(cli.command, cli.args, spawnOptions());
   } catch (err) {
     return {

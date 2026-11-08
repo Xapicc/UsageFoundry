@@ -132,6 +132,8 @@ process.exit(0);
 const fs = require("node:fs");
 const path = require("node:path");
 const args = process.argv.slice(2);
+// Past the \`-c\` pins every codexAuth.ts child leads with, as the real CLI reads them.
+while (args[0] === "-c") args.splice(0, 2);
 const file = path.join(process.env.CODEX_HOME, "auth.json");
 if (args[0] === "login" && args[1] === "status") {
   const stored = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;

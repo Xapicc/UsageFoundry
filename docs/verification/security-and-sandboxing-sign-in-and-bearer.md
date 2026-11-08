@@ -1,4 +1,4 @@
-# Verification: Security and sandboxing — the sign-in limiter, the gate's bearer budget, the `claude auth` children's settings and the Codex children's `config.toml`
+# Verification: Security and sandboxing — the sign-in limiter, the gate's bearer budget and the `claude auth` children's settings
 
 [← Verification index](../verification.md)
 
@@ -108,101 +108,6 @@
   CONNECT to `api.anthropic.com` at the listener. Caveat: one run per case,
   fake credentials, not in a booted container as root.
 
-- **A planted `$CODEX_HOME/config.toml` steers `codex app-server`'s bearer and
-  none of the sign-in children, 2026-11-08.** codex-cli 0.153.4, a scratch
-  `CODEX_HOME` under `$TMPDIR` holding a made-up API key or a made-up ChatGPT
-  `auth.json` (unsigned JWTs), the spawn environment's `HTTPS_PROXY` at
-  loopback listener P with `NO_PROXY=127.0.0.1`, and a planted file naming
-  listener E; each logged every connection and answered 403. Unplanted, P took
-  everything: `login status` nothing, `logout` and `login --device-auth` one
-  CONNECT each to `auth.openai.com`, and `app-server` through `initialize`,
-  `account/read`, `account/rateLimits/read` and `model/list` 18 to
-  `chatgpt.com`. Planted `chatgpt_base_url` sent `app-server`'s `wham/usage`,
-  `wham/rate-limit-reset-credits` and six plugin listings to E, each with the
-  stored access token as `Authorization: Bearer` and `chatgpt-account-id`;
-  `openai_base_url`, or `model_provider` naming a planted
-  `[model_providers.*]`, sent `/v1/models` there with the same bearer; an
-  `[otel]` exporter sent logs and traces. None of the four moved a connection
-  of `login status`, `logout` or `login --with-api-key`, nor of `login
-  --device-auth` driven to `Successfully logged in` through a stub issuer
-  (`--experimental_issuer`), which took the user-code, token and `oauth/token`
-  requests while E took nothing. A planted `[model_providers.openai]`,
-  `[mcp_servers.*]` `url`, `experimental_thread_store_endpoint` or legacy
-  `profile` left `app-server` as unplanted. In this container `CODEX_HOME` is
-  1770, group `node`, with an owner the sandbox does not map (root, by the
-  Dockerfile's `chown root:node`), and its `config.toml` is `node:node 0600`
-  (`stat` only; the real home was never opened). Caveat: one run per cell; the CONNECTs were refused, so what the
-  tunnels would have carried is not seen; only the keys named were tried.
-
-- **`-c` pins after `app-server` put all of it back, and no Codex subcommand
-  this app runs takes `--ignore-user-config`, 2026-11-08.** Same harness, a
-  file planting `chatgpt_base_url`, `openai_base_url`, `model_provider` with
-  its table and all three `[otel]` exporters at E. With `-c
-  chatgpt_base_url="https://chatgpt.com/backend-api/"`, `-c
-  openai_base_url=""`, `-c model_provider="openai"` and `-c` setting
-  `otel.exporter`, `otel.trace_exporter` and `otel.metrics_exporter` to
-  `"none"`, the ChatGPT-mode child sent 18 CONNECTs to `chatgpt.com` at P and
-  none to E, with the same four answers; without `openai_base_url=""`,
-  `/v1/models` still reached E. `""` reads as unset: with no planted file the
-  pins changed neither the connections nor the answers, in ChatGPT mode or with
-  an API key. `--ignore-user-config` before or after `app-server`, `login`, `login
-  status` or `logout` exits with `unexpected argument`. Caveat: no real
-  sign-in, so a token refresh under the pins was not seen; not in a booted
-  container as root.
-
-- **A planted `[marketplaces.*]` git source makes `codex app-server` start
-  `git` against the host it names, and only `features.plugins=false` stops it,
-  2026-11-08.** Board task `de468a72`, codex-cli 0.153.4, the harness above
-  with the six endpoint pins on. Unplanted, the API-key child already ran
-  `git` (user agent `git/2.39.5`) to `github.com` and the ChatGPT-mode child
-  did not. A planted `source_type = "git"` marketplace whose `source` was an
-  `http://` URL at listener E got `GET
-  /evil/repo.git/info/refs?service=git-upload-pack` from `git` in both modes,
-  with no `Authorization`. `-c marketplaces={}` left that fetch in place,
-  since `-c` merges with the file. With `-c features.plugins=false` E took
-  nothing, the API-key child made no connection at all and the ChatGPT one 12
-  CONNECTs to `chatgpt.com` rather than 18. Through the app's own spawn
-  (`codexUsage` and `listCodexModels` from the compiled `codexAccount.js`, two
-  children per case), the build without the pin gave E two fetches per case.
-  The build with it gave none, and its answers were byte-identical to the old
-  build's, unplanted and planted, in both modes. Caveat: fake credentials, so
-  the rate-limit read failed in every case; E refused, so what a served
-  repository would go on to do is not seen.
-
-- **No planted command runs during `codex app-server`'s four reads,
-  2026-11-08.** Same harness and pins, each case lingering 8 s after
-  `model/list` before stdin's EOF, in both sign-in modes. Each command
-  appended to a marker file: `[mcp_servers.*]` `command` with `args`, an HTTP
-  server's `http_headers_helper`, `notify`, `[[hooks.<event>]]` command hooks
-  in `config.toml` for `SessionStart`, `SessionEnd`, `Interrupt` and
-  `PreCompact`, the same and `UserPromptSubmit` and `Stop` in
-  `$CODEX_HOME/hooks.json`, and a local-marketplace plugin installed with
-  `codex plugin add` and enabled, whose `plugin.json` and `.mcp.json` named
-  MCP servers. No marker was written, and the connections went to the
-  unplanted child's hosts in its numbers. Caveat: a turn or thread was never
-  started, which is where these are meant to run; one run per case.
-
-- **`cli_auth_credentials_store`, `forced_login_method` and
-  `forced_chatgpt_workspace_id` deny or lose a Codex sign-in and name no host,
-  2026-11-08.** Same harness against `login --with-api-key`, `login status`,
-  `logout`, `login --device-auth` driven through the stub issuer, and
-  `app-server`. `"keyring"` (no secret service here) failed both logins, the
-  device one after its token exchange; status and logout errored with
-  `auth.json` left in place. `"ephemeral"` answered `Successfully logged in`
-  to both and wrote no `auth.json`, and status answered `Not logged in` over
-  one that existed. `"auto"` saved to the file, but its logout failed on the
-  keyring. `forced_login_method` refused the other kind of login, and a
-  `forced_chatgpt_workspace_id` the token lacked refused the device login.
-  Over a stored login of the other kind or account, both made status say `Not
-  logged in` and `account/read` answer `account: null`, which `"keyring"` and
-  `"ephemeral"` answered over every stored login. Such a child then ran the
-  API-key child's `git` sync to `github.com`, which the plugins pin now stops;
-  no read deleted `auth.json`. On the login children `-c
-  cli_auth_credentials_store="file"` and `-c forced_chatgpt_workspace_id=[]`
-  (or `""`) undid theirs; `-c forced_login_method=""` failed with `unknown
-  variant`, and both of its values restrict. Caveat: fake tokens, a stub
-  issuer, one run per cell.
-
 ## Not yet verified by hand
 
 - **That the bearer budget survives a dev-server reload of `middleware.ts`.**
@@ -218,11 +123,3 @@
   `/settings`, complete it, and expect the page to show signed in,
   `.credentials.json` owned by `UF_AGENT_UID`, and the proxy's port never
   dialled (`ss -tn` or a listener on it); then Sign out and expect signed out.
-
-- **That the app-server pins hold against a real sign-in in a booted
-  container.** Every measurement above used made-up tokens and refused
-  CONNECTs. Settle as root in a container signed in to Codex: as the agent uid,
-  put `chatgpt_base_url = "http://127.0.0.1:9/backend-api/"` and `openai_base_url
-  = "http://127.0.0.1:9/v1"` in `$CODEX_HOME/config.toml`, keep a listener on
-  port 9, load `/` and Settings → Codex, and expect the Codex windows and model
-  list to read while the listener takes nothing; then remove the two lines.

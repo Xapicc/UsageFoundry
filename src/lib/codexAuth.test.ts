@@ -13,8 +13,10 @@ import { after, describe, it, mock } from "node:test";
  * The stub records its pid and prints a link and a one-time code carrying it,
  * then polls the way the real CLI does — by sitting there, since `beginLogin`
  * closes its stdin. `STUB_HOLD`, read at spawn time, makes it wait for that file
- * before printing. Started as `app-server` it appends its arguments to
- * `argv.log`, one start per line split on `\u001f`, and exits before answering.
+ * before printing. Every start appends its arguments to `argv.log`, one start
+ * per line split on `\u001f`. Started as `app-server` it exits before
+ * answering; past any leading `-c` pairs, `login status`, `login
+ * --with-api-key` and `logout` answer as a signed-out CLI does and exit.
  */
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-codex-auth-")));
 const pidsDir = path.join(tmp, "pids");
@@ -25,7 +27,12 @@ fs.writeFileSync(
   stub,
   [
     "#!/bin/sh",
-    `if [ "$1" = app-server ]; then printf '%s\\037' "$@" >> "${argvLog}"; echo >> "${argvLog}"; exit 0; fi`,
+    `printf '%s\\037' "$@" >> "${argvLog}"; echo >> "${argvLog}"`,
+    'if [ "$1" = app-server ]; then exit 0; fi',
+    'while [ "$1" = -c ]; do shift 2; done',
+    'if [ "$1 $2" = "login status" ]; then echo "Not logged in"; exit 1; fi',
+    'if [ "$1 $2" = "login --with-api-key" ]; then read -r line; exit 0; fi',
+    'if [ "$1" = logout ]; then echo "Not logged in"; exit 0; fi',
     `echo $$ > "${pidsDir}/$$"`,
     'if [ -n "$STUB_HOLD" ]; then while [ ! -e "$STUB_HOLD" ]; do sleep 0.02; done; fi',
     "echo '1. Open this link in your browser and sign in to your account'",
@@ -60,7 +67,10 @@ const {
   normalizeApiKey,
   parseCodexStatus,
   pendingLogin,
+  readAuthStatus,
   redactSecrets,
+  signOut,
+  submitApiKey,
 } = require("./codexAuth") as typeof import("./codexAuth");
 const { listCodexModels } = require("./codexAccount") as typeof import("./codexAccount");
 
@@ -284,6 +294,15 @@ function recordedPids(): number[] {
   return fs.readdirSync(pidsDir).map(Number);
 }
 
+/** Every start the stub logged since `argv.log` was last removed, one array each. */
+function loggedStarts(): string[][] {
+  return fs
+    .readFileSync(argvLog, "utf8")
+    .split("\n")
+    .filter((line) => line !== "")
+    .map((line) => line.split("\u001f").slice(0, -1));
+}
+
 function alive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -311,6 +330,14 @@ async function driveUntilSettled<T>(promise: Promise<T>): Promise<T> {
   return promise;
 }
 
+/** `SIGN_IN_CONFIG_PINS` in `codexAuth.ts`, which the app server carries too. */
+const SIGN_IN_PINS = [
+  "-c",
+  'cli_auth_credentials_store="file"',
+  "-c",
+  "forced_chatgpt_workspace_id=[]",
+];
+
 /**
  * `claudeAuth.test.ts`'s `the settings flags an auth child starts with`, for
  * the one Codex child a planted `$CODEX_HOME/config.toml` was measured to
@@ -333,12 +360,7 @@ describe("the config overrides the app-server child starts with", () => {
     } finally {
       fs.rmSync(path.join(config.CODEX_HOME, "auth.json"), { force: true });
     }
-    const starts = fs
-      .readFileSync(argvLog, "utf8")
-      .split("\n")
-      .filter((line) => line !== "")
-      .map((line) => line.split("\u001f").slice(0, -1));
-    assert.deepEqual(starts, [
+    assert.deepEqual(loggedStarts(), [
       [
         "app-server",
         "-c",
@@ -355,7 +377,39 @@ describe("the config overrides the app-server child starts with", () => {
         'otel.metrics_exporter="none"',
         "-c",
         "features.plugins=false",
+        ...SIGN_IN_PINS,
       ],
+    ]);
+  });
+});
+
+/**
+ * The same case for the four sign-in children, whose file keys deny or lose a
+ * sign-in rather than move a connection: a planted `"ephemeral"` store let a
+ * login answer `Successfully logged in` and save nothing, and a planted
+ * workspace read a stored login as signed out. Without the pins the stub
+ * answers identically, so again only the argv shows it. The pins lead, ahead
+ * of the subcommand, because that is the position measured.
+ */
+describe("the config overrides every sign-in child starts with", () => {
+  it("leads status, both logins and logout with the sign-in pins", async () => {
+    fs.rmSync(argvLog, { force: true });
+    try {
+      await readAuthStatus();
+      await submitApiKey("sk-proj-fakefakefakefake");
+      await signOut();
+      const login = await beginLogin();
+      assert.ok(login.ok, JSON.stringify(login));
+    } finally {
+      cancelLogin();
+    }
+    assert.deepEqual(loggedStarts(), [
+      [...SIGN_IN_PINS, "login", "status"],
+      [...SIGN_IN_PINS, "login", "--with-api-key"],
+      [...SIGN_IN_PINS, "login", "status"],
+      [...SIGN_IN_PINS, "logout"],
+      [...SIGN_IN_PINS, "login", "status"],
+      [...SIGN_IN_PINS, "login", "--device-auth"],
     ]);
   });
 });
