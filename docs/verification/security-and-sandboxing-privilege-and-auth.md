@@ -81,7 +81,8 @@
 
 - **What an authenticated work cycle replaces under `~/.claude` is unwatched,
   2026-09-27.** *Verified* in
-  [agents-templates-and-models.md](agents-templates-and-models.md) reads each
+  [security-and-sandboxing-config-dir-binds.md](security-and-sandboxing-config-dir-binds.md)
+  reads each
   deny-listed file's write method off the binary and reproduces the strip on
   `.config.json`, but both scratch runs
   stopped at "Not logged in", so two things rest on the binary alone: that an
