@@ -84,6 +84,13 @@ This page is the second half of the index at [testing.md](testing.md), which hol
 | `usageRemaining.test.ts` |  |
 | `UsageRemaining.test.ts` |  |
 
+## [The dashboard's "waiting on you" line](testing/waiting-on-you.md)
+
+| Test file | Also in |
+|---|---|
+| `src/app/api/waiting/route.test.ts` |  |
+| `waitingView.test.ts` |  |
+
 ## [What a run left in its repository's git directory](testing/git-dir-watch.md)
 
 | Test file | Also in |

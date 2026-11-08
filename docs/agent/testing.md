@@ -413,7 +413,7 @@ Units that are about no test file in the tree:
 
 ## [The install's edges and its pages](testing-edges-and-pages.md)
 
-Auth, credentials, config and settings, provider sign-in, the status routes, sign-in limits, the container, the knowledge vault, Dreaming, the toolbar readout, the git-directory watch, the components, stacks and the TokenEconomizer: their sections, with their tables, are in [testing-edges-and-pages.md](testing-edges-and-pages.md), which is this page's second half.
+Auth, credentials, config and settings, provider sign-in, the status routes, sign-in limits, the container, the knowledge vault, Dreaming, the toolbar readout, the dashboard's "waiting on you" line, the git-directory watch, the components, stacks and the TokenEconomizer: their sections, with their tables, are in [testing-edges-and-pages.md](testing-edges-and-pages.md), which is this page's second half.
 
 ## [Test harnesses: which tests open a database, and how this page is checked](testing/test-harnesses.md)
 
