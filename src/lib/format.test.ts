@@ -11,6 +11,7 @@ import {
   fmtInstantWithZone,
   fmtLiveCycle,
   fmtTokens,
+  fmtUSD,
   guardBadge,
   INSTANCE_OUTCOME_LABEL,
   INSTANCE_OUTCOME_TONE,
@@ -26,6 +27,7 @@ import {
   resolveLiveModel,
   runPageNotes,
   runTokenFigures,
+  signedUSD,
   storedFolderState,
   taskProjectDraft,
   taskProjectPayload,
@@ -491,6 +493,67 @@ test("a byte figure that rounds up to 1024 of a unit is written in the next", ()
   assert.equal(fmtBytes(10 * 1024), "10 KB");
   assert.equal(fmtBytes(9.96 * 1024 ** 2), "10 MB");
   assert.equal(fmtBytes(9.94 * 1024 ** 2), "9.9 MB");
+});
+
+/**
+ * A dollar figure keeps its precision and, if it is ever negative, writes the
+ * minus where `fmtTokens` writes it.
+ *
+ * `toFixed` on the signed value put the hyphen after the dollar sign, so a
+ * deficit of fifty cents printed `$-0.50` beside the `−81.8k` of a token
+ * column. The positive branches are pinned too, because the negative one was
+ * rewritten around them: below a cent the figure keeps four decimals, and
+ * zero keeps two.
+ */
+test("a dollar figure keeps its precision, and a negative one leads with U+2212", () => {
+  assert.equal(fmtUSD(0), "$0.00");
+  assert.equal(fmtUSD(0.5), "$0.50");
+  assert.equal(fmtUSD(0.01), "$0.01");
+  assert.equal(fmtUSD(0.0099), "$0.0099");
+  assert.equal(fmtUSD(0.00001), "$0.0000");
+  assert.equal(fmtUSD(1234.567), "$1234.57");
+  assert.equal(fmtUSD(Number.NaN), "—");
+  assert.equal(fmtUSD(Number.POSITIVE_INFINITY), "—");
+
+  assert.equal(fmtUSD(-0.5), "−$0.50");
+  assert.equal(fmtUSD(-0.001), "−$0.0010");
+  assert.equal(fmtUSD(-1234.567), "−$1234.57");
+
+  // A deficit that rounds to nothing at the precision it is written in has no
+  // sign: the minus was chosen on the raw value, before `toFixed` had rounded.
+  assert.equal(fmtUSD(-0.00001), "$0.0000");
+  assert.equal(fmtUSD(-0.00004), "$0.0000");
+  assert.equal(fmtUSD(-0), "$0.00");
+  // The control beside it: just past half a unit of the fourth decimal is a
+  // figure, so a fix that dropped the sign under a cent would pass the cases
+  // above and fail this one.
+  assert.equal(fmtUSD(-0.0001), "−$0.0001");
+});
+
+/**
+ * A netted figure carries a sign only while it still has a direction.
+ *
+ * The sign was picked from `n >= 0` and then the magnitude was rounded, so
+ * `-0.00001` printed `−$0.0000` and `0.00001` printed `+$0.0000`: a direction
+ * on a figure that had rounded to none. Zero is neither, and `fmtTokens`
+ * already writes it without one.
+ */
+test("a signed dollar figure has no sign once it rounds to zero", () => {
+  assert.equal(signedUSD(0.5), "+$0.50");
+  assert.equal(signedUSD(-0.5), "−$0.50");
+  assert.equal(signedUSD(0.0001), "+$0.0001");
+  assert.equal(signedUSD(-0.0001), "−$0.0001");
+  assert.equal(signedUSD(1234.567), "+$1234.57");
+
+  assert.equal(signedUSD(0.00001), "$0.0000");
+  assert.equal(signedUSD(-0.00001), "$0.0000");
+  assert.equal(signedUSD(0), "$0.00");
+  assert.equal(signedUSD(-0), "$0.00");
+
+  // Not a number is not a direction either; it was "+—" and "−—".
+  assert.equal(signedUSD(Number.NaN), "—");
+  assert.equal(signedUSD(Number.POSITIVE_INFINITY), "—");
+  assert.equal(signedUSD(Number.NEGATIVE_INFINITY), "—");
 });
 
 /**
