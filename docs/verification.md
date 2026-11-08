@@ -64,6 +64,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Security and sandboxing | [security-and-sandboxing-cli-sandbox.md](verification/security-and-sandboxing-cli-sandbox.md) — the CLI's sandbox, bwrap, seccomp, mount points and the write set |
 | Security and sandboxing | [security-and-sandboxing-unix-sockets.md](verification/security-and-sandboxing-unix-sockets.md) — whether a sandboxed command may open Unix sockets, and what the container holds to reach |
 | Security and sandboxing | [security-and-sandboxing-privilege-and-auth.md](verification/security-and-sandboxing-privilege-and-auth.md) — the privilege split, credentials, auth and containment |
+| Security and sandboxing | [security-and-sandboxing-claude-home-lock.md](verification/security-and-sandboxing-claude-home-lock.md) — the `UF_LOCK_CLAUDE_HOME` lock on `~/.claude` and the OAuth refresh under it |
 | Security and sandboxing | [security-and-sandboxing-stacks.md](verification/security-and-sandboxing-stacks.md) — a stack's tool grants and permissions |
 | Security and sandboxing | [security-and-sandboxing-sign-in-and-bearer.md](verification/security-and-sandboxing-sign-in-and-bearer.md) — the sign-in limiter and the gate's bearer budget |
 | Security and sandboxing | [security-and-sandboxing-cross-origin.md](verification/security-and-sandboxing-cross-origin.md) — which browser requests the session cookie authorises |
