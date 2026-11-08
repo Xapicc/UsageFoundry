@@ -35,11 +35,17 @@ import {
  * The ExternalValidator proposal
  * (`git show a74a1bb:"proposals/implemented - ExternalValidator/"`) is the
  * shaping for this and `scripts/validator-spike/` is the measurement: 40
- * labelled runs, task text against branch diff, **34 of 37 agreement on the
- * held-out set with zero false-finished**, median $0.125 a verdict on an
- * upper-bound transport. The prompt below is that spike's, because that is the
- * artefact the numbers were measured on; the one paragraph that changed is
- * named where it changed and why.
+ * labelled runs, task text against branch diff, median $0.125 a verdict on an
+ * upper-bound transport. The prompt below is that spike's `prompt.md` with one
+ * paragraph changed (named where it changed and why), and the two are not the
+ * same string, so there are two figures and neither is a clean A/B against the
+ * other: `prompt.md` scored 34 of 37 on the held-out set on Sonnet 4.5, and
+ * this preamble (`VERDICT_PREFERENCE`) scored 32 of 37 on Sonnet 5.5, each with
+ * zero false-finished. The judge model changed between them, so the two lost
+ * cases are not shown to be the preamble's. `prompt.md` was judged once per case;
+ * the preamble three times, 32, 31 and 32 of 37, with two cases moving. The
+ * reading, the control and what neither measured are in
+ * `scripts/validator-spike/RESULT.md` and `repeat-report-shipped.md` beside it.
  *
  * ## Where this design departs from the pitch, and why it had to
  *
