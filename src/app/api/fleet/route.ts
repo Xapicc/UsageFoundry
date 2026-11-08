@@ -1,12 +1,16 @@
 import { NextResponse } from "next/server";
 // Relative, not "@/…" — see the note in the login route.
+import { codexGuardSnapshot } from "../../../lib/codexAccount";
 import {
   allRefusedMessage,
+  fleetGuardWindows,
   fleetState,
   reopenFleet,
   setFleetPaused,
   stopFleet,
+  type FleetGuardSnapshots,
 } from "../../../lib/fleet";
+import { currentSnapshot } from "../../../lib/orchestrator";
 import { ENFORCEMENT_MODES, policyNumberRefusal } from "../../../lib/budget";
 import { optionalObjectField, readJsonObject } from "../../../lib/http";
 import { auditMutation, recordDurableMutation } from "../../../lib/requestLog";
@@ -131,7 +135,17 @@ async function postHandler(req: Request) {
     if (numberRefusal) {
       return NextResponse.json({ error: numberRefusal }, { status: 400 });
     }
-    const report = reopenFleet(ids, rawBudget);
+    // The readings a fraction guard in the batch will be judged against,
+    // fetched here because `reopenFleet` awaits nothing — see its docblock —
+    // and only the ones some run needs: the sheet sends no fraction, so this
+    // is usually nothing and no transcript scan is paid for. The provider's
+    // windows are asked for as `POST /api/runs/[id]/reopen` asks, one reading
+    // per provider rather than one per run.
+    const windows = fleetGuardWindows(ids, rawBudget);
+    const snapshots: FleetGuardSnapshots = {};
+    if (windows.includes("claude")) snapshots.claude = await currentSnapshot();
+    if (windows.includes("codex")) snapshots.codex = await codexGuardSnapshot();
+    const report = reopenFleet(ids, rawBudget, snapshots);
     // A batch where every id was refused is a 400 for the same reason an empty
     // list is: a 200 with nothing started is indistinguishable from a batch that
     // worked, and the page clears its selection on `res.ok`.
