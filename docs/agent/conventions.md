@@ -19,11 +19,14 @@ Each rule is in one topic file under `docs/agent/conventions/`; the lines below 
 - `better-sqlite3` is a native addon — it must stay in `serverExternalPackages` in `next.config.ts`, and the Dockerfile's `deps` stage carries the build toolchain for it.
 - Comments in this codebase explain *why* a decision was made (usually a correctness or safety trade-off), not what the code does.
 
-## [Polling, list DTOs, filters and Settings saves](conventions/polling-dtos-and-settings-save.md)
+## [Polling and the page's event stream](conventions/polling-and-streams.md)
 
 - Pages are client components that poll their API route (dashboard 120s, run detail 3s for the row while SSE carries the log).
 - A poll keeps one request of its own out at a time, so it re-arms on the answer rather than on a clock.
 - A page holds one `EventSource` whatever it shows, and a page that follows several runs follows them through one multiplexed stream.
+
+## [List DTOs, filters and Settings saves](conventions/polling-dtos-and-settings-save.md)
+
 - A list route ships the list's own DTO, and both readers of a list move together.
 - A payload may carry a position into its own answer, and it is turned back into an id at the fetch boundary.
 - A control that narrows what is on screen narrows the *data*, never the way the data is drawn — and it says what it left out.
