@@ -913,7 +913,14 @@ function runBranchOf(dir: string, branch: string): { runId: string | null } | nu
   return branch.startsWith("uf/") ? { runId: null } : null;
 }
 
-/** The newest run that recorded each of these branches in this repository. */
+/**
+ * The newest run that recorded each of these branches in this repository.
+ *
+ * Newest by write order inside a shared millisecond, which is `rowid DESC`: a
+ * hand-over chain's links share one branch and are created in one pass, and on
+ * `created_at` alone the first row here was the chain's *first* link, because
+ * `idx_runs_created` returns a tie oldest-written first.
+ */
 function runsOn(repoRoot: string, branches: readonly string[]): Map<string, RunRow> {
   const found = new Map<string, RunRow>();
   if (branches.length === 0) return found;
@@ -922,7 +929,7 @@ function runsOn(repoRoot: string, branches: readonly string[]): Map<string, RunR
       `SELECT * FROM runs
         WHERE repo_root = ? AND isolation = 'worktree'
           AND worktree_branch IN (${branches.map(() => "?").join(",")})
-        ORDER BY created_at DESC`,
+        ORDER BY created_at DESC, rowid DESC`,
     )
     .all(repoRoot, ...branches) as RunRow[];
   for (const run of rows) {
