@@ -517,6 +517,59 @@ export function windowGuardRefusal(
 }
 
 /**
+ * Which provider's windows a run's fraction guards are read against.
+ *
+ * `startRun`'s own choice, repeated: a Codex run reads the Codex account's
+ * windows and every other run reads Claude's, `local` included. Two names
+ * rather than the provider column, because the guard has two readings to give
+ * and a snapshot is fetched once per reading, not once per run.
+ */
+export type GuardWindows = "claude" | "codex";
+
+/** The readings a bulk pick-up judges each run's fraction guards against. */
+export type GuardSnapshots = Partial<Record<GuardWindows, UsageSnapshot>>;
+
+export const guardWindowsOf = (run: {
+  provider: RunProviderDTO | null;
+}): GuardWindows => (run.provider === "codex" ? "codex" : "claude");
+
+/** Whether the budget a pick-up would hand a run carries a fraction guard. */
+export function carriesFractionGuard(budget: Record<string, unknown>): boolean {
+  const policy = normalizePolicy(budget);
+  return policy.maxWeeklyFraction !== null || policy.maxSessionFraction !== null;
+}
+
+/**
+ * `windowGuardRefusal` for one run of a bulk pick-up: a fraction guard with
+ * nothing to read, said where there is a person.
+ *
+ * Shared by the two bulk doors that put runs back without a person at each one
+ * — the fleet pick-up and the restart notice's — because `reopenRun` carries a
+ * stored fraction forward without asking, and the pre-cycle guard no longer
+ * ends a run over `no_ceiling` (`RUN_ENFORCEABLE_CODES`): a pick-up that does
+ * not ask puts a run back to work with its guard unread. A reading that was not
+ * fetched is refused the same way and says so, rather than being read as one
+ * that was fine — a guard that could not be checked is not one that passed, and
+ * a caller that hands in no readings gets every fraction-guarded run refused,
+ * which is the safe way to be wrong.
+ */
+export function fractionGuardRefusal(
+  run: { provider: RunProviderDTO | null },
+  budget: Record<string, unknown>,
+  snapshots: GuardSnapshots,
+): string | null {
+  const policy = normalizePolicy(budget);
+  if (policy.maxWeeklyFraction === null && policy.maxSessionFraction === null) {
+    return null;
+  }
+  const snapshot = snapshots[guardWindowsOf(run)];
+  if (!snapshot) {
+    return "Its usage window could not be read just now, so a fraction guard on it could not be checked. Try again.";
+  }
+  return windowGuardRefusal(policy, snapshot, run.provider);
+}
+
+/**
  * The refusal a run under a provider this app cannot meter earns **at a door**,
  * when nothing in its policy would bound it.
  *

@@ -1,4 +1,10 @@
-import { normalizePolicy, windowGuardRefusal } from "./budget";
+import {
+  carriesFractionGuard,
+  fractionGuardRefusal,
+  guardWindowsOf,
+  type GuardSnapshots,
+  type GuardWindows,
+} from "./budget";
 import { db } from "./db";
 import { newWorkPaused, setNewWorkPaused } from "./settings";
 import {
@@ -13,7 +19,6 @@ import {
   type RunRow,
   type RunStatus,
 } from "./orchestrator";
-import type { UsageSnapshot } from "./windows";
 import { haltSteps, stopInstance, type HaltReport } from "./workflows";
 
 /**
@@ -273,21 +278,8 @@ export interface FleetReopenReport {
   refused: Array<{ id: string; reason: string }>;
 }
 
-/**
- * Which provider's windows a run's fraction guards are read against.
- *
- * `startRun`'s own choice, repeated: a Codex run reads the Codex account's
- * windows and every other run reads Claude's, `local` included. Two names
- * rather than the provider column, because the guard has two readings to give
- * and a snapshot is fetched once per reading, not once per run.
- */
-export type GuardWindows = "claude" | "codex";
-
 /** The readings `reopenFleet` judges a pick-up's fraction guards against. */
-export type FleetGuardSnapshots = Partial<Record<GuardWindows, UsageSnapshot>>;
-
-const guardWindowsOf = (run: Pick<RunRow, "provider">): GuardWindows =>
-  run.provider === "codex" ? "codex" : "claude";
+export type FleetGuardSnapshots = GuardSnapshots;
 
 /**
  * The budget a pick-up hands one run: the sheet's fields laid over that run's
@@ -321,12 +313,6 @@ function pickUpBudget(
   return { ...stored, ...wire, ...cycles };
 }
 
-/** Whether the budget a pick-up would hand this run carries a fraction guard. */
-function carriesFractionGuard(budget: Record<string, unknown>): boolean {
-  const policy = normalizePolicy(budget);
-  return policy.maxWeeklyFraction !== null || policy.maxSessionFraction !== null;
-}
-
 /**
  * Which readings a pick-up of these runs has to have in hand before the
  * synchronous loop starts, so the route can fetch them and `reopenFleet` need
@@ -352,35 +338,6 @@ export function fleetGuardWindows(
     }
   }
   return [...needed];
-}
-
-/**
- * `POST /api/runs/[id]/reopen`'s refusal for one run of a batch: a fraction
- * guard with nothing to read, said where there is a person.
- *
- * The pre-cycle guard no longer ends a run over `no_ceiling` — it records it
- * and spawns the cycle (`RUN_ENFORCEABLE_CODES`) — so a pick-up that does not
- * ask here puts a run back to work with its guard unread, which is what this
- * door did until it asked. A reading that was not fetched is refused the same
- * way and says so, rather than being read as one that was fine: the loop may be
- * handed fewer readings than it needs only if a run's blob changed between the
- * route's look and the loop's, and a guard that could not be checked is not one
- * that passed.
- */
-function fractionGuardRefusal(
-  run: RunRow,
-  budget: Record<string, unknown>,
-  snapshots: FleetGuardSnapshots,
-): string | null {
-  const policy = normalizePolicy(budget);
-  if (policy.maxWeeklyFraction === null && policy.maxSessionFraction === null) {
-    return null;
-  }
-  const snapshot = snapshots[guardWindowsOf(run)];
-  if (!snapshot) {
-    return "Its usage window could not be read just now, so a fraction guard on it could not be checked. Try again.";
-  }
-  return windowGuardRefusal(policy, snapshot, run.provider);
 }
 
 /**

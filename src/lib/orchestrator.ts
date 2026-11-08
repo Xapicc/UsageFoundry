@@ -56,13 +56,18 @@ import {
   type BudgetPolicy,
   type BudgetStopCode,
   type BudgetVerdict,
+  type GuardSnapshots,
+  type GuardWindows,
   type RunProgress,
   LIVE_ENFORCEABLE_CODES,
   RESUME_MARGIN_MS,
+  carriesFractionGuard,
   cycleCapReason,
   enforceableForRun,
   evaluateBudget,
+  fractionGuardRefusal,
   guardEnding,
+  guardWindowsOf,
   normalizePolicy,
   planReadingAgeMs,
   tighterHeadroom,
@@ -15492,8 +15497,15 @@ export function setRunAside(id: string, aside: boolean): SetAsideOutcome {
  * operator chose. `reopenRun` still checks the carried-forward guards at the
  * door, so one that really had used up its cycles is refused by name and
  * reported here rather than silently skipped.
+ *
+ * A run whose stored blob carries a fraction guard that has nothing to read is
+ * refused by name the same way, which `reopenRun` does not do for it. The
+ * readings come in as `snapshots` because asking needs a usage scan and this
+ * loop awaits nothing (`createRun`'s no-`await` window): the route fetches the
+ * ones `restartClosedGuardWindows` names first. A caller that passes none gets
+ * every fraction-guarded run refused, which is the safe way to be wrong.
  */
-export function reopenRestartClosed(): {
+export function reopenRestartClosed(snapshots: GuardSnapshots = {}): {
   reopened: number;
   refused: { id: string; reason: string }[];
 } {
@@ -15501,12 +15513,41 @@ export function reopenRestartClosed(): {
   let reopened = 0;
 
   for (const run of restartClosedRuns()) {
-    const outcome = reopenRun(run.id, JSON.parse(run.budget) as unknown);
+    const budget = JSON.parse(run.budget) as Record<string, unknown>;
+    // The stored blob is the only way a fraction reaches this door, and
+    // `reopenRun` carries it forward without asking whether its window can be
+    // read: the run would spawn with the guard recorded and never evaluated.
+    // Refused here, per run, so the row stays `restart_closed` and counted on
+    // the notice; its own page's reopen asks the same question of a budget a
+    // person can edit.
+    const unreadable = fractionGuardRefusal(run, budget, snapshots);
+    if (unreadable) {
+      refused.push({ id: run.id, reason: unreadable });
+      continue;
+    }
+    const outcome = reopenRun(run.id, budget);
     if (outcome.ok) reopened += 1;
     else refused.push({ id: run.id, reason: outcome.reason });
   }
 
   return { reopened, refused };
+}
+
+/**
+ * Which readings the restart notice's press has to have in hand before
+ * `reopenRestartClosed`'s synchronous loop starts, so the route can fetch them
+ * and the loop need not await — `fleetGuardWindows`' job for the other bulk
+ * door, and for nearly every press it answers nothing, so no transcript scan is
+ * paid for.
+ */
+export function restartClosedGuardWindows(): GuardWindows[] {
+  const needed = new Set<GuardWindows>();
+  for (const run of restartClosedRuns()) {
+    if (carriesFractionGuard(JSON.parse(run.budget) as Record<string, unknown>)) {
+      needed.add(guardWindowsOf(run));
+    }
+  }
+  return [...needed];
 }
 
 /**

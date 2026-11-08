@@ -1,6 +1,14 @@
 import { NextResponse } from "next/server";
-import { reopenRestartClosed, restartClosedRuns } from "@/lib/orchestrator";
-import { auditMutation, recordDurableMutation } from "@/lib/requestLog";
+// Relative, not "@/…" — see the note in the claude-auth login route.
+import type { GuardSnapshots } from "../../../../lib/budget";
+import { codexGuardSnapshot } from "../../../../lib/codexAccount";
+import {
+  currentSnapshot,
+  reopenRestartClosed,
+  restartClosedGuardWindows,
+  restartClosedRuns,
+} from "../../../../lib/orchestrator";
+import { auditMutation, recordDurableMutation } from "../../../../lib/requestLog";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,10 +39,20 @@ export async function GET() {
  * A refusal per run rather than one for the batch: `reopenRun` checks the
  * carried-forward guards at the door, so a run that really had used up its
  * cycles is refused by name, and reporting that as "the batch failed" would
- * hide the ones that did start.
+ * hide the ones that did start. That includes a run whose stored fraction guard
+ * has no reading to measure against: it stays `restart_closed`, named in
+ * `refused`, rather than going back to work with the guard unread.
  */
 async function postHandler(req: Request) {
-  const outcome = reopenRestartClosed();
+  // The readings a stored fraction guard will be judged against, fetched here
+  // because `reopenRestartClosed` awaits nothing, and only the ones some run
+  // needs: no fraction guard in the list means no transcript scan, as at
+  // `POST /api/fleet`.
+  const windows = restartClosedGuardWindows();
+  const snapshots: GuardSnapshots = {};
+  if (windows.includes("claude")) snapshots.claude = await currentSnapshot();
+  if (windows.includes("codex")) snapshots.codex = await codexGuardSnapshot();
+  const outcome = reopenRestartClosed(snapshots);
   // Durable and only when the press reached a run. This is a bulk start of
   // billed children, and the count is the fact — the per-run detail is already
   // on each run's own events, and a press over an empty list changed nothing.

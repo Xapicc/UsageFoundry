@@ -102,8 +102,8 @@ function pressReport(press: RestartClosedPress): PressReport {
         ? `None went back in the queue. ${runs(refused.length)} refused:`
         : `${runs(reopened)} back in the queue. ${refused.length} refused:`,
     // The short id is how the rest of the app names a run in running text, and
-    // each reason is `reopenRun`'s own sentence, which says "this run" and
-    // would be anonymous without it.
+    // each reason is `reopenRun`'s own sentence or a fraction guard's (neither
+    // names the run), which would be anonymous without it.
     refused: refused.map((r) => ({ id: r.id, name: r.id.slice(0, 8), reason: r.reason })),
     // A refused run keeps `restart_closed`, so it stays in the count and a
     // second press meets the same refusal. Its own page is where either way
