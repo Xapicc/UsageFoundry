@@ -357,6 +357,16 @@ const MAX_REGION_LINES = 80;
 const MAX_CONTENT_BYTES = 1_000_000;
 
 /**
+ * The line of a failed merge's stderr saying this app blanked a merge driver
+ * (`explainBlankedMergeDrivers` in `git.ts`), or null. Every reader of a failed
+ * merge asks this before it reads the exit status or the files git left
+ * unmerged, which on git 2.54 and later include the file the blank failed.
+ */
+function blankedDriverLine(stderr: string): string | null {
+  return stderr.split("\n").find((line) => line.includes(BLANKED_MERGE_DRIVER_NOTE))?.trim() ?? null;
+}
+
+/**
  * Parse `git merge-tree --write-tree -z`.
  *
  * Exit 0 is a clean merge, exit 1 means conflicts, anything else is an error —
@@ -391,8 +401,8 @@ export function parseMergeTree(
   // with exit 128 on git 2.39.5 and with exit 1 and a conflict listing for the
   // file on 2.56.0, so on the newer git the status alone reads this app's own
   // refusal as a conflict the operator could resolve.
-  const blanked = stderr.split("\n").find((line) => line.includes(BLANKED_MERGE_DRIVER_NOTE));
-  if (blanked) return { outcome: "unknown", reason: `git could not preview the merge: ${blanked.trim()}` };
+  const blanked = blankedDriverLine(stderr);
+  if (blanked) return { outcome: "unknown", reason: `git could not preview the merge: ${blanked}` };
   if (code !== 1) {
     const detail = stderr.split("\n")[0] ?? "";
     return {
@@ -2519,14 +2529,29 @@ function untrackedAt(folder: string, added: readonly string[]): string[] {
   return [...found];
 }
 
-/** Why a merge git refused did not land, once `unwind` has said what it left. */
-function mergeRefusal(
+/**
+ * Why a merge git refused did not land, once `unwind` has said what it left.
+ *
+ * A merge driver this app blanked is the reason whatever `conflicts` holds. On
+ * git 2.56.0 it fails `merge` and `merge --squash` with exit 1, the file listed
+ * unmerged and, for `merge`, MERGE_HEAD written, where 2.39.5 exits 2 over a
+ * clean checkout, so the newer git's refusal read "The merge conflicted" in a
+ * file that merges cleanly under its driver and never said this app refused to
+ * run it (board task 716f904b, captured through `git()`). git's own line
+ * carrying the sentence is the reason on both, and a checkout the unwind could
+ * not restore gets the warning it needs from the branches below.
+ *
+ * Exported for its test, `gitFailureLine`'s precedent.
+ */
+export function mergeRefusal(
   branch: string,
   stderr: string,
-  conflicts: readonly string[],
+  unmerged: readonly string[],
   unwound: Unwound,
 ): string {
-  const why = stderr.split("\n")[0] || "unknown error";
+  const blanked = blankedDriverLine(stderr);
+  const why = blanked ?? (stderr.split("\n")[0] || "unknown error");
+  const conflicts = blanked ? [] : unmerged;
   if (unwound !== "restored") {
     if (conflicts.length > 0) {
       return `The merge conflicted and could not be rolled back, so your checkout is part-way through it — look at git status there before anything else. Conflicting: ${conflicts.join(", ")}`;
@@ -3075,6 +3100,29 @@ export const HELD_RESOLUTION_REFUSAL =
   "conflict until the hold is lifted.";
 
 /**
+ * Why a resolution's merge that git failed is no work for a resolver, or null
+ * when it left conflicts to resolve.
+ *
+ * Nothing unmerged is a refusal, and so is a merge driver this app blanked,
+ * whatever git left unmerged: on git 2.56.0 the blank leaves the file it was
+ * merging listed as a conflict (`mergeRefusal`'s reason), and reading that
+ * as work would start a resolver, which is paid, on a file that merges
+ * cleanly under the driver this app will not run (board task 716f904b).
+ *
+ * Exported for its test.
+ */
+export function unresolvableMerge(
+  target: string,
+  branch: string,
+  stderr: string,
+  conflicted: readonly string[],
+): string | null {
+  const blanked = blankedDriverLine(stderr);
+  if (!blanked && conflicted.length > 0) return null;
+  return `git could not merge ${target} into ${branch}: ${blanked ?? (stderr.split("\n")[0] || "unknown error")}`;
+}
+
+/**
  * Merge the target *into* the run's branch, and have Claude resolve what git
  * could not.
  *
@@ -3274,13 +3322,11 @@ async function startResolution(
   }
 
   const conflicted = await conflictedFiles(checkout.path);
-  if (conflicted.length === 0) {
+  const unresolvable = unresolvableMerge(target, branch, merge.stderr, conflicted);
+  if (unresolvable) {
     await git(checkout.path, ["merge", "--abort"], NO_CLOCK);
     await discardCheckout(repoRoot, checkout);
-    return {
-      ok: false,
-      reason: `git could not merge ${target} into ${branch}: ${merge.stderr.split("\n")[0] || "unknown error"}`,
-    };
+    return { ok: false, reason: unresolvable };
   }
 
   // Before the spawn, because `after` takes a file with no marker left in it as

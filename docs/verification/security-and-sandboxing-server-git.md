@@ -432,6 +432,81 @@
   Windows, some macOS packages) was not tried; that placement follows one,
   since it asks the same binary the call runs, is inferred.
 
+- **git joins an include onto its origin's directory without folding `..`,
+  and watching the path unfolded refuses a file written beside a symlink's
+  target after the probe, 2026-11-08.** Board task `bbbe1aff`, `main` at
+  `4fd7c103`, git 2.39.5 under `env -i`. With `.git/sub` a symlink to
+  `<elsewhere>/dir`, `include.path = sub/../evil.inc` and `* filter=x` in
+  `.git/info/attributes`, `config --show-origin --includes --get-regexp
+  '^filter\.'` printed origin `file:.git/sub/../evil.inc`, `add -A` ran the
+  `filter.x.clean` that `<elsewhere>/evil.inc` defines and exited 0, and
+  `.git/evil.inc`, where the fingerprint looked, did not exist. Through this
+  app's compiled `git()` and `gitSync()`, `gitFilterProbe.test.ts`'s five
+  symlink cases, the stub writing the included file while the index is
+  listed (a relative include, one nested in a file reached that way, `~/`
+  with `HOME` below the link, `~<user>/` below `~/.cache` and `%(prefix)/`),
+  ran the plant at `4fd7c103` through `git()` and, with the loop cut to
+  `gitSync()` alone, through it too; with the change all are refused naming
+  the `sub/../` path. On 2.39.5 the `%(prefix)/` case skips; on a `v2.56.0`
+  built under `$TMPDIR` as the `12d0e24c` entry says, it failed at
+  `4fd7c103` and passed with the change, and the whole file passed 70 of 70
+  there. Caveat: only the
+  include targets were unfolded; the top of the work tree is still
+  `path.resolve(dir, cdup)`, which folds a symlink in the call's own
+  directory, and that was not driven.
+
+- **A directory below the top of the work tree made a git directory after the
+  probe is found first, and fingerprinting what makes one refuses the call,
+  2026-11-08.** Board task `fbd6d8dd`, branch at `011f4457`, git 2.39.5 under
+  `env -i`. In a committed repository `B` with tracked `B/sub`, `add -A` from
+  `B/sub` ran a `filter.x.clean` defined only in a `config` naming `B` as its
+  `core.worktree` (`* filter=x` in its `info/attributes`) in four layouts,
+  each once its last piece was made and never before: `B/sub` given a `HEAD`
+  beside `objects/` and `refs/` (`rev-parse --absolute-git-dir` printed
+  `B/sub`, `--show-toplevel` `B`); an empty `B/sub/.git` directory given the
+  same; `B/sub` holding `HEAD` first and given `objects/` and `refs/`; and
+  `B/sub` holding `HEAD` and a `commondir` first and the directory it names
+  given `objects/`. Without `core.repositoryformatversion` git discarded the
+  `core.worktree` and the call failed "must be run in a work tree" (2.39.5
+  and 2.56.0); with a `commondir` it took one only from `config.worktree`
+  under `extensions.worktreeConfig`. `-c safe.bareRepository=explicit`
+  refused the first layout and ran the driver in the second. Through this
+  app's compiled `git()` and `gitSync()`, `gitFilterProbe.test.ts`'s four
+  cases, the stub making the last piece while the index is listed, ran the
+  plant at `011f4457` through `git()` and, with the loop cut to `gitSync()`
+  alone, through it too, on 2.39.5 and on the `v2.56.0` build; with the
+  change each is refused naming that piece, and a call from the
+  subdirectory with nothing made runs. The file passed 66 of 76 with 10
+  skipped on 2.39.5 and 76 of 76 on 2.56.0. A production caller, traced by
+  reading and not driven: `worktreeDiff`'s `status --porcelain`
+  (`diff.ts`) runs in a run's folder, which `probeIsolation` leaves below
+  the top for a run on a subdirectory. Caveat: a `commondir` is read when it
+  is first fingerprinted, so one whose target moves under it is seen only as
+  the file's change; and the git directory the probe found is not watched
+  for ceasing to be one.
+
+- **On git 2.56.0 Land's real merge of a file a blanked driver failed read as a
+  conflict in that file, and now gives the driver's sentence, 2026-11-08.**
+  Board task `716f904b`, branch at `00299ab3`. Through this app's compiled
+  `git()` with `GIT_BIN` at the `v2.56.0` build above, two branches changing
+  different lines of `f.txt` under `merge.evil.driver` and `* merge=evil`:
+  `merge --no-edit --no-overwrite-ignore side` and `merge --squash
+  --no-overwrite-ignore side` each exited 1 with CONFLICT for `f.txt` on
+  stdout, stderr only git's `cannot run :` line carrying the sentence,
+  `UU f.txt`, MERGE_HEAD for the merge and none for the squash, and the
+  driver did not run; `conflictedFiles` returned `["f.txt"]` and `unwind`
+  returned `restored` with an empty status for both. On the image's 2.39.5
+  both exited 2 over a clean checkout with nothing unmerged. The unfixed
+  `mergeRefusal`, exported for the test, gave "The merge conflicted and was
+  rolled back — your checkout is untouched. Conflicting: f.txt" for the
+  2.56.0 shape; with the change, `land.test.ts`' five cases on those
+  captured shapes pass, and on the 2.56.0 repositories above the reason for
+  each was "git refused the merge, and your checkout is as it was:" and
+  that line. With the two blanked checks taken out of the compiled module,
+  three of the five fail. Caveat: `landRun` and `resolveConflicts` were not
+  driven whole on 2.56.0, and that `unresolvableMerge` keeps a resolver from
+  starting is read from the code.
+
 ## Not yet verified by hand
 
 - **Whether a work cycle can race this app's git on `.git/config` in

@@ -830,6 +830,45 @@ function discoveryEntries(dir: string, top: string): string[] {
 }
 
 /**
+ * What git's discovery reads to decide whether a directory it passes below the
+ * top of the work tree is a git directory, and so stops there instead of at
+ * the top: at each level, `<at>/.git` when it is a directory and `<at>` itself
+ * when `.git` is absent, each one if it has a valid `HEAD` and `objects/` and
+ * `refs/` in the directory its `commondir` names, or in it. A subdirectory
+ * made one after the probe, by its `HEAD`, by an empty `.git` given a `HEAD`,
+ * or by `objects/` made beside a `HEAD` or in what a `commondir` names, was
+ * found first, and with `core.worktree` naming the top the call read its
+ * `config`, which the probe never had, and ran a filter only that defined
+ * (board task fbd6d8dd, measured, 2.39.5). `discoveryEntries` sees the second
+ * only as a directory's inode, which files made inside it leave alone.
+ *
+ * `HEAD` and `commondir` as configuration, since what they hold decides it;
+ * `objects/` and `refs/` by `locationFingerprint`, since only whether they are
+ * there counts and git writes inside them. Below the top only, where nothing
+ * of the repository's own is, so in a normal tree these stay absent; at the
+ * top, `<top>/.git` is what git found and its own files are watched already.
+ */
+function gitDirectoryInputs(dir: string, top: string): { asConfig: string[]; asLocation: string[] } {
+  const asConfig: string[] = [];
+  const asLocation: string[] = [];
+  for (let at = path.resolve(dir); at !== top && at !== path.dirname(at); at = path.dirname(at)) {
+    for (const candidate of [path.join(at, ".git"), at]) {
+      const commondir = path.join(candidate, "commondir");
+      let common = candidate;
+      try {
+        // git strips trailing line ends and joins a relative one onto the
+        // candidate, as `joinAsGit` does.
+        const named = fs.readFileSync(commondir, "utf8").replace(/[\r\n]+$/, "");
+        if (named) common = joinAsGit(candidate, named);
+      } catch {}
+      asConfig.push(path.join(candidate, "HEAD"), commondir);
+      asLocation.push(path.join(common, "objects"), path.join(common, "refs"));
+    }
+  }
+  return { asConfig, asLocation };
+}
+
+/**
  * Where a file an include names is, or, for a `~user/` or `%(prefix)/` path,
  * what git must be asked to place, with the directory the answer is relative
  * to if it is not absolute.
@@ -837,27 +876,44 @@ function discoveryEntries(dir: string, top: string): string[] {
 type IncludeTarget = { file: string } | { placedByGit: string; namedIn: string };
 
 /**
+ * `file` joined onto `dir` as git joins an include onto the directory of the
+ * file naming it: by string, `..` left in. `path.resolve` folds `..` against
+ * the component before it, and the kernel, which git hands the path to,
+ * follows that component first when it is a symlink: with `.git/sub` a link
+ * to `<elsewhere>/dir`, `sub/../evil.inc` is `<elsewhere>/evil.inc` to git and
+ * was watched as `.git/evil.inc`, absent at both ends, while a driver written
+ * into the other ran (board task bbbe1aff, measured, 2.39.5). The stat of the
+ * unfolded path goes through the same lookup git's open does.
+ */
+const joinAsGit = (dir: string, file: string) => (path.isAbsolute(file) ? file : `${dir}/${file}`);
+
+/**
  * The files the records' `include.path` and `includeIf.<condition>.path` name,
  * resolved as git resolves them: `~/` against the child's `HOME`, `~user/`
  * through the user database and `%(prefix)/` against git's install prefix,
  * which only git is asked (`placeWithGit`), and anything else against the
  * directory of the file that names it, whose own relative origin is relative
- * to `top`. A conditional include is listed whether or not its condition
- * holds, which watches more than git reads and never less.
+ * to `top`. Each is joined by `joinAsGit` and never normalised, since git
+ * normalises none of them. A conditional include is listed whether or not its
+ * condition holds, which watches more than git reads and never less.
  */
 function includeTargets(top: string, records: ConfigRecord[]): IncludeTarget[] {
   const home = gitEnv().HOME;
   const targets: IncludeTarget[] = [];
   for (const { origin, key, value } of records) {
     if (!/^include(?:if\..+)?\.path$/i.test(key) || !value || !origin.startsWith("file:")) continue;
-    const namedIn = path.dirname(path.resolve(top, origin.slice("file:".length)));
+    // Not `path.dirname` of a resolved path: an origin reached through
+    // `sub/../` is a file in the symlink target's parent, and a relative include
+    // inside it is joined onto that.
+    const namedIn = path.dirname(joinAsGit(top, origin.slice("file:".length)));
     if (value.startsWith("~/")) {
-      // git ignores a `~/` include when HOME is unset, so there is nothing to watch.
-      if (home) targets.push({ file: path.join(home, value.slice(2)) });
+      // git ignores a `~/` include when HOME is unset, so there is nothing to
+      // watch; otherwise it appends the rest to HOME as written.
+      if (home) targets.push({ file: `${home}${value.slice(1)}` });
     } else if (value.startsWith("~") || value.startsWith("%(prefix)/")) {
       targets.push({ placedByGit: value, namedIn });
     } else {
-      targets.push({ file: path.resolve(namedIn, value) });
+      targets.push({ file: joinAsGit(namedIn, value) });
     }
   }
   return targets;
@@ -930,9 +986,9 @@ type Prepared =
  * populated submodules, which become sites. An include under `~user/` or
  * `%(prefix)/` costs one more, to place it, and the common configuration has
  * none. Before the probe, each site's configuration files, its git directory's
- * `commondir`, HEAD and the refs behind it, and the `.git` entries and git
- * directory it was found through are fingerprinted, and after it every
- * include target. Then every watched file is fingerprinted again, last thing
+ * `commondir`, HEAD and the refs behind it, the `.git` entries and git
+ * directory it was found through, and what would make a directory below the
+ * top a git directory are fingerprinted, and after it every include target. Then every watched file is fingerprinted again, last thing
  * before the caller spawns the call, and one that changed refuses it.
  */
 function* prepareContentCall(
@@ -994,6 +1050,9 @@ function* prepareContentCall(
     for (const ref of refsBehindHead(head, gitDir, commonDir)) watch(ref, symrefFingerprint);
     for (const file of reftableFiles(gitDir, commonDir)) watch(file);
     for (const entry of [...discoveryEntries(dir, top), gitDir]) watch(entry, locationFingerprint);
+    const below = gitDirectoryInputs(dir, top);
+    for (const file of below.asConfig) watch(file);
+    for (const entry of below.asLocation) watch(entry, locationFingerprint);
 
     const probe = yield { dir, args: FILTER_PROBE };
     const read = readFilterProbe(probe, dir, args);
@@ -1012,7 +1071,7 @@ function* prepareContentCall(
       if (placed.code !== 0 || placed.overflowed) {
         return { ok: false, reason: probeFailure(placed, dir, args, step) };
       }
-      watch(path.resolve(target.namedIn, placed.stdout.replace(/\0$/, "")));
+      watch(joinAsGit(target.namedIn, placed.stdout.replace(/\0$/, "")));
     }
 
     if (args[0] === "merge-tree") continue;

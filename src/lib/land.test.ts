@@ -9,6 +9,7 @@ import {
   hasConflictMarkers,
   landRecheck,
   landRefusal,
+  mergeRefusal,
   parseCount,
   parseMergeTree,
   parseStatusZ,
@@ -17,6 +18,7 @@ import {
   purgeRefusal,
   selectBranchCandidates,
   selectProbeTargets,
+  unresolvableMerge,
   unresolvedFiles,
   unsettledBranchRefusal,
   type CheckoutState,
@@ -48,6 +50,13 @@ import {
  * git's progress line to an operator as the reason their resolution would not
  * run. Whether the run's own slot may be merged in is `resolveCheckout`'s
  * reading of `parseStatusZ`, and `resolveCheckout.test.ts` covers it.
+ *
+ * `mergeRefusal` and `unresolvableMerge` are the real merge's readers of a
+ * driver this app blanked, `parseMergeTree`'s case for the preview: on git
+ * 2.54 and later the blank lists the file it was merging as a conflict, so
+ * Land said a file conflicted that merges cleanly under its driver, and a
+ * resolution would have paid a resolver to resolve it. The image's 2.39.5
+ * cannot show it, so the shapes are captured from 2.56.0.
  */
 
 /* ------------------------------------------------------------------ */
@@ -177,6 +186,65 @@ describe("parseMergeTree", () => {
   it("keeps reading exit 1 as a conflict when the driver was not blanked", () => {
     const stdout = z("<tree-oid>", "100644 aaa 1\tf.txt", "", "1", "f.txt", "CONFLICT (contents)", "CONFLICT (content): Merge conflict in f.txt\n", "");
     assert.equal(parseMergeTree(stdout, "", 1).outcome, "conflict");
+  });
+});
+
+describe("a real merge a blanked merge driver failed", () => {
+  // Captured through `git()` with GIT_BIN at a built git 2.56.0, merging two
+  // branches that change different lines of f.txt under `* merge=evil`: exit
+  // 1 for `merge --no-edit` and `merge --squash` alike, with this on stderr,
+  // CONFLICT for f.txt on stdout, `UU f.txt` in status and, for the merge,
+  // MERGE_HEAD written. `conflictedFiles` then returned ["f.txt"].
+  const stderr256 =
+    "error: cannot run : No such file or directory (this app does not run a repository's merge drivers, " +
+    "so it blanked merge.evil.driver and git could not merge a file that uses it)";
+  // The same merges on the image's 2.39.5: exit 2, a clean checkout, nothing unmerged.
+  const stderr239 = `${stderr256}\nerror: error: Failed to execute internal merge\nMerge with strategy ort failed.`;
+
+  it("mergeRefusal says this app blanked the driver, not that the file conflicted, on either git", () => {
+    for (const [stderr, unmerged] of [[stderr256, ["f.txt"]], [stderr239, []]] as const) {
+      const reason = mergeRefusal("uf/x", stderr, unmerged, "restored");
+      assert.match(reason, /does not run a repository's merge drivers/, reason);
+      assert.match(reason, /merge\.evil\.driver/, reason);
+      assert.doesNotMatch(reason, /conflicted|Conflicting/, reason);
+      assert.match(reason, /your checkout is as it was/, reason);
+    }
+  });
+
+  it("mergeRefusal still warns about a checkout the unwind could not restore, with the driver's sentence", () => {
+    // The merge leaves MERGE_HEAD (`mid-merge` when its abort fails); the squash none (`changed`).
+    const midMerge = mergeRefusal("uf/x", stderr256, ["f.txt"], "mid-merge");
+    assert.match(midMerge, /run git merge --abort there/, midMerge);
+    assert.match(midMerge, /does not run a repository's merge drivers/, midMerge);
+    assert.doesNotMatch(midMerge, /conflicted|Conflicting/, midMerge);
+    const changed = mergeRefusal("uf/x", stderr256, ["f.txt"], "changed");
+    assert.match(changed, /holds that work uncommitted/, changed);
+    assert.match(changed, /does not run a repository's merge drivers/, changed);
+    assert.doesNotMatch(changed, /conflicted|Conflicting/, changed);
+  });
+
+  it("mergeRefusal keeps reporting a real conflict when no driver was blanked", () => {
+    const stderr = "Auto-merging f.txt";
+    assert.equal(
+      mergeRefusal("uf/x", stderr, ["f.txt"], "restored"),
+      "The merge conflicted and was rolled back — your checkout is untouched. Conflicting: f.txt",
+    );
+    assert.match(mergeRefusal("uf/x", stderr, ["f.txt"], "mid-merge"), /^The merge conflicted and could not be rolled back.*Conflicting: f\.txt$/);
+  });
+
+  it("unresolvableMerge starts no resolver for the file a blanked driver left unmerged", () => {
+    const reason = unresolvableMerge("main", "uf/x", stderr256, ["f.txt"]);
+    assert.ok(reason, "a resolver would be started on f.txt");
+    assert.match(reason, /^git could not merge main into uf\/x: error: cannot run : /);
+    assert.match(reason, /merge\.evil\.driver/);
+  });
+
+  it("unresolvableMerge leaves a real conflict to the resolver, and refuses a merge that left none", () => {
+    assert.equal(unresolvableMerge("main", "uf/x", "Auto-merging f.txt", ["f.txt"]), null);
+    assert.equal(
+      unresolvableMerge("main", "uf/x", "fatal: refusing to merge unrelated histories", []),
+      "git could not merge main into uf/x: fatal: refusing to merge unrelated histories",
+    );
   });
 });
 
