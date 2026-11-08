@@ -43,11 +43,14 @@ The paragraphs themselves live in `docs/agent/workflows-and-schedules/`, one top
 - A shutdown holds a deliver block at its claim, and does not hold a merge block.
 - A branch refused because a land or a run holds its checkout is failed, not waited for, and that was decided.
 
-## [Halting, status and pick-ups of a workflow instance](workflows-and-schedules/instance-lifecycle.md)
+## [Halting and status of a workflow instance](workflows-and-schedules/instance-lifecycle.md)
 
 - A workflow instance is halted through one door, and the door is closed before anything is signalled.
 - Four of an instance's six readings are derived, and `started` is not a word for a press of Run that is over.
 - A held gate leaves the instance `started`, and it is the operator's to end — Continue lets it through, Stop halts through the same door as every other halt.
+
+## [Picking up a stuck workflow run](workflows-and-schedules/instance-pick-ups.md)
+
 - A stuck workflow run is picked up one named obstacle at a time, and never through a halt.
 - A pick-up is refused while another press of the same workflow works in a folder it shares — an authorisation rule, the one `startWorkflow` holds at a press, held at every door that brings a press back.
 - The page that presses Run states the refusal to press it again before it is pressed, per folder, and the instance it links is found in both halves of the graph.
