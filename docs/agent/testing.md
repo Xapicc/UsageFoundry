@@ -5,7 +5,7 @@
 > whose violation is silent — nothing throws, nothing fails to typecheck.
 > **Read before editing any src/**/*.test.ts, or when deciding whether a change needs one.**
 
-This page is the index. The bar every test is held to comes first, each of its paragraphs listed by its lead claim and held in `testing/the-bar.md`; then one section per topic file under `testing/`, each with a table of the test files whose grounds that file holds. Read the bar, then the one topic file your change touches.
+This page is the index. The bar every test is held to comes first, each of its paragraphs listed by its lead claim and held in `testing/the-bar.md`; then one section per topic file under `testing/`, each with a table of the test files whose grounds that file holds. Read the bar, then the one topic file your change touches. The sections from auth to the TokenEconomizer are on a second page, [testing-edges-and-pages.md](testing-edges-and-pages.md), because this one outgrew the size every other doc keeps to.
 
 ## [The bar](testing/the-bar.md)
 
@@ -411,143 +411,9 @@ Units that are about no test file in the tree:
 | `reviewBlockRun.test.ts` | [workflows], [harnesses] |
 | `src/app/api/runs/[id]/agent-cost/route.test.ts` |  |
 
-## [Auth, credentials, config, settings and the run streams](testing/auth-config-and-status-routes.md)
+## [The install's edges and its pages](testing-edges-and-pages.md)
 
-| Test file | Also in |
-|---|---|
-| `authGuard.test.ts` |  |
-| `config.test.ts` |  |
-| `configCheck.test.ts` |  |
-| `credential-audit.test.ts` |  |
-| `http.test.ts` | [harnesses] |
-| `otlp.test.ts` |  |
-| `requestLog.test.ts` |  |
-| `sessionToken.test.ts` |  |
-| `settings.test.ts` |  |
-| `src/app/api/fleet/route.test.ts` |  |
-| `src/app/api/jsonObjectBody.test.ts` |  |
-| `src/app/api/login/route.test.ts` | [sign-in] |
-| `src/app/api/otlp/v1/logs/route.test.ts` |  |
-| `src/app/api/runs/[id]/reopen/route.test.ts` |  |
-| `src/app/api/runs/[id]/stream/route.test.ts` |  |
-| `src/app/api/runs/route.test.ts` |  |
-| `src/app/api/runs/live/stream/route.test.ts` | [harnesses] |
-| `src/app/api/settings/route.test.ts` | [harnesses] |
-| `src/middleware.test.ts` | [sign-in] |
-
-## [Provider sign-in: the Claude and Codex auth modules](testing/provider-sign-in.md)
-
-| Test file | Also in |
-|---|---|
-| `claudeAuth.test.ts` |  |
-| `codexAuth.test.ts` |  |
-
-## [The health and status routes](testing/health-and-status-routes.md)
-
-| Test file | Also in |
-|---|---|
-| `readOnlyBanner.test.ts` |  |
-| `src/app/api/health/route.test.ts` |  |
-| `src/app/api/status/route.test.ts` | [sign-in] |
-
-## [Sign-in limits](testing/sign-in-limits.md)
-
-| Test file | Also in |
-|---|---|
-| `loginLimiter.test.ts` |  |
-
-## [Container, compose and backups](testing/container-and-deployment.md)
-
-| Test file | Also in |
-|---|---|
-| `backupRestore.test.ts` |  |
-| `deployment.test.ts` | [stacks] |
-
-## [The knowledge vault reader, vault skill and graph view](testing/knowledge-vault-and-graph.md)
-
-| Test file | Also in |
-|---|---|
-| `canvasView.test.ts` |  |
-| `forceLayout.test.ts` |  |
-| `knowledge.test.ts` |  |
-| `knowledgeGraph.test.ts` | [harnesses] |
-| `vaultPointer.test.ts` |  |
-| `vaultSkill.test.ts` |  |
-
-## [Dreaming](testing/dreaming.md)
-
-| Test file | Also in |
-|---|---|
-| `dreaming.test.ts` |  |
-| `dreamingClock.test.ts` |  |
-| `dreamingLanding.test.ts` |  |
-| `dreamingLedger.test.ts` |  |
-| `dreamingScan.test.ts` |  |
-
-## [The toolbar's usage readout](testing/toolbar-usage-readout.md)
-
-| Test file | Also in |
-|---|---|
-| `usageRemaining.test.ts` |  |
-| `UsageRemaining.test.ts` |  |
-
-## [What a run left in its repository's git directory](testing/git-dir-watch.md)
-
-| Test file | Also in |
-|---|---|
-| `gitDirWatch.test.ts` |  |
-| `gitDirRead.test.ts` |  |
-| `RunGitDirNotice.test.tsx` |  |
-
-## [Components: Meter, the ascii skin, Markdown and the UI kit](testing/components-meter-markdown-and-kit.md)
-
-| Test file | Also in |
-|---|---|
-| `AsciiBar.test.tsx` |  |
-| `AsciiFrame.test.tsx` |  |
-| `Disclosure.test.tsx` |  |
-| `LimitField.test.tsx` |  |
-| `ListView.test.tsx` |  |
-| `LiveTelemetry.test.tsx` | [cards] |
-| `Markdown.test.tsx` |  |
-| `Meter.test.tsx` |  |
-| `Table.test.tsx` |  |
-
-## [Components: usage, context and run cards](testing/components-usage-and-run-cards.md)
-
-| Test file | Also in |
-|---|---|
-| `BranchWork.test.tsx` |  |
-| `CodexWindows.test.tsx` |  |
-| `ContextOccupancy.test.tsx` | [samples] |
-| `InstallSpendCard.test.tsx` |  |
-| `LiveRunFigures.test.tsx` |  |
-| `OpenTasksChart.test.tsx` |  |
-| `RecentBlocksCard.test.tsx` |  |
-| `RunHandoff.test.tsx` |  |
-| `UsagePeriods.test.tsx` | [ui-kit] |
-| `windowCardNotes.test.ts` |  |
-
-## [Stacks, the tool inventory and the end of the function list](testing/stacks-and-tool-inventory.md)
-
-| Test file | Also in |
-|---|---|
-| `applyStacks.test.ts` |  |
-| `cycles.test.ts` | [run-page] |
-| `logLine.test.ts` |  |
-| `repoReading.test.ts` |  |
-| `repoSpend.test.ts` |  |
-| `stackRequests.test.ts` |  |
-| `stackWait.test.ts` | [budgets], [cycle], [edges], [queue], [validation](testing/completion-validation.md) |
-| `stacks.test.ts` |  |
-| `toolInventory.test.ts` |  |
-| `unsavedWork.test.ts` |  |
-
-## [TokenEconomizer: availability, env pins and the catalogue refresh](testing/token-economizer.md)
-
-| Test file | Also in |
-|---|---|
-| `tokenEconomizer.test.ts` | [argv], [deployment] |
+Auth, credentials, config and settings, provider sign-in, the status routes, sign-in limits, the container, the knowledge vault, Dreaming, the toolbar readout, the git-directory watch, the components, stacks and the TokenEconomizer: their sections, with their tables, are in [testing-edges-and-pages.md](testing-edges-and-pages.md), which is this page's second half.
 
 ## [Test harnesses: which tests open a database, and how this page is checked](testing/test-harnesses.md)
 
@@ -561,7 +427,7 @@ Units that are about no test file in the tree:
 
 ## Checking this page is complete
 
-Every test file is named in the paragraph that holds its grounds, in the topic file for its area — by basename, or by path for the `route.test.ts` files, which all share one — and that name is the whole of what the check below looks for. It reads the topic files and never this page. The tables above name every test file by design, so a check that read them would pass a test whose row was added and whose paragraph never was, which is how it once printed nothing while four files had no grounds anywhere. For the same reason a paragraph that names only its subject, a function or a module, is invisible to it: when you write one, put the file's name in it too.
+Every test file is named in the paragraph that holds its grounds, in the topic file for its area — by basename, or by path for the `route.test.ts` files, which all share one — and that name is the whole of what the check below looks for. It reads the topic files and never this page. The tables above, and those in [testing-edges-and-pages.md](testing-edges-and-pages.md), name every test file by design, so a check that read them would pass a test whose row was added and whose paragraph never was, which is how it once printed nothing while four files had no grounds anywhere. For the same reason a paragraph that names only its subject, a function or a module, is invisible to it: when you write one, put the file's name in it too.
 
 ```
 find src -name '*.test.ts' -o -name '*.test.tsx' | wc -l          # 185 as this is written, 2026-10-01
@@ -603,13 +469,8 @@ It prints nothing as this is written. Whoever owns a file it names owes that fil
 [sandbox]: testing/sandbox-and-read-guard.md
 [parsers]: testing/stream-parsers-and-webhook.md
 [codex-cycle]: testing/codex-cycle-readings.md
-[auth]: testing/auth-config-and-status-routes.md
 [status]: testing/health-and-status-routes.md
-[sign-in]: testing/sign-in-limits.md
-[container]: testing/container-and-deployment.md
 [knowledge]: testing/knowledge-vault-and-graph.md
-[dreaming]: testing/dreaming.md
-[ui-kit]: testing/components-meter-markdown-and-kit.md
 [cards]: testing/components-usage-and-run-cards.md
 [stacks]: testing/stacks-and-tool-inventory.md
 [harnesses]: testing/test-harnesses.md
