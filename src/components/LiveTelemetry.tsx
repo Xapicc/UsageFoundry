@@ -50,6 +50,14 @@ import { TBody, THead, Table, Td, Th, Tr } from "./ui/Table";
  * `default` against the window card's `primary`, for `ContextControlAside`'s
  * reason: elevation is what says this sits beside the money rather than inside
  * it, and there is at most one `primary` on a screen.
+ *
+ * With no run working it is one line, not a card. The question this answers on
+ * the dashboard is whether anything this app started is spending *now*, and a
+ * card's worth of totals and a run table over the last five hours answered it
+ * with "no" only to a reader who found the missing badge. The line keeps the
+ * title — `— first-party` is its provenance here too — and the window's total,
+ * so the figure still never appears without its source; the per-run breakdown
+ * is the run pages' business until something is running again.
  */
 export function LiveTelemetry({
   telemetry,
@@ -59,6 +67,18 @@ export function LiveTelemetry({
   now: number;
 }) {
   const unlisted = telemetry.runCount - telemetry.runs.length;
+
+  if (telemetry.workingRunCount === 0) {
+    return (
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs tabular-nums text-ink-muted">
+        <h2 className="text-sm font-semibold text-ink">Live from runs — first-party</h2>
+        <span>
+          idle · {fmtUSD(telemetry.costUSD)} this session window · last request{" "}
+          {fmtRelative(telemetry.lastAt, now)}
+        </span>
+      </div>
+    );
+  }
 
   return (
     <Card>
