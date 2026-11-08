@@ -28,6 +28,8 @@ const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-git-probe
 const modeFile = path.join(root, "mode");
 /** The program the plant modes write into a repository's configuration. */
 const plantFile = path.join(root, "plant");
+/** Where `plant-include` writes the included file, absolute. */
+const includeFile = path.join(root, "include-target");
 const realGit = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
 const gitStub = path.join(root, "git");
 
@@ -59,7 +61,7 @@ fs.writeFileSync(
     // An included file written after the probe has named it, while the index
     // is listed.
     `  if [ "$arg" = "ls-files" ] && [ "$mode" = "plant-include" ]; then`,
-    `    printf '[filter "x"]\\n\\tclean = %s\\n' "$(cat '${plantFile}')" > .git/evil.inc`,
+    `    printf '[filter "x"]\\n\\tclean = %s\\n' "$(cat '${plantFile}')" > "$(cat '${includeFile}')"`,
     "  fi",
     "done",
     `exec '${realGit}' "$@"`,
@@ -892,7 +894,35 @@ describe("a driver written between the probe and the call is refused", () => {
     return { repo, marker };
   }
 
-  after(() => setMode("pass"));
+  /**
+   * This process's user and a writable directory under the home the user
+   * database gives it, which is where git places `~<user>/`, or null where
+   * there is none; a sandbox may allow writes below a home and not in it.
+   */
+  function userHome(): { user: string; home: string; dir: string } | null {
+    try {
+      const { username, homedir } = os.userInfo();
+      const dir = path.join(homedir, ".cache");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.accessSync(dir, fs.constants.W_OK);
+      return { user: username, home: homedir, dir };
+    } catch {
+      return null;
+    }
+  }
+  const noUserHome = "this user has no home in the user database it can write below";
+
+  const homeFiles: string[] = [];
+  const homeTarget = (home: { dir: string }) => {
+    const target = path.join(home.dir, `uf-git-probe-${process.pid}-${count++}.inc`);
+    homeFiles.push(target);
+    return target;
+  };
+
+  after(() => {
+    setMode("pass");
+    for (const file of homeFiles) fs.rmSync(file, { force: true });
+  });
 
   it("git(): .git/config rewritten after the probe refuses the call", async () => {
     const { repo, marker } = namedButUndefinedRepo();
@@ -921,6 +951,7 @@ describe("a driver written between the probe and the call is refused", () => {
   it("git(): an included file written after the probe named it refuses the call", async () => {
     const { repo, marker } = namedButUndefinedRepo();
     plain(repo, ["config", "include.path", "evil.inc"]);
+    fs.writeFileSync(includeFile, path.join(repo, ".git", "evil.inc"));
     setMode("plant-include");
     const res = await git(repo, ["add", "-A"]);
     setMode("pass");
@@ -928,6 +959,57 @@ describe("a driver written between the probe and the call is refused", () => {
     ranNothing(marker);
     assert.equal(res.ok, false);
     assert.match(res.stderr, /evil\.inc changed while the filter probe read it/);
+  });
+
+  // From a subdirectory of a checkout git names `.git/config` relative to the
+  // top, not to the directory it ran in, and the watch resolved the include
+  // against the subdirectory (board task 10264b6b).
+  it("git() and gitSync(): from a subdirectory, an included file written after the probe refuses the call", async () => {
+    for (const viaSync of [false, true]) {
+      const { repo, marker } = namedButUndefinedRepo();
+      const sub = path.join(repo, "sub");
+      fs.mkdirSync(sub);
+      plain(repo, ["config", "include.path", "evil.inc"]);
+      fs.writeFileSync(includeFile, path.join(repo, ".git", "evil.inc"));
+      setMode("plant-include");
+      const res = viaSync ? gitSync(sub, ["add", "-A"]) : await git(sub, ["add", "-A"]);
+      setMode("pass");
+
+      ranNothing(marker);
+      assert.equal(res.ok, false, `${viaSync ? "gitSync" : "git"}() ran the call`);
+      assert.match(res.stderr, /\.git\/evil\.inc changed while the filter probe read it/);
+    }
+  });
+
+  // git places `~<user>/` through the user database, and the watch read it as
+  // a path relative to `.git` (board task 10264b6b).
+  it("git() and gitSync(): an include under `~<user>/` written after the probe refuses the call", async (t) => {
+    const home = userHome();
+    if (home === null) return t.skip(noUserHome);
+    for (const viaSync of [false, true]) {
+      const { repo, marker } = namedButUndefinedRepo();
+      const target = homeTarget(home);
+      plain(repo, ["config", "include.path", `~${home.user}/${path.relative(home.home, target)}`]);
+      fs.writeFileSync(includeFile, target);
+      setMode("plant-include");
+      const res = viaSync ? gitSync(repo, ["add", "-A"]) : await git(repo, ["add", "-A"]);
+      setMode("pass");
+
+      ranNothing(marker);
+      assert.equal(res.ok, false, `${viaSync ? "gitSync" : "git"}() ran the call`);
+      assert.match(res.stderr, new RegExp(`${path.basename(target).replace(/\./g, "\\.")} changed while the filter probe read it`));
+    }
+  });
+
+  it("control: an include under `~<user>/` is read from that user's home", (t) => {
+    const home = userHome();
+    if (home === null) return t.skip(noUserHome);
+    const { repo, marker } = namedButUndefinedRepo();
+    const target = homeTarget(home);
+    plain(repo, ["config", "include.path", `~${home.user}/${path.relative(home.home, target)}`]);
+    fs.writeFileSync(target, `[filter "x"]\n\tclean = ${fs.readFileSync(plantFile, "utf8")}\n`);
+    plain(repo, ["add", "-A"]);
+    assert.equal(fs.existsSync(marker), true, "the driver included from the user's home did not fire");
   });
 
   it("control: what each plant leaves behind runs the driver", () => {

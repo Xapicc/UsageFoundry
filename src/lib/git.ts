@@ -594,14 +594,46 @@ function populatedGitlinks(dir: string, output: string): string[] {
  */
 const MAX_PROBE_SITES = 64;
 
-/** A site's own configuration files, absolute: `config` and `config.worktree`. */
-const CONFIG_FILES = [
+/**
+ * A site's own configuration files, absolute (`config` and `config.worktree`),
+ * then the way up from the site to the top of its work tree.
+ *
+ * The way up is what the probe's relative origins are relative to: from a
+ * subdirectory git names the repository's own file `file:.git/config`, as
+ * seen from the top, and an include resolved against the subdirectory was
+ * watched where git never reads it (board task 10264b6b). `--show-cdup` prints
+ * an empty line at the top and no line outside a work tree, where a relative
+ * origin is relative to the site itself (measured, 2.39.5), which is why it
+ * comes last: its absence moves no other line.
+ */
+const SITE_PATHS = [
   "rev-parse",
   "--path-format=absolute",
   "--git-path",
   "config",
   "--git-path",
   "config.worktree",
+  "--show-cdup",
+];
+
+/**
+ * Asks git where a `~user/` path is, by having it format the path as a
+ * `--type=path` value, which goes through the same user-database lookup an
+ * include does. `--file /dev/null` so that nothing the repository wrote is
+ * read, and `-z` so that the answer is the path whatever it holds. A user git
+ * cannot find fails it with exit 128, but the probe has already failed on that
+ * include by then (measured, 2.39.5).
+ */
+const placeUnderUser = (value: string) => [
+  "config",
+  "--file",
+  "/dev/null",
+  "--type=path",
+  "-z",
+  "--default",
+  value,
+  "--get",
+  "usagefoundry.include",
 ];
 
 /**
@@ -633,24 +665,35 @@ function configFingerprint(file: string): string {
 }
 
 /**
- * The files the records' `include.path` and `includeIf.<condition>.path` name,
- * resolved as git resolves them: `~/` against the child's `HOME`, anything
- * else against the directory of the file that names it. A conditional include
- * is listed whether or not its condition holds, which watches more than git
- * reads and never less.
+ * Where a file an include names is, or, for a `~user/` path, what git must be
+ * asked to place, with the directory the answer is relative to if it is not
+ * absolute.
  */
-function includeTargets(dir: string, records: ConfigRecord[]): string[] {
+type IncludeTarget = { file: string } | { underUser: string; namedIn: string };
+
+/**
+ * The files the records' `include.path` and `includeIf.<condition>.path` name,
+ * resolved as git resolves them: `~/` against the child's `HOME`, `~user/`
+ * through the user database, which only git is asked (`placeUnderUser`), and
+ * anything else against the directory of the file that names it, whose own
+ * relative origin is relative to `top`. A conditional include is listed
+ * whether or not its condition holds, which watches more than git reads and
+ * never less.
+ */
+function includeTargets(top: string, records: ConfigRecord[]): IncludeTarget[] {
   const home = gitEnv().HOME;
-  const targets: string[] = [];
+  const targets: IncludeTarget[] = [];
   for (const { origin, key, value } of records) {
     if (!/^include(?:if\..+)?\.path$/i.test(key) || !value || !origin.startsWith("file:")) continue;
+    const namedIn = path.dirname(path.resolve(top, origin.slice("file:".length)));
     if (value.startsWith("~/")) {
       // git ignores a `~/` include when HOME is unset, so there is nothing to watch.
-      if (home) targets.push(path.join(home, value.slice(2)));
-      continue;
+      if (home) targets.push({ file: path.join(home, value.slice(2)) });
+    } else if (value.startsWith("~")) {
+      targets.push({ underUser: value, namedIn });
+    } else {
+      targets.push({ file: path.resolve(namedIn, value) });
     }
-    const namedIn = path.resolve(dir, origin.slice("file:".length));
-    targets.push(path.resolve(path.dirname(namedIn), value));
   }
   return targets;
 }
@@ -719,9 +762,10 @@ type Prepared =
  * prepare a call differently. Each site takes three: where its configuration
  * lives, fingerprinted before the probe runs; the probe; and, for every
  * subcommand but `merge-tree`, which writes no work tree, the index listing its
- * populated submodules, which become sites. Then every watched file is
- * fingerprinted again, last thing before the caller spawns the call, and one
- * that changed refuses it.
+ * populated submodules, which become sites. An include under `~user/` costs
+ * one more, to place it, and the common configuration has none. Then every
+ * watched file is fingerprinted again, last thing before the caller spawns the
+ * call, and one that changed refuses it.
  */
 function* prepareContentCall(
   cwd: string,
@@ -759,11 +803,12 @@ function* prepareContentCall(
       };
     }
 
-    const located = yield { dir, args: CONFIG_FILES };
+    const located = yield { dir, args: SITE_PATHS };
     if (located.code !== 0 || located.overflowed) {
-      return { ok: false, reason: probeFailure(located, dir, args, CONFIG_FILES) };
+      return { ok: false, reason: probeFailure(located, dir, args, SITE_PATHS) };
     }
-    for (const file of located.stdout.split("\n")) if (file !== "") watch(file);
+    const [config, worktreeConfig, cdup = ""] = located.stdout.split("\n");
+    for (const file of [config, worktreeConfig]) if (file) watch(file);
 
     const probe = yield { dir, args: FILTER_PROBE };
     const read = readFilterProbe(probe, dir, args);
@@ -772,7 +817,18 @@ function* prepareContentCall(
     for (const name of names.filters) filters.add(name);
     for (const name of names.merges) merges.add(name);
     for (const name of names.hooks) hooks.add(name);
-    for (const file of includeTargets(dir, read.records)) watch(file);
+    for (const target of includeTargets(path.resolve(dir, cdup), read.records)) {
+      if ("file" in target) {
+        watch(target.file);
+        continue;
+      }
+      const step = placeUnderUser(target.underUser);
+      const placed = yield { dir, args: step };
+      if (placed.code !== 0 || placed.overflowed) {
+        return { ok: false, reason: probeFailure(placed, dir, args, step) };
+      }
+      watch(path.resolve(target.namedIn, placed.stdout.replace(/\0$/, "")));
+    }
 
     if (args[0] === "merge-tree") continue;
     const index = yield { dir, args: GITLINK_LIST };

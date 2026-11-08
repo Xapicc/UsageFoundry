@@ -250,6 +250,22 @@
   `60db46c4`, four on 2.39.5 and five on 2.56.0, and none with the change.
   Caveat: 2.54.0 was not built, and the hook case skips on 2.39.5.
 
+- **git names an include's origin relative to the top of the work tree, and
+  places `~<user>/` through the user database, 2026-11-08.** Board task
+  `10264b6b`, `main` at `60db46c4`, git 2.39.5 under `env -i`. With
+  `include.path = evil.inc`, `config --show-origin --includes` printed
+  `file:.git/config` and `file:.git/evil.inc` from the top, a subdirectory
+  and a nested one, `file:config` from inside `.git` and a bare repository's
+  root, and absolute paths from a linked worktree and from a subdirectory of
+  a git directory. `rev-parse --show-cdup`, last on its line, printed an
+  empty line at the top, `../` one level down, and no line where there is no
+  work tree. `config --file /dev/null --type=path --default ~node/x --get k`
+  printed `/home/node/x`; for `~nosuchuser/` it exited 128, and so did the
+  probe over an `include.path` naming one. Through `git()` and `gitSync()`,
+  `gitFilterProbe.test.ts`'s subdirectory and `~<user>/` cases ran the plant
+  at `60db46c4` and were refused with the change. Caveat: one user database,
+  the container's `/etc/passwd`.
+
 ## Not yet verified by hand
 
 - **Whether a work cycle can race this app's git on `.git/config` in
