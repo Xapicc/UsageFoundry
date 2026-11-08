@@ -12,7 +12,9 @@
 // its brief would make, with the shape of argv `buildArgs` emits: an isolated
 // run in a worktree of a scratch repository, the vault flags of a reader or a
 // writer, and the setting carried in the same `--settings` overlay as the
-// sandbox write set. Every write is judged by the file afterwards, never by
+// sandbox write set. The vault rides `permissions.additionalDirectories` there,
+// as `buildArgs` gives it since 2026-11-08, with a skill, an agent and a
+// CLAUDE.md planted in its `.claude/`; a reader that is shown any of them fails. Every write is judged by the file afterwards, never by
 // what the tool said; what the tool said is printed beside it, because that is
 // what the model reads.
 //
@@ -24,7 +26,9 @@
 //   4. the setting on with the cycle's temporary directory as an `--add-dir`,
 //      plus a skill, an agent and a CLAUDE.md planted in that directory, to see
 //      whether an `--add-dir` of a shared directory loads anything from it;
-//      4b. the same directory in `permissions.additionalDirectories` instead.
+//      4b. the same directory in `permissions.additionalDirectories` instead;
+//      4v. a reader given the vault as `--add-dir`, the argv before 2026-11-08,
+//      as the control for what the vault's planted `.claude/` reaches.
 //   5. the vault's writer (a worktree under the vault's `.uf-worktrees/`, the
 //      writable argv) with the setting on: its writes into the vault must land.
 //   6. the setting off in `--settings` and on in the checkout's own
@@ -103,6 +107,14 @@ function plant() {
   fs.mkdirSync(agents, { recursive: true });
   fs.writeFileSync(path.join(agents, "planted.md"), "---\nname: planted-probe-agent\ndescription: PLANTED-AGENT-MARKER\n---\nbody\n");
   fs.writeFileSync(path.join(tmp, "CLAUDE.md"), "PLANTED-CLAUDE-MD-MARKER\n");
+  // The same three in the vault, where a vault writer could leave them for
+  // every reader. Untracked, so a worktree of the vault does not check them out.
+  const vaultSkill = path.join(vault, ".claude", "skills", "vault-planted-skill");
+  fs.mkdirSync(vaultSkill, { recursive: true });
+  fs.writeFileSync(path.join(vaultSkill, "SKILL.md"), "---\nname: vault-planted-skill\ndescription: VAULT-PLANTED-SKILL-MARKER\n---\nbody\n");
+  fs.mkdirSync(path.join(vault, ".claude", "agents"), { recursive: true });
+  fs.writeFileSync(path.join(vault, ".claude", "agents", "planted.md"), "---\nname: vault-planted-agent\ndescription: VAULT-PLANTED-AGENT-MARKER\n---\nbody\n");
+  fs.writeFileSync(path.join(vault, "CLAUDE.md"), "VAULT-PLANTED-CLAUDE-MD-MARKER\n");
 }
 
 const exists = (p) => fs.existsSync(p);
@@ -273,6 +285,9 @@ function startStub(calls, results, ctx) {
         for (const marker of ["PLANTED-SKILL-MARKER", "PLANTED-AGENT-MARKER", "PLANTED-CLAUDE-MD-MARKER", "planted-probe-skill", "planted-probe-agent"]) {
           if (raw.includes(marker)) ctx.markers.add(marker);
         }
+        for (const marker of ["VAULT-PLANTED-SKILL-MARKER", "VAULT-PLANTED-AGENT-MARKER", "VAULT-PLANTED-CLAUDE-MD-MARKER", "vault-planted-skill", "vault-planted-agent"]) {
+          if (raw.includes(marker)) ctx.vaultMarkers.add(marker);
+        }
         // On the first request only, before any tool input has named a path:
         // whether the environment section's "Additional working directories"
         // list names the directory, as a `  - <path>` line. The sandbox's own
@@ -311,7 +326,7 @@ function startStub(calls, results, ctx) {
   return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve({ server, port: server.address().port })));
 }
 
-async function turn(label, { cwd, permissionMode, settingInOverlay, addDirs = [], additionalDirectories, readerOfVault = false, projectSetting, steps, timeoutMs = TURN_TIMEOUT_MS }) {
+async function turn(label, { cwd, permissionMode, settingInOverlay, addDirs = [], additionalDirectories, vaultBy = "additionalDirectories", readerOfVault = false, projectSetting, steps, timeoutMs = TURN_TIMEOUT_MS }) {
   plantFresh();
   if (projectSetting !== undefined) {
     fs.mkdirSync(path.join(cwd, ".claude"), { recursive: true });
@@ -322,18 +337,19 @@ async function turn(label, { cwd, permissionMode, settingInOverlay, addDirs = []
     { ...s, step: true },
   ]);
   const results = new Map();
-  const ctx = { turnId: label.split(".")[0], scratchpad: null, markers: new Set(), mainRequests: 0, toolNames: [], scratchListed: false, vaultListed: false };
+  const ctx = { turnId: label.split(".")[0], scratchpad: null, markers: new Set(), vaultMarkers: new Set(), mainRequests: 0, toolNames: [], scratchListed: false, vaultListed: false };
   const { server, port } = await startStub(calls, results, ctx);
   // The write set an isolated run gets (`sandboxSettings`): its checkout, the
   // repository's .git, the config dir and the temporary directory.
   const allowWrite = [cwd, path.join(cwd === vaultWorktree ? vault : repo, ".git"), configDir, tmp];
+  const workingDirs = [...(additionalDirectories ?? []), ...(vaultBy === "additionalDirectories" ? [vault] : [])];
   const overlay = {
     apiKeyHelper: "",
-    ...(settingInOverlay || additionalDirectories
+    ...(settingInOverlay || workingDirs.length > 0
       ? {
           permissions: {
             ...(settingInOverlay ? { blockWritesOutsideWorkingDirectories: true } : {}),
-            ...(additionalDirectories ? { additionalDirectories } : {}),
+            ...(workingDirs.length > 0 ? { additionalDirectories: workingDirs } : {}),
           },
         }
       : {}),
@@ -343,7 +359,7 @@ async function turn(label, { cwd, permissionMode, settingInOverlay, addDirs = []
     "-p", "--output-format", "stream-json", "--verbose",
     "--permission-mode", permissionMode,
     "--disallowedTools", "Bash(pkill:*)", "Bash(killall:*)", ...(readerOfVault ? [`Edit(/${vault}/**)`] : []),
-    "--add-dir", vault, ...addDirs.flatMap((d) => ["--add-dir", d]),
+    ...(vaultBy === "add-dir" ? ["--add-dir", vault] : []), ...addDirs.flatMap((d) => ["--add-dir", d]),
     "--settings", JSON.stringify(overlay),
     "--", "go",
   ];
@@ -370,13 +386,20 @@ async function turn(label, { cwd, permissionMode, settingInOverlay, addDirs = []
     });
   });
   server.close();
-  console.log(`\n${label} (exit ${code}, ${ctx.mainRequests} main requests)`);
+  console.log(`\n${label}, vault by ${vaultBy} (exit ${code}, ${ctx.mainRequests} main requests)`);
   if (stderr.trim()) console.log(`  stderr: ${stderr.trim().slice(0, 300).replaceAll("\n", " | ")}`);
   console.log(`  scratchpad offered: ${ctx.scratchpad ?? "none"}`);
   console.log(`  "Additional working directories" lists the temporary directory: ${ctx.scratchListed}; the vault: ${ctx.vaultListed}`);
   console.log(`  worktree tools on offer: ${["EnterWorktree", "ExitWorktree"].filter((t) => ctx.toolNames.includes(t)).join(", ") || "none"}`);
   if (addDirs.length > 0 || additionalDirectories) console.log(`  planted markers seen in the request: ${[...ctx.markers].join(", ") || "none"}`);
+  console.log(`  the vault's planted markers seen in the request: ${[...ctx.vaultMarkers].join(", ") || "none"}`);
   let ok = true;
+  // A reader handed the vault through the overlay must be shown nothing the
+  // vault's `.claude/` holds; under `--add-dir` that is the control's to show.
+  if (readerOfVault && vaultBy === "additionalDirectories") {
+    ok = ctx.vaultMarkers.size === 0;
+    console.log(`  ${ok ? "ok  " : "FAIL"} the vault's planted skill, agent and CLAUDE.md kept from a reader's request`);
+  }
   calls.forEach((c, i) => {
     if (!c.step) return;
     const { attempts, result } = lastResult(results, i);
@@ -414,6 +437,7 @@ const TURNS = [
   ["3c", "isolated run, setting off, acceptEdits (control for the read)", { cwd: worktree, permissionMode: "acceptEdits", settingInOverlay: false, readerOfVault: true, steps: acceptEditsReads(isolatedSteps()).filter((s) => s.label === "Read the main checkout") }],
   ["4", "isolated run, setting on, --add-dir of the temporary directory", { cwd: worktree, permissionMode: "bypassPermissions", settingInOverlay: true, readerOfVault: true, addDirs: [tmp], steps: tmpAddDirSteps() }],
   ["4b", "isolated run, setting on, the temporary directory in permissions.additionalDirectories", { cwd: worktree, permissionMode: "bypassPermissions", settingInOverlay: true, readerOfVault: true, additionalDirectories: [tmp], steps: tmpAddDirSteps() }],
+  ["4v", "isolated run, setting on, the vault as --add-dir (control)", { cwd: worktree, permissionMode: "bypassPermissions", settingInOverlay: true, readerOfVault: true, vaultBy: "add-dir", steps: isolatedSteps().filter((s) => /\(reader\)/.test(s.label)) }],
   ["5", "vault writer, setting on, writable argv", { cwd: vaultWorktree, permissionMode: "bypassPermissions", settingInOverlay: true, readerOfVault: false, steps: vaultWriterSteps() }],
   ["6", "setting only in the checkout's .claude/settings.json", { cwd: worktree, permissionMode: "bypassPermissions", settingInOverlay: false, projectSetting: true, readerOfVault: true, steps: projectSettingsSteps("refused") }],
   ["7", "setting on in --settings, false in the checkout's .claude/settings.json", { cwd: worktree, permissionMode: "bypassPermissions", settingInOverlay: true, projectSetting: false, readerOfVault: true, steps: projectSettingsSteps("refused") }],
