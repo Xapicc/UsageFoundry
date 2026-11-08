@@ -623,14 +623,16 @@ const SITE_PATHS = [
 ];
 
 /**
- * Asks git where a `~user/` path is, by having it format the path as a
- * `--type=path` value, which goes through the same user-database lookup an
- * include does. `--file /dev/null` so that nothing the repository wrote is
- * read, and `-z` so that the answer is the path whatever it holds. A user git
- * cannot find fails it with exit 128, but the probe has already failed on that
- * include by then (measured, 2.39.5).
+ * Asks git where a `~user/` or `%(prefix)/` path is, by having it format the
+ * path as a `--type=path` value, which goes through the same expansion an
+ * include does: the user database for the first, and for the second git's own
+ * install prefix, which only the binary knows (board task 12d0e24c, measured,
+ * 2.39.5 and 2.56.0). `--file /dev/null` so that nothing the repository wrote
+ * is read, and `-z` so that the answer is the path whatever it holds. A user
+ * git cannot find fails it with exit 128, but the probe has already failed on
+ * that include by then (measured, 2.39.5).
  */
-const placeUnderUser = (value: string) => [
+const placeWithGit = (value: string) => [
   "config",
   "--file",
   "/dev/null",
@@ -766,20 +768,20 @@ function discoveryEntries(dir: string, top: string): string[] {
 }
 
 /**
- * Where a file an include names is, or, for a `~user/` path, what git must be
- * asked to place, with the directory the answer is relative to if it is not
- * absolute.
+ * Where a file an include names is, or, for a `~user/` or `%(prefix)/` path,
+ * what git must be asked to place, with the directory the answer is relative
+ * to if it is not absolute.
  */
-type IncludeTarget = { file: string } | { underUser: string; namedIn: string };
+type IncludeTarget = { file: string } | { placedByGit: string; namedIn: string };
 
 /**
  * The files the records' `include.path` and `includeIf.<condition>.path` name,
  * resolved as git resolves them: `~/` against the child's `HOME`, `~user/`
- * through the user database, which only git is asked (`placeUnderUser`), and
- * anything else against the directory of the file that names it, whose own
- * relative origin is relative to `top`. A conditional include is listed
- * whether or not its condition holds, which watches more than git reads and
- * never less.
+ * through the user database and `%(prefix)/` against git's install prefix,
+ * which only git is asked (`placeWithGit`), and anything else against the
+ * directory of the file that names it, whose own relative origin is relative
+ * to `top`. A conditional include is listed whether or not its condition
+ * holds, which watches more than git reads and never less.
  */
 function includeTargets(top: string, records: ConfigRecord[]): IncludeTarget[] {
   const home = gitEnv().HOME;
@@ -790,8 +792,8 @@ function includeTargets(top: string, records: ConfigRecord[]): IncludeTarget[] {
     if (value.startsWith("~/")) {
       // git ignores a `~/` include when HOME is unset, so there is nothing to watch.
       if (home) targets.push({ file: path.join(home, value.slice(2)) });
-    } else if (value.startsWith("~")) {
-      targets.push({ underUser: value, namedIn });
+    } else if (value.startsWith("~") || value.startsWith("%(prefix)/")) {
+      targets.push({ placedByGit: value, namedIn });
     } else {
       targets.push({ file: path.resolve(namedIn, value) });
     }
@@ -863,13 +865,13 @@ type Prepared =
  * prepare a call differently. Each site takes three: where its configuration
  * lives, fingerprinted before the probe runs; the probe; and, for every
  * subcommand but `merge-tree`, which writes no work tree, the index listing its
- * populated submodules, which become sites. An include under `~user/` costs
- * one more, to place it, and the common configuration has none. Before the
- * probe, each site's configuration files, HEAD and the refs behind it, and the
- * `.git` entries and git directory it was found through are fingerprinted, and
- * after it every include target. Then every watched file is fingerprinted
- * again, last thing before the caller spawns the call, and one that changed
- * refuses it.
+ * populated submodules, which become sites. An include under `~user/` or
+ * `%(prefix)/` costs one more, to place it, and the common configuration has
+ * none. Before the probe, each site's configuration files, its git directory's
+ * `commondir`, HEAD and the refs behind it, and the `.git` entries and git
+ * directory it was found through are fingerprinted, and after it every
+ * include target. Then every watched file is fingerprinted again, last thing
+ * before the caller spawns the call, and one that changed refuses it.
  */
 function* prepareContentCall(
   cwd: string,
@@ -921,7 +923,12 @@ function* prepareContentCall(
       };
     }
     const top = path.resolve(dir, cdup);
-    for (const file of [config, worktreeConfig, head]) watch(file);
+    // `commondir` is what places `config` and the branches, so the paths above
+    // stand only while it does: a linked worktree's rewritten to name another
+    // repository's `.git` ran a filter only that one defined, and git accepted
+    // it (board task 2290ab7a, measured, 2.39.5). git reads one in any git
+    // directory, so in a main checkout it is watched as absent.
+    for (const file of [config, worktreeConfig, head, path.join(gitDir, "commondir")]) watch(file);
     for (const ref of refsBehindHead(head, gitDir, commonDir)) watch(ref, symrefFingerprint);
     for (const entry of [...discoveryEntries(dir, top), gitDir]) watch(entry, locationFingerprint);
 
@@ -937,7 +944,7 @@ function* prepareContentCall(
         watch(target.file);
         continue;
       }
-      const step = placeUnderUser(target.underUser);
+      const step = placeWithGit(target.placedByGit);
       const placed = yield { dir, args: step };
       if (placed.code !== 0 || placed.overflowed) {
         return { ok: false, reason: probeFailure(placed, dir, args, step) };
