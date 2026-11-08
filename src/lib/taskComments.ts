@@ -358,11 +358,15 @@ export function listTaskComments(taskId: string, limit: number): TaskCommentThre
 
   if (capped === 0) return { comments: [], total, limit: capped };
 
+  // `rowid` rather than `id` breaks a tie on `created_at`: `id` is a random
+  // UUID, so notes written in one millisecond came back in UUID order, and the
+  // thread is documented as the order the notes were written. The index on
+  // `(task_id, created_at)` carries `rowid` as its last key, so this costs no sort.
   const rows = db()
     .prepare(
       `SELECT ${COLUMNS} FROM task_comments
         WHERE task_id = ?
-        ORDER BY created_at DESC, id DESC
+        ORDER BY created_at DESC, rowid DESC
         LIMIT ?`,
     )
     .all(taskId, capped) as TaskCommentRow[];
@@ -426,19 +430,22 @@ export function newestCommentsForTasks(
   // statement is the whole reason this takes one. The ordering inside the
   // partition is `listTaskComments`' descending one, for its reason — the rows
   // kept are the newest — and the outer `ORDER BY` puts each task's slice back
-  // into the order a thread is read in.
+  // into the order a thread is read in. Both break a tie on `rowid`, the order
+  // the rows were inserted in; `id` is a random UUID, so notes written in one
+  // millisecond would come back shuffled. The inner `rowid` is carried out as
+  // `seq` because a subquery's rows have none of their own.
   const rows = db()
     .prepare(
       `SELECT ${COLUMNS} FROM (
-         SELECT ${COLUMNS},
+         SELECT ${COLUMNS}, rowid AS seq,
                 ROW_NUMBER() OVER (
-                  PARTITION BY task_id ORDER BY created_at DESC, id DESC
+                  PARTITION BY task_id ORDER BY created_at DESC, rowid DESC
                 ) AS row_num
            FROM task_comments
           WHERE task_id IN (${placeholders})
        )
        WHERE row_num <= ?
-       ORDER BY task_id, created_at ASC, id ASC`,
+       ORDER BY task_id, created_at ASC, seq ASC`,
     )
     .all(...taskIds, capped) as TaskCommentRow[];
 

@@ -259,6 +259,39 @@ test("a capped thread reads oldest first and loses its oldest end", () => {
   assert.equal(clipped.limit, 2);
 });
 
+test("notes written in one millisecond read back in the order they were written", () => {
+  const id = seedTask("tied");
+  const bodies = Array.from({ length: 8 }, (_, n) => `n${n}`);
+
+  // The clock is held rather than the column rewritten, because the tie is the
+  // case: `id` is a random UUID, so a tiebreak on it hands back notes that share
+  // a `created_at` in UUID order — eight came back n0,n3,n1,n2,n7,n5,n4,n6 — and
+  // the thread is documented as the order the notes were written. A batch writer
+  // or a clock step reaches this with nothing failing and the thread reading as
+  // a conversation that happened in another order.
+  const realNow = Date.now;
+  Date.now = () => 1_700_000_000_000;
+  try {
+    for (const body of bodies) assert.ok(addTaskComment(id, { body }, ACTORS.operator).ok);
+  } finally {
+    Date.now = realNow;
+  }
+
+  assert.deepEqual(listTaskComments(id, 10).comments.map((c) => c.body), bodies);
+  assert.deepEqual(
+    (newestCommentsForTasks([id], 10).get(id) ?? []).map((c) => c.body),
+    bodies,
+  );
+
+  // The cap takes from the old end of a tie too: without a tiebreak that is
+  // writing-order-blind, "the newest three" is any three of the eight.
+  assert.deepEqual(listTaskComments(id, 3).comments.map((c) => c.body), ["n5", "n6", "n7"]);
+  assert.deepEqual(
+    (newestCommentsForTasks([id], 3).get(id) ?? []).map((c) => c.body),
+    ["n5", "n6", "n7"],
+  );
+});
+
 test("a deleted task takes its thread with it, and leaves every other thread standing", () => {
   const doomed = seedTask("doomed");
   const kept = seedTask("kept");
