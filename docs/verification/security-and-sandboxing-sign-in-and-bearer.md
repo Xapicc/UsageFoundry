@@ -203,6 +203,44 @@
   variant`, and both of its values restrict. Caveat: fake tokens, a stub
   issuer, one run per cell.
 
+- **`-c cli_auth_credentials_store="file"` and `-c
+  forced_chatgpt_workspace_id=[]` change nothing on an unplanted `codex
+  app-server` and undo the planted values there, 2026-11-08.** Board task
+  `a50cb16b`, codex-cli 0.153.4, the harness above with the seven
+  `APP_SERVER_CONFIG_PINS` of main on, with and without the two, in both
+  sign-in modes. Unplanted, `initialize`, `account/read`,
+  `account/rateLimits/read` and `model/list` answered the same either way
+  (stderr timestamps aside); the ChatGPT-mode child sent 12 CONNECTs to
+  `chatgpt.com` at P either way and the API-key child none. Over a planted
+  `"keyring"`, `"ephemeral"` or a workspace the token lacked, the child
+  without them answered `account: null` and refused the rate-limit read as
+  unauthenticated; with them it answered as unplanted. `"auto"` answered as
+  unplanted either way. Caveat: fake tokens, one run per cell.
+
+- **Through the app's own spawn, the sign-in pins put the panel's answers back
+  over all four planted values, 2026-11-08.** Board task `a50cb16b`. Compiled
+  `codexAuth.js` and `codexAccount.js` from the branch before and after the
+  change, under `env -i`; `CODEX_BIN` a `/bin/sh` wrapper that passed the
+  app's argv to codex-cli 0.153.4 unchanged and appended the stub issuer to a
+  device login only; a fresh scratch `CODEX_HOME` per case and P as above.
+  Unplanted, `"ephemeral"`, `"keyring"`, `"auto"` and a workspace the token
+  lacked, each against `readAuthStatus` and `codexUsage` plus
+  `listCodexModels` over both kinds of stored login, `signOut` over a ChatGPT
+  one, and `submitApiKey` and `beginLogin` from signed out. Before the change,
+  `"ephemeral"` read both logins as signed out and the model list as not
+  signed in, `submitApiKey` was refused quoting `Successfully logged in` with
+  nothing written, the device login wrote nothing, and `signOut` answered
+  success and left `auth.json` in place. `"keyring"` errored every status
+  read, both logins and `signOut` on `Platform secure storage failure`, and
+  `"auto"` failed `signOut` the same way, leaving the file. The workspace read
+  the ChatGPT login and its models as signed out and refused the device
+  login. After it, every case answered as the unplanted one, `auth.json`
+  written or removed as there; unplanted, the two builds answered the same.
+  Caveat: `beginLogin`'s own answer was a refusal in every case, because the
+  stub issuer's link is `http://127.0.0.1` and `extractDeviceLogin` accepts
+  only OpenAI's hosts, so what was read is `auth.json` and the status after
+  the child exited; fake tokens, one run per cell.
+
 ## Not yet verified by hand
 
 - **That the bearer budget survives a dev-server reload of `middleware.ts`.**
