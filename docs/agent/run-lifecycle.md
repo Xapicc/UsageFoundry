@@ -78,6 +78,8 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - A session whose transcript is gone is restarted before the cycle, not discovered by failing one.
 - A cycle the CLI refused to start is not a refused resume, and its stderr sentence is the stop reason.
 - A `result` that says `is_error: true` keeps its sentence in `IterationResult.errorText`, which is not `apiError`.
+- A refused resume's sentence is in `errors`, not `result`, and is quoted after the hand command, never in place of it.
+- The frames a resumed deferred call writes around its `result` are dropped by name, and only the measured ones.
 
 ## [How a run ends: the terminus, cancellation, DONE, needs-review and verdicts](run-lifecycle/endings.md)
 

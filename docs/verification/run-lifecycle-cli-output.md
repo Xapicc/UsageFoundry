@@ -87,7 +87,44 @@ the CLI's `Bash` cannot start inside this sandbox, so no command ran.
   appear on an ordinary resumed cycle. Caveat: one hook, one MCP server, the
   stub's answers.
 
+- **`attachment` repeats the hook's `hook_response`, `command_lifecycle` frames
+  the `result`, and a refused resume's `errors` is an array of strings,
+  2026-11-09.** Plan e4 re-driven against the 2.1.319 stub with
+  `--include-hook-events` added to every cycle's args, which is what
+  `buildArgs` passes. In the cycle that resumed the deferred call the
+  `attachment` came straight after the `system:hook_response` of the same
+  `PreToolUse` hook and held the same `stderr` (`hook stderr line`) under
+  `attachment`, so it repeats the response. Run without the flag the same cycle
+  wrote the attachment and no `hook_response`. `command_lifecycle` read
+  `started` and `cancelled` around the two refused cycles' results, and
+  `started` and `completed` around the cycle that ran the call. The binary's
+  zod schema lists six states (`queued`, `started`, `completed`, `cancelled`,
+  `discarded`, `refused`), describes `attachment` as an internal union whose
+  "wire shape [is] pending a dedicated SDKAttachment schema", and types
+  `errors` as `z.array(z.string())` on the error variants of `result`
+  (`error_during_execution`, `error_max_turns`, `error_max_budget_usd`,
+  `error_max_structured_output_retries`), the success variant carrying `result`
+  instead. `handleStreamLine` now drops `command_lifecycle` and a `hook_success`
+  `attachment` by name, and reads `errors` into the stop reason of a refused
+  resume. Fed through `parseLine`, the captured lines no longer file an
+  unrecognised-event line, and a refused-resume line shaped as plan e5 recorded
+  it (copied from the board task, not re-driven) fills `errorText`;
+  `resumeMissingTranscript.test.ts` ends a run on the whole sentence. Caveat: one hook script, exit 0, stderr only; the states `queued`,
+  `discarded` and `refused`, any other `attachment` subtype and an `errors` of
+  more than one entry were not seen.
+
 ## Not yet verified by hand
+
+- **What else `attachment` and `command_lifecycle` carry.** A hook that
+  exits 2 or prints `additionalContext` may arrive as another `attachment`
+  subtype, which still reaches the unrecognised-event line on purpose, and a
+  rejected message as a `refused` or `discarded` frame, which is dropped with
+  the rest of `command_lifecycle` and so would show nowhere. Settle by adding a
+  cycle to plan e4 in `scripts/cli-capture/plans.mjs` whose hook exits 2,
+  driving it with `--include-hook-events`, and reading the `attachment.type`
+  and `state` values that arrive. Whether `error_max_budget_usd` and the other error subtypes
+  carry `errors` in practice wants a cycle with a `--max-budget-usd` small
+  enough to trip on the stub's first turn.
 
 - **None of this has come from the real API or the container's live run
   loop.** The shapes above are the CLI's, but the answers that produced them
