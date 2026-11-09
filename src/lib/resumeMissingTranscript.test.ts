@@ -333,8 +333,9 @@ describe("a pick-up the CLI refuses to resume", () => {
     assert.ok(reopened.ok, JSON.stringify(reopened));
     const row = await settled(run.id);
 
-    // A result arrived, so the loop read the refusal as a cycle that worked
-    // and failed: no retry, and a stop reason naming only the exit code.
+    // A result arrived with zero turns, so the loop reads the refusal as a
+    // cycle that did no work: one retry, then a stop reason that names the
+    // hand command and, after it, the CLI's own sentence.
     assert.deepEqual(
       spawns.map((s) => s.resumed),
       [null, session, session],
@@ -343,6 +344,15 @@ describe("a pick-up the CLI refuses to resume", () => {
     assert.equal(row.status, "failed");
     assert.equal(row.ending_code, "resume_failed");
     assert.ok(row.stop_reason?.includes(`claude --resume ${session}`), row.stop_reason ?? "");
+    // The refusal's `result` has no `result` string, only `errors`, so the
+    // sentence that says why used to be on the run's log alone. It follows the
+    // command and does not replace it.
+    assert.equal(
+      row.stop_reason,
+      "Could not resume this run's Claude Code session (exit 1). Its work is still on disk; " +
+        `pick it up by hand with: claude --resume ${session}. ` +
+        `Claude Code said: “No conversation found with session ID: ${session}”.`,
+    );
     assert.equal(row.iterations, 2, "the attempt the retry replaced is not charged");
   });
 });

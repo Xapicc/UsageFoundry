@@ -2619,10 +2619,11 @@ export function refusalStopReason(
  * spawns). A local run is still Claude Code.
  *
  * `cliSentence` is the CLI's own account of why, when it gave one — a startup
- * failure's stderr line, or the text of a result that said `is_error: true` —
- * and it is only ever quoted on the plain exit. A cycle that could not resume
- * its session names the hand command instead, which is the answer to a
- * different question.
+ * failure's stderr line, or the text or `errors` of a result that said
+ * `is_error: true`. On the plain exit it is the whole account. A cycle that
+ * could not resume its session leads with the hand command, which is what the
+ * operator can do, and quotes the sentence after it as a second sentence, which
+ * is why: the command answers a different question and must not be displaced.
  */
 export function exitStopReason(
   provider: RunProviderDTO | null,
@@ -2640,7 +2641,8 @@ export function exitStopReason(
       : `${cli} exited with code ${exitCode}.`;
   }
   const command = codex ? `codex resume ${resumeTarget}` : `claude --resume ${resumeTarget}`;
-  return `Could not resume this run's ${cli} session (exit ${exitCode}). Its work is still on disk; pick it up by hand with: ${command}`;
+  const pickUp = `Could not resume this run's ${cli} session (exit ${exitCode}). Its work is still on disk; pick it up by hand with: ${command}`;
+  return cliSentence ? `${pickUp}. ${cli} said: “${cliSentence}”.` : pickUp;
 }
 
 /**
@@ -9569,6 +9571,36 @@ function publishSubagentActivity(runId: string): void {
   bus.emit(`${runId}:subagents`, subagentActivity(runId));
 }
 
+/** The `type` of a top-level `attachment` event's payload, or undefined when it has none. */
+function attachmentSubtype(ev: Record<string, unknown>): unknown {
+  const attachment = ev.attachment;
+  return typeof attachment === "object" && attachment !== null && "type" in attachment
+    ? attachment.type
+    : undefined;
+}
+
+/**
+ * The CLI's sentence off a result's `errors` array, or null when there is none.
+ *
+ * `errors` is `z.array(z.string())` on the error variants of the result schema
+ * (`error_during_execution`, `error_max_turns`, `error_max_budget_usd`,
+ * `error_max_structured_output_retries`) and absent on `success`, which carries
+ * `result` instead, read out of the 2.1.319 binary. Its description calls it
+ * the failure message of a known startup failure, which is the measured
+ * refusal of a `--resume` of an unknown id: no `result` string, one entry.
+ * More than one entry is unmeasured, so they are joined into one line rather
+ * than the first taken and the rest lost, and anything that is not a string is
+ * skipped rather than trusted, as a build that moves the field must not break
+ * the cycle that carried it.
+ */
+function resultErrorsSentence(raw: unknown): string | null {
+  if (!Array.isArray(raw)) return null;
+  const messages = raw.filter(
+    (entry): entry is string => typeof entry === "string" && entry.trim() !== "",
+  );
+  return messages.length === 0 ? null : messages.join(" ");
+}
+
 /** Interpret one line of Claude Code's `stream-json` output. */
 function handleStreamLine(
   runId: string,
@@ -9776,6 +9808,37 @@ function handleStreamLine(
   // routine event as a vocabulary this app has lost.
   if (type === "rate_limit_event") return;
 
+  // The CLI's framing of one queued message (`state` is `started`, `completed`
+  // or `cancelled` on the pin, with `queued`, `discarded` and `refused` in its
+  // schema), written around the `result` it brackets. Measured on 2.1.319 on a
+  // `--resume` of a deferred tool call, which is the only cycle that wrote any:
+  // a `command_uuid`, a state and the session id, so no cost, no session change
+  // and no stop reason that the `result` beside it does not state better. The
+  // `refused` and `discarded` states are in the schema and were never seen; a
+  // message that was not processed should show as a cycle with no `result`,
+  // which `cycleDidNoWork` already reads, but that is inferred and not
+  // measured. Stored, it would be a row per frame that `describeEvent` has no
+  // line for. Dropped by name, like `rate_limit_event`, rather than left to be
+  // filed as a vocabulary the app has lost on every resumed cycle.
+  if (type === "command_lifecycle") return;
+
+  // A hook's result a second time. With `--include-hook-events`, which
+  // `buildArgs` passes on every cycle, the CLI writes the `system:hook_response`
+  // the branch below stores and then yields this top-level event for the same
+  // hook, carrying the same `stdout` and `stderr` (measured on 2.1.319, plan e4
+  // cycle D4). It is not stored because `clipHookEvent` bounds the printed
+  // fields of a hook event's own top level, and these sit under `attachment`: a
+  // hook that prints on every call would be kept twice, the second time
+  // unclipped. It is not read because the CLI describes `attachment` as an
+  // internal union whose wire shape is still pending, while `hookInjection`
+  // reads a `hook_response` whose fields were measured.
+  //
+  // One subtype, by name. Every other `attachment` — an at-mentioned file, a
+  // hook that blocked — is unmeasured here and carries content, so it still
+  // falls to `noteUnknownStreamEvent` below. A deny list that covered the whole
+  // type would lose those silently, the way the `thinking_tokens` note says.
+  if (type === "attachment" && attachmentSubtype(ev) === "hook_success") return;
+
   if (type === "user") {
     // Before the failures and over all of them: a call that answered is a call
     // that is no longer running, and the successful ones are the majority the
@@ -9866,8 +9929,16 @@ function handleStreamLine(
     // fails the cycle stays the exit code's to say, which is 1 on every shape
     // measured; an exit-0 `is_error` result is unmeasured, and promoting it to
     // `isError` would change what ends a run on a guess.
-    if (ev.is_error === true && typeof ev.result === "string" && ev.result.trim()) {
-      acc.errorText = clipCliSentence(ev.result);
+    //
+    // From `errors` when there is no `result` string, which is the shape of a
+    // refused resume (`error_during_execution`, zero turns): the CLI's only
+    // account of why sits there, and it was read by nobody.
+    if (ev.is_error === true) {
+      const said =
+        typeof ev.result === "string" && ev.result.trim()
+          ? ev.result
+          : resultErrorsSentence(ev.errors);
+      if (said) acc.errorText = clipCliSentence(said);
     }
 
     // Second-best source for a refusal, behind the `<synthetic>` message: the
@@ -10015,7 +10086,8 @@ function handleStreamLine(
   }
 
   // A type none of the branches above claimed. `assistant`, `user`, `result`,
-  // `system`, `tool_progress` and `rate_limit_event` are what
+  // `system`, `tool_progress`, `rate_limit_event`, `command_lifecycle` and a
+  // `hook_success` `attachment` are what
   // `--output-format stream-json` was measured to write, so anything here means
   // the pin has moved — and the symptom of missing that is a cycle with no cost,
   // no session id and no stop reason, which every page in this app renders as a

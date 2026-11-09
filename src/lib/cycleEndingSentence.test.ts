@@ -504,10 +504,24 @@ describe("exitStopReason with the CLI's sentence", () => {
     assert.equal(exitStopReason("claude", 1, null, null), "Claude Code exited with code 1.");
   });
 
-  it("leaves a failed resume naming the hand command alone", () => {
+  it("leaves a failed resume naming the hand command alone without one", () => {
     assert.equal(
-      exitStopReason("claude", 1, "sess-1", "ignored"),
+      exitStopReason("claude", 1, "sess-1"),
       "Could not resume this run's Claude Code session (exit 1). Its work is still on disk; pick it up by hand with: claude --resume sess-1",
+    );
+  });
+
+  // The sentence used to be thrown away here, on the reasoning that the hand
+  // command answers a different question. It does, which is why the command
+  // stays first and whole and the sentence is a second one after it.
+  it("quotes it after the hand command on a failed resume, for either CLI", () => {
+    assert.equal(
+      exitStopReason("claude", 1, "sess-1", "No conversation found with session ID: sess-1"),
+      "Could not resume this run's Claude Code session (exit 1). Its work is still on disk; pick it up by hand with: claude --resume sess-1. Claude Code said: “No conversation found with session ID: sess-1”.",
+    );
+    assert.equal(
+      exitStopReason("codex", 1, "thread-1", "boom"),
+      "Could not resume this run's Codex session (exit 1). Its work is still on disk; pick it up by hand with: codex resume thread-1. Codex said: “boom”.",
     );
   });
 });
