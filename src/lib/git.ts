@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { GIT_BIN, WORKSPACE_MOUNTS } from "./config";
 import { fmtDuration } from "./format";
@@ -290,25 +291,30 @@ function neutralizers(
   return out;
 }
 
-/** One record of the probe's output: the file it came from, its key, its value. */
+/**
+ * One record of the probe's output: the scope it was read in (`local`,
+ * `command`, …), the file it came from, its key, its value.
+ */
 interface ConfigRecord {
+  scope: string;
   origin: string;
   key: string;
   value: string | null;
 }
 
 /**
- * `-z --show-origin` output is `<origin> NUL <key> LF <value> NUL` per record,
- * with no LF at all for a key written without a value.
+ * `-z --show-scope --show-origin` output is `<scope> NUL <origin> NUL <key> LF
+ * <value> NUL` per record, with no LF at all for a key written without a value.
  */
 function configRecords(output: string): ConfigRecord[] {
   const fields = output.split("\0");
   const records: ConfigRecord[] = [];
-  for (let i = 0; i + 1 < fields.length; i += 2) {
-    const entry = fields[i + 1];
+  for (let i = 0; i + 2 < fields.length; i += 3) {
+    const entry = fields[i + 2];
     const lf = entry.indexOf("\n");
     records.push({
-      origin: fields[i],
+      scope: fields[i],
+      origin: fields[i + 1],
       key: lf === -1 ? entry : entry.slice(0, lf),
       value: lf === -1 ? null : entry.slice(lf + 1),
     });
@@ -353,25 +359,99 @@ function driverNames(records: ConfigRecord[]): { filters: string[]; merges: stri
  * `config` is a read that runs nothing the repository chose, so it is on
  * `UNPROBED_SUBCOMMANDS` and the enumeration never recurses. `--includes`
  * because a driver or hook reached through an `include.path` would fire too. It exits 1
- * with nothing on stdout when no driver and no include is defined, which is the
- * common case; `readFilterProbe` is where every other ending is told apart from
- * that one. The `merge` section also holds plain settings (`merge.ff`,
+ * with nothing on stdout when no driver and no include is defined, though the
+ * key `siteMarkerInclude` adds is listed on every probe, so in practice it
+ * exits 0; `readFilterProbe` is where every other ending is told apart from
+ * those two. The `merge` section also holds plain settings (`merge.ff`,
  * `merge.renames`), so exit 0 can be a list with no driver in it, which blanks
  * nothing.
  *
  * The `include` keys and `--show-origin` are for `configFingerprint`: an
  * included file is configuration the call reads, so it is watched like the
  * repository's own, and its path is relative to the file that names it. They
- * blank nothing.
+ * blank nothing. The `usagefoundry` key and `--show-scope` are for
+ * `siteMarkerInclude`, and blank nothing either.
  */
 const FILTER_PROBE = [
   "config",
   "-z",
+  "--show-scope",
   "--show-origin",
   "--includes",
   "--get-regexp",
-  "^(filter|merge|hook|include|includeif)\\.",
+  "^(filter|merge|hook|include|includeif|usagefoundry)\\.",
 ];
+
+/** What the probe's marker file holds, and the record it lists from it. */
+const PROBE_MARKER = "[usagefoundry]\n\tprobed = true\n";
+const PROBE_MARKER_KEY = "usagefoundry.probed";
+
+/** Names the marker file to a probe step, for the `=` reason `BLANK_VAR` has. */
+const PROBE_MARKER_VAR = "USAGEFOUNDRY_PROBE_MARKER";
+
+const probeMarkerState = ((globalThis as unknown as { __ufGitProbeMarker?: { file?: string } })
+  .__ufGitProbeMarker ??= {});
+
+/**
+ * The file `siteMarkerInclude` names, made once a process and again whenever
+ * it is not there as written.
+ *
+ * Nothing about it is secret or trusted: git reads it only when the condition
+ * holds, so a copy edited by anyone can add records to a probe that read the
+ * right repository, which blanks more, or drop the marker, which refuses the
+ * call. Readable by every uid because the probe runs as the agent's under
+ * privsep (`childCredentials`); chmod rather than a create mode, which the
+ * umask narrows. A replacement goes in a new directory, never back into the
+ * old one, which may by then be someone else's.
+ */
+function probeMarkerFile(): string {
+  const known = probeMarkerState.file;
+  try {
+    if (known !== undefined && fs.readFileSync(known, "utf8") === PROBE_MARKER) return known;
+  } catch {}
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "uf-git-probe-marker-"));
+  fs.chmodSync(dir, 0o755);
+  const file = path.join(dir, "marker");
+  fs.writeFileSync(file, PROBE_MARKER, { flag: "wx" });
+  fs.chmodSync(file, 0o644);
+  probeMarkerState.file = file;
+  return file;
+}
+
+/**
+ * The option that makes the probe show it read `gitDir`: an include of the
+ * marker file on the condition that the git directory git is reading is
+ * `gitDir`, the one `SITE_PATHS` found a moment before.
+ *
+ * git's discovery takes a directory for a git directory only while its
+ * `objects/` and `refs/` are there, and the probe is a child of its own, so
+ * either moved away while the probe read and back before it exited sent the
+ * probe up to the enclosing repository: it listed that one's drivers, the
+ * fingerprints read the same at both ends since a rename keeps the inode, and
+ * the call ran a driver only the site defined (board task f3122092, measured,
+ * 2.39.5). Pinning the probe with `--git-dir=` does not help, because `git
+ * config` takes a named directory without them for no repository and reads
+ * only the global files, exit 1 and nothing printed: the driver still ran
+ * (measured, 2.39.5). Watching the directories across the probe sees nothing,
+ * as their inode and realpath are back by then, and their ctime also moves on
+ * writes that leave the repository where it was (`gitDirectoryInputs`). So
+ * the probe proves where it read instead: a record the marker gave,
+ * in the `command` scope, is there only if git's own discovery, in the probe
+ * itself, stopped at `gitDir`. A repository that includes the marker file
+ * itself lists it in its own scope, so the scope is what is checked.
+ *
+ * `gitdir:` is a glob, matched against git's realpath of the directory it
+ * found, which is what `--absolute-git-dir` prints, so the path's glob
+ * characters are escaped (`[` and `\` broke the match, measured, 2.39.5).
+ * `--config-env` because the path may hold an `=`.
+ */
+function siteMarkerInclude(gitDir: string): string {
+  return `--config-env=includeIf.gitdir:${gitDir.replace(/[\\*?[]/g, "\\$&")}.path=${PROBE_MARKER_VAR}`;
+}
+
+/** Whether the probe's records carry the marker `siteMarkerInclude` asked for. */
+const readMarker = (records: ConfigRecord[], marker: string) =>
+  records.some((r) => r.scope === "command" && r.key === PROBE_MARKER_KEY && r.origin === `file:${marker}`);
 
 /**
  * The most any step of the probe may print. Only the index listing comes near
@@ -976,6 +1056,8 @@ const QUIETED = new Set(["checkout", "switch"]);
 interface PrepareStep {
   dir: string;
   args: string[];
+  /** Set on the child after the caller's own. */
+  env?: Record<string, string>;
 }
 
 /** The content subcommand as it is to be spawned, or why it must not be. */
@@ -997,7 +1079,8 @@ type Prepared =
  * A generator so that `git()` and `gitSync()` drive the same steps, one
  * awaiting each child and the other spawning it synchronously, and cannot
  * prepare a call differently. Each site takes three: where its configuration
- * lives, fingerprinted before the probe runs; the probe; and, for every
+ * lives, fingerprinted before the probe runs; the probe, which must show it
+ * read the git directory the first found (`siteMarkerInclude`); and, for every
  * subcommand but `merge-tree`, which writes no work tree, the index listing its
  * populated submodules, which become sites. An include under `~user/` or
  * `%(prefix)/` costs one more, to place it, and the common configuration has
@@ -1113,9 +1196,35 @@ function* prepareContentCall(
     for (const file of below.asConfig) watch(file);
     for (const entry of below.asLocation) watch(entry, locationFingerprint);
 
-    const probe = yield { dir, args: [...named, ...FILTER_PROBE] };
+    let marker: string;
+    try {
+      marker = probeMarkerFile();
+    } catch (err) {
+      // A result, not a throw: `git()` and `gitSync()` report every failure
+      // as one, and nothing above them is written to catch.
+      return {
+        ok: false,
+        reason:
+          `git ${args[0]} was not run in ${cwd}: the filter probe's marker file could not be written ` +
+          `in ${os.tmpdir()}: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+    const probe = yield {
+      dir,
+      args: [...named, siteMarkerInclude(gitDir), ...FILTER_PROBE],
+      env: { [PROBE_MARKER_VAR]: marker },
+    };
     const read = readFilterProbe(probe, dir, args);
     if (!read.ok) return read;
+    if (!readMarker(read.records, marker)) {
+      return {
+        ok: false,
+        reason:
+          `The filter probe in ${dir} did not read ${gitDir}, the git directory git found there a moment ` +
+          `before, so git ${args[0]} was not run: a git directory that stopped being one, or became one, ` +
+          "while the probe read would leave drivers the call reads unblanked.",
+      };
+    }
     const names = driverNames(read.records);
     for (const name of names.filters) filters.add(name);
     for (const name of names.merges) merges.add(name);
@@ -1240,7 +1349,7 @@ export function gitSync(cwd: string, args: string[]): GitResult {
 
 /** One step of `prepareContentCall`, spawned synchronously. */
 function stepSync(step: PrepareStep): ProbeEnding {
-  const res = spawnGitSync(step.dir, step.args, [], STEP_MAX_BYTES);
+  const res = spawnGitSync(step.dir, step.args, [], STEP_MAX_BYTES, step.env);
   // `spawnSync` reports its own clock and its buffer limit as errors with these
   // codes, and a child that could not start as one with its message, which is
   // all there is to say.
@@ -1255,10 +1364,16 @@ function stepSync(step: PrepareStep): ProbeEnding {
   };
 }
 
-function spawnGitSync(cwd: string, args: string[], extra: string[], maxBuffer?: number) {
+function spawnGitSync(
+  cwd: string,
+  args: string[],
+  extra: string[],
+  maxBuffer?: number,
+  env?: Record<string, string>,
+) {
   return spawnSync(GIT_BIN, gitArgs(args, extra), {
     cwd,
-    env: { ...gitEnv(), [BLANK_VAR]: "", [FALSE_VAR]: "false" },
+    env: { ...gitEnv(), ...env, [BLANK_VAR]: "", [FALSE_VAR]: "false" },
     ...childCredentials(),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
@@ -1363,7 +1478,7 @@ export async function git(
       // a call that has no clock (landing) must not have one on its probe
       // either. `trim: false` keeps the `-z` record separators intact.
       const ending = await spawnGit(step.value.dir, step.value.args, [], {
-        env: opts.env,
+        env: { ...opts.env, ...step.value.env },
         timeoutMs: opts.timeoutMs,
         trim: false,
         maxBytes: STEP_MAX_BYTES,

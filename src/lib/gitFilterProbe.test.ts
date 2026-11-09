@@ -29,7 +29,7 @@ const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-git-probe
 const modeFile = path.join(root, "mode");
 /** The program the plant modes write into a repository's configuration. */
 const plantFile = path.join(root, "plant");
-/** Where `plant-include` and `rewrite` write, what `make-dir` makes and what `move-away` moves, absolute. */
+/** Where `plant-include` and `rewrite` write, what `make-dir` makes and what `move-away` and `move-away-while-probing` move, absolute. */
 const writeTarget = path.join(root, "write-target");
 /** What `rewrite` writes there. */
 const rewriteContent = path.join(root, "rewrite-content");
@@ -55,6 +55,17 @@ fs.writeFileSync(
     '      refused) echo "error: could not lock config file" >&2; echo "fatal: unable to read config file" >&2; exit 128 ;;',
     "      killed) kill -9 $$ ;;",
     '      output-with-one) echo "filter.x.clean"; exit 1 ;;',
+    // `<writeTarget>` is away only while the probe reads, and back before the
+    // probe exits, so a fingerprint taken on either side sees it where it was.
+    // The `-marker-included` form first has the repository enclosing the one
+    // `<writeTarget>` is in include the file the probe's marker comes from.
+    `      move-away-while-probing*) target="$(cat '${writeTarget}')"`,
+    '        if [ "$mode" = "move-away-while-probing-marker-included" ]; then',
+    `          '${realGit}' config -f "$target/../../../.git/config" include.path "$USAGEFOUNDRY_PROBE_MARKER"`,
+    "        fi",
+    '        mv "$target" "$target.away"',
+    `        echo "$target" >> '${root}/moved'`,
+    `        '${realGit}' "$@"; status=$?; mv "$target.away" "$target"; exit $status ;;`,
     // The probe answers from the configuration as it was, and the driver is
     // written the moment after: the race a writer swapping `.git/config` wins.
     '      plant-after-probe) out="$(mktemp)"',
@@ -1824,6 +1835,110 @@ describe("a git directory the probe found that stops being one is refused", () =
         assert.notEqual(fs.statSync(dir, { bigint: true }).ctimeNs, ctime, `${write} left ${part}/ as it was`);
         assert.equal(res.ok, true, `${viaSync ? "gitSync" : "git"}() after ${write}: ${res.stderr}`);
       }
+    }
+  });
+
+  /**
+   * `nestedRepo` the other way round: the inner repository defines filter `x`
+   * and the enclosing one defines no driver, so a probe that climbs past the
+   * inner one lists nothing to blank.
+   */
+  function drivenInnerRepo(): { inner: string; marker: string } {
+    const name = `repo${count++}`;
+    const outer = path.join(root, name);
+    committedRepo(outer, "f.txt");
+    const inner = path.join(outer, "r");
+    committedRepo(inner);
+    const { prog, marker } = plantProgram(name);
+    plantInGitDir(path.join(inner, ".git"), [["filter.x.clean", prog]]);
+    fs.writeFileSync(path.join(inner, "s.txt"), "two\n");
+    return { inner, marker };
+  }
+
+  for (const part of ["objects", "refs"]) {
+    it(`git() and gitSync(): its ${part}/ moved away only while the probe reads refuses the call`, async () => {
+      // A rename away and back keeps the inode, so the fingerprint reads the
+      // same at both ends while the probe lists the enclosing repository's
+      // drivers and not this one's (board task f3122092).
+      const moves = path.join(root, "moved");
+      for (const viaSync of [false, true]) {
+        const via = viaSync ? "gitSync" : "git";
+        const { inner, marker } = drivenInnerRepo();
+        const moved = path.join(inner, ".git", part);
+        fs.writeFileSync(writeTarget, moved);
+        fs.rmSync(moves, { force: true });
+        setMode("move-away-while-probing");
+        const res = viaSync ? gitSync(inner, ["add", "-A"]) : await git(inner, ["add", "-A"]);
+        setMode("pass");
+
+        ranNothing(marker);
+        assert.equal(fs.readFileSync(moves, "utf8"), `${moved}\n`, `${via}(): the stub did not move it once`);
+        assert.equal(fs.existsSync(moved), true, "the stub did not move it back");
+        assert.equal(res.ok, false, `${via}() ran the call`);
+        assert.ok(res.stderr.includes(`did not read ${path.join(inner, ".git")}`), `${via}(): ${res.stderr}`);
+      }
+    });
+  }
+
+  it("git() and gitSync(): an enclosing repository that includes the probe's marker file itself is still refused", async () => {
+    // The marker it lists is in its own scope, not the command line's.
+    for (const viaSync of [false, true]) {
+      const via = viaSync ? "gitSync" : "git";
+      const { inner, marker } = drivenInnerRepo();
+      fs.writeFileSync(writeTarget, path.join(inner, ".git", "objects"));
+      setMode("move-away-while-probing-marker-included");
+      const res = viaSync ? gitSync(inner, ["add", "-A"]) : await git(inner, ["add", "-A"]);
+      setMode("pass");
+
+      ranNothing(marker);
+      const included = plain(path.dirname(inner), ["config", "include.path"]).trim();
+      assert.match(fs.readFileSync(included, "utf8"), /probed = true/, `${via}(): the stub did not include the marker`);
+      assert.equal(res.ok, false, `${via}() ran the call`);
+      assert.ok(res.stderr.includes(`did not read ${path.join(inner, ".git")}`), `${via}(): ${res.stderr}`);
+    }
+  });
+
+  it("git() and gitSync(): a marker file that cannot be written fails the call rather than throwing", async () => {
+    const state = (globalThis as unknown as { __ufGitProbeMarker: { file?: string } }).__ufGitProbeMarker;
+    const tmpdir = process.env.TMPDIR;
+    const restoreTmpdir = () => {
+      if (tmpdir === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = tmpdir;
+    };
+    const { inner, marker } = drivenInnerRepo();
+    await git(inner, ["status", "--porcelain"]);
+    try {
+      for (const viaSync of [false, true]) {
+        // A cached file that is gone, and nowhere to make another.
+        state.file = path.join(root, "no-such-dir", "marker");
+        process.env.TMPDIR = path.join(root, "no-such-tmp");
+        const res = viaSync ? gitSync(inner, ["add", "-A"]) : await git(inner, ["add", "-A"]);
+        restoreTmpdir();
+        ranNothing(marker);
+        assert.equal(res.ok, false, `${viaSync ? "gitSync" : "git"}() ran the call`);
+        assert.match(res.stderr, /marker file could not be written/, res.stderr);
+      }
+    } finally {
+      restoreTmpdir();
+      state.file = undefined;
+    }
+  });
+
+  it("control: under plain git, either moved away only while config is read hides the inner driver from it, and add -A runs it", () => {
+    for (const part of ["objects", "refs"]) {
+      const { inner, marker } = drivenInnerRepo();
+      const listing = ["config", "--get-regexp", "^filter\\."];
+      assert.match(plain(inner, listing), /^filter\.x\.clean /, part);
+      const moved = path.join(inner, ".git", part);
+      fs.renameSync(moved, `${moved}.away`);
+      assert.throws(
+        () => plain(inner, listing),
+        (err: { status?: number; stdout?: string }) => err.status === 1 && err.stdout === "",
+        `${part}: the inner driver was still listed`,
+      );
+      fs.renameSync(`${moved}.away`, moved);
+      plain(inner, ["add", "-A"]);
+      assert.equal(fs.existsSync(marker), true, `${part}: the inner repository's driver did not run`);
     }
   });
 
