@@ -54,7 +54,7 @@ This page is the second half of the index at [testing.md](testing.md), which hol
 | Test file | Also in |
 |---|---|
 | `backupRestore.test.ts` |  |
-| `deployment.test.ts` | [stacks] |
+| `deployment.test.ts` | [stacks], [token-economizer] |
 
 ## [The knowledge vault reader, vault skill and graph view](testing/knowledge-vault-and-graph.md)
 
@@ -164,3 +164,4 @@ This page is the second half of the index at [testing.md](testing.md), which hol
 [stacks]: testing/stacks-and-tool-inventory.md
 [harnesses]: testing/test-harnesses.md
 [edges]: testing/dependency-edges-and-rivals.md
+[token-economizer]: testing/token-economizer.md

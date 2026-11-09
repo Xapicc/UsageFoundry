@@ -29,7 +29,7 @@ Twenty are renderings rather than functions — every `*.test.tsx` in the tree, 
 | `diff.test.ts` |  |
 | `land.test.ts` | [landing], [merge-queue], [harnesses], [contention] |
 | `mountRootIsolation.test.ts` |  |
-| `orchestrator.test.ts` | [cycle], [edges], [argv], [samples], [parsers], [codex-cycle], [budgets], [pricing], [landing], [merge-queue], [sandbox], [harnesses] |
+| `orchestrator.test.ts` | [cycle], [edges], [argv], [samples], [parsers], [codex-cycle], [budgets], [pricing], [landing], [merge-queue], [sandbox], [harnesses], [token-economizer] |
 | `patch.test.ts` |  |
 | `planUsage.test.ts` |  |
 | `queueOrder.test.ts` |  |
@@ -495,3 +495,4 @@ It prints nothing as this is written. Whoever owns a file it names owes that fil
 [branch-delete]: testing/branch-deletion-and-slot-reuse.md
 [edges]: testing/dependency-edges-and-rivals.md
 [run-form]: testing/run-form-limits.md
+[token-economizer]: testing/token-economizer.md
