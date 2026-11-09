@@ -161,6 +161,52 @@ environment's proxy at a closed or logging loopback port with
   each failed one case. Caveat: not as root and not in a container. The real
   `setpriv` drop and the home's traversal by the agent gid are read, not run.
 
+- **A cycle's trust write is unconditional, so no file it cannot replace can
+  absorb it, 2026-11-09.** Board task `27f99097`, codex-cli 0.153.4, a
+  loopback stub answering a whole turn. Over a `config.toml` already holding
+  `trust_level = "trusted"` for the directory, the cycle replaced the file
+  (a new inode). With `-c 'projects."<dir>".trust_level="trusted"'` or
+  `"untrusted"` it still wrote the entry, and over `[[[` it loaded the
+  repository's MCP server either way. Caveat: one run each.
+
+- **Everything a cycle shares with the next works through a link from a home
+  of its own, 2026-11-09.** Board task `27f99097`, scratch homes whose
+  entries were links into a shared one. `exec resume` from a second home
+  found the first home's thread and sent its turn back, and the rollout
+  landed in the shared `sessions/`. Execpolicy logged `loaded 1 .rules files`
+  through a linked `rules/`. A linked `AGENTS.md`'s marker reached the
+  request. `installation_id`, sent on 8 of 8 requests, came from the shared
+  file, which a link to nothing created. A link to a missing
+  `thread-writer-locks/` failed the cycle (`File exists`).
+  `CODEX_SQLITE_HOME` put all six SQLite files in the shared home. Caveat:
+  one uid, so the links were the cycle's own, not root's.
+
+- **The state database records a rollout through the home that started its
+  thread, 2026-11-09.** Board task `27f99097`. With the SQLite state shared,
+  `exec resume` from a new home answered `no rollout found` once the first
+  home was gone; `threads.rollout_path` read `<home>/sessions/…`. A fresh
+  database per cycle resumed, but backfilled every rollout it could see on
+  each start: 400 added about 3 s to a 7 s cycle, and 60 of 5 MB about 1 s,
+  so it reads heads. Kept as a `sessions`-only anchor, the first home's path
+  stood through two resumes, and both resumed. Caveat: one machine's timings.
+
+- **A cycle garbling the shared `config.toml` mid-run no longer makes another
+  cycle load its repository's `.codex/config.toml`, 2026-11-09.** Board task
+  `27f99097`, the real CLI driven through the compiled
+  `prepareCodexCycleHome`, `prepareCodexRules` and `buildCodexArgs`, while a
+  loop put `[[[`, mode 0000 and a directory at the shared file every 20 ms.
+  In the shared home, 4 of 5 cycles started the repository's MCP server, and
+  5 of 5 in a hand-built repeat. In homes of their own, 0 of 5 did, and each
+  new thread wrote its own trust entry. Cycle 2 resumed cycle 1's thread with
+  its prompt, the SQLite state stayed shared, and the homes went down to an
+  anchor or nothing. Seven `codexCycleHome.test.ts` cases pass, one driving
+  the run loop, and a `deployment.test.ts` case covers the `.uf-cycle-homes`
+  repair. Dropping the run loop's hand-over or the stale-home release each
+  failed one case. Caveat: one uid. `codex` is dumpable, so a same-uid
+  process that sees the cycle read `CODEX_HOME` from `/proc/<pid>/environ`
+  (measured). The split's chown, 1770, 0711 and the agents' `rm` are read,
+  not run.
+
 ## Not yet verified by hand
 
 - **The agent uid's `rm` and `mkdir` at `config.toml` in a booted container,
@@ -170,20 +216,27 @@ environment's proxy at a closed or logging loopback port with
   task `9dd37c12` is a different measurement, root's file. Settle in a booted
   container: `docker compose exec -u node usagefoundry sh -c 'cd
   /home/node/.codex && mv config.toml config.toml.mine; mkdir config.toml'`.
-  Expect a Codex run's next cycle to be refused with `Refusing to spawn a Codex
-  work cycle: /home/node/.codex/config.toml is a directory…`, and Settings →
-  Codex to show the same sentence. Then `docker compose restart usagefoundry`,
-  expect the boot log's `was not a file; moved it to …` and the next cycle to
-  run, and move `config.toml.mine` back.
+  Since board task `27f99097`, expect a Codex run's next cycle to run, and
+  Settings → Codex to show `/home/node/.codex/config.toml is a directory…`.
+  Then `docker compose restart usagefoundry`, expect the boot log's `was not
+  a file; moved it to …`, and move `config.toml.mine` back.
 
 - **The regular-file refusals under the uid split, in a booted container.**
-  Every case above ran as one uid. Settle there, restoring the file after
-  each step. As root, `chown 0:0 /home/node/.codex/config.toml`: expect the
-  next Codex cycle to be refused with `… is owned by uid 0, not by uid 1000`.
-  As the agent uid, `chmod 000` it: expect `… is mode 0000`, with Settings →
-  Codex naming the read. And as the agent uid, `printf '[[[' >` it: expect
-  `Codex cannot load its configuration (…:1:3: …)` in both places. Then, for the
-  last two, `docker compose restart usagefoundry`: expect the boot log's
-  `moved it to …/.moved-aside.…/config.toml` and the next cycle to run, and
-  root's file still in place (board task `e7b6d31e`). Board task `9dd37c12`
-  decides whether root's file needs refusing at all.
+  Every case above ran as one uid. Since board task `27f99097` no cycle is
+  refused over the shared file, so what is left is the panel and the boot.
+  As the agent uid, `chmod 000 /home/node/.codex/config.toml`, then `printf
+  '[[[' >` it: expect Settings → Codex to name each, and the next Codex cycle
+  to run. Then `docker compose restart usagefoundry`: expect the boot log's
+  `moved it to …/.moved-aside.…/config.toml`, and root's file, made with
+  `chown 0:0`, still in place (board task `e7b6d31e`). Restore the file
+  after each step. Board task `9dd37c12` decides whether root's file needs
+  refusing at all.
+
+- **Each cycle's own home under the split, in a booted container.** Start a
+  Codex run and, while its cycle runs, `docker compose exec usagefoundry ls
+  -la /home/node/.codex/.uf-cycle-homes`: expect `drwx--x--x root root`,
+  and from `-u node` a `Permission denied` listing it. Expect the cycle's own
+  directory to be `drwxrwx--T root node` with root's links and the agents'
+  `config.toml`. After it, expect a `sessions`-only anchor at 0755 if the
+  cycle started its thread, and nothing if it resumed one. Then reopen the
+  run and expect its next cycle to resume the thread.

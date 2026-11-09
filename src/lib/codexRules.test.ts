@@ -155,66 +155,94 @@ describe("prepareCodexRules", () => {
     assert.equal(mod.prepareCodexRules().kind, "ready");
   });
 
-  it("refuses a directory at config.toml without a uid split too, and follows a link to a file", () => {
-    // A cycle that cannot write its trust entry into `config.toml` loads its
-    // repository's `.codex/config.toml` and says nothing (measured on
-    // 0.153.4), so this refusal is the only sign there would be. Nothing makes
-    // a directory there legitimately. A link to a regular file is an
-    // operator's dotfiles on a laptop, and Codex reads through it.
+  it("answers ready whatever is at the shared config.toml, which no cycle writes now", () => {
+    // Board task `27f99097`: each cycle writes its trust entry into a
+    // `config.toml` of its own home (`codexCycleHome.ts`), so these shapes,
+    // each of which used to refuse every Codex cycle, cost a cycle nothing.
     const config = path.join(process.env.CODEX_HOME!, "config.toml");
-    fs.mkdirSync(config);
-    try {
-      const delivery = mod.prepareCodexRules();
-      assert.equal(delivery.kind, "unavailable", "answered ready with a directory at config.toml");
-      const reason = delivery.kind === "unavailable" ? delivery.reason : "";
-      assert.equal(reason.includes(`${config} is a directory`), true, reason);
-    } finally {
-      fs.rmdirSync(config);
+    const shapes: [string, () => void][] = [
+      ["a directory", () => fs.mkdirSync(config)],
+      ["a FIFO", () => execFileSync("mkfifo", [config])],
+      ["a link to nothing", () => fs.symlinkSync("/no/such/file", config)],
+      ["unparseable", () => fs.writeFileSync(config, "[[[")],
+      ["mode 0000", () => {
+        fs.writeFileSync(config, "");
+        fs.chmodSync(config, 0o000);
+      }],
+    ];
+    for (const [what, plant] of shapes) {
+      plant();
+      try {
+        assert.equal(mod.prepareCodexRules().kind, "ready", `refused a cycle over a config.toml that is ${what}`);
+      } finally {
+        fs.rmSync(config, { recursive: true, force: true });
+      }
     }
+  });
+});
 
+/**
+ * The shared `config.toml` for the one reader left that it can stop: Codex's
+ * sign-in children, which exit 1 over a directory, a FIFO or a link to a
+ * directory there (measured on 0.153.4), the sign-out included.
+ */
+describe("codexConfigUnusableBecause", () => {
+  const config = () => path.join(process.env.CODEX_HOME!, "config.toml");
+
+  it("names a directory there, says the cycles are not affected, and follows a link to a file", () => {
+    fs.mkdirSync(config());
+    try {
+      const reason = mod.codexConfigUnusableBecause() ?? "";
+      assert.equal(reason.includes(`${config()} is a directory`), true, reason);
+      assert.match(reason, /work cycles each write a config\.toml of their own/);
+      assert.match(reason, /Restarting the container moves it aside/);
+    } finally {
+      fs.rmdirSync(config());
+    }
+    // A link to a regular file is an operator's dotfiles, and Codex reads
+    // through it; a link to nothing read as absent to `login status`.
     const dotfile = path.join(tmp, "dotfiles-config.toml");
     fs.writeFileSync(dotfile, "");
-    fs.symlinkSync(dotfile, config);
+    for (const target of [dotfile, "/no/such/file"]) {
+      fs.symlinkSync(target, config());
+      try {
+        assert.equal(mod.codexConfigUnusableBecause(), null, `refused a link to ${target}`);
+      } finally {
+        fs.rmSync(config());
+      }
+    }
+    execFileSync("mkfifo", [config()]);
     try {
-      assert.equal(mod.prepareCodexRules().kind, "ready");
+      assert.match(mod.codexConfigUnusableBecause() ?? "", /is not a regular file/);
     } finally {
-      fs.rmSync(config);
+      fs.rmSync(config());
     }
   });
 
   it(
-    "refuses a config.toml this uid cannot read without a uid split, and passes one it can only read",
+    "names one this uid cannot read, sending nobody to a restart without a uid split",
     { skip: process.getuid?.() === 0 ? "root reads any file" : false },
     () => {
-      // Board task `93f1c142`: over the cycle's own file at mode 0000 or 0200
-      // its trust write failed and its repository's `.codex/config.toml`
-      // loaded, 3 of 3 (0.153.4). 0400 passed, since the write is a rename.
-      const config = path.join(process.env.CODEX_HOME!, "config.toml");
       for (const mode of [0o000, 0o200]) {
-        fs.writeFileSync(config, "");
-        fs.chmodSync(config, mode);
+        fs.writeFileSync(config(), "");
+        fs.chmodSync(config(), mode);
         try {
-          const delivery = mod.prepareCodexRules();
-          assert.equal(delivery.kind, "unavailable", `answered ready over a mode ${mode.toString(8)} config.toml`);
-          const reason = delivery.kind === "unavailable" ? delivery.reason : "";
-          assert.equal(reason.includes(`${config} cannot be read by this server's uid`), true, reason);
-          assert.match(reason, /loads its repository's \.codex\/config\.toml/);
-          // Without a uid split the boot's CODEX_HOME block does not run, so
-          // the refusal must not send the operator to a restart that changes
-          // nothing.
+          const reason = mod.codexConfigUnusableBecause() ?? "";
+          assert.equal(reason.includes(`${config()} cannot be read by this server's uid`), true, reason);
+          // Without a uid split the boot's CODEX_HOME block does not run.
           assert.match(reason, /Rename it aside yourself/);
           assert.match(reason, /only under a uid split/);
           assert.doesNotMatch(reason, /Restarting the container/);
         } finally {
-          fs.rmSync(config, { force: true });
+          fs.rmSync(config(), { force: true });
         }
       }
-      fs.writeFileSync(config, "");
-      fs.chmodSync(config, 0o400);
+      fs.writeFileSync(config(), "");
+      fs.chmodSync(config(), 0o400);
       try {
-        assert.equal(mod.prepareCodexRules().kind, "ready");
+        assert.equal(mod.codexConfigUnusableBecause(), null);
       } finally {
-        fs.rmSync(config, { force: true });
+        fs.rmSync(config(), { force: true });
       }
     },
   );
@@ -248,8 +276,8 @@ describe("prepareCodexRules when the cycle runs under another uid", () => {
   }
 
   /** The refusal's reason, after asserting there is one and that it named `named`. */
-  function refused(named: string, owner = self, cycleUid?: number | null): string {
-    const delivery = mod.prepareCodexRules(owner, cycleUid);
+  function refused(named: string, owner = self): string {
+    const delivery = mod.prepareCodexRules(owner);
     assert.equal(delivery.kind, "unavailable", `answered ready with ${named} untrustworthy`);
     const reason = delivery.kind === "unavailable" ? delivery.reason : "";
     assert.equal(
@@ -330,103 +358,25 @@ describe("prepareCodexRules when the cycle runs under another uid", () => {
     assert.equal(fs.existsSync(CODEX_RULES_FILE), false);
   });
 
-  /**
-   * Every `workspace-write` or bypass cycle writes a trust entry into
-   * `$CODEX_HOME/config.toml`, and with that write failing it loaded its
-   * repository's `.codex/config.toml` and started the MCP servers named there,
-   * 15 of 15 runs, while it never did with the write succeeding (codex-cli
-   * 0.153.4). The file is the agents' own, so any cycle can `rm` it and put
-   * something else at the name, and nothing in the cycle's output says so.
-   */
-  const configFile = () => path.join(home(), "config.toml");
-
-  it("answers ready with config.toml absent or a regular file", () => {
-    // The control: absent is a fresh install, where the cycle's own trust
-    // write creates the file, and a regular file is every install after it.
-    homeWithMode(0o1770);
-    assert.equal(mod.prepareCodexRules(self).kind, "ready");
-    fs.writeFileSync(configFile(), '[projects."/w"]\ntrust_level = "trusted"\n');
-    assert.equal(mod.prepareCodexRules(self).kind, "ready");
-    // And the cycle's own 0600 file, which every install after the first has:
-    // an owner or mode check that refused it would refuse every Codex cycle.
-    assert.equal(mod.prepareCodexRules(self, self).kind, "ready");
-  });
-
-  it("refuses a config.toml the cycle's uid does not own, naming what the boot does with it", () => {
-    // Board task `93f1c142`. The trust write renames a new file over this one,
-    // and the sticky home refuses that to anyone but the file's owner: root's
-    // own file, or the agents' under a changed UF_AGENT_UID. The rename refusal
-    // is the sticky bit's, read rather than run, since the suite has one uid;
-    // a failed write loading the repository's file was measured two other ways.
-    homeWithMode(0o1770);
-    fs.writeFileSync(configFile(), "");
-    const reason = refused(configFile(), self, self + 1);
-    assert.equal(
-      reason.includes(`${configFile()} is owned by uid ${self}, not by uid ${self + 1}`),
-      true,
-      reason,
-    );
-    // Board task `e7b6d31e`: the entrypoint's chown loop gives a file of
-    // another non-root uid back to the agents, and moves it aside if it cannot.
-    // Root's it leaves, and that sentence needs a root-owned file the suite
-    // cannot make.
-    assert.equal(reason.includes(`Restarting the container gives it back to uid ${self + 1}`), true, reason);
-  });
-
-  it("refuses a config.toml its owner cannot read, and passes one it can only read", () => {
-    // Mode 0000 and 0200 failed the trust write and loaded the repository's
-    // file (0.153.4); 0044 is the same for an owner, whose own bits are the only
-    // ones read. 0400 passed, since a rename needs no write bit on the file.
-    for (const mode of [0o000, 0o200, 0o044]) {
+  it("answers ready under the split whatever a cycle left at the shared config.toml", () => {
+    // Board task `27f99097`: a link, a directory, a FIFO, another uid's file
+    // and an unreadable one each refused every cycle here, since the trust
+    // write went to this file. It goes to each cycle's own home now.
+    const configFile = path.join(home(), "config.toml");
+    const shapes: [string, () => void][] = [
+      ["a link", () => fs.symlinkSync("/no/such/file", configFile)],
+      ["a directory", () => fs.mkdirSync(configFile)],
+      ["a FIFO", () => execFileSync("mkfifo", [configFile])],
+      ["mode 0000", () => {
+        fs.writeFileSync(configFile, "");
+        fs.chmodSync(configFile, 0o000);
+      }],
+    ];
+    for (const [what, plant] of shapes) {
       homeWithMode(0o1770);
-      fs.writeFileSync(configFile(), "");
-      fs.chmodSync(configFile(), mode);
-      const reason = refused(configFile(), self, self);
-      assert.equal(
-        reason.includes(`is mode ${mode.toString(8).padStart(4, "0")}, which its owner`),
-        true,
-        reason,
-      );
-      // Board task `e7b6d31e`: the boot now moves such a file aside.
-      assert.match(reason, /Restarting the container moves it aside \(/);
+      plant();
+      assert.equal(mod.prepareCodexRules(self).kind, "ready", `refused a cycle over a config.toml that is ${what}`);
     }
-    homeWithMode(0o1770);
-    fs.writeFileSync(configFile(), "");
-    fs.chmodSync(configFile(), 0o400);
-    assert.equal(mod.prepareCodexRules(self, self).kind, "ready");
-  });
-
-  it("refuses a directory at config.toml, saying what it costs and what fixes it", () => {
-    homeWithMode(0o1770);
-    fs.mkdirSync(configFile());
-    const reason = refused(configFile());
-    assert.match(reason, /is a directory/);
-    assert.match(reason, /\.codex\/config\.toml/);
-    assert.match(reason, /Restarting the container moves it aside/);
-  });
-
-  it("refuses a link at config.toml whatever it names", () => {
-    // Under a uid split a link is a name a cycle can repoint between this
-    // check and the cycle's write, so even one naming a regular file is
-    // refused; without the split it is followed (the case above).
-    const elsewhere = path.join(path.dirname(home()), "agent-config");
-    for (const target of ["file", "directory", "nowhere"] as const) {
-      homeWithMode(0o1770);
-      fs.rmSync(elsewhere, { recursive: true, force: true });
-      if (target === "file") fs.writeFileSync(elsewhere, "");
-      if (target === "directory") fs.mkdirSync(elsewhere);
-      fs.symlinkSync(elsewhere, configFile());
-      assert.match(refused(configFile()), /is a symbolic link/, `a link to a ${target}`);
-    }
-    fs.rmSync(elsewhere, { recursive: true, force: true });
-  });
-
-  it("refuses a FIFO at config.toml", () => {
-    // Neither a file nor a directory: Codex's sign-in children answered `is
-    // not a file` over one, as over a directory.
-    homeWithMode(0o1770);
-    execFileSync("mkfifo", [configFile()]);
-    assert.match(refused(configFile()), /is not a regular file/);
   });
 
   it("refuses a CODEX_HOME the agents could rename out of its parent", () => {
@@ -450,13 +400,12 @@ describe("prepareCodexRules when the cycle runs under another uid", () => {
 });
 
 /**
- * The parse half of board task `93f1c142`. A regular `config.toml` a cycle
- * cannot decode failed its trust write and loaded its repository's
- * `.codex/config.toml`, 3 of 3 (0.153.4), and passes every `stat` check above,
- * so Codex is asked (`codexConfigLoadRefusal`) and this reads what it said.
- * Each line is what `login status` printed over such a file, with the scratch
- * home's path replaced. A reading that missed one passes that file to a cycle
- * with nothing said; one that matched a status refuses every Codex cycle.
+ * A regular `config.toml` Codex cannot decode passes every `stat` check above,
+ * and each sign-in child then exits 1 with one `Error loading configuration`
+ * line (0.153.4), which this turns into the panel's sentence. Each line is
+ * what `login status` printed over such a file, with the scratch home's path
+ * replaced. A reading that missed one shows the operator Codex's bare line;
+ * one that matched a status shows a healthy sign-in as broken.
  */
 describe("codexConfigLoadFailure", () => {
   const file = "/home/node/.codex/config.toml";
@@ -473,7 +422,7 @@ describe("codexConfigLoadFailure", () => {
       );
       assert.equal(typeof reason, "string", `read no failure in: ${why}`);
       assert.equal(reason!.includes(`Codex cannot load its configuration (${why})`), true, reason!);
-      assert.match(reason!, /loads its repository's \.codex\/config\.toml/);
+      assert.match(reason!, /work cycles each write a config\.toml of their own/);
       // Board task `e7b6d31e`: the boot moves such a file aside unless it is
       // root's, which the line cannot say.
       assert.match(reason!, /Restarting the container moves it aside unless root owns it/);

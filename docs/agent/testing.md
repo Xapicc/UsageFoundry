@@ -382,6 +382,7 @@ Cases in `landAfterVerify.test.ts`, `landUnwind.test.ts`, `land.test.ts` and `me
 
 | Test file | Also in |
 |---|---|
+| `codexCycleHome.test.ts` |  |
 | `codexRules.test.ts` |  |
 | `readGuard.test.ts` |  |
 | `sandboxMountPoints.test.ts` |  |

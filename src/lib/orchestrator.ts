@@ -132,7 +132,7 @@ import { prepareReadGuard } from "./readGuard";
 // generated on disk for a cycle to pick up — and unlike it in the one way that
 // matters: an unavailable read guard logs, an unavailable denial refuses.
 import { prepareCodexRules } from "./codexRules";
-import { codexConfigLoadRefusal } from "./codexAuth";
+import { prepareCodexCycleHome, releaseCodexCycleHome } from "./codexCycleHome";
 import { prepareCodexInstructions } from "./codexInstructions";
 import {
   codexGuardSnapshot,
@@ -8498,6 +8498,9 @@ export function runIteration(
   // Environment a plugin loaded on this cycle's argv reads its settings from —
   // TokenEconomizer's `TE_*` today. Empty for a call site that loads none.
   pluginEnv: Record<string, string> = {},
+  // A Codex cycle's own `CODEX_HOME` (`prepareCodexCycleHome`), over the
+  // shared one the server's environment names. Empty for a Claude cycle.
+  cycleHomeEnv: Record<string, string> = {},
 ): Promise<IterationResult> {
   return new Promise((resolve) => {
     // Before the spawn and not before the run, because what has to be true is
@@ -8563,6 +8566,7 @@ export function runIteration(
         ...agentGitEnv(githubToken, excludes.path),
         ...(backgroundWaitMs === null ? {} : { [BACKGROUND_WAIT_ENV]: backgroundWaitMs }),
         ...pluginEnv,
+        ...cycleHomeEnv,
       },
       local,
     );
@@ -11739,20 +11743,13 @@ export async function startRun(id: string): Promise<void> {
       // less, and this would degrade to a cycle that can kill the server
       // supervising every run in flight. `codexRules.ts` carries what the file
       // is, why it is a file rather than a flag, and what it does not cover.
-      // The same call refuses a `$CODEX_HOME/config.toml` that is not a regular
-      // file, or one the cycle cannot read or replace, since a cycle that cannot
-      // write its trust entry there silently loads its repository's Codex
-      // config instead; and Codex itself is asked whether it can parse it.
+      let codexHomeEnv: Record<string, string> = {};
       if (run.provider === "codex") {
         const rules = prepareCodexRules();
         if (rules.kind === "unavailable") {
           throw new Error(
             `Refusing to spawn a Codex work cycle: ${rules.reason}`,
           );
-        }
-        const unloadable = await codexConfigLoadRefusal();
-        if (unloadable) {
-          throw new Error(`Refusing to spawn a Codex work cycle: ${unloadable}`);
         }
         // The operator's `~/.claude` rules, as the `AGENTS.md` Codex reads.
         // Degraded rather than refused, unlike the denial above: a cycle
@@ -11762,6 +11759,16 @@ export async function startRun(id: string): Promise<void> {
         if (instructions.kind === "unavailable") {
           log(id, `Codex is running this cycle without your ~/.claude rules: ${instructions.reason}`);
         }
+        // A `CODEX_HOME` of the cycle's own, whose `config.toml` no other cycle
+        // can reach before this cycle's trust write: with that write failing a
+        // cycle loads its repository's `.codex/config.toml`, and in the shared
+        // home any cycle could fail it for another (`codexCycleHome.ts`).
+        // Refused, not degraded, since the shared home is what it replaces.
+        const home = await prepareCodexCycleHome(id);
+        if (home.kind === "unavailable") {
+          throw new Error(`Refusing to spawn a Codex work cycle: ${home.reason}`);
+        }
+        codexHomeEnv = home.env;
       }
 
       // Read per cycle, so a sign-out reaches a parked run before its next cycle
@@ -12409,6 +12416,7 @@ export async function startRun(id: string): Promise<void> {
                 now: Date.now(),
               }).value,
           tokenEconomizer.kind === "ready" ? tokenEconomizer.env : {},
+          codexHomeEnv,
         );
       } finally {
         liveGuards.delete(id);
@@ -12434,6 +12442,14 @@ export async function startRun(id: string): Promise<void> {
         // disk is a live capability a sibling agent sharing this uid could read.
         if (taskboard.kind === "ready") removeMcpConfig(taskboard.mcpConfigPath);
         if (taskboard.kind === "headers") removeMcpConfig(taskboard.headersPath);
+        // After `endCodexCycle`, which reads the rollout through the shared
+        // home rather than this one. A cycle that started a thread keeps its
+        // home as the anchor of the path Codex recorded for it, which a resume
+        // looks the thread up by (`releaseCodexCycleHome`).
+        if (run.provider === "codex") {
+          const left = await releaseCodexCycleHome(id, sessionId !== resumeTarget);
+          if (left) log(id, `After this Codex work cycle: ${left}`);
+        }
       }
 
       cyclesThisSegment += 1;
@@ -13168,6 +13184,9 @@ export async function startRun(id: string): Promise<void> {
     // only fires when the feature is currently on is one an operator switching
     // it off would skip for exactly the runs it matters for.
     revokeRunCapabilities(id);
+    // A cycle that threw between making its `CODEX_HOME` and spawning left it.
+    const codexHomeLeft = await releaseCodexCycleHome(id);
+    if (codexHomeLeft) log(id, `At the end of this run: ${codexHomeLeft}`);
 
     // Spend is only ever read from the CLI's `result` event, so a cycle killed
     // before that event lands contributes $0 to `spent_usd`. Say what was

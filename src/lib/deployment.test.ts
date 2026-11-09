@@ -2814,12 +2814,12 @@ describe("a work cycle cannot take the Codex denial's directory away from root",
 
   /**
    * Board task `1eff0ac8`. `config.toml` is the agents' own file, so a cycle
-   * can leave anything at the name, and a Codex cycle that cannot write its
-   * trust entry there loads its repository's `.codex/config.toml` (measured on
-   * 0.153.4). `prepareCodexRules` refuses every Codex cycle over a non-file
-   * there and cannot repair it without racing a running cycle, so this boot
-   * is the only thing that clears it; without it a restart, which the refusal
-   * tells the operator to do, would change nothing.
+   * can leave anything at the name, and every Codex sign-in child fails over a
+   * non-file there (measured on 0.153.4). Nothing repairs it at run time
+   * without racing a running cycle, so this boot is the only thing that clears
+   * it; without it a restart, which the panel tells the operator to do, would
+   * change nothing. (Work cycles stopped using this file with board task
+   * `27f99097`.)
    */
   it("moves aside whatever a work cycle left at config.toml that is not a file, and leaves a file alone", () => {
     const target = path.join(fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-codex-config-"))), "mine.toml");
@@ -2850,13 +2850,12 @@ describe("a work cycle cannot take the Codex denial's directory away from root",
   });
 
   /**
-   * Board task `e7b6d31e`. A regular `config.toml` the agents do not own, or
-   * whose owner read bit is off, refuses every Codex cycle (`codexRules.ts`),
-   * since the trust write failed over 0000 and 0200 and the sticky home refuses
-   * a rename over another uid's file, and a cycle can `chmod 000` its own. The
-   * boot used to leave every regular file, so one cycle stopped all Codex work
-   * until somebody renamed the file by hand. Root's file is the operator's,
-   * since only root can make one, and stays, unread by Codex.
+   * Board task `e7b6d31e`. A regular `config.toml` whose owner read bit is
+   * off fails every Codex sign-in child (0000 and 0200, measured on 0.153.4),
+   * as one the agents do not own may, and a cycle can `chmod 000` its own. The
+   * boot used to leave every regular file, so one cycle could break the
+   * Settings panel until somebody renamed the file by hand. Root's file is the
+   * operator's, since only root can make one, and stays, unread by Codex.
    */
   it("moves aside a regular config.toml the agents cannot own or read, and leaves root's", () => {
     const unusable: [string, number, Record<string, string>][] = [
@@ -2874,7 +2873,7 @@ describe("a work cycle cannot take the Codex denial's directory away from root",
       const aside = movedAside(home, "config.toml");
       assert.notEqual(aside, null, `a config.toml that is ${what} was deleted rather than moved aside`);
       assert.equal((fs.lstatSync(aside!).mode & 0o777).toString(8), mode.toString(8), "the boot changed what it moved");
-      assert.match(stderr, /could write its trust entry there; moved it to/);
+      assert.match(stderr, /which Codex's sign-in children fail on; moved it to/);
     }
 
     const readable = scratchHome((home) => {
@@ -2902,10 +2901,10 @@ describe("a work cycle cannot take the Codex denial's directory away from root",
   /**
    * Board task `e7b6d31e`, the parse half. `[[[`, a byte that is not UTF-8
    * and `model = 5` each make `login status` print `Error loading
-   * configuration` naming the file, and `codexConfigLoadRefusal` then refuses
-   * every Codex cycle, so the boot asks the same child the same way and moves
-   * the file aside on that line. A line naming another file is not this
-   * file's fault, and a child that could not answer is not a verdict.
+   * configuration` naming the file, and every sign-in child fails the same
+   * way, so the boot asks the panel's child the panel's way and moves the file
+   * aside on that line. A line naming another file is not this file's fault,
+   * and a child that could not answer is not a verdict.
    */
   it("moves aside a config.toml Codex cannot load, asking as the agents with none of the boot's environment", () => {
     const home = scratchHome((home) => fs.writeFileSync(path.join(home, "config.toml"), "[[["));
@@ -2940,6 +2939,46 @@ describe("a work cycle cannot take the Codex denial's directory away from root",
       if (warned) assert.match(stderr, warned);
       else assert.equal(stderr, "", `said something over ${what}`);
     }
+  });
+
+  /**
+   * Board task `27f99097`. Every Codex work cycle's own home is made under
+   * `.uf-cycle-homes`, which must be root's and unlistable, and the agents'
+   * group bit lets a cycle put something at the name before the server does;
+   * the server then refuses every Codex cycle. Root's own directory holds the
+   * anchors resumes resolve threads through, so it stays whole.
+   */
+  it("makes .uf-cycle-homes root's and unlistable, moving aside what a cycle put there first", () => {
+    for (const [what, plant] of [
+      ["a directory of the agents'", (home: string) => {
+        fs.mkdirSync(path.join(home, ".uf-cycle-homes"));
+        fs.writeFileSync(path.join(home, ".uf-cycle-homes", "planted"), "");
+      }],
+      ["a link", (home: string) => fs.symlinkSync(os.tmpdir(), path.join(home, ".uf-cycle-homes"))],
+      ["a file", (home: string) => fs.writeFileSync(path.join(home, ".uf-cycle-homes"), "")],
+    ] as const) {
+      const home = scratchHome(plant);
+      const calls = boot(home);
+      const homes = path.join(home, ".uf-cycle-homes");
+      const stat = fs.lstatSync(homes);
+      assert.equal(stat.isDirectory() && !stat.isSymbolicLink(), true, `.uf-cycle-homes is still ${what}`);
+      assert.deepEqual(fs.readdirSync(homes), [], `${what} is still in use`);
+      assert.notEqual(movedAside(home, ".uf-cycle-homes"), null, `${what} was deleted rather than moved aside`);
+      for (const wanted of [`chown 0:0 ${homes}`, `chmod 0711 ${homes}`]) {
+        assert.equal(calls.includes(wanted), true, `the boot never ran \`${wanted}\`: ${JSON.stringify(calls)}`);
+      }
+    }
+
+    // Root's own, by a `stat` stub, since the suite cannot make one.
+    const rootStat =
+      'stat() { case "$*" in *"/.uf-cycle-homes") command stat "$@" | sed "s/^[0-9]*/0/" ;; ' +
+      '*) command stat "$@" ;; esac; }';
+    const home = scratchHome((home) => {
+      fs.mkdirSync(path.join(home, ".uf-cycle-homes", "0123abcd"), { recursive: true });
+    });
+    bootWithOutput(home, [rootStat]);
+    assert.deepEqual(fs.readdirSync(path.join(home, ".uf-cycle-homes")), ["0123abcd"], "root's anchors were not kept");
+    assert.equal(movedAside(home, ".uf-cycle-homes"), null);
   });
 
   it("moves a config.toml leftover aside whatever a cycle planted at the names the clock predicts", () => {

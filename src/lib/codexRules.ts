@@ -41,7 +41,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { CODEX_HOME } from "./config";
-import { childCredentials, privilegeSeparated } from "./privsep";
+import { privilegeSeparated } from "./privsep";
 
 /**
  * The commands a work cycle may not run, and the reason each is on the list.
@@ -94,114 +94,39 @@ export function codexRulesText(
 export const CODEX_CONFIG_FILE = path.join(CODEX_HOME, "config.toml");
 
 /**
- * Why `$CODEX_HOME/config.toml` is something other than the regular file Codex
- * needs there, or one its reader cannot read or replace, or null when it is
- * usable or absent.
+ * Why the shared `$CODEX_HOME/config.toml` is something Codex's sign-in
+ * children cannot start over, or null when it is usable or absent.
  *
- * Two readers, both measured on codex-cli 0.153.4. Every `workspace-write` or
- * bypass cycle writes a `trust_level` entry into this file, and one whose write
- * failed — a directory at the name, or a home it could not create its
- * temporary file in — loaded its repository's `.codex/config.toml` and started
- * the MCP servers named there, 15 of 15 runs against 0 of 14, with nothing in
- * its output. And `login status`, both logins and `logout` exit 1 with `Error
- * loading configuration: … is not a file` over a directory, a FIFO or a link
- * to a directory, so the panel had only that to quote. `app-server` logs the
- * same error and goes on with the defaults and its `-c` pins (measured), so
- * `codexAccount.ts` does not ask. Absent is a fresh install: the cycle's write
- * creates the file, and a dangling link read as absent to `login status`.
+ * Those children are its one reader that matters. Work cycles each write their
+ * own (`codexCycleHome.ts`): a cycle whose trust write there failed loaded its
+ * repository's `.codex/config.toml`, and in this shared file any cycle could
+ * fail it for another, so no cycle writes here any more and none is refused
+ * over it. `login status`, both logins and `logout` exit 1 with `Error loading
+ * configuration: … is not a file` over a directory, a FIFO or a link to a
+ * directory (measured on 0.153.4), so the panel had only that to quote; this
+ * names it without starting one. `app-server` logs the same error and goes on
+ * with the defaults and its `-c` pins (measured), so `codexAccount.ts` does not
+ * ask. A dangling link read as absent to `login status`, and absent is a fresh
+ * install. A link is followed, as Codex follows it.
  *
- * The file is the agents' own under a uid split — group-writable sticky home,
- * their file — so any cycle can `rm` it and put something else at the name,
- * and **nothing here repairs it**: a rename by root at cycle time races a cycle
- * still running, `tamperedBecause`'s reason, and making root own the file is
- * what `docs/agent/security/cycle-settings-env.md` records as widening every
- * cycle. The entrypoint moves it aside at boot instead. A check here is also
- * not a lock: a cycle running beside the one about to spawn can still swap the
- * name in the ~0.1 s before that cycle's write.
- *
- * **A regular file is not enough either** (board task `93f1c142`, measured on
- * 0.153.4): the write also failed, and the repository's file loaded, over a
- * file the cycle could not read (mode 0000 or 0200) or decode (`[[[`, a byte
- * that is not UTF-8). And the write is a rename over the file, which the
- * sticky `CODEX_HOME` refuses to anyone but the file's owner, so under the
- * split a file the agents do not own fails it too (inferred from the sticky
- * bit; the suite has no second uid). Ownership and the read bit are checked
- * here; whether Codex can parse the file is asked of Codex
- * (`codexConfigLoadRefusal`), because this repository has no TOML parser and a
- * second one would differ from Codex's exactly where a cycle looks for it.
- * Mode 0400 passed, because the rename needs no write bit on the file.
- *
- * @param followLinks `stat` rather than `lstat`. True for the sign-in children,
- *   which read through a link as Codex does, and for a cycle without a uid
- *   split, where a link is an operator's dotfiles; false for a cycle under the
- *   split, where a link is a name the agents can repoint after the check, so it
- *   is refused whatever it names.
- * @param cycleUid the uid a work cycle runs as under the split, which must own
- *   the file and have its read bit; null to ask `access(2)` whether this
- *   process can read it, which without the split is the cycle's own answer.
- *   Null for the sign-in children too: they never write the file, so whose it
- *   is costs them nothing, and their own output names a read they could not do.
+ * The file is the agents' own under a uid split, so any cycle can put
+ * something else at the name, and **nothing here repairs it**: a rename by
+ * root while a cycle runs is `tamperedBecause`'s race. The entrypoint moves it
+ * aside at boot instead. A regular file this process cannot read is named here
+ * too, which without the split is the children's own answer; one that only
+ * the agents cannot read, or that Codex cannot parse, the child's own line
+ * names (`codexConfigLoadFailure`), because this repository has no TOML parser
+ * and a second one would differ from Codex's.
  */
-export function codexConfigUnusableBecause(
-  followLinks: boolean,
-  cycleUid: number | null = null,
-): string | null {
+export function codexConfigUnusableBecause(): string | null {
   let stat: fs.Stats;
   try {
-    stat = followLinks ? fs.statSync(CODEX_CONFIG_FILE) : fs.lstatSync(CODEX_CONFIG_FILE);
+    stat = fs.statSync(CODEX_CONFIG_FILE);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
-    // A reason rather than a throw, so `prepareCodexRules` does not report a
-    // link loop here as the denial failing to write.
     return `${CODEX_CONFIG_FILE} could not be checked: ${(err as Error).message}`;
   }
-  if (stat.isFile()) return regularConfigUnusableBecause(stat, cycleUid);
-  const what = stat.isSymbolicLink()
-    ? "a symbolic link, which a work cycle could repoint"
-    : stat.isDirectory()
-      ? "a directory"
-      : "not a regular file";
-  return (
-    `${CODEX_CONFIG_FILE} is ${what}. A Codex work cycle writes its project trust entry there, ` +
-    `and one that cannot loads its repository's .codex/config.toml, which can start the MCP ` +
-    `servers that file names; Codex's sign-in children fail on a directory there too. ` +
-    `Restarting the container moves it aside (docker-entrypoint.sh, at every boot); without the ` +
-    `container, rename it yourself and Codex makes a new one.`
-  );
-}
-
-/**
- * What a cycle loses over a regular `config.toml` it cannot use, and what
- * removes it.
- *
- * Each remedy says what `docker-entrypoint.sh`'s `CODEX_HOME` block does with
- * that file at boot (board task `e7b6d31e`), since a sentence that sends the
- * operator to a restart which changes nothing costs them the restart and then
- * the reading. Under the uid split it moves aside a regular file the agents
- * cannot read or Codex cannot load, after its chown loop has given a file of
- * another non-root uid back to the agents. It leaves root's file alone,
- * because only root can make one, and without the split it does not run.
- */
-function regularConfigRefusal(problem: string, remedy: string): string {
-  return (
-    `${problem}. A Codex work cycle writes its project trust entry into ${CODEX_CONFIG_FILE} by ` +
-    `reading it and renaming a new file over it, and one that cannot loads its repository's ` +
-    `.codex/config.toml, which can start the MCP servers that file names. ${remedy}`
-  );
-}
-
-/** The boot moves it aside; the operator's file only if root does not own it. */
-function movedAsideAtBoot(unlessRoots: boolean): string {
-  return (
-    `Restarting the container moves it aside${unlessRoots ? " unless root owns it" : ""} ` +
-    `(docker-entrypoint.sh, at every boot), and the next cycle makes a new one; without the ` +
-    `container, rename it aside yourself.`
-  );
-}
-
-/** `codexConfigUnusableBecause` for a regular file: whose it is, and whether its reader can read it. */
-function regularConfigUnusableBecause(stat: fs.Stats, cycleUid: number | null): string | null {
-  if (cycleUid === null) {
+  if (stat.isFile()) {
     try {
       fs.accessSync(CODEX_CONFIG_FILE, fs.constants.R_OK);
       return null;
@@ -209,33 +134,32 @@ function regularConfigUnusableBecause(stat: fs.Stats, cycleUid: number | null): 
       return regularConfigRefusal(
         `${CODEX_CONFIG_FILE} cannot be read by this server's uid ${process.getuid?.() ?? "?"}, ` +
           `which Codex runs as here: ${(err as Error).message}`,
-        `Rename it aside yourself, or make it readable, and the next cycle makes a new one; the ` +
-          `container's boot moves it aside only under a uid split, which this server does not have.`,
+        `Rename it aside yourself, or make it readable; the container's boot moves it aside only ` +
+          `under a uid split, which this server does not have.`,
       );
     }
   }
-  if (stat.uid !== cycleUid) {
-    return regularConfigRefusal(
-      `${CODEX_CONFIG_FILE} is owned by uid ${stat.uid}, not by uid ${cycleUid}, which Codex work ` +
-        `cycles run as, and the sticky CODEX_HOME refuses a rename over it to anyone but its owner`,
-      stat.uid === 0
-        ? `Only root can make a file root's, so the container's boot takes this one for the ` +
-            `operator's own and leaves it where it is: give it to uid ${cycleUid} or rename it ` +
-            `aside yourself, and the next cycle makes a new one.`
-        : `Restarting the container gives it back to uid ${cycleUid}, or moves it aside if it ` +
-            `cannot (docker-entrypoint.sh, at every boot); without the container, rename it aside ` +
-            `yourself and the next cycle makes a new one.`,
-    );
-  }
-  const mode = stat.mode & 0o7777;
-  if ((mode & 0o400) === 0) {
-    return regularConfigRefusal(
-      `${CODEX_CONFIG_FILE} is mode ${mode.toString(8).padStart(4, "0")}, which its owner, ` +
-        `the uid Codex work cycles run as, cannot read`,
-      movedAsideAtBoot(false),
-    );
-  }
-  return null;
+  return (
+    `${CODEX_CONFIG_FILE} is ${stat.isDirectory() ? "a directory" : "not a regular file"}, ` +
+    `and Codex's sign-in children, the Settings panel's status, sign-in and sign-out, fail on ` +
+    `it; work cycles each write a config.toml of their own and are not affected. Restarting ` +
+    `the container moves it aside (docker-entrypoint.sh, at every boot); without the ` +
+    `container, rename it yourself.`
+  );
+}
+
+/**
+ * What the sign-in children lose over a regular `config.toml` they cannot use,
+ * and what removes it: what `docker-entrypoint.sh`'s `CODEX_HOME` block does
+ * with that file at boot (board task `e7b6d31e`), since a sentence sending the
+ * operator to a restart that changes nothing costs them the restart.
+ */
+function regularConfigRefusal(problem: string, remedy: string): string {
+  return (
+    `${problem}. Codex's sign-in children load it before anything else, so the Settings panel ` +
+    `cannot read, start or end a Codex sign-in over it; work cycles each write a config.toml of ` +
+    `their own and are not affected. ${remedy}`
+  );
 }
 
 /** What every Codex child prints, and exits 1 on, when it cannot load its configuration. */
@@ -245,15 +169,10 @@ const CONFIG_LOAD_ERROR = "Error loading configuration:";
  * The refusal for a Codex child's output that says it could not load its
  * configuration, or null when the output says nothing of the kind.
  *
- * The parse half of board task `93f1c142`. `login status` is the reader,
- * because it loads `config.toml` whole and writes nothing, and it exits 1 with
- * one `Error loading configuration: …` line on everything that failed a
- * cycle's trust write: `[[[`, a byte that is not UTF-8, mode 0000 and 0200
- * (measured on 0.153.4). It is stricter than the write: valid TOML of the
- * wrong type, `model = 5` or `projects = 5`, fails it too, where the cycle
- * replaced the file and loaded nothing. That refusal is kept rather than told
- * apart from a syntax error by wording, since the sign-in children fail on
- * that file all the same and the line does not say which it is.
+ * Every sign-in child exits 1 with one `Error loading configuration: …` line
+ * over `[[[`, a byte that is not UTF-8, mode 0000 or 0200, and valid TOML of
+ * the wrong type, `model = 5` or `projects = 5` (measured on 0.153.4), and the
+ * line does not say which it is.
  *
  * Codex's own reason is quoted, because it names the line and column, and it
  * names whichever file failed rather than one assumed here. The caller redacts
@@ -267,16 +186,15 @@ export function codexConfigLoadFailure(output: string): string | null {
   if (line === undefined) return null;
   const reason = line.slice(CONFIG_LOAD_ERROR.length).trim().slice(0, 300);
   // Root's file is the one the boot leaves, and nothing in the line says whose
-  // the file is; under the split the cycle is refused on root's before Codex
-  // is asked, so only the sign-in children's panel needs the clause.
+  // the file is.
   return regularConfigRefusal(
-    `Codex cannot load its configuration (${reason || "it gave no reason"}), so its sign-in ` +
-      `children cannot start over it either`,
-    movedAsideAtBoot(true),
+    `Codex cannot load its configuration (${reason || "it gave no reason"})`,
+    `Restarting the container moves it aside unless root owns it (docker-entrypoint.sh, at ` +
+      `every boot); without the container, rename it aside yourself.`,
   );
 }
 
-/** Whether the cycle about to spawn may: the denial is in place and Codex's own file is usable. */
+/** Whether the cycle about to spawn may: the denial is in place. */
 export type CodexRulesDelivery =
   | { kind: "ready"; file: string }
   | { kind: "unavailable"; reason: string };
@@ -444,24 +362,16 @@ function makeDirectory(dir: string): void {
  * degrades to a cycle that re-reads files: this degrades to a cycle that can
  * kill the supervisor, and the Claude equivalent is not optional either.
  *
- * `config.toml` is checked here too (`codexConfigUnusableBecause`), after the
- * home and its name hold, because this is already the one call every Codex
- * cycle is refused at, and a cycle that cannot write its trust entry degrades
- * silently to one that loads its repository's Codex config. So each reason
- * says which of the two it is about. Whether Codex can parse it is the one
- * check that needs a child, so the run loop asks `codexConfigLoadRefusal`
- * after this rather than this growing an `await`.
+ * The shared `config.toml` is not checked here: each cycle writes its own
+ * (`codexCycleHome.ts`, which links this `rules/` into it), so a garbled
+ * shared one costs a cycle nothing and refusing over it would only stop work.
  *
  * @param owner the uid both directories, and `CODEX_HOME`'s parent unless it
  *   is a mount point, must belong to, or null to check nothing; `rulesOwner()`
  *   says which, and the tests pass their own.
- * @param cycleUid the uid the cycle will run as, which must own `config.toml`;
- *   the child's own uid under the split, null without it, and the tests pass
- *   their own.
  */
 export function prepareCodexRules(
   owner: number | null = rulesOwner(),
-  cycleUid: number | null = owner === null ? null : (childCredentials().uid ?? null),
 ): CodexRulesDelivery {
   const dir = path.dirname(CODEX_RULES_FILE);
   const tmp = `${CODEX_RULES_FILE}.tmp-${randomBytes(6).toString("hex")}`;
@@ -472,8 +382,6 @@ export function prepareCodexRules(
       const tampered = tamperedBecause(dir, owner);
       if (tampered) return { kind: "unavailable", reason: tampered };
     }
-    const config = codexConfigUnusableBecause(owner === null, cycleUid);
-    if (config) return { kind: "unavailable", reason: config };
     fs.writeFileSync(tmp, codexRulesText());
     // World-readable on purpose: the process that writes it is the server, and
     // the process that has to read it is the cycle, under a different uid.

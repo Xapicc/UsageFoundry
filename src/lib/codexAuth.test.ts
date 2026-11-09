@@ -67,7 +67,6 @@ assert.equal(
 const {
   beginLogin,
   cancelLogin,
-  codexConfigLoadRefusal,
   extractDeviceLogin,
   lastLoginFailure,
   normalizeApiKey,
@@ -458,9 +457,7 @@ describe("a directory at config.toml", () => {
  * passes the check above, and on 0.153.4 each child then exited 1 with one
  * `Error loading configuration: …:1:3: unquoted keys cannot be empty…` or
  * `… Permission denied (os error 13)` line, which is all the panel had to
- * quote. A work cycle over the same file loaded its repository's
- * `.codex/config.toml`, so the run loop asks `codexConfigLoadRefusal` before
- * each one, and an answer of "fine" there is the one that matters.
+ * quote.
  */
 describe("a config.toml Codex cannot parse or read", () => {
   const file = () => path.join(config.CODEX_HOME, "config.toml");
@@ -474,7 +471,7 @@ describe("a config.toml Codex cannot parse or read", () => {
         const error = answer.ok ? "" : answer.error;
         assert.match(error, /^Codex cannot load its configuration \(/);
         assert.equal(error.includes(`${file()}:1:3: unquoted keys cannot be empty`), true, error);
-        assert.match(error, /loads its repository's \.codex\/config\.toml/);
+        assert.match(error, /work cycles each write a config\.toml of their own/);
       }
     } finally {
       fs.rmSync(file(), { force: true });
@@ -499,27 +496,6 @@ describe("a config.toml Codex cannot parse or read", () => {
       }
     },
   );
-
-  it("refuses a work cycle over it, and asks nothing over an absent file", async () => {
-    fs.mkdirSync(config.CODEX_HOME, { recursive: true });
-    fs.rmSync(file(), { force: true });
-    fs.rmSync(argvLog, { force: true });
-    // A fresh install, where the cycle's own write makes the file.
-    assert.equal(await codexConfigLoadRefusal(), null);
-    assert.equal(fs.existsSync(argvLog), false, "a child was started over an absent file");
-
-    fs.writeFileSync(file(), '[projects."/w"]\ntrust_level = "trusted"\n');
-    try {
-      assert.equal(await codexConfigLoadRefusal(), null, "refused a file Codex loads");
-      assert.deepEqual(loggedStarts(), [[...SIGN_IN_PINS, "login", "status"]]);
-      fs.writeFileSync(file(), "[[[ not toml\n");
-      const refusal = await codexConfigLoadRefusal();
-      assert.match(refusal ?? "", /^Codex cannot load its configuration \(/);
-      assert.equal((refusal ?? "").includes(`${file()}:1:3:`), true, refusal ?? "answered null");
-    } finally {
-      fs.rmSync(file(), { force: true });
-    }
-  });
 });
 
 /** `PENDING_TIMEOUT_MS` in `codexAuth.ts`. The last assertions below fail if it drifts. */
