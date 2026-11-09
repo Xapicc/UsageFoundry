@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { after, describe, it } from "node:test";
+import { after, before, describe, it } from "node:test";
 
 import { PINNED_CYCLE_ENV } from "./cycleInvocation";
 import {
+  assistConfigRootArgs,
   assistModel,
   assistSettingsArgs,
   assistToolUses,
@@ -379,6 +380,63 @@ describe("assistSettingsArgs — the endpoint a checkout's settings cannot move"
       if (previous === undefined) delete process.env.HTTPS_PROXY;
       else process.env.HTTPS_PROXY = previous;
     }
+  });
+});
+
+/**
+ * The reviewer, resolver and validator run in a run's linked worktree, and the
+ * CLI reads part of such a checkout's project config from its main checkout.
+ * Measured on 2.1.319 through `startAssist`: the main checkout's untracked
+ * skill, agent, command and `settings.local.json` reached a validator and a
+ * resolver until this flag was on their argv, and that file's
+ * `permissions.allow` widened the resolver (`security/project-config-discovery.md`).
+ * Every way of getting it wrong is silent: the assist runs, judging with
+ * config that is not the run's. Over a real `git worktree add`, because the
+ * `.git` file is what the function reads.
+ */
+describe("assistConfigRootArgs — where an assist reads its project config from", () => {
+  let root = "";
+  const main = () => path.join(root, "repo");
+  const worktree = () => path.join(root, ".uf-worktrees", "repo-1");
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync("git", args, {
+      cwd,
+      stdio: "pipe",
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "t",
+        GIT_AUTHOR_EMAIL: "t@example.com",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@example.com",
+      },
+    });
+
+  before(() => {
+    root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-assist-config-root-")));
+    fs.mkdirSync(path.join(main(), "sub"), { recursive: true });
+    fs.writeFileSync(path.join(main(), "sub", "f.txt"), "x\n");
+    fs.mkdirSync(path.join(root, "plain"));
+    git(main(), "init", "-q");
+    git(main(), "add", "-A");
+    git(main(), "commit", "-q", "-m", "root");
+    git(main(), "worktree", "add", "-q", worktree(), "-b", "uf/assist-config-root");
+  });
+  after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  it("names a linked worktree's top level, from that level and from below it", () => {
+    assert.deepEqual(assistConfigRootArgs(worktree()), ["--project-config-root", worktree()]);
+    // Not the subdirectory: pointed at one, the flag left the checkout root's
+    // settings files unapplied (measured, same pin).
+    assert.deepEqual(assistConfigRootArgs(path.join(worktree(), "sub")), [
+      "--project-config-root",
+      worktree(),
+    ]);
+  });
+
+  it("adds nothing in a main checkout or a plain folder, whose argv keeps its bytes", () => {
+    assert.deepEqual(assistConfigRootArgs(main()), []);
+    assert.deepEqual(assistConfigRootArgs(path.join(main(), "sub")), []);
+    assert.deepEqual(assistConfigRootArgs(path.join(root, "plain")), []);
   });
 });
 
