@@ -77,6 +77,62 @@
   sub-agents included, not only app-spawned work cycles, and a session that
   never wrote with the file tools is not in it.
 
+- **The vault as a `permissions.additionalDirectories` entry still reads,
+  searches and refuses every write for a reader, on 2.1.319, 2026-11-08.** The
+  linux-arm64 build at `/usr/local/bin/claude`, uid 1000, nested in an agent's
+  sandbox, under board task `7a30963a`. Driven by
+  `scripts/sandbox-probe/vault-readonly-probe.mjs` at `bddf609a` against a
+  stub API with a dummy key, with the vault argv `buildArgs` emits since
+  `188e702a`: the vault in the overlay's `additionalDirectories` after the
+  temporary directory, beside `blockWritesOutsideWorkingDirectories`, plus
+  `Edit(//<vault>/**)` and `denyWrite`. Under `acceptEdits` and
+  `bypassPermissions` alike, the reader read a note and a notebook, and the
+  search answered with and without `-B`, leaving no `__pycache__`. `Write`,
+  `Edit` and `NotebookEdit` were refused by the permission rule, Bash `touch`,
+  `>`, `sed -i` and a Python `open()` failed with `Read-only file system`, and
+  the workspace controls landed. bwrap got the vault as `--bind` and then
+  `--ro-bind`. In the no-deny control, `Write`, `NotebookEdit` and Bash `touch`
+  into the vault landed, and bwrap got `--bind` alone, so the entry grants
+  write as `--add-dir` did. The writable argv's Bash `touch` and `Write` in a
+  worktree under the vault landed. With the vault given by neither
+  (`PROBE_VAULT_FLAG=none`), an `acceptEdits` reader's `Read` was refused as
+  "you haven't granted it yet". Caveat: nested, so each Bash step ran alone in
+  its own call after spending five pids, and got through on its fifth or sixth
+  attempt. It was not run unnested or against the bind-mounted vault.
+
+- **Through `--add-dir` the vault's planted `.claude/` reached a reader, and
+  through the overlay entry it did not, same pin and day.** A skill and an
+  agent were planted in the scratch vault's `.claude/skills/` and
+  `.claude/agents/`, with a `CLAUDE.md` at its root, each carrying a marker.
+  Given as `--add-dir` (`PROBE_VAULT_FLAG=add-dir`, and `write-boundary-probe.mjs`
+  turn 4v), the skill's and the agent's markers were in the reader's requests
+  under both modes. Given as the entry, none of the three reached any request
+  of a reader in either probe: `vault-readonly-probe.mjs`'s two reader turns,
+  and `write-boundary-probe.mjs` turns 1 to 4b, 6 and 7, whose other results
+  matched the entries above. In turn 5, the writer in a git worktree under the
+  vault's `.uf-worktrees/` wrote into its worktree and into the vault outside
+  it with the setting on, and was shown the vault's untracked skill and agent.
+  Those came from the worktree's main checkout, not from the flag (next entry).
+  On a vault with no `.claude/`, the two spellings' first requests differed
+  only in the session id and in the CLI's temporary settings-file name,
+  `claude-settings-<hash>.json`, in the sandbox section. A logging shim showed
+  bwrap given nothing inside the vault's `.claude/` under either spelling, and
+  a writer given `--ro-bind /dev/null <vault>/.mcp.json`. Caveat: the stub API,
+  the probes' argv rather than one built by `runIteration`, and markers found
+  in the request body. Whether the model would have invoked the skill was not
+  driven.
+
+- **Where else the CLI found `.claude/` content, same pin and day.** This came
+  from an uncommitted copy of `write-boundary-probe.mjs`, one run per case. A
+  run in a git checkout's root was shown its own `.claude/skills/` and none from
+  the directories above it. A run in a linked worktree was shown the **main
+  checkout's** untracked `.claude/skills/`, and none from `.uf-worktrees/` or
+  above. A run whose cwd is in no git repository was shown a skill from its
+  parent directory. A run whose cwd contains the vault was shown the vault's
+  root `CLAUDE.md` in the request after it read a vault note, and not the
+  vault's skill or agent. These are filed as board tasks `687b0d2f` and
+  `b2fd06d0`.
+
 ## Not yet verified by hand
 
 - **No work cycle spawned by the app has been seen refused.** The probe
@@ -105,3 +161,18 @@
   ungranted permission. Making the temporary directory a working directory
   presumably lets such a run `Read` its own scratch there, which was not
   checked either way.
+
+- **No app-spawned cycle has been seen given the vault through the overlay.**
+  Settle: on the container, one run with the vault skill on whose spawn argv
+  carries no `--add-dir` and an `additionalDirectories` ending in
+  `/workspace2`. It reads a note under `acceptEdits`, its search answers, and
+  its log shows no `bwrap:` failure for a Bash call.
+
+- **Losing the vault's sandbox mount points is inferred harmless.** The run
+  loop made them through `addDirsIn`, which reads `--add-dir`. On the scratch
+  vault, bwrap was asked for nothing inside the vault's `.claude/` under either
+  spelling. The bind-mounted `/workspace2` was not probed, and its existing
+  placeholders stay where they are. Settle: on the container, after one
+  reader cycle with the skill on that makes a Bash call, `ls -la
+  /workspace2/.claude` is unchanged and the cycle's log has no `bwrap:` line
+  naming a path under `/workspace2`.
