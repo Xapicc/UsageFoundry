@@ -7,6 +7,31 @@ The runs list, the run inspector and `/runs/live` are in
 
 ## Verified
 
+- **`npm run smoke-pages` draws `CodexWindows` and the live `LiveTelemetry`
+  card on `/`, 2026-11-09.** A second visit to `/`, named `/ [codex + live
+  telemetry]`, answers the page's `/api/usage` polls with the server's own
+  response plus invented `codex` and `telemetry` keys (`page.route` on the
+  pathname, `usageWithCodexAndLiveTelemetry` in the script) — a fixture rather
+  than a staged credential, because `codexUsage()` needs a stub `codex
+  app-server` on top of `auth.json`, and no run lives long enough under a
+  `CLAUDE_BIN` that exits in milliseconds. Against the standalone bundle: 27
+  visits, **108/108 clean**, exit 0, with the fixtured one clean at 390px and
+  1280px in both skins. That it was *drawn*, not just clean, was read from a
+  throwaway copy cut down to the two visits of `/` (not committed), which found
+  the `Codex` title, two meters labelled *5-hour window used* and *Weekly window
+  used*, the *1 working* badge, two run links and the "cheaper run is in the
+  total above but not listed" line in all four combinations, and none of them
+  on the plain visit; the 1280 standard, 390 standard and 1280 ascii screenshots
+  were read (the 390 one at a 2600px viewport, since the shell scrolls inside
+  its pane). The guard that the fixture was served is a harness check: with the
+  route predicate broken to `/api/usagex`, all four fixtured visits failed with
+  "usage fixture was never requested". **Caveat:** the figures are invented, so
+  this is the page's drawing of a Codex plan and of one running run, not the
+  server's reading of either; one plan (`plus`, no limit reached) and one
+  working run are drawn, so the *limit reached* badge and a six-run list are
+  still unseen at 390px. The text above was read by the uncommitted copy; the
+  script still asserts about load and never about content.
+
 - **`npm run smoke-pages` now opens every page file and draws `/`'s meters,
   2026-11-09.** Against the standalone bundle built in the worktree, the pass
   derived 26 pages from `src/app` and ran 104/104 loads clean at 390px and
