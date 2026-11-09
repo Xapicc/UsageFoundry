@@ -147,7 +147,7 @@ I did not run `npm test` or `npm run typecheck`, because nothing in `src/` chang
 
 ## Too big for this list
 
-- One install-wide stop that also reaches assist children (reviews, conflict resolutions, chat turns, validations). "Stop everything" composes run and instance stops only (`src/lib/fleet.ts`, `docs/agent/run-lifecycle/fleet-stop-hold-and-set-aside.md`'s *"there is one install-wide stop, one install-wide hold"* paragraph), and a `run_reviews` row has no stop at all (`docs/agent/budgets-and-guards/concurrency-and-install-ceiling.md`'s *"the door is read once"* paragraph). That needs a stop path designed for assists first.
+- One install-wide stop that also reaches assist children (reviews, conflict resolutions, chat turns, validations). "Stop everything" composes run and instance stops only (`src/lib/fleet.ts`, `docs/agent/run-lifecycle/fleet-stop-hold-and-set-aside.md`'s *"there is one install-wide stop, one install-wide hold"* paragraph), and a `run_reviews` row has no stop at all (`docs/agent/budgets-and-guards/assists-under-the-install-limit.md`'s *"the door is read once"* paragraph). That needs a stop path designed for assists first.
 - A per-segment history of a run, with each pick-up, park and restart as its own row carrying worked minutes and spend. `started_at`/`paused_ms` reset on a pick-up (`docs/agent/run-lifecycle/reopen-and-resume.md`'s *"reopening a finished run is an operator decision"* paragraph), so today a run's whole life cannot be totalled.
 
 ## Bugs filed
