@@ -177,7 +177,7 @@ column disambiguates.
 | 5 | `59316d77` | `3206acaf` | UsageFoundry | done | finished | The pre-promise window named in #19 is wrapped so a throw fails the turn instead of stranding it | diff of `chat.ts`; new `chatTurn.test.ts` (98 lines) |
 | 6 | `ddff2cf3` | `dc1d43af` | RSSDashboard | done | **unjudgeable** | Read-only context audit; the run was forbidden to write anything and its whole output was stdout prose | empty diff (correct); branch deleted |
 | 7 | `41397184` | `a3c09412` | UsageFoundry | done | finished | Both owned pages rewritten, nothing else touched, and the section list regrouped from schema fields to decisions — the stated Done test | `settings/page.tsx` (+1111/−493), `account/page.tsx` |
-| 8 | `dd927763` | `a20af8db` | UsageFoundry | done | ~~**unjudgeable**~~ → **finished** (corrected, see below) | The entire task text is "Implement WF1"; the specification it names is not in the artefacts, so a large diff has nothing to be checked against | task text; 5 commits exist |
+| 8 | `dd927763` | `a20af8db` | UsageFoundry | done | ~~**unjudgeable**~~ → **partial** (corrected twice, see below) | The entire task text is "Implement WF1"; the specification it names is not in the artefacts, so a large diff has nothing to be checked against | task text; 5 commits exist |
 | 9 | `e0cbde08` | `bfc4a3c3` | UsageFoundry | done | finished | The complaint was that a deciding block leaves no account of itself; the diff puts its reply, its refusals and a status line on the instance page | `workflows.ts`, instance page, `db.ts` columns, `workflows.test.ts` |
 | 10 | `504855a6` | `10ae0848` | UsageFoundry | cap? | **unjudgeable** | Triage run explicitly forbidden to commit; the deliverable is GitHub issues, which are not in the repository | empty diff (correct) |
 | 11 | `7c219726` | `4961e361` | UsageFoundry | done | finished | The land card's strategy splits into chosen-vs-default so a re-read stops overwriting the operator's pick — the defect as described | diff of `RunLand.tsx` (the GitHub close step is not visible) |
@@ -213,6 +213,10 @@ column disambiguates.
 
 ### Correction to rows 8 and 36
 
+*Corrected twice: the premise on the first pass, and on 2026-11-08 row 8's label,
+which the first pass had set to `finished` without checking it against the
+repository.*
+
 **Both labels were wrong, and for the same reason: this measurement read
 `runs.task` where a validator reads the composed prompt.** `runs.task` on a
 workflow member is the *node's own title* — here, literally `Implement WF1` and
@@ -231,46 +235,72 @@ hold the composed prompt under `task`:
 
 Named deliverables, ordering constraints and a definition of done are all in the
 prompt. `WF1`/`WF2` is a label, not the specification. On the input a validator
-actually receives, both rows are judgeable and `finished` is defensible — which
-is what the spike returned for both.
+actually receives, both rows are judgeable. That is as far as the premise goes:
+the two rows do not get the same label, and the first version of this correction
+said they did.
+
+**Row 36 is `finished`.** Checked against the repository at its last commit
+(`86ab12bf`), the prompt's named deliverables are in the tree.
+`scripts/validator-spike/RESULT.md`, *What it did with the seven `unjudgeable`
+rows*, has the list and the one clause that had nothing to attach to at that
+commit.
+
+**Row 8 is `partial`.** The step from "the specification is in the prompt" to
+`finished` was not checked against the repository for row 8, and it fails there.
+The prompt's first item under `## What must survive it` is *"Uncommitted work goes
+onto its own branch. `commitPending` exists for this."* Across the five commits
+(`96b558b1..918fbf2a`) no line was added or removed that mentions `commitPending`
+(MEASURED 2026-11-08: `git diff 96b558b1 918fbf2a | grep -c '^[+-].*commitPending'`
+prints 0, and `git grep commitPending 918fbf2a` finds it only in `land.ts`, the
+land route, `CLAUDE.md` and `.gitignore`, which is where it already was), and the
+README the run wrote says "the halt never commits, never removes a checkout and
+never touches a branch". The omission is on purpose and written down as a choice.
+Nothing else in the prompt was found missing: `stopInstance` is the one function
+an operator's control and a tripped guard both call, the instance is marked
+`stopping` before anything is signalled and a second stop is a no-op, live,
+queued and paused members go through `stopRun`, a `waiting` member becomes
+`blocked`, queued merges are cancelled by `cancelQueuedFor`, the instance records
+`stopped_at` and `stop_cause`, and `workflows.test.ts` has `haltPlan` tests for
+the mixed instance, a stop mid-instantiation and a second stop. That was read
+from the commit stats, the added lines and the test names, not from the whole
+patch and not by running anything.
+
+**Why `partial`, and what is a judgement call.** This document's labels are
+`finished`, `partial`, `not-done` and `unjudgeable`. `not-done` is what rows 2
+and 34 got — told to commit, and nothing was — and row 8 did nearly all of what it
+was asked, so `not-done` is wrong. `finished` is the rule in §2: the change asked
+for is *demonstrably in the diff*, and a README that discloses leaving a stated
+requirement out is a disclosure, not the requirement. (`not-finished`, which the
+board task that raised this used, is the spike's verdict word in `validate.mjs`
+and not one of this document's labels; `score.mjs:42-43` maps both `partial` and
+`not-done` onto it, so choosing between those two moves no spike score.) **The
+operator may overturn this call.** Someone who reads a documented, deliberate
+deviation as within a run's latitude would call row 8 `finished`, and §4 below
+would go back to 33 / 0 / 2 / 5 and "31 for 31". Everything that depends on the
+label is row 8 above and §4; §5 does not depend on it.
 
 **The row labels above are struck through rather than rewritten, and the reason
 column is left as the measurement run wrote it.** `scripts/validator-spike/RESULT.md`
 deliberately did *not* rescore: both rows are still counted as misses in the
-spike's 34/37. (The "36/37 if rescored" this paragraph used to quote assumed both
-rows are `finished`; see the second correction below, which finds only row 36
-is.) Keeping the original text here is what makes that decision checkable. **The counts in §4 and
-§5 below are the corrected ones**, because a base rate that a reader carries into
-a build decision should not be the superseded number.
-
-**Second correction, 2026-11-08: row 8 is not `finished`, so the counts in §4 below
-are one row off.** The premise that was retracted above (the specification *is* in
-the composed prompt) stands for both rows. The step from there to `finished` was
-not checked against the repository, and for row 8 it fails: the task requires
-uncommitted work to go onto its own branch via `commitPending`, and at the case's
-last commit (`918fbf2a`) no line the run added mentions it and the README it wrote
-says "the halt never commits". The evidence supports `partial` at most (one
-requirement checked, not the whole task). Row 36 was checked the same way and its
-named deliverables are present (`scripts/validator-spike/RESULT.md`, *What it did
-with the seven `unjudgeable` rows*, has the list and the one clause that
-had nothing to attach to at that commit). Effect on what follows, none of it re-derived here: §4's label table
-reads `finished` 32, `partial` 1, `not-done` 2, `unjudgeable` 5; the `DONE` row
-reads 30 of 31 judgeable with the work in full and one `partial`, not "31 for 31";
-and "`partial = 0`" in the cautions is no longer true. §5's five unjudgeable rows
-and the retracted category stand, because they depend on the premise and not on
-the label.
+spike's 34/37. Its own rescoring on what the repository supports (row 36
+`finished`, row 8 `partial`) gives 35/37 for `prompt.md` and 34/37 for the shipped
+preamble, and it declines to quote either, because the new labels were chosen
+after the verdicts were known. Keeping the original text here is what makes that
+decision checkable. **The counts in §4 and §5 below are the corrected ones**,
+because a base rate that a reader carries into a build decision should not be the
+superseded number.
 
 ---
 
 ## 4. Base rate
 
-**n = 40.** Corrected for rows 8 and 36 above; the original figures are kept
-beside each.
+**n = 40.** Corrected for rows 8 (to `partial`) and 36 (to `finished`) above; the
+original figures are kept beside each.
 
 | Label | Count | Share of n = 40 | As originally labelled |
 |---|---:|---:|---|
-| `finished` | 33 | 82.5% | 31 / 77.5% |
-| `partial` | 0 | 0% | 0 / 0% |
+| `finished` | 32 | 80.0% | 31 / 77.5% |
+| `partial` | 1 | 2.5% | 0 / 0% |
 | `not-done` | 2 | 5.0% | 2 / 5.0% |
 | `unjudgeable` | **5** | **12.5%** | 7 / 17.5% |
 
@@ -279,17 +309,21 @@ Split by the one signal that separates the two ways a run becomes `completed`
 
 | | n | `finished` | `partial` | `not-done` | `unjudgeable` |
 |---|---:|---:|---:|---:|---:|
-| `reported_done = 1` — certainly `completed` | **32** | 31 (96.9%) | 0 | **0 (0%)** | 1 (3.1%) |
+| `reported_done = 1` — certainly `completed` | **32** | 30 (93.8%) | 1 (3.1%) | **0 (0%)** | 1 (3.1%) |
 | no `DONE` — inferred `completed` via the cycle cap | **8** | 2 (25%) | 0 | **2 (25%)** | 4 (50%) |
 
 *As originally labelled the top row read 29 (90.6%) / 3 (9.4%). The bottom row is
 untouched by the correction.*
 
-**That split is the result**, and the correction sharpens rather than softens it.
-Both runs that failed to do the work were runs that never said `DONE`. Among the
-32 that did, every judgeable one had the work in the diff — **31 for 31**, where
-the original labelling said 29 for 29. Among the 8 that did not, the judgeable
-ones split evenly: two did the work, two did not.
+**That split is still the result**, with one row less clean than the first
+correction made it. Both runs that did nothing were runs that never said `DONE`.
+Among the 32 that did, 31 were judgeable: 30 had the work in the diff in full and
+one (row 8) had all of it but a requirement the task stated — **30 for 31 in
+full**, where the first correction said 31 for 31 and the original labelling 29
+for 29. That `partial` is not a run that fell short unnoticed: it left the
+requirement out on purpose and wrote that down, and the shipped judge's
+`not-finished` named exactly that requirement (`RESULT.md`). Among the 8 that did
+not say `DONE`, the judgeable ones split evenly: two did the work, two did not.
 
 The honest reading is narrower than "DONE is trustworthy". `reported_done` and the
 cycle-cap ending are already distinguishable in the database — `reported_done` is its own
@@ -300,9 +334,10 @@ of them: 63 of 213 unattended run sessions (29.6%) end without `DONE`.
 
 Three cautions on the numbers, all of which push the same way:
 
-- **`partial = 0` is real but fragile.** Every judgeable run either had the asked-for
-  change or had nothing. Nothing landed half-built. But the labelling rule was "is the
-  change present", not "does it work" — see §6.
+- **`partial = 1`, and it is a requirement left out on purpose, not something
+  half-built.** Every other judgeable run either had the asked-for change or had
+  nothing, so nothing landed half-built by accident. But the labelling rule was "is
+  the change present", not "does it work" — see §6.
 - **The `not-done` denominator is four.** Only 4 of the 8 non-`DONE` runs were judgeable
   at all, so "25% not-done" rests on 2 of 4. It is a signal about where to look, not an
   estimate.
