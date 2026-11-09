@@ -220,7 +220,7 @@ Cases in `loopSection.test.ts` and `workflows.test.ts`, each listed under its ow
 | Test file | Also in |
 |---|---|
 | `blockTurnReading.test.ts` |  |
-| `chat.test.ts` | [proposals], [functions], [pricing], [task-deps], [landing] |
+| `chat.test.ts` | [proposals], [refusals], [functions], [pricing], [task-deps], [landing] |
 | `chatOrder.test.ts` |  |
 | `chatRequest.test.ts` |  |
 | `chatStream.test.ts` | [pricing] |
@@ -242,6 +242,11 @@ Cases in `loopSection.test.ts` and `workflows.test.ts`, each listed under its ow
 | `dto.test.ts` |  |
 | `proposalContinuation.test.ts` |  |
 | `remoteReads.test.ts` |  |
+
+## [Chat proposals: what the doors refuse](testing/chat-proposal-door-refusals.md)
+
+| Test file | Also in |
+|---|---|
 | `src/app/api/chat/[id]/proposals/route.test.ts` |  |
 
 ## [Taskboard authority, moves and a run's board](testing/taskboard-authority-and-moves.md)
@@ -483,6 +488,7 @@ It prints nothing as this is written. Whoever owns a file it names owes that fil
 [pick-ups]: testing/workflow-pick-ups.md
 [chat]: testing/chat-turns-and-threads.md
 [proposals]: testing/chat-proposals.md
+[refusals]: testing/chat-proposal-door-refusals.md
 [tasks]: testing/taskboard-authority-and-moves.md
 [task-deps]: testing/taskboard-comments-deps-and-mcp.md
 [landing]: testing/landing-and-delivery.md
