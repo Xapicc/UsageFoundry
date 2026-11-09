@@ -1428,9 +1428,9 @@ export function sessionTranscriptResolver(): (
  * which is the expensive pass this cache exists to avoid. A removed file would
  * otherwise keep its parsed entries for the life of the process — `runScan`
  * re-derives the file list every time, so nothing would ever revisit them — and
- * the dashboard would go on showing spend from transcripts that are gone until
- * the next restart, disagreeing with the very cutoff the period card had just
- * been told about.
+ * `/` and `/usage` would go on showing spend from transcripts that are gone
+ * until the next restart, disagreeing with the very cutoff the period card on
+ * `/usage` had just been told about.
  *
  * In-flight refreshes are dropped alongside the cached entry, rather than left
  * to write a pre-removal offset back over it.

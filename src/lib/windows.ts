@@ -505,7 +505,7 @@ export const MAIN_THREAD_BUCKET = "(main thread)";
  *                 in a checkout this classification cannot see, an agent since
  *                 deleted, or a turn from another machine's transcripts.
  *
- * Never null on a row the dashboard renders; null only when nothing looked the
+ * Never null on a row `/usage` renders; null only when nothing looked the
  * names up, which is the orchestrator's guard path — see `buildSnapshot`.
  */
 export type AgentOrigin = "main" | "registry" | "ambient" | "both" | "unknown";
@@ -570,10 +570,11 @@ export function agentOrigin(
 /**
  * One run's own turns, split by who produced them.
  *
- * The same `groupBy` and the same buckets as the dashboard column, over the
- * entries belonging to one session rather than to a window — so a turn carrying
- * an agent name lands in that agent's row, a turn carrying none lands in
- * `(main thread)`, and the rows add up to `costUSD` with nothing omitted.
+ * The same `groupBy` and the same buckets as the by-agent rows on `/usage`,
+ * over the entries belonging to one session rather than to a window — so a
+ * turn carrying an agent name lands in that agent's row, a turn carrying none
+ * lands in `(main thread)`, and the rows add up to `costUSD` with nothing
+ * omitted.
  *
  * Which turns carry a name is the CLI's business and this infers nothing. That
  * used to be the same statement as "a delegated turn"; since a run can be
@@ -1541,9 +1542,9 @@ function periodBoundaries(
 ): number[] {
   // Something names when this week rolls over — the provider's own reading, or
   // failing that the anchor the operator configured — and the newest bucket has
-  // to be the same seven hours-to-the-minute as the weekly meter directly above
-  // it on the page. A calendar Monday would put a different total under the
-  // same word.
+  // to be the same seven hours-to-the-minute as the weekly meter on `/`. A
+  // calendar Monday would put a different total under the same word on
+  // `/usage`.
   if (granularity === "week" && weeklyReset !== null) {
     const current = weeklyReset - WEEK_MS;
     const out: number[] = [];

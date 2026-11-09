@@ -775,9 +775,9 @@ export interface Settings {
    * A removed transcript takes its session with it, so the sweep clears
    * `runs.session_id` on the terminal runs it belonged to — `--resume` against
    * a file that is gone fails a pick-up outright, where a null session id is
-   * already this app's documented restart. And it shortens the dashboard's own
-   * calendar history, which `PeriodSeries.completeFrom` carries onto the card
-   * rather than letting the buckets quietly understate.
+   * already this app's documented restart. And it shortens the calendar history
+   * on `/usage`, which `PeriodSeries.completeFrom` carries onto the card rather
+   * than letting the buckets quietly understate.
    *
    * 30 days rather than longer because the store is the operator's home
    * directory; longer than the checkout horizon because a transcript is the

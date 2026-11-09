@@ -1321,7 +1321,7 @@ export function instanceBudgetNumberRefusal(
  * A **rolling** 24 hours, not a calendar day, and both halves of that are
  * deliberate. A calendar day would have to be cut in some zone — the container
  * runs in UTC and the operator does not, which is the failure `zonedMidnight`
- * already exists to fix for the dashboard's history — and a guard cut in the
+ * already exists to fix for `/usage`'s calendar history — and a guard cut in the
  * wrong zone refuses work for hours or authorises it for hours. It would also
  * be a cliff every run in the install crosses at the same instant, which is the
  * lockstep this app already has enough of.
