@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -153,6 +154,33 @@ describe("prepareCodexRules", () => {
     fs.rmSync(dir);
     assert.equal(mod.prepareCodexRules().kind, "ready");
   });
+
+  it("refuses a directory at config.toml without a uid split too, and follows a link to a file", () => {
+    // A cycle that cannot write its trust entry into `config.toml` loads its
+    // repository's `.codex/config.toml` and says nothing (measured on
+    // 0.153.4), so this refusal is the only sign there would be. Nothing makes
+    // a directory there legitimately. A link to a regular file is an
+    // operator's dotfiles on a laptop, and Codex reads through it.
+    const config = path.join(process.env.CODEX_HOME!, "config.toml");
+    fs.mkdirSync(config);
+    try {
+      const delivery = mod.prepareCodexRules();
+      assert.equal(delivery.kind, "unavailable", "answered ready with a directory at config.toml");
+      const reason = delivery.kind === "unavailable" ? delivery.reason : "";
+      assert.equal(reason.includes(`${config} is a directory`), true, reason);
+    } finally {
+      fs.rmdirSync(config);
+    }
+
+    const dotfile = path.join(tmp, "dotfiles-config.toml");
+    fs.writeFileSync(dotfile, "");
+    fs.symlinkSync(dotfile, config);
+    try {
+      assert.equal(mod.prepareCodexRules().kind, "ready");
+    } finally {
+      fs.rmSync(config);
+    }
+  });
 });
 
 /**
@@ -263,6 +291,58 @@ describe("prepareCodexRules when the cycle runs under another uid", () => {
     fs.chmodSync(rulesDir(), 0o777);
     refused(rulesDir());
     assert.equal(fs.existsSync(CODEX_RULES_FILE), false);
+  });
+
+  /**
+   * Every `workspace-write` or bypass cycle writes a trust entry into
+   * `$CODEX_HOME/config.toml`, and with that write failing it loaded its
+   * repository's `.codex/config.toml` and started the MCP servers named there,
+   * 15 of 15 runs, while it never did with the write succeeding (codex-cli
+   * 0.153.4). The file is the agents' own, so any cycle can `rm` it and put
+   * something else at the name, and nothing in the cycle's output says so.
+   */
+  const configFile = () => path.join(home(), "config.toml");
+
+  it("answers ready with config.toml absent or a regular file", () => {
+    // The control: absent is a fresh install, where the cycle's own trust
+    // write creates the file, and a regular file is every install after it.
+    homeWithMode(0o1770);
+    assert.equal(mod.prepareCodexRules(self).kind, "ready");
+    fs.writeFileSync(configFile(), '[projects."/w"]\ntrust_level = "trusted"\n');
+    assert.equal(mod.prepareCodexRules(self).kind, "ready");
+  });
+
+  it("refuses a directory at config.toml, saying what it costs and what fixes it", () => {
+    homeWithMode(0o1770);
+    fs.mkdirSync(configFile());
+    const reason = refused(configFile());
+    assert.match(reason, /is a directory/);
+    assert.match(reason, /\.codex\/config\.toml/);
+    assert.match(reason, /Restarting the container moves it aside/);
+  });
+
+  it("refuses a link at config.toml whatever it names", () => {
+    // Under a uid split a link is a name a cycle can repoint between this
+    // check and the cycle's write, so even one naming a regular file is
+    // refused; without the split it is followed (the case above).
+    const elsewhere = path.join(path.dirname(home()), "agent-config");
+    for (const target of ["file", "directory", "nowhere"] as const) {
+      homeWithMode(0o1770);
+      fs.rmSync(elsewhere, { recursive: true, force: true });
+      if (target === "file") fs.writeFileSync(elsewhere, "");
+      if (target === "directory") fs.mkdirSync(elsewhere);
+      fs.symlinkSync(elsewhere, configFile());
+      assert.match(refused(configFile()), /is a symbolic link/, `a link to a ${target}`);
+    }
+    fs.rmSync(elsewhere, { recursive: true, force: true });
+  });
+
+  it("refuses a FIFO at config.toml", () => {
+    // Neither a file nor a directory: Codex's sign-in children answered `is
+    // not a file` over one, as over a directory.
+    homeWithMode(0o1770);
+    execFileSync("mkfifo", [configFile()]);
+    assert.match(refused(configFile()), /is not a regular file/);
   });
 
   it("refuses a CODEX_HOME the agents could rename out of its parent", () => {

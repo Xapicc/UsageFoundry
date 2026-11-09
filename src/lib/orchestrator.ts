@@ -11623,11 +11623,14 @@ export async function startRun(id: string): Promise<void> {
       // less, and this would degrade to a cycle that can kill the server
       // supervising every run in flight. `codexRules.ts` carries what the file
       // is, why it is a file rather than a flag, and what it does not cover.
+      // The same call refuses a `$CODEX_HOME/config.toml` that is not a regular
+      // file, since a cycle that cannot write its trust entry there silently
+      // loads its repository's Codex config instead.
       if (run.provider === "codex") {
         const rules = prepareCodexRules();
         if (rules.kind === "unavailable") {
           throw new Error(
-            `Refusing to spawn a Codex work cycle with no process-kill denial: ${rules.reason}`,
+            `Refusing to spawn a Codex work cycle: ${rules.reason}`,
           );
         }
         // The operator's `~/.claude` rules, as the `AGENTS.md` Codex reads.

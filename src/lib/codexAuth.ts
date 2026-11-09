@@ -4,6 +4,7 @@ import {
   type SpawnOptions,
 } from "node:child_process";
 import fs from "node:fs";
+import { codexConfigUnusableBecause } from "./codexRules";
 import { CODEX_BIN, CODEX_HOME, spawnCommand } from "./config";
 import { childCredentials } from "./privsep";
 import { agentEnvironment } from "./stacks";
@@ -436,11 +437,20 @@ const SIGN_IN_CONFIG_PINS = [
  * Failures are allowed to throw, one layer up: a `CODEX_HOME` the child cannot
  * write is a sign-in that cannot complete, and saying so is better than a
  * login that reports success over nothing on disk.
+ *
+ * Every child here also refuses to start over a `config.toml` that is not a
+ * regular file, which a work cycle can leave: each of them exited 1 on one
+ * with `Error loading configuration`, the sign-out included (measured on
+ * 0.153.4), so a refusal costs no sign-in that would have worked, and it says
+ * where the thing came from and what removes it. Reported, never repaired,
+ * for `codexConfigUnusableBecause`'s reason.
  */
 function ensureCodexHome(): CodexAuthResult<null> {
   try {
     fs.mkdirSync(CODEX_HOME, { recursive: true, mode: 0o700 });
     lockCodexHome();
+    const config = codexConfigUnusableBecause(true);
+    if (config) return { ok: false, error: config };
     return { ok: true, value: null };
   } catch (err) {
     return {
