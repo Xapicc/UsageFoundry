@@ -142,11 +142,88 @@ Split out of [security-and-sandboxing-server-git-fingerprints.md](security-and-s
   `status` in 4 of 4 calls (board task `8e9fe2ed`); a work cycle making the
   move beside a call is inferred, not driven.
 
+- **A directory made a git directory above a cwd spelled through a symlink
+  is refused, now that the way up starts at the real path, 2026-11-09.**
+  Board task `cdf5ae4b`, branch at `3cee41f0`, git 2.39.5 only. The
+  fixture of `fbd6d8dd`'s entry above, `B/sub` holding all but the last
+  piece of a git directory, with a link `B-link` naming `B/sub/d` and the
+  call made from `B-link/x`: under plain git `rev-parse --show-cdup` there
+  printed `../../../`, and in each of the four layouts `add -A` ran the
+  driver once the last piece was made and never before. Through this app's
+  compiled `git()` and `gitSync()` at `3cee41f0`, the stub making the last
+  piece while the index is listed, all 8 calls (each layout through each)
+  ran the plant: `top` was `../../../` folded onto the link's spelling, a
+  directory above the fixture, so the walks from the cwd never passed
+  `B/sub`. With `top` and both walks taken from the cwd's realpath, all 8
+  are refused naming the piece made, and a call from `B/sub` and from
+  `B-link/x` with nothing made still runs. The file passed 82 of 92 with 10
+  skipped. Caveat: not run on a 2.56.0 build. No production caller passes
+  a symlink-spelled cwd, read in code and not driven: folders and
+  repository roots are realpathed by `resolveInMount`, Land, diff and
+  retention re-check them, and a worktree slot is `path.join`ed onto a
+  realpathed store, though its last component is never itself checked.
+  The cwd's realpath is read once, before the first step, and nothing
+  watches the link itself.
+
+- **A probed call's submodules are found from the top of the work tree, so
+  one behind `--git-dir=` from outside its `core.worktree` reaches them,
+  2026-11-09.** Board task `b934c65b`, branch at `4e79bc97`, git 2.39.5
+  only. A repository `A` holding an embedded repository `a` that holds `b`,
+  each a gitlink no `.gitmodules` names, with `filter.x.clean` and `*
+  filter=x` planted in `A/a/b/.git`, `b/s.txt` stat-dirty and
+  `core.worktree` set to `A`: under plain git from a directory outside `A`,
+  `--git-dir=A/.git rev-parse --show-cdup` printed `A`'s absolute path,
+  `ls-files --stage` printed the gitlink as `a`, from the top, and `add -A`
+  ran `b`'s driver. Through this app's compiled `git()` and `gitSync()` at
+  `4e79bc97` the same call ran it through each alone with `ok: true`, and
+  from `A` ran nothing: `populatedGitlinks` resolved `a` against the cwd,
+  found no `.git` there and probed no submodule. The same resolution folded
+  `../sm` onto a subdirectory spelled through a symlink, and a
+  superproject's `status` from there ran its submodule's driver through
+  each. With the listing made `--full-name` and its paths resolved against
+  the probe's `top`, all four run nothing and succeed. The file passed 84
+  of 94 with 10 skipped, and `git`, `gitDirRead`, `gitDirWatch`,
+  `blockStartupGit` and `checkoutGitClock` 62 of 69 with 7 skipped.
+  Caveat: not run on a 2.56.0 build. No production caller puts a probed
+  subcommand behind `--git-dir=` (its one producer, `readGitDir`, runs
+  `config`), so the first shape is latent; `--show-cdup` printing an
+  absolute path from outside a work tree was measured only with
+  `core.worktree` set.
+
+- **The index listing is pinned to the git directory the probe found, so
+  one away only while it lists is refused, 2026-11-09.** Board task
+  `8e9fe2ed`, branch at `498dfbf0`, git 2.39.5 only. A repository `P` with
+  no driver and no gitlink holding a superproject `R` whose submodule `sm`
+  has `filter.x.clean` and `* filter=x` planted in `R/.git/modules/sm/` and
+  a stat-dirty `sm/s.txt`: under plain git `ls-files --stage -- :/` in `R`
+  named `sm`, with `R/.git/objects` or `R/.git/refs` renamed away it named
+  no gitlink, only `P`'s `../f.txt`, and renamed back, `status` ran the
+  driver. Through this app's compiled `git()` and `gitSync()` at
+  `498dfbf0`, a `GIT_BIN` stub renaming either away around the listing and
+  back before it exits ran the driver on `status --porcelain` through each
+  alone, for both. With the listing run as `--git-dir=<the gitDir
+  SITE_PATHS printed> ls-files --full-name ...`, each is refused on
+  `ls-files`' "not a git repository", exit 128. Repeating `SITE_PATHS`
+  after the listing, the brief's other fix, was not built: it runs once the
+  directory is back and reads what it read before. `--work-tree` was left
+  off because plain git listed the same gitlinks with `--git-dir=` alone as
+  by discovery: from a subdirectory, through a symlinked cwd, from a linked
+  worktree's subdirectory, behind `core.worktree` from inside and outside
+  the work tree, from inside `.git`, in a bare repository and in a
+  submodule. `--git-dir=` naming the common directory instead listed the
+  main checkout's index from the linked worktree, and mutated into the
+  compiled change it failed the new linked-worktree case. The
+  found-directory cases' stub now moves after the listing, which a pinned
+  listing would refuse first; with the `objects/`/`refs/` watch cut from
+  the compiled change they ran the plant. The file passed 88 of 98 with 10
+  skipped, `land.test.ts` 110 of 110. Caveat: not run on a 2.56.0 build; a
+  work cycle making the move beside a call is inferred, not driven.
+
 ## Not yet verified by hand
 
 - **Whether a work cycle can move a site's `objects/` or `refs/` away and
-  back beside one of this app's calls.** Board tasks `9ef321d6` and
-  `f3122092`. Every move above was made by a `GIT_BIN` stub at the exact
+  back beside one of this app's calls.** Board tasks `9ef321d6`,
+  `f3122092` and `8e9fe2ed`. Every move above was made by a `GIT_BIN` stub at the exact
   step; a cycle doing it is inferred from its writing the common `.git`, and
   it would need a loop timed to a git child. Settle with a stub cycle that
   renames `R/.git/objects` away and back in a loop while a sibling run's

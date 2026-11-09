@@ -656,10 +656,17 @@ function probeSites(
 }
 
 /**
- * Every gitlink in the index, with paths relative to the directory it ran in
- * (`:/` reaches the whole tree from a subdirectory, as `../sm`).
+ * Every gitlink in the index (`:/` reaches the whole tree from a
+ * subdirectory), with paths relative to the top of the work tree.
+ *
+ * `--full-name` because without it a path is relative to wherever git took
+ * the call to stand: `../sm` from a subdirectory, but from the top for a call
+ * whose leading `--git-dir=` names a repository with `core.worktree`, run from
+ * outside that work tree. Resolved against the directory the call ran in, that
+ * one named no submodule, none was probed, and the call's child git in a
+ * nested repository ran its filter (board task b934c65b, measured, 2.39.5).
  */
-const GITLINK_LIST = ["ls-files", "--stage", "-z", "--", ":/"];
+const GITLINK_LIST = ["ls-files", "--full-name", "--stage", "-z", "--", ":/"];
 
 /**
  * The populated submodules in a probe site's index, each a probe site of its
@@ -687,13 +694,13 @@ const GITLINK_LIST = ["ls-files", "--stage", "-z", "--", ":/"];
  * applies before it starts the child, and whether or not `.gitmodules` names
  * it, because git recurses into one it does not (measured).
  */
-function populatedGitlinks(dir: string, output: string): string[] {
+function populatedGitlinks(top: string, output: string): string[] {
   const trees: string[] = [];
   for (const record of output.split("\0")) {
     if (!record.startsWith("160000 ")) continue;
     const tab = record.indexOf("\t");
     if (tab === -1) continue;
-    const tree = path.resolve(dir, record.slice(tab + 1));
+    const tree = path.resolve(top, record.slice(tab + 1));
     if (fs.existsSync(path.join(tree, ".git"))) trees.push(tree);
   }
   return trees;
@@ -719,7 +726,9 @@ const MAX_PROBE_SITES = 64;
  * watched where git never reads it (board task 10264b6b). `--show-cdup` prints
  * an empty line at the top and no line outside a work tree, where a relative
  * origin is relative to the site itself (measured, 2.39.5), which is why it
- * comes last: its absence moves no other line.
+ * comes last: its absence moves no other line. From outside the work tree a
+ * leading `--git-dir=`'s `core.worktree` names, it prints that work tree's
+ * absolute path (measured, 2.39.5), which `path.resolve` takes as it stands.
  */
 const SITE_PATHS = [
   "rev-parse",
@@ -1171,7 +1180,13 @@ function* prepareContentCall(
           `printed ${JSON.stringify(located.stdout)}, not the five paths it was asked for`,
       };
     }
-    const top = path.resolve(dir, cdup);
+    // `--show-cdup` counts the parents git climbed from its own `getcwd()`,
+    // which is physical, so it is applied to the real path and the walks below
+    // start there. Folded onto a cwd spelled through a symlink, it named a
+    // directory above another tree, the walks watched directories git never
+    // passed, and a directory made a git directory on git's real way up ran its
+    // filter (board task cdf5ae4b, measured, 2.39.5).
+    const top = path.resolve(identity, cdup);
     // `commondir` is what places `config` and the branches, so the paths above
     // stand only while it does: a linked worktree's rewritten to name another
     // repository's `.git` ran a filter only that one defined, and git accepted
@@ -1180,7 +1195,7 @@ function* prepareContentCall(
     for (const file of [config, worktreeConfig, head, path.join(gitDir, "commondir")]) watch(file);
     for (const ref of refsBehindHead(head, gitDir, commonDir)) watch(ref, symrefFingerprint);
     for (const file of reftableFiles(gitDir, commonDir)) watch(file);
-    for (const entry of [...discoveryEntries(dir, top), gitDir]) watch(entry, locationFingerprint);
+    for (const entry of [...discoveryEntries(identity, top), gitDir]) watch(entry, locationFingerprint);
     // git takes the directory it found for a git directory only while the
     // common one holds `objects/` and `refs/`: with either moved away, its
     // discovery climbed past it to an enclosing repository and ran a filter
@@ -1192,7 +1207,7 @@ function* prepareContentCall(
     for (const entry of [path.join(commonDir, "objects"), path.join(commonDir, "refs")]) {
       watch(entry, locationFingerprint);
     }
-    const below = gitDirectoryInputs(dir, top);
+    const below = gitDirectoryInputs(identity, top);
     for (const file of below.asConfig) watch(file);
     for (const entry of below.asLocation) watch(entry, locationFingerprint);
 
@@ -1243,12 +1258,25 @@ function* prepareContentCall(
     }
 
     if (args[0] === "merge-tree") continue;
-    const gitlinkList = [...named, ...GITLINK_LIST];
+    // Pinned to the git directory `SITE_PATHS` found: by discovery, with its
+    // `objects/` or `refs/` moved away only while the index was listed, git
+    // listed an enclosing repository's index, which names none of the site's
+    // gitlinks, and a driver planted in a submodule's git directory ran (board
+    // task 8e9fe2ed, measured, 2.39.5). Named, a directory without either is
+    // no repository to `ls-files`, exit 128, so the call fails closed; the
+    // probe cannot be pinned so, as `siteMarkerInclude` says. The git
+    // directory rather than the common one, which in a linked worktree holds
+    // the main checkout's index. No `--work-tree`: under `--full-name` the
+    // paths are the index's own wherever git takes the top to be, and this
+    // listed what discovery did from a subdirectory, through a symlink, in a
+    // linked worktree, behind `core.worktree` and inside a git directory
+    // (measured).
+    const gitlinkList = [`--git-dir=${gitDir}`, ...GITLINK_LIST];
     const index = yield { dir, args: gitlinkList };
     if (index.code !== 0 || index.overflowed) {
       return { ok: false, reason: probeFailure(index, dir, args, gitlinkList) };
     }
-    queue.push(...populatedGitlinks(dir, index.stdout));
+    queue.push(...populatedGitlinks(top, index.stdout));
   }
 
   for (const [file, { fingerprint, before }] of watched) {
