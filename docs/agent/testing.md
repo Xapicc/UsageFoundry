@@ -398,7 +398,7 @@ Its cases are in `orchestrator.test.ts`; see that file's row above.
 | `codexRollout.test.ts` |  |
 | `mcpStatus.test.ts` |  |
 | `notify.test.ts` |  |
-| `review.test.ts` | [pricing], [landing], [stacks], [argv] |
+| `review.test.ts` | [pricing], [landing], [stacks], [argv], [sandbox] |
 | `toolComposition.test.ts` |  |
 
 Units that are about no test file in the tree:
