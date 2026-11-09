@@ -58,8 +58,14 @@
  *     env -u __NEXT_PRIVATE_STANDALONE_CONFIG npm run build
  *     npm run smoke-pages
  *
- * Exit codes are three-valued on purpose. 0 passed, 1 a page failed, **2 the
- * pass did not run** — no build, no Playwright, no browser. A skip that exited 0
+ * The pages are the `page.tsx` files on disk, not a list kept here: a page
+ * addressed by a parameter needs an entry in `DYNAMIC_PAGES` naming its seed, and
+ * one without refuses to run, exit 1, with its route printed. A hand-kept list
+ * used to say "every page" while missing `/usage`, and reported a clean total.
+ *
+ * Exit codes are three-valued on purpose. 0 passed, 1 a page failed (or a page
+ * has no seed to be opened with), **2 the pass did not run** — no build, no
+ * Playwright, no browser. A skip that exited 0
  * would report a pass for work that never happened, which is the one outcome
  * this file exists to make impossible.
  */
@@ -223,13 +229,83 @@ function makeSandbox() {
   const dataDir = path.join(root, "data");
   const claudeHome = path.join(root, "claude-home");
   const workspace = path.join(root, "workspace");
-  // `projects/` present but empty: the app warns about a CLAUDE_HOME without
-  // one, and an empty one is the state a machine that has never run Claude Code
-  // is in — which is what we want every usage figure to read.
   for (const dir of [dataDir, path.join(claudeHome, "projects"), path.join(workspace, "project")]) {
     fs.mkdirSync(dir, { recursive: true });
   }
+  seedTranscripts(claudeHome, root);
   return { root, dataDir, claudeHome, workspace, claudeBin };
+}
+
+/**
+ * A few synthetic assistant turns under `CLAUDE_HOME/projects`, so `/` draws.
+ *
+ * With that directory empty, `GET /api/usage` answers `meta.entryCount === 0` and
+ * the dashboard renders `FirstRun` ("Nothing to measure yet") instead of
+ * everything below it: the window card, `CodexWindows`, `LiveTelemetry` and
+ * `InstallSpendCard`. Every page-load assertion this file makes was then about
+ * the nothing-state of the one page whose whole subject is the meters, at every
+ * width and skin, and the run read clean. `/usage` was the same.
+ *
+ * Written from what `parseLine` in `src/lib/transcripts.ts` reads and nothing
+ * more: `type: "assistant"`, a `message` with `id`, `model` and `usage`, a
+ * `requestId` (without both ids the line is keyed on its uuid, which is fine but
+ * is the weaker dedupe path), a parseable `timestamp`, and a `cwd` and
+ * `sessionId`. No effort, skill, agent or entrypoint field: nothing here is
+ * about those, and a fixture that carried them would be one more thing to keep
+ * in step with the parser.
+ *
+ * Timestamps are relative to *now*, and that is the point of generating the file
+ * here rather than committing one: the session window is the five hours after
+ * the first turn inside it, so a fixture dated at commit time would be a
+ * finished window by the time anyone ran this, and `/` would draw an idle
+ * session. The newest turn is ten minutes old and a pass takes a few minutes, so
+ * the window is open for all of it. The oldest turn is 30 hours back, in its own
+ * session, so the weekly window holds more than the session one does — two
+ * meters reading the same number would hide a mix-up between them.
+ *
+ * `claude-sonnet-4-5` because it is in `pricing.ts`'s table: an unpriced model
+ * would also draw the meters, but behind the "unpriced models" banner, and that
+ * is a different page.
+ *
+ * Invented, never copied from a real transcript: a real one carries prompts and
+ * paths that belong to somebody, and this pass is run by people who then paste
+ * its output and screenshots into tickets.
+ */
+function seedTranscripts(claudeHome, root) {
+  const projectDir = path.join(claudeHome, "projects", "-smoke-synthetic-project");
+  fs.mkdirSync(projectDir, { recursive: true });
+  const cwd = path.join(root, "synthetic-project");
+  const now = Date.now();
+  const minute = 60_000;
+  const sessions = [
+    { id: "00000000-0000-4000-8000-00000000a001", agesInMinutes: [30 * 60] },
+    { id: "00000000-0000-4000-8000-00000000a002", agesInMinutes: [40, 25, 10] },
+  ];
+  for (const session of sessions) {
+    const lines = session.agesInMinutes.map((age, turn) =>
+      JSON.stringify({
+        type: "assistant",
+        uuid: `${session.id.slice(-4)}-turn-${turn}`,
+        sessionId: session.id,
+        cwd,
+        requestId: `req_smoke_${session.id.slice(-4)}_${turn}`,
+        timestamp: new Date(now - age * minute).toISOString(),
+        isSidechain: false,
+        message: {
+          id: `msg_smoke_${session.id.slice(-4)}_${turn}`,
+          model: "claude-sonnet-4-5",
+          usage: {
+            input_tokens: 1_200 + turn * 300,
+            output_tokens: 800 + turn * 200,
+            cache_read_input_tokens: 40_000 + turn * 10_000,
+            cache_creation_input_tokens: 3_000,
+            cache_creation: { ephemeral_5m_input_tokens: 3_000, ephemeral_1h_input_tokens: 0 },
+          },
+        },
+      }),
+    );
+    fs.writeFileSync(path.join(projectDir, `${session.id}.jsonl`), lines.join("\n") + "\n");
+  }
 }
 
 /**
@@ -405,6 +481,31 @@ async function sendJSON(method, baseUrl, pathname, headers, body) {
 }
 
 /**
+ * Refuse to run if the sandbox's transcripts did not reach the usage route.
+ *
+ * Not an assertion about the interface — it reads an API, not the page, and it is
+ * the transcript counterpart of the check that `data-skin` arrived: everything
+ * the dashboard half of this pass measures is worthless if `seedTranscripts` wrote
+ * lines the parser rejects, because `/` then falls back to `FirstRun` and every
+ * assertion goes green over the nothing-state, which is the failure this seeding
+ * exists to end. A parser change that stopped accepting the fixture would
+ * otherwise return the pass to exactly that, silently.
+ */
+async function requireSeededUsage(baseUrl, headers) {
+  const response = await fetch(`${baseUrl}/api/usage`, { headers });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`GET /api/usage answered ${response.status}: ${text.slice(0, 300)}`);
+  const entryCount = JSON.parse(text)?.meta?.entryCount;
+  if (typeof entryCount !== "number" || entryCount <= 0) {
+    throw new Error(
+      `GET /api/usage reported meta.entryCount ${JSON.stringify(entryCount)} over the sandbox's ` +
+        "synthetic transcripts, so `/` would draw FirstRun instead of its meters. " +
+        "`seedTranscripts` no longer writes lines `parseLine` in src/lib/transcripts.ts accepts.",
+    );
+  }
+}
+
+/**
  * A vault on disk, then the two settings that point the install at it.
  *
  * The files are written straight into the sandbox workspace because they are not
@@ -446,9 +547,9 @@ async function seedVault(baseUrl, headers, workspace) {
 /**
  * Seed through the app's own API, never by writing to its database.
  *
- * Seven of the twenty-two pages are addressed by an id, and a page fetching an
- * id that does not exist logs a console error for the 404 — so the ids have to
- * be real or a third of the pass measures the wrong thing. The app permits
+ * The pages addressed by an id (`DYNAMIC_PAGES`) are about a third of the pass, and
+ * a page fetching an id that does not exist logs a console error for the 404 — so
+ * the ids have to be real or that third measures the wrong thing. The app permits
  * exactly one writer to a data directory and says so at boot, which rules out
  * opening the SQLite file from here while the server holds it.
  */
@@ -493,51 +594,96 @@ async function seed(baseUrl, headers, workspace) {
   };
 }
 
-/** Every `src/app/**\/page.tsx`, with the seven dynamic ones bound to seeds. */
-function routes({ runId, workflowId, instanceId, taskId }) {
-  return [
-    "/",
-    "/account",
-    "/agents",
-    "/branches",
-    "/chat",
-    "/dreaming",
-    "/knowledge",
-    "/login",
-    "/projects",
-    "/runs",
-    "/runs/new",
-    "/runs/live",
-    `/runs/${runId}`,
-    `/runs/${runId}/touched`,
-    `/runs/${runId}/conflicts`,
-    "/settings",
-    // Not seeded, and it cannot be: a receipt is written by the applier into a
-    // named volume the host has no copy of, so what this asserts is the page's
-    // "no receipt names this stack" state. That is the state an operator most
-    // often reaches it in — from a link on a row whose stack has since been
-    // removed — and the half with a receipt is verified by hand against the
-    // container, in `docs/verification.md`.
-    "/settings/stacks/none-declared",
-    "/tasks",
-    "/tasks/new",
-    `/tasks/${taskId}`,
-    "/usage",
-    "/workflows",
-    "/workflows/new",
-    `/workflows/${workflowId}`,
-    `/workflows/${workflowId}/edit`,
-    `/workflows/${workflowId}/instances/${instanceId}`,
-  ];
+/**
+ * Every page file Next routes to, as the URL pattern it serves: `/runs/[id]/touched`.
+ *
+ * Read off the disk because this file used to carry the list by hand under a
+ * comment — and a `CLAUDE.md` paragraph — saying "every `src/app/**\/page.tsx`".
+ * Nothing made that true. `/usage` was added as a page, the pass reported its
+ * usual clean total, and the page had never been opened: a list that can be
+ * short by one entry fails by printing a smaller number, which nobody reads.
+ *
+ * A folder's name is its URL segment, taken as written. Next also has route
+ * groups (`(name)`) and private folders (`_name`) that are not segments; this repo
+ * has none, and one added later would be requested under its folder name and
+ * fail with a 404 that names it, which is the cue to teach this about them
+ * rather than a reason to carry the handling before it is needed.
+ */
+function discoverPagePatterns() {
+  const appDir = path.join(REPO, "src", "app");
+  const patterns = [];
+  function walk(dir, segments) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        walk(path.join(dir, entry.name), [...segments, entry.name]);
+      } else if (/^page\.(?:tsx|ts|jsx|js)$/.test(entry.name)) {
+        patterns.push("/" + segments.join("/"));
+      }
+    }
+  }
+  try {
+    walk(appDir, []);
+  } catch (error) {
+    // The same reason as `skinStorageKey`: an unreadable tree is a pass that did
+    // not run, and a bare throw would exit 1 and report it as a page that failed.
+    skip(`could not read ${path.relative(REPO, appDir)}: ${error.message}`);
+  }
+  if (patterns.length === 0) skip(`${path.relative(REPO, appDir)} holds no page file.`);
+  return patterns.sort();
 }
 
-/** What a route is called in the report, with the seeded id put back. */
-function label(route, seeds) {
-  return route
-    .replace(seeds.instanceId, "[instanceId]")
-    .replace(seeds.workflowId, "[id]")
-    .replace(seeds.runId, "[id]")
-    .replace(seeds.taskId, "[id]");
+/**
+ * The pages addressed by a parameter, each bound to the seed that makes it real.
+ *
+ * Keyed by the whole pattern rather than by the parameter's name, because `[id]`
+ * is a run under `/runs`, a task under `/tasks` and a workflow under
+ * `/workflows`, and a table keyed on `id` would guess. It is also what makes a
+ * new `/runs/[id]/<something>` fail by name instead of being quietly opened with
+ * whichever id looked closest.
+ *
+ * Ids have to be real: a page fetching one that does not exist logs a console
+ * error for the 404, so a made-up one would measure the wrong thing.
+ */
+const DYNAMIC_PAGES = {
+  "/runs/[id]": (seeds) => ({ id: seeds.runId }),
+  "/runs/[id]/conflicts": (seeds) => ({ id: seeds.runId }),
+  "/runs/[id]/touched": (seeds) => ({ id: seeds.runId }),
+  // Not seeded, and it cannot be: a receipt is written by the applier into a
+  // named volume the host has no copy of, so what this asserts is the page's
+  // "no receipt names this stack" state. That is the state an operator most
+  // often reaches it in — from a link on a row whose stack has since been
+  // removed — and the half with a receipt is verified by hand against the
+  // container, in `docs/verification.md`.
+  "/settings/stacks/[name]": () => ({ name: "none-declared" }),
+  "/tasks/[id]": (seeds) => ({ id: seeds.taskId }),
+  "/workflows/[id]": (seeds) => ({ id: seeds.workflowId }),
+  "/workflows/[id]/edit": (seeds) => ({ id: seeds.workflowId }),
+  "/workflows/[id]/instances/[instanceId]": (seeds) => ({
+    id: seeds.workflowId,
+    instanceId: seeds.instanceId,
+  }),
+};
+
+const isDynamic = (pattern) => pattern.includes("[");
+
+/** Patterns that name a parameter and have no entry in `DYNAMIC_PAGES`. */
+function unboundPatterns(patterns) {
+  return patterns.filter((pattern) => isDynamic(pattern) && !(pattern in DYNAMIC_PAGES));
+}
+
+/** Each pattern with its parameters filled in from the seeds: what to request. */
+function routes(patterns, seeds) {
+  return patterns.map((pattern) => {
+    if (!isDynamic(pattern)) return { pattern, url: pattern };
+    const values = DYNAMIC_PAGES[pattern](seeds);
+    const url = pattern.replace(/\[([^\]]+)\]/g, (_match, name) => {
+      if (typeof values[name] !== "string") {
+        throw new Error(`DYNAMIC_PAGES["${pattern}"] supplies no value for [${name}]`);
+      }
+      return encodeURIComponent(values[name]);
+    });
+    return { pattern, url };
+  });
 }
 
 /**
@@ -708,6 +854,23 @@ async function checkPage(context, baseUrl, route, width, skin) {
 }
 
 async function main() {
+  // First, and before anything that can skip: the page set is a fact about the
+  // tree, so a page this file has no seed for is reported even on a machine with
+  // no build or no browser, where the pass would otherwise exit 2 and leave the
+  // next person to find it.
+  const patterns = discoverPagePatterns();
+  const unbound = unboundPatterns(patterns);
+  if (unbound.length > 0) {
+    console.error(
+      `\nFAILED — ${unbound.length} page${unbound.length === 1 ? "" : "s"} under src/app ` +
+        `${unbound.length === 1 ? "is" : "are"} addressed by a parameter and ` +
+        `${unbound.length === 1 ? "has" : "have"} no entry in DYNAMIC_PAGES:\n\n` +
+        unbound.map((pattern) => `    ${pattern}`).join("\n") +
+        "\n\n  Bind each to a seed in scripts/smoke-pages.mjs. Opening it with an invented id\n" +
+        "  would log a 404 and measure the wrong page, so the pass refuses to run.\n",
+    );
+    process.exit(1);
+  }
   const storageKey = skinStorageKey();
   const playwrightEntry = resolvePlaywright();
   if (playwrightEntry === null) {
@@ -787,8 +950,9 @@ async function main() {
   try {
     await waitForHealth(baseUrl, headers, serverLog);
 
+    await requireSeededUsage(baseUrl, headers);
     const seeds = await seed(baseUrl, headers, sandbox.workspace);
-    const pages = routes(seeds);
+    const pages = routes(patterns, seeds);
     console.log(
       `${pages.length} pages × ${SKINS.length} skins × ${WIDTHS.length} widths ` +
         `against ${baseUrl}\n`,
@@ -811,10 +975,9 @@ async function main() {
             [storageKey, skin.attribute],
           );
         }
-        for (const route of pages) {
-          const result = await checkPage(context, baseUrl, route, width, skin);
+        for (const { pattern: name, url } of pages) {
+          const result = await checkPage(context, baseUrl, url, width, skin);
           checked += 1;
-          const name = label(route, seeds);
           const where = `${skin.name.padEnd(8)} ${String(width).padEnd(5)}`;
           if (result.problems.length === 0) {
             console.log(`  ok    ${where} ${name}`);
