@@ -2615,6 +2615,38 @@ describe("a work cycle cannot take the Codex denial's directory away from root",
     return home;
   }
 
+  /**
+   * Where the boot put `name`, or null: inside a directory of its own the boot
+   * made in the Codex home, which only root can enter, never at a name beside
+   * it. Board task `d7c19b38`: a name beside it is one a cycle can predict from
+   * the clock and plant something at first.
+   */
+  function movedAside(home: string, name: string): string | null {
+    for (const entry of fs.readdirSync(home)) {
+      if (!entry.startsWith(".moved-aside.")) continue;
+      const dir = path.join(home, entry);
+      const stat = fs.lstatSync(dir);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) continue;
+      assert.equal(stat.mode & 0o777, 0o700, `${dir} is ${(stat.mode & 0o777).toString(8)}, so the agents can reach what it holds`);
+      if (fs.readdirSync(dir).includes(name)) return path.join(dir, name);
+    }
+    return null;
+  }
+
+  /**
+   * Something a cycle planted at every name the boot used to move to: the
+   * epoch-stamped one, for each second `date` is stubbed to, as `kind`.
+   */
+  function plantAtClockNames(home: string, name: string, kind: "link" | "directory", elsewhere: string): void {
+    const planted = path.join(home, `${name}.moved-aside.1234567890`);
+    if (kind === "link") {
+      fs.symlinkSync(elsewhere, planted);
+    } else {
+      fs.mkdirSync(planted);
+      fs.writeFileSync(path.join(planted, "keep"), "");
+    }
+  }
+
   it("ships the Codex home root's and sticky, so a fresh volume starts that way", () => {
     assert.ok(codexHome, "docker-entrypoint.sh no longer names the Codex home");
     const reaching = chownGrants().filter(
@@ -2674,9 +2706,9 @@ describe("a work cycle cannot take the Codex denial's directory away from root",
       const calls = boot(home);
       const rules = fs.lstatSync(path.join(home, "rules"));
       assert.equal(rules.isDirectory() && !rules.isSymbolicLink(), true, `rules/ is still ${what}`);
-      assert.equal(
-        fs.readdirSync(home).some((name) => name.startsWith("rules.moved-aside.")),
-        true,
+      assert.notEqual(
+        movedAside(home, "rules"),
+        null,
         `${what} was deleted rather than moved aside where the operator can see it`,
       );
       assert.deepEqual(
@@ -2688,18 +2720,36 @@ describe("a work cycle cannot take the Codex denial's directory away from root",
   });
 
   it("moves a leftover aside within the Codex home, never into a directory a link names", () => {
-    // The name it moves to is one a work cycle can predict, so it can plant a
-    // link to any directory there first. A plain `mv` would then have root put
-    // the cycle's own file into that directory — `/etc/profile.d` as easily as
-    // anywhere — which is a privilege escalation rather than a tidy-up.
+    // A name a work cycle can predict is one it can plant a link to any
+    // directory at first. A plain `mv` would then have root put the cycle's own
+    // file into that directory — `/etc/profile.d` as easily as anywhere — which
+    // is a privilege escalation rather than a tidy-up.
     const elsewhere = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-codex-elsewhere-")));
     const home = scratchHome((home) => {
       fs.writeFileSync(path.join(home, "rules"), "planted");
-      fs.symlinkSync(elsewhere, path.join(home, "rules.moved-aside.1234567890"));
+      plantAtClockNames(home, "rules", "link", elsewhere);
     });
     boot(home, ["date() { echo 1234567890; }"]);
     assert.deepEqual(fs.readdirSync(elsewhere), [], "root moved the planted file through the link");
     assert.equal(fs.lstatSync(path.join(home, "rules")).isDirectory(), true);
+  });
+
+  it("moves a leftover at rules aside whatever a cycle planted at the names the clock predicts", () => {
+    // Board task `d7c19b38`. A directory at `rules.moved-aside.<epoch>` made
+    // `mv -T` of a file at `rules` fail with EISDIR, and the `mkdir` after it
+    // then failed on the file, so a cycle that planted a day of seconds kept
+    // every Codex cycle refused across every restart in that day.
+    const elsewhere = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-codex-elsewhere-")));
+    const home = scratchHome((home) => {
+      fs.writeFileSync(path.join(home, "rules"), "planted");
+      plantAtClockNames(home, "rules", "directory", elsewhere);
+    });
+    boot(home, ["date() { echo 1234567890; }"]);
+    const rules = fs.lstatSync(path.join(home, "rules"));
+    assert.equal(rules.isDirectory() && !rules.isSymbolicLink(), true, "rules/ is still the planted file");
+    const aside = movedAside(home, "rules");
+    assert.notEqual(aside, null, "the planted file was not moved aside");
+    assert.equal(fs.readFileSync(aside!, "utf8"), "planted");
   });
 
   /**
@@ -2725,9 +2775,9 @@ describe("a work cycle cannot take the Codex denial's directory away from root",
       boot(home);
       // `readdir`, not `existsSync`, which reads a dangling link as absent.
       assert.equal(fs.readdirSync(home).includes("config.toml"), false, `config.toml is still ${what}`);
-      assert.equal(
-        fs.readdirSync(home).some((name) => name.startsWith("config.toml.moved-aside.")),
-        true,
+      assert.notEqual(
+        movedAside(home, "config.toml"),
+        null,
         `${what} was deleted rather than moved aside where the operator can see it`,
       );
     }
@@ -2736,19 +2786,28 @@ describe("a work cycle cannot take the Codex denial's directory away from root",
     const home = scratchHome((home) => fs.writeFileSync(path.join(home, "config.toml"), "y = 2\n"));
     boot(home);
     assert.equal(fs.readFileSync(path.join(home, "config.toml"), "utf8"), "y = 2\n");
-    assert.equal(fs.readdirSync(home).some((name) => name.startsWith("config.toml.moved-aside.")), false);
+    assert.deepEqual(fs.readdirSync(home).filter((name) => name.includes("moved-aside")), []);
   });
 
-  it("never moves a config.toml leftover into a directory a link at its aside name names", () => {
-    // `rules`' case above, for a directory: `mv -T` refuses to put one over a
-    // link, so the boot leaves it, warns, and the cycle stays refused.
-    const elsewhere = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-codex-elsewhere-")));
-    const home = scratchHome((home) => {
-      fs.mkdirSync(path.join(home, "config.toml"));
-      fs.writeFileSync(path.join(home, "config.toml", "planted"), "");
-      fs.symlinkSync(elsewhere, path.join(home, "config.toml.moved-aside.1234567890"));
-    });
-    boot(home, ["date() { echo 1234567890; }"]);
-    assert.deepEqual(fs.readdirSync(elsewhere), [], "root moved the planted directory through the link");
+  it("moves a config.toml leftover aside whatever a cycle planted at the names the clock predicts", () => {
+    // Board task `d7c19b38`. With a link or a directory at
+    // `config.toml.moved-aside.<epoch>`, `mv -T` of a directory failed, so the
+    // boot left it, warned, and every Codex cycle stayed refused; a cycle that
+    // planted a day of seconds held that across every restart in the day. And
+    // nothing may ever go through the link into the directory it names.
+    for (const kind of ["link", "directory"] as const) {
+      const elsewhere = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-codex-elsewhere-")));
+      const home = scratchHome((home) => {
+        fs.mkdirSync(path.join(home, "config.toml"));
+        fs.writeFileSync(path.join(home, "config.toml", "planted"), "");
+        plantAtClockNames(home, "config.toml", kind, elsewhere);
+      });
+      boot(home, ["date() { echo 1234567890; }"]);
+      assert.deepEqual(fs.readdirSync(elsewhere), [], `root moved the planted directory through the ${kind}`);
+      assert.equal(fs.readdirSync(home).includes("config.toml"), false, `config.toml is still a directory behind a planted ${kind}`);
+      const aside = movedAside(home, "config.toml");
+      assert.notEqual(aside, null, `the directory behind a planted ${kind} was not moved aside`);
+      assert.deepEqual(fs.readdirSync(aside!), ["planted"]);
+    }
   });
 });

@@ -65,6 +65,65 @@ environment's proxy at a closed or logging loopback port with
   guard passes both, being regular files: board task `93f1c142`. Caveat: run as
   the file's owner rather than a second uid; one version, a fake key.
 
+- **Entries a cycle plants at the clock-stamped aside names no longer stop
+  the boot's repair, 2026-11-09.** Board task `d7c19b38`. The entrypoint's
+  `CODEX_HOME` block, extracted and run under `dash` and under `bash` against
+  a scratch home with a directory at `config.toml`, a file at `rules`, and a
+  link and a non-empty directory planted at each `<name>.moved-aside.<epoch>`
+  for the next 120 seconds of the real clock. Before the change both repairs
+  failed, the boot printing the `config.toml` warning and the `rules`
+  refusal. After it both moved, each into a `.moved-aside.XXXXXX` directory
+  `mktemp -d` made at 0700, and nothing went through a planted link. The
+  `deployment.test.ts` cases for each name, with `date` stubbed, failed before
+  and pass after. Caveat: not as root, not in a container, so that the later
+  boots' chown loop skips root's aside directory is read from its `0:*` case.
+
+- **Of sixteen regular `config.toml` shapes, four fail the cycle's trust
+  write, and `login status` names those four and six more, 2026-11-09.**
+  Board task `93f1c142`, the argv above, one run per shape. The repository's
+  MCP server started over `[[[`, a byte that is not UTF-8, and the cycle's
+  own file at 0000 or 0200, with the file left as it was. It did not start
+  over an empty file, an `untrusted` entry, `projects` as an integer, a
+  string, an array or an inline table, a project entry that is a string,
+  `trust_level = 5`, `model = 5`, an unknown key, a BOM, or 0400. Each of
+  those got its trust entry. `login status` exited 1 with one `Error loading
+  configuration: …` line over the four, and over the six type errors too;
+  it answered normally over the rest. So it refuses everything the write
+  fails on, plus valid TOML of the wrong type. The binary's own line for the
+  failure is `failed to persist trusted project state … continuing with
+  in-memory trust for this thread`. Caveat: one uid; one run per shape.
+
+- **The guard now refuses a Codex cycle over a regular `config.toml` it cannot
+  read or replace, or that Codex cannot load, 2026-11-09.** Board task
+  `93f1c142`. `codexConfigUnusableBecause` refuses one the cycle's uid does
+  not own or whose owner read bit is off, and without the split one
+  `access(2)` cannot read. Before each cycle, `codexConfigLoadRefusal` asks
+  `login status` as the agents. Driven through the compiled module against
+  the real CLI, it refused `[[[`, a non-UTF-8 byte, 0000, 0200 and `model =
+  5`, each quoting Codex's line. It answered null over an absent file
+  (starting nothing), an empty file, a trusted entry and 0400, at 13–19 ms
+  each. Over ChatGPT tokens that expired long ago, `login status` made no
+  request to a logging token endpoint and proxy, and left `auth.json` as it
+  was. Three `codexRules.test.ts` and three `codexAuth.test.ts` cases failed
+  on the code before and pass after. Caveat: one uid. That the sticky bit
+  refuses the agents' rename over a file they do not own is read, not run.
+  The run loop's refusal was not driven, only the two functions.
+
+- **`-p <profile>` does not keep the project layer out, 2026-11-09.** Board
+  task `93f1c142`, option (c). Over a `[[[` `config.toml`, a cycle given `-p
+  uf` and an empty `$CODEX_HOME/uf.config.toml` still started the
+  repository's MCP server. Over an absent `config.toml`, the trust entry went
+  to `config.toml`, and the profile file stayed empty. Caveat: one run each.
+
+- **A cycle's ChatGPT token refresh writes through a linked `auth.json`,
+  2026-11-09.** Board task `93f1c142`, option (b). Home S's `auth.json` was a
+  link to home A's, whose tokens had expired long ago, and
+  `CODEX_REFRESH_TOKEN_URL_OVERRIDE` pointed at a loopback stub. `codex exec`
+  under S posted `grant_type=refresh_token`. A's file then held the rotated
+  refresh token and a new `last_refresh`, and S's link was still a link.
+  That answers one objection to a per-cycle home, not the rest (board task
+  `27f99097`). Caveat: one run, fake tokens.
+
 - **TokenEconomizer's Codex tool pruning, written into a repository's
   `.codex/config.toml`, removes no tool from a Codex work cycle, 2026-11-09.**
   Board task `786dd327`, codex-cli 0.153.4. The keys are
@@ -97,3 +156,12 @@ environment's proxy at a closed or logging loopback port with
   Codex to show the same sentence. Then `docker compose restart usagefoundry`,
   expect the boot log's `was not a file; moved it to …` and the next cycle to
   run, and move `config.toml.mine` back.
+
+- **The regular-file refusals under the uid split, in a booted container.**
+  Every case above ran as one uid. Settle there, restoring the file after
+  each step. As root, `chown 0:0 /home/node/.codex/config.toml`: expect the
+  next Codex cycle to be refused with `… is owned by uid 0, not by uid 1000`.
+  As the agent uid, `chmod 000` it: expect `… is mode 0000`, with Settings →
+  Codex naming the read. And as the agent uid, `printf '[[[' >` it: expect
+  `Codex cannot load its configuration (…:1:3: …)` in both places. Board task
+  `9dd37c12` decides whether root's file needs refusing at all.

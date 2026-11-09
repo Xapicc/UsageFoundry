@@ -181,6 +181,40 @@ describe("prepareCodexRules", () => {
       fs.rmSync(config);
     }
   });
+
+  it(
+    "refuses a config.toml this uid cannot read without a uid split, and passes one it can only read",
+    { skip: process.getuid?.() === 0 ? "root reads any file" : false },
+    () => {
+      // Board task `93f1c142`: over the cycle's own file at mode 0000 or 0200
+      // its trust write failed and its repository's `.codex/config.toml`
+      // loaded, 3 of 3 (0.153.4). 0400 passed, since the write is a rename.
+      const config = path.join(process.env.CODEX_HOME!, "config.toml");
+      for (const mode of [0o000, 0o200]) {
+        fs.writeFileSync(config, "");
+        fs.chmodSync(config, mode);
+        try {
+          const delivery = mod.prepareCodexRules();
+          assert.equal(delivery.kind, "unavailable", `answered ready over a mode ${mode.toString(8)} config.toml`);
+          const reason = delivery.kind === "unavailable" ? delivery.reason : "";
+          assert.equal(reason.includes(`${config} cannot be read by this server's uid`), true, reason);
+          assert.match(reason, /loads its repository's \.codex\/config\.toml/);
+          // The boot moves only a thing that is not a file aside, so the
+          // refusal must not send the operator to a restart that changes nothing.
+          assert.match(reason, /a restart does not/);
+        } finally {
+          fs.rmSync(config, { force: true });
+        }
+      }
+      fs.writeFileSync(config, "");
+      fs.chmodSync(config, 0o400);
+      try {
+        assert.equal(mod.prepareCodexRules().kind, "ready");
+      } finally {
+        fs.rmSync(config, { force: true });
+      }
+    },
+  );
 });
 
 /**
@@ -211,8 +245,8 @@ describe("prepareCodexRules when the cycle runs under another uid", () => {
   }
 
   /** The refusal's reason, after asserting there is one and that it named `named`. */
-  function refused(named: string, owner = self): string {
-    const delivery = mod.prepareCodexRules(owner);
+  function refused(named: string, owner = self, cycleUid?: number | null): string {
+    const delivery = mod.prepareCodexRules(owner, cycleUid);
     assert.equal(delivery.kind, "unavailable", `answered ready with ${named} untrustworthy`);
     const reason = delivery.kind === "unavailable" ? delivery.reason : "";
     assert.equal(
@@ -310,6 +344,47 @@ describe("prepareCodexRules when the cycle runs under another uid", () => {
     assert.equal(mod.prepareCodexRules(self).kind, "ready");
     fs.writeFileSync(configFile(), '[projects."/w"]\ntrust_level = "trusted"\n');
     assert.equal(mod.prepareCodexRules(self).kind, "ready");
+    // And the cycle's own 0600 file, which every install after the first has:
+    // an owner or mode check that refused it would refuse every Codex cycle.
+    assert.equal(mod.prepareCodexRules(self, self).kind, "ready");
+  });
+
+  it("refuses a config.toml the cycle's uid does not own, sending nobody to a restart", () => {
+    // Board task `93f1c142`. The trust write renames a new file over this one,
+    // and the sticky home refuses that to anyone but the file's owner: root's
+    // own file, or the agents' under a changed UF_AGENT_UID. The rename refusal
+    // is the sticky bit's, read rather than run, since the suite has one uid;
+    // a failed write loading the repository's file was measured two other ways.
+    homeWithMode(0o1770);
+    fs.writeFileSync(configFile(), "");
+    const reason = refused(configFile(), self, self + 1);
+    assert.equal(
+      reason.includes(`${configFile()} is owned by uid ${self}, not by uid ${self + 1}`),
+      true,
+      reason,
+    );
+    assert.match(reason, /a restart does not/);
+  });
+
+  it("refuses a config.toml its owner cannot read, and passes one it can only read", () => {
+    // Mode 0000 and 0200 failed the trust write and loaded the repository's
+    // file (0.153.4); 0044 is the same for an owner, whose own bits are the only
+    // ones read. 0400 passed, since a rename needs no write bit on the file.
+    for (const mode of [0o000, 0o200, 0o044]) {
+      homeWithMode(0o1770);
+      fs.writeFileSync(configFile(), "");
+      fs.chmodSync(configFile(), mode);
+      const reason = refused(configFile(), self, self);
+      assert.equal(
+        reason.includes(`is mode ${mode.toString(8).padStart(4, "0")}, which its owner`),
+        true,
+        reason,
+      );
+    }
+    homeWithMode(0o1770);
+    fs.writeFileSync(configFile(), "");
+    fs.chmodSync(configFile(), 0o400);
+    assert.equal(mod.prepareCodexRules(self, self).kind, "ready");
   });
 
   it("refuses a directory at config.toml, saying what it costs and what fixes it", () => {
@@ -361,6 +436,47 @@ describe("prepareCodexRules when the cycle runs under another uid", () => {
       assert.equal(fs.existsSync(rulesDir()), false, "made rules/ under a swappable name");
     } finally {
       fs.chmodSync(parent, 0o700);
+    }
+  });
+});
+
+/**
+ * The parse half of board task `93f1c142`. A regular `config.toml` a cycle
+ * cannot decode failed its trust write and loaded its repository's
+ * `.codex/config.toml`, 3 of 3 (0.153.4), and passes every `stat` check above,
+ * so Codex is asked (`codexConfigLoadRefusal`) and this reads what it said.
+ * Each line is what `login status` printed over such a file, with the scratch
+ * home's path replaced. A reading that missed one passes that file to a cycle
+ * with nothing said; one that matched a status refuses every Codex cycle.
+ */
+describe("codexConfigLoadFailure", () => {
+  const file = "/home/node/.codex/config.toml";
+  const measured = [
+    `${file}:1:3: unquoted keys cannot be empty, expected letters, numbers, \`-\`, \`_\``,
+    `Failed to read config file ${file}: invalid utf-8 sequence of 1 bytes from index 9`,
+    `Failed to read config file ${file}: Permission denied (os error 13)`,
+  ];
+
+  it("turns each failure into a refusal that quotes Codex and says what it costs", () => {
+    for (const why of measured) {
+      const reason = mod.codexConfigLoadFailure(
+        `WARNING: proceeding, even though we could not create PATH aliases: x\nError loading configuration: ${why}\n`,
+      );
+      assert.equal(typeof reason, "string", `read no failure in: ${why}`);
+      assert.equal(reason!.includes(`Codex cannot load its configuration (${why})`), true, reason!);
+      assert.match(reason!, /loads its repository's \.codex\/config\.toml/);
+      assert.match(reason!, /Rename it aside yourself/);
+    }
+  });
+
+  it("answers null for every answer a loadable file gives", () => {
+    for (const output of [
+      "Logged in using an API key - sk-proj-***-0000",
+      "Logged in using ChatGPT",
+      "Not logged in",
+      "",
+    ]) {
+      assert.equal(mod.codexConfigLoadFailure(output), null, output);
     }
   });
 });

@@ -16,7 +16,9 @@ import { after, describe, it, mock } from "node:test";
  * before printing. Every start appends its arguments to `argv.log`, one start
  * per line split on `\u001f`. Started as `app-server` it exits before
  * answering; past any leading `-c` pairs, `login status`, `login
- * --with-api-key` and `logout` answer as a signed-out CLI does and exit.
+ * --with-api-key` and `logout` answer as a signed-out CLI does and exit. Over
+ * a `$CODEX_HOME/config.toml` that starts `[[[`, every command past the pairs
+ * prints the line 0.153.4 printed over one and exits 1.
  */
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-codex-auth-")));
 const pidsDir = path.join(tmp, "pids");
@@ -30,6 +32,9 @@ fs.writeFileSync(
     `printf '%s\\037' "$@" >> "${argvLog}"; echo >> "${argvLog}"`,
     'if [ "$1" = app-server ]; then exit 0; fi',
     'while [ "$1" = -c ]; do shift 2; done',
+    `if [ "$(head -c 3 "$CODEX_HOME/config.toml" 2>/dev/null)" = '[[[' ]; then`,
+    "  printf 'Error loading configuration: %s/config.toml:1:3: unquoted keys cannot be empty, expected letters, numbers, `-`, `_`\\n' \"$CODEX_HOME\"; exit 1",
+    "fi",
     'if [ "$1 $2" = "login status" ]; then echo "Not logged in"; exit 1; fi',
     'if [ "$1 $2" = "login --with-api-key" ]; then read -r line; exit 0; fi',
     'if [ "$1" = logout ]; then echo "Not logged in"; exit 0; fi',
@@ -62,6 +67,7 @@ assert.equal(
 const {
   beginLogin,
   cancelLogin,
+  codexConfigLoadRefusal,
   extractDeviceLogin,
   lastLoginFailure,
   normalizeApiKey,
@@ -443,6 +449,75 @@ describe("a directory at config.toml", () => {
     } finally {
       cancelLogin();
       fs.rmdirSync(file);
+    }
+  });
+});
+
+/**
+ * Board task `93f1c142`: a regular `config.toml` Codex cannot parse or read
+ * passes the check above, and on 0.153.4 each child then exited 1 with one
+ * `Error loading configuration: …:1:3: unquoted keys cannot be empty…` or
+ * `… Permission denied (os error 13)` line, which is all the panel had to
+ * quote. A work cycle over the same file loaded its repository's
+ * `.codex/config.toml`, so the run loop asks `codexConfigLoadRefusal` before
+ * each one, and an answer of "fine" there is the one that matters.
+ */
+describe("a config.toml Codex cannot parse or read", () => {
+  const file = () => path.join(config.CODEX_HOME, "config.toml");
+
+  it("is named in a sentence by status and the sign-out, not in the CLI's words", async () => {
+    fs.mkdirSync(config.CODEX_HOME, { recursive: true });
+    fs.writeFileSync(file(), "[[[ not toml\n");
+    try {
+      for (const answer of [await readAuthStatus(), await signOut()]) {
+        assert.equal(answer.ok, false, JSON.stringify(answer));
+        const error = answer.ok ? "" : answer.error;
+        assert.match(error, /^Codex cannot load its configuration \(/);
+        assert.equal(error.includes(`${file()}:1:3: unquoted keys cannot be empty`), true, error);
+        assert.match(error, /loads its repository's \.codex\/config\.toml/);
+      }
+    } finally {
+      fs.rmSync(file(), { force: true });
+    }
+  });
+
+  it(
+    "names one this uid cannot read without starting a child",
+    { skip: process.getuid?.() === 0 ? "root reads any file" : false },
+    async () => {
+      fs.mkdirSync(config.CODEX_HOME, { recursive: true });
+      fs.writeFileSync(file(), "");
+      fs.chmodSync(file(), 0o000);
+      fs.rmSync(argvLog, { force: true });
+      try {
+        const answer = await readAuthStatus();
+        const error = answer.ok ? "" : answer.error;
+        assert.equal(error.includes(`${file()} cannot be read by this server's uid`), true, error);
+        assert.equal(fs.existsSync(argvLog), false, "a child was started over it");
+      } finally {
+        fs.rmSync(file(), { force: true });
+      }
+    },
+  );
+
+  it("refuses a work cycle over it, and asks nothing over an absent file", async () => {
+    fs.mkdirSync(config.CODEX_HOME, { recursive: true });
+    fs.rmSync(file(), { force: true });
+    fs.rmSync(argvLog, { force: true });
+    // A fresh install, where the cycle's own write makes the file.
+    assert.equal(await codexConfigLoadRefusal(), null);
+    assert.equal(fs.existsSync(argvLog), false, "a child was started over an absent file");
+
+    fs.writeFileSync(file(), '[projects."/w"]\ntrust_level = "trusted"\n');
+    try {
+      assert.equal(await codexConfigLoadRefusal(), null, "refused a file Codex loads");
+      assert.deepEqual(loggedStarts(), [[...SIGN_IN_PINS, "login", "status"]]);
+      fs.writeFileSync(file(), "[[[ not toml\n");
+      const refusal = await codexConfigLoadRefusal();
+      assert.match(refusal ?? "", /^Codex cannot load its configuration \(/);
+      assert.equal((refusal ?? "").includes(`${file()}:1:3:`), true, refusal ?? "answered null");
+    } finally {
+      fs.rmSync(file(), { force: true });
     }
   });
 });

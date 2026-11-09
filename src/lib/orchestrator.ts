@@ -132,6 +132,7 @@ import { prepareReadGuard } from "./readGuard";
 // generated on disk for a cycle to pick up — and unlike it in the one way that
 // matters: an unavailable read guard logs, an unavailable denial refuses.
 import { prepareCodexRules } from "./codexRules";
+import { codexConfigLoadRefusal } from "./codexAuth";
 import { prepareCodexInstructions } from "./codexInstructions";
 import {
   codexGuardSnapshot,
@@ -11739,14 +11740,19 @@ export async function startRun(id: string): Promise<void> {
       // supervising every run in flight. `codexRules.ts` carries what the file
       // is, why it is a file rather than a flag, and what it does not cover.
       // The same call refuses a `$CODEX_HOME/config.toml` that is not a regular
-      // file, since a cycle that cannot write its trust entry there silently
-      // loads its repository's Codex config instead.
+      // file, or one the cycle cannot read or replace, since a cycle that cannot
+      // write its trust entry there silently loads its repository's Codex
+      // config instead; and Codex itself is asked whether it can parse it.
       if (run.provider === "codex") {
         const rules = prepareCodexRules();
         if (rules.kind === "unavailable") {
           throw new Error(
             `Refusing to spawn a Codex work cycle: ${rules.reason}`,
           );
+        }
+        const unloadable = await codexConfigLoadRefusal();
+        if (unloadable) {
+          throw new Error(`Refusing to spawn a Codex work cycle: ${unloadable}`);
         }
         // The operator's `~/.claude` rules, as the `AGENTS.md` Codex reads.
         // Degraded rather than refused, unlike the denial above: a cycle

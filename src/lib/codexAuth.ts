@@ -4,7 +4,11 @@ import {
   type SpawnOptions,
 } from "node:child_process";
 import fs from "node:fs";
-import { codexConfigUnusableBecause } from "./codexRules";
+import {
+  CODEX_CONFIG_FILE,
+  codexConfigLoadFailure,
+  codexConfigUnusableBecause,
+} from "./codexRules";
 import { CODEX_BIN, CODEX_HOME, spawnCommand } from "./config";
 import { childCredentials } from "./privsep";
 import { agentEnvironment } from "./stacks";
@@ -268,7 +272,13 @@ export function parseCodexStatus(raw: string): CodexAuthResult<CodexAuthStatus> 
 
 /** What went wrong, in the CLI's own words where it left any, minus any secret. */
 function describeOutput(text: string): string {
-  const line = redactSecrets(stripEscapes(text))
+  const clean = redactSecrets(stripEscapes(text));
+  // A `config.toml` Codex cannot parse or read fails every child here with one
+  // `Error loading configuration` line, which says neither what that costs the
+  // work cycles nor what to do; `codexConfigLoadFailure` says both.
+  const unloadable = codexConfigLoadFailure(clean);
+  if (unloadable) return unloadable;
+  const line = clean
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean)
@@ -442,8 +452,11 @@ const SIGN_IN_CONFIG_PINS = [
  * regular file, which a work cycle can leave: each of them exited 1 on one
  * with `Error loading configuration`, the sign-out included (measured on
  * 0.153.4), so a refusal costs no sign-in that would have worked, and it says
- * where the thing came from and what removes it. Reported, never repaired,
- * for `codexConfigUnusableBecause`'s reason.
+ * where the thing came from and what removes it. The same goes for one this
+ * uid cannot read, without the split; a file that fails to parse, or that only
+ * the agents cannot read, is named from the child's own line instead, by
+ * `describeOutput`. Reported, never repaired, for
+ * `codexConfigUnusableBecause`'s reason.
  */
 function ensureCodexHome(): CodexAuthResult<null> {
   try {
@@ -473,6 +486,43 @@ function lockCodexHome(): void {
   } finally {
     fs.closeSync(fd);
   }
+}
+
+/**
+ * Why a Codex work cycle may not start over the `config.toml` Codex would load,
+ * asked of Codex itself, or null: the parse half of board task `93f1c142`, for
+ * the run loop to refuse on after `prepareCodexRules`.
+ *
+ * `login status`, through this file's spawn, because that child's surface is
+ * already measured: the sign-in pins, no write to `CODEX_HOME`, no connection a
+ * planted key moved, and no token refresh over a ChatGPT login whose tokens
+ * expired long ago (0.153.4, a logging token endpoint and proxy). As the
+ * agents' uid, so a read only they cannot do fails here as it would in the
+ * cycle. 13–19 ms a cycle through this spawn, measured.
+ *
+ * An absent file asks nothing: a cycle's own write creates it, and refusing on
+ * it would refuse a fresh install. A child that could not be asked refuses the
+ * cycle rather than passing it, since this is the one check that sees a file
+ * Codex cannot parse, and a cycle that could not start it would not start
+ * either. Not a lock, for `codexConfigUnusableBecause`'s reason: a cycle
+ * running beside can still swap the file in the ~0.1 s before this cycle's
+ * write, and this child adds its own 13–19 ms to that gap.
+ */
+export async function codexConfigLoadRefusal(): Promise<string | null> {
+  try {
+    fs.lstatSync(CODEX_CONFIG_FILE);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    // Anything else is for Codex to answer, below, as the cycle would meet it.
+  }
+  const res = await runCodex(["login", "status"], COMMAND_TIMEOUT_MS);
+  if (res.spawnError) {
+    return (
+      `Could not ask \`${CODEX_BIN} login status\` whether Codex can load ${CODEX_CONFIG_FILE}, ` +
+      `and a work cycle that cannot loads its repository's .codex/config.toml: ${res.spawnError}`
+    );
+  }
+  return codexConfigLoadFailure(redactSecrets(stripEscapes(res.output)));
 }
 
 /** One command to completion. Never throws; a failure is a value. */

@@ -183,15 +183,28 @@ if [ -n "${UF_AGENT_UID:-}" ] && [ -d "$CODEX_HOME_VOLUME" ]; then
   # Anything at `rules` that is not a real directory is moved aside rather than
   # trusted or deleted. Neither Codex nor this app puts a file or a link there,
   # so it is a work cycle's doing, and the operator may want to see what it was.
-  # `-T` because the name moved to is one a cycle can predict and plant a link
-  # to a directory at: without it, root would move the cycle's file *into*
-  # whatever that link names. Nothing but this script is running yet, so
-  # nothing can race the `mkdir`.
+  #
+  # **Into a directory `mktemp -d` makes, never to a name beside it.** This used
+  # to be `rules.moved-aside.$(date +%s)`, which a cycle can predict and, with
+  # the agents' group bit on this directory, create first: a directory planted
+  # there failed the `mv` with EISDIR and the `mkdir` below on the file, so
+  # planting a day of seconds kept every Codex cycle refused through every
+  # restart in that day (board task `d7c19b38`). `mktemp` creates its name
+  # exclusively, retrying on one that exists, at 0700 as root, so nothing a
+  # cycle made can be at the destination and nothing it runs can reach what
+  # was moved. The chown loop above skips it on later boots as root's. `-T`
+  # stays for the case it was added for, a link at the destination naming a
+  # directory root would otherwise move the cycle's file into. Nothing but this
+  # script is running yet, so nothing can race the `mkdir`.
   if [ -L "$codex_rules" ] || { [ -e "$codex_rules" ] && [ ! -d "$codex_rules" ]; }; then
-    codex_rules_aside="$codex_rules.moved-aside.$(date +%s)"
-    if mv -T -- "$codex_rules" "$codex_rules_aside" 2>/dev/null; then
+    codex_aside=
+    if codex_aside="$(mktemp -d "$CODEX_HOME_VOLUME/.moved-aside.XXXXXX" 2>/dev/null)" &&
+       mv -T -- "$codex_rules" "$codex_aside/rules" 2>/dev/null; then
       echo "[usagefoundry] $codex_rules was not a directory; moved it to" \
-           "$codex_rules_aside and made a directory only root can write." >&2
+           "$codex_aside/rules and made a directory only root can write." >&2
+    else
+      # Empty unless the `mv` succeeded, and `rmdir` takes nothing else.
+      [ -z "$codex_aside" ] || rmdir "$codex_aside" 2>/dev/null
     fi
   fi
   if [ -L "$codex_rules" ] || ! mkdir -p "$codex_rules" 2>/dev/null ||
@@ -210,14 +223,18 @@ if [ -n "${UF_AGENT_UID:-}" ] && [ -d "$CODEX_HOME_VOLUME" ]; then
   # thing to the Settings panel instead of starting a child. It is moved
   # aside here rather than at cycle time, where root's rename would race a
   # cycle still running, and not replaced: the next cycle's own write creates
-  # the agents' file. `-T` for the `rules` block's reason.
+  # the agents' file. Into a `mktemp -d` directory with `-T`, for the `rules`
+  # block's two reasons: a link or a directory planted at a clock-stamped name
+  # failed this `mv` too, leaving the cycles refused.
   codex_config="$CODEX_HOME_VOLUME/config.toml"
   if [ -L "$codex_config" ] || { [ -e "$codex_config" ] && [ ! -f "$codex_config" ]; }; then
-    codex_config_aside="$codex_config.moved-aside.$(date +%s)"
-    if mv -T -- "$codex_config" "$codex_config_aside" 2>/dev/null; then
+    codex_aside=
+    if codex_aside="$(mktemp -d "$CODEX_HOME_VOLUME/.moved-aside.XXXXXX" 2>/dev/null)" &&
+       mv -T -- "$codex_config" "$codex_aside/config.toml" 2>/dev/null; then
       echo "[usagefoundry] $codex_config was not a file; moved it to" \
-           "$codex_config_aside, and Codex will make a new one." >&2
+           "$codex_aside/config.toml, and Codex will make a new one." >&2
     else
+      [ -z "$codex_aside" ] || rmdir "$codex_aside" 2>/dev/null
       echo "[usagefoundry] cannot move $codex_config aside — it is not a file, so" \
            "every Codex work cycle and sign-in will be refused until it is gone." >&2
     fi
