@@ -24,20 +24,26 @@ Twenty are renderings rather than functions — every `*.test.tsx` in the tree, 
 |---|---|
 | `branchRival.test.ts` |  |
 | `budget.test.ts` | [harnesses] |
-| `checkoutGitClock.test.ts` |  |
-| `cutOffCheckout.test.ts` | [cycle] |
 | `diff.test.ts` |  |
 | `land.test.ts` | [landing], [merge-queue], [harnesses], [contention] |
-| `mountRootIsolation.test.ts` |  |
-| `orchestrator.test.ts` | [cycle], [edges], [argv], [functions], [samples], [parsers], [codex-cycle], [budgets], [pricing], [landing], [merge-queue], [sandbox], [harnesses], [token-economizer] |
+| `orchestrator.test.ts` | [cycle], [edges], [argv], [functions], [samples], [parsers], [codex-cycle], [budgets], [pricing], [landing], [merge-queue], [sandbox], [harnesses], [token-economizer], [slots] |
 | `patch.test.ts` |  |
 | `planUsage.test.ts` |  |
 | `queueOrder.test.ts` |  |
 | `repoSpendAdmission.test.ts` |  |
 | `runOrigin.test.ts` |  |
 | `runWriteOrder.test.ts` | [write-order] |
-| `slotProbes.test.ts` |  |
 | `windows.test.ts` | [harnesses], [pricing] |
+
+## [Checkout slots: the walk, the store and the git that readies one](testing/checkout-slots.md)
+
+| Test file | Also in |
+|---|---|
+| `checkoutGitClock.test.ts` |  |
+| `cutOffCheckout.test.ts` | [cycle] |
+| `mountRootIsolation.test.ts` |  |
+| `slotLeafLink.test.ts` |  |
+| `slotProbes.test.ts` |  |
 
 ## [Run write order](testing/run-write-order.md)
 
@@ -432,6 +438,7 @@ done                              # names any test no topic file names
 It prints nothing as this is written. Whoever owns a file it names owes that file's topic file the paragraph stating what it earned against the bar above, and this page its row. Do not put the name in a topic file before the paragraph exists — not in a list, not in another test's paragraph — because a mention is all the check can see, and that would silence it for a test nobody wrote grounds for. It is a floor rather than a proof: it cannot tell a paragraph from a passing mention.
 
 [queue]: testing/run-queue-and-admission.md
+[slots]: testing/checkout-slots.md
 [write-order]: testing/run-write-order.md
 [cycle]: testing/work-cycle-prompts-and-endings.md
 [fleet]: testing/fleet-stop-and-hold.md
