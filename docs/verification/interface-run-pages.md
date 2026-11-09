@@ -181,6 +181,29 @@ panels and the API payloads are in
   submitted, so that typing 2 there buys one cycle is `reopenRun`'s arithmetic
   read from source rather than a pick-up driven in a browser.
 
+- **`/runs` opens narrowed to a finished status from a link, 2026-11-09**,
+  standalone bundle built from `3a67f03e` and served by hand (`npm run
+  smoke-pages` on the same bundle: 104 of 104 page loads clean), a throwaway
+  `DATA_DIR` holding nine settled runs (two needs-review, four failed, one
+  stopped, two completed, ages from 1 hour to 30 days) and one paused run,
+  headless Chromium at 1280. `/runs?status=needs-review`: "Finished in the last
+  24 hours" held the one needs-review run of the day, the fold was open on
+  "Needs review" with the one from 30 days back, "In flight" kept its paused run,
+  and "Showing needs-review runs only · Show all" sat under the finished
+  heading. `?status=failed`: the day's two failed runs, the fold open on Failed
+  with the two older. `?status=paused` still narrowed only "In flight", with the
+  fold closed on All. `?status=bogus` and `?status=all` drew "“bogus” is not a
+  status this page narrows to." with no run in "In flight". From `?status=failed`,
+  Show all went to `/runs` and the fold went back to All and closed. The
+  dashboard's strip, clicked from `/`, landed on the first two URLs with the fold
+  open, and its counts (2 and 2) equalled the rows on the page (1 + 1, and 2 in
+  the day band). No console error; at 390 the document's `scrollWidth` equalled
+  its `clientWidth` on three narrowed URLs. Caveat: the fold held at most four
+  rows, so a narrowed fold or day band paged past its first page was not driven,
+  nor was a URL change under a page that is on the day band's second page. The
+  Fleet card's "Pick up N stopped" follows the narrowed day band (2 under
+  `?status=failed`, 3 without) — read as the rule it already had, not decided.
+
 ## Not yet verified by hand
 
 - **The Fleet card has not been watched under `docker compose up --build`.**

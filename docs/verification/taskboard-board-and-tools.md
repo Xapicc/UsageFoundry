@@ -199,6 +199,22 @@
   work touched; not `spawnAssist`'s child; 5 of 27 replies were saved by hand
   from chat.
 
+- **`/tasks?lane=operator` opens on the lane, 2026-11-09**, the same bundle and
+  seed with six tasks (open: one agent's and two operator-only; claimed: one
+  operator-only; done: one of each), headless Chromium at 1280. The select read
+  "Operator only (4)", Claimed held the operator-only one, Open held the two
+  operator-only rows and not the agent's, Done the one. `?lane=agent` drew the
+  agent's open and done rows; `?lane=bogus` drew "“bogus” is not a lane the board
+  has. Show all" over the whole board with All work chosen. From
+  `?lane=operator`, the sidebar's Taskboard went to `/tasks` and the select
+  returned to All work; choosing All work by hand left the address at
+  `?lane=operator`, which is the rule that the page reads the lane and never
+  writes it. The dashboard's "2 operator-only tasks open", clicked from `/`,
+  landed on the lane with Open holding those 2. No console error; at 390 the
+  document's `scrollWidth` equalled its `clientWidth` on both URLs. Caveat: the
+  seed had no project on any task, so the lane's counts "within the chosen
+  project" were not seen with a project chosen beside a lane from the URL.
+
 ## Not yet verified by hand
 
 - **No model has called the board tools over stdio**; that needs a billed run.
