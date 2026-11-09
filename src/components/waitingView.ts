@@ -27,9 +27,9 @@ export type WaitingView =
 interface Place {
   key: WaitingKey;
   /**
-   * `/runs` takes only an in-flight status in `?status=` and refuses any other,
-   * and the tasks board keeps its operator-only filter in the browser rather
-   * than the URL, so none of these can narrow the page it opens.
+   * Where the count was taken, narrowed to the rows it counted: `/runs` reads
+   * `?status=` and the tasks board reads `?lane=`. A value either page does not
+   * know is refused by name there, so these are spelled as the pages spell them.
    */
   href: string;
   one: string;
@@ -42,14 +42,14 @@ interface Place {
 const PLACES: Record<keyof Omit<WaitingDTO, "failedSince">, Place> = {
   needsReview: {
     key: "needs-review",
-    href: "/runs",
+    href: "/runs?status=needs-review",
     one: "run needs review",
     many: "runs need review",
     name: "Runs needing review",
   },
   failedRecently: {
     key: "failed",
-    href: "/runs",
+    href: "/runs?status=failed",
     one: "run failed in the last 24 hours",
     many: "runs failed in the last 24 hours",
     name: "Runs failed in the last 24 hours",
@@ -70,7 +70,7 @@ const PLACES: Record<keyof Omit<WaitingDTO, "failedSince">, Place> = {
   },
   tasks: {
     key: "tasks",
-    href: "/tasks",
+    href: "/tasks?lane=operator",
     one: "operator-only task open",
     many: "operator-only tasks open",
     name: "Operator-only tasks open",

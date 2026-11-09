@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -9,6 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   MAX_TASK_PAGE,
   type TaskDTO,
@@ -94,8 +96,11 @@ import {
  * show or hide one it can; drawn from anywhere else they would need a mount
  * root joined to a relative path in the browser, which is the second, looser
  * resolver `docs/agent/taskboard.md` exists to prevent. The operator-only filter
- * sits beside it and follows it: in the browser, over the same rows, and not
- * kept in the URL, because the project filter is not.
+ * sits beside it and follows it: in the browser, over the same rows. A link can
+ * choose it — `?lane=` is read, as `/runs` reads `?status=`, so the dashboard's
+ * count of operator-only tasks lands on them — but the page never writes it
+ * back, because the project filter is not in the URL and a lane alone would make
+ * the address claim half of what is on screen.
  */
 
 /**
@@ -223,6 +228,23 @@ function inLane(task: TaskListItemDTO, lane: Lane): boolean {
   if (lane === "all") return true;
   return task.operatorOnly === (lane === "operator");
 }
+
+/**
+ * What `?lane=` asked for. A value naming no lane is refused rather than
+ * dropped, on `/runs`' grounds for `?status=`: opening on every task when the
+ * link said "operator only" reads as the operator-only ones.
+ */
+type LaneAsked = { kind: "chosen"; lane: Lane } | { kind: "refused"; asked: string };
+
+function readLane(asked: string | null): LaneAsked {
+  if (!asked) return { kind: "chosen", lane: "all" };
+  const option = LANE_OPTIONS.find((candidate) => candidate.value === asked);
+  return option
+    ? { kind: "chosen", lane: option.value }
+    : { kind: "refused", asked };
+}
+
+const laneOf = (asked: LaneAsked): Lane => (asked.kind === "chosen" ? asked.lane : "all");
 
 /**
  * One project, as a `<select>` value.
@@ -357,7 +379,22 @@ function DepLine({ deps }: { deps: TaskDepsDTO }) {
   );
 }
 
+/**
+ * `useSearchParams` rather than `window.location.search`, on `/runs`' ground:
+ * the sidebar's Taskboard is a navigation to this same route, which keeps the
+ * page mounted and would leave a one-off reading on the lane a link chose. The
+ * boundary is what `next build` demands of a client page reading it.
+ */
 export default function TasksPage() {
+  return (
+    <Suspense>
+      <TasksView />
+    </Suspense>
+  );
+}
+
+function TasksView() {
+  const askedLane = useSearchParams().get("lane");
   const [tasks, setTasks] = useState<TaskListItemDTO[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [pollError, setPollError] = useState<string | null>(null);
@@ -380,7 +417,16 @@ export default function TasksPage() {
     key: EVERY_PROJECT,
     label: "",
   });
-  const [lane, setLane] = useState<Lane>("all");
+  const laneAsked = readLane(askedLane);
+  const [lane, setLane] = useState<Lane>(() => laneOf(laneAsked));
+  // Follows the URL when it moves under the mounted page, adjusted in the render
+  // that saw the change rather than in an effect, which would draw one frame of
+  // the old lane. Not on every render: a press on the select must outlast one.
+  const [laneAskedFor, setLaneAskedFor] = useState(askedLane);
+  if (laneAskedFor !== askedLane) {
+    setLaneAskedFor(askedLane);
+    setLane(laneOf(laneAsked));
+  }
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -815,6 +861,14 @@ export default function TasksPage() {
       {note && (
         <Notice tone="info" live>
           {note}
+        </Notice>
+      )}
+      {laneAsked.kind === "refused" && (
+        <Notice tone="warn">
+          “{laneAsked.asked}” is not a lane the board has.{" "}
+          <Link href="/tasks" className="max-md:inline-flex max-md:min-h-11 max-md:items-center">
+            Show all
+          </Link>
         </Notice>
       )}
       {loaded && !unreadable && tasks.length > 0 && (

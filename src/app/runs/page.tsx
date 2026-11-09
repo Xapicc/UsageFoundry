@@ -144,9 +144,9 @@ interface Bands {
   active: RunListItemDTO[];
   activeTotal: number;
   /**
-   * What "In flight" was narrowed to when it was read. Carried with the rows
+   * What the bands were narrowed to when they were read. Carried with the rows
    * rather than read off the URL, which moves a request ahead of them, so the
-   * line describing the band always describes the rows under it.
+   * line describing a band always describes the rows under it.
    */
   narrowing: Narrowing;
   /** Runs spending now, for the Live button. */
@@ -197,23 +197,44 @@ function isActiveStatus(status: string): status is ActiveStatus {
   return Object.hasOwn(ACTIVE_ORDER, status);
 }
 
+/** A status a finished run can have, and so one the older-runs fold can be set to. */
+type SettledStatus = Exclude<Filter, "all">;
+
+function isSettledStatus(status: string): status is SettledStatus {
+  return FILTERS.some((option) => option.value !== "all" && option.value === status);
+}
+
 /**
- * What `?status=` asked "In flight" for — the URL `/runs/live`'s counts link to.
+ * What `?status=` asked for — the URL `/runs/live`'s counts link to, and the
+ * dashboard's "waiting on you" line.
  *
- * A value naming no status in flight is refused rather than dropped, on the
- * route's own grounds for refusing one: answering "every run" to "show me the
- * paused ones" reads as the paused ones.
+ * A status is narrowed in the band or bands that can hold it and the other left
+ * whole: a status in flight narrows "In flight", and a finished one narrows
+ * "Finished in the last 24 hours" and sets the older-runs fold. Both, because
+ * the dashboard's count of runs needing review spans the day and everything
+ * before it, and its count of failed ones is the day alone, so a link that set
+ * only the fold would miss every failed run it counted and some of the others.
+ *
+ * A value naming neither is refused rather than dropped, on the route's own
+ * grounds for refusing one: answering "every run" to "show me the paused ones"
+ * reads as the paused ones.
  */
 type Narrowing =
   | { kind: "all" }
   | { kind: "only"; status: ActiveStatus }
+  | { kind: "settled"; status: SettledStatus }
   | { kind: "refused"; asked: string };
 
 function readNarrowing(asked: string | null): Narrowing {
   if (!asked) return { kind: "all" };
-  return isActiveStatus(asked)
-    ? { kind: "only", status: asked }
-    : { kind: "refused", asked };
+  if (isActiveStatus(asked)) return { kind: "only", status: asked };
+  if (isSettledStatus(asked)) return { kind: "settled", status: asked };
+  return { kind: "refused", asked };
+}
+
+/** The segment the older-runs fold starts on for a narrowing. */
+function foldFilterOf(narrowing: Narrowing): Filter {
+  return narrowing.kind === "settled" ? narrowing.status : "all";
 }
 
 /** A request the narrowing leaves nothing to ask: no rows, and none counted. */
@@ -237,6 +258,7 @@ function inFlightRequests(narrowing: Narrowing) {
     statuses.filter(
       (s) =>
         narrowing.kind === "all" ||
+        narrowing.kind === "settled" ||
         (narrowing.kind === "only" && s === narrowing.status),
     );
   const executing = keep(EXECUTING);
@@ -258,13 +280,22 @@ function runningCount() {
 }
 
 /**
- * The line saying "In flight" is narrowed, and the way back to all of it.
+ * The line saying a band is narrowed, and the way back to all of it.
  *
  * Without it a band narrowed by a link from `/runs/live` reads as the whole
- * fleet: "In flight 2" over two paused runs says nothing is running.
+ * fleet: "In flight 2" over two paused runs says nothing is running. Drawn
+ * under the heading of the band the narrowing reached, so a finished status
+ * does not put a line about runs in flight over the runs that are.
  */
-function NarrowingNote({ narrowing }: { narrowing: Narrowing }) {
+function NarrowingNote({
+  narrowing,
+  band,
+}: {
+  narrowing: Narrowing;
+  band: "in-flight" | "finished";
+}) {
   if (narrowing.kind === "all") return null;
+  if (band !== (narrowing.kind === "settled" ? "finished" : "in-flight")) return null;
   const showAll = (
     <Link href="/runs" className="max-md:inline-flex max-md:min-h-11 max-md:items-center">
       Show all
@@ -273,7 +304,7 @@ function NarrowingNote({ narrowing }: { narrowing: Narrowing }) {
   if (narrowing.kind === "refused") {
     return (
       <Notice tone="warn">
-        No run in flight has the status “{narrowing.asked}”. {showAll}
+        “{narrowing.asked}” is not a status this page narrows to. {showAll}
       </Notice>
     );
   }
@@ -879,10 +910,23 @@ function RunsView() {
   // read back off the answer so pressing Next twice in a row is two pages
   // forward and not two requests for the same one — the branches page's own
   // note, and the same reason its offset lives beside its repository.
-  const [filter, setFilter] = useState<Filter>("all");
+  const [filter, setFilter] = useState<Filter>(() =>
+    foldFilterOf(readNarrowing(askedStatus)),
+  );
   const [query, setQuery] = useState("");
   const [settledQuery, setSettledQuery] = useState("");
   const [offset, setOffset] = useState(0);
+  // The fold follows the URL when the URL moves under the mounted page — Show
+  // all, or the sidebar's Runs — for `statusAsked`'s reason, and it is adjusted
+  // here in the render that saw the change rather than in an effect, which
+  // would draw one frame of the old segment and fire a request for it first.
+  // Not on every render: a press on the segmented control must outlast one.
+  const [filterAskedFor, setFilterAskedFor] = useState(askedStatus);
+  if (filterAskedFor !== askedStatus) {
+    setFilterAskedFor(askedStatus);
+    setFilter(foldFilterOf(readNarrowing(askedStatus)));
+    setOffset(0);
+  }
   const [history, setHistory] = useState<RunListDTO | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -932,6 +976,9 @@ function RunsView() {
     // fold is then handed.
     const cut = bucketBoundary(Date.now());
     const narrowing = readNarrowing(askedStatus);
+    // Whether "In flight" holds every run in flight, which is when its own rows
+    // count the running ones and no request of their own is needed.
+    const inFlightWhole = narrowing.kind === "all" || narrowing.kind === "settled";
     // Only the newest request may write, for `loadHistory`'s reason: `reload`
     // asks beside the poll's own request, so an answer read before a press can
     // land after the one read since it and put the run back as it was.
@@ -943,9 +990,10 @@ function RunsView() {
         ...inFlightRequests(narrowing),
         bandRequest({
           settledAfter: String(cut),
+          ...(narrowing.kind === "settled" ? { status: narrowing.status } : {}),
           ...(recentOffset > 0 ? { offset: String(recentOffset) } : {}),
         }),
-        narrowing.kind === "all" ? unasked() : runningCount(),
+        inFlightWhole ? unasked() : runningCount(),
       ]);
       if (ticket !== runsRequest.current) return;
       // Dropped whole rather than in part: the request carrying the new
@@ -973,10 +1021,9 @@ function RunsView() {
         // Unnarrowed, off the band itself rather than a request of its own: it
         // is capped at `BAND_LIMIT` rows, which no install's concurrency
         // ceiling comes near, and `running` sorts first in it.
-        running:
-          narrowing.kind === "all"
-            ? active.filter((r) => r.status === "running").length
-            : counted.total,
+        running: inFlightWhole
+          ? active.filter((r) => r.status === "running").length
+          : counted.total,
         recent: settled,
       });
       // Off the recent band, the one request every narrowing makes; each
@@ -1161,6 +1208,7 @@ function RunsView() {
   );
 
   const { active, activeTotal, narrowing, running, recent } = bands;
+  const foldNarrowed = readNarrowing(askedStatus).kind === "settled";
 
   return (
     <>
@@ -1229,7 +1277,7 @@ function RunsView() {
           In flight
           {activeTotal > 0 && <Badge tone="accent">{activeTotal}</Badge>}
         </CardTitle>
-        <NarrowingNote narrowing={narrowing} />
+        <NarrowingNote narrowing={narrowing} band="in-flight" />
         <p className="sr-only" aria-live="polite">
           {loaded && narrowing.kind !== "refused"
             ? `${activeTotal} ${narrowing.kind === "only" ? `${STATUS_LABEL[narrowing.status]} ` : ""}run${activeTotal === 1 ? "" : "s"} in flight`
@@ -1285,6 +1333,7 @@ function RunsView() {
 
       <div className="mb-8">
         <CardTitle>Finished in the last 24 hours</CardTitle>
+        <NarrowingNote narrowing={narrowing} band="finished" />
         {!loaded ? (
           <div aria-busy="true">
             <span className="sr-only">Reading runs…</span>
@@ -1303,7 +1352,11 @@ function RunsView() {
         ) : recent.runs.length === 0 ? (
           <Card emphasis="quiet">
             <Empty>
-              <div className="font-medium text-ink">Nothing finished</div>
+              <div className="font-medium text-ink">
+                {narrowing.kind === "settled"
+                  ? `No ${STATUS_LABEL[narrowing.status]} runs in the last 24 hours`
+                  : "Nothing finished"}
+              </div>
             </Empty>
           </Card>
         ) : (
@@ -1333,6 +1386,10 @@ function RunsView() {
         <Disclosure
           summary="Older runs"
           count={history.total}
+          // Open on a finished status, where the fold is the other half of the
+          // rows a link counted. `Disclosure` writes the attribute again only
+          // when this changes, so it follows a navigation and not a poll.
+          defaultOpen={foldNarrowed}
           summaryClassName="mb-3 py-2 text-sm font-semibold text-ink-muted"
         >
           {/* Each `Field`'s own `mb-3.5` is this row's vertical gap, so the row

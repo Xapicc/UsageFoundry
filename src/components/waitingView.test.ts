@@ -43,7 +43,35 @@ test("an item whose count is zero is left out, and the rest keep their order and
   if (view.kind !== "items") return;
   assert.deepEqual(
     view.items.map((i) => i.href),
-    ["/runs", "/chat", "/tasks"],
+    ["/runs?status=needs-review", "/chat", "/tasks?lane=operator"],
+  );
+});
+
+test("the three counts a page can narrow link to the rows they were taken over", () => {
+  // A spelling the page does not know is refused there by name, and a bare
+  // `/runs` lands on every run: either way the count and the rows disagree and
+  // nothing throws.
+  const view = waitingView(
+    dto({
+      needsReview: exact(1),
+      failedRecently: exact(1),
+      branches: exact(1),
+      proposals: exact(1),
+      tasks: exact(1),
+    }),
+    false,
+  );
+  assert.equal(view.kind, "items");
+  if (view.kind !== "items") return;
+  assert.deepEqual(
+    view.items.map((i) => [i.key, i.href]),
+    [
+      ["needs-review", "/runs?status=needs-review"],
+      ["failed", "/runs?status=failed"],
+      ["branches", "/branches"],
+      ["proposals", "/chat"],
+      ["tasks", "/tasks?lane=operator"],
+    ],
   );
 });
 

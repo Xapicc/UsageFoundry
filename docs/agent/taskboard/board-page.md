@@ -48,9 +48,19 @@ project the board cannot show nor a hidden one it can; built from
 path *in the browser*, which is the second, looser resolver the `resolveInMount`
 paragraph in [tasks-and-transitions.md](tasks-and-transitions.md) exists to prevent. The other is the operator-only filter beside
 it (all work, agent work, operator only), which follows the project filter
-rather than the query: in the browser over the same rows, not kept in the URL
-because the project filter is not, and counted within the chosen project because
-that is the set it narrows. `MAX_TASK_PAGE` lives in `apiTypes.ts` beside
+rather than the query: in the browser over the same rows, and counted within the
+chosen project because that is the set it narrows. **A link may choose it, and the
+page never writes it back.** `?lane=operator` is read — it is where the
+dashboard's "operator-only tasks open" line lands, on the rows it counted — but
+the select does not write the URL, because the project filter is not in the URL
+and a lane alone would make the address claim half of what is on screen. That is
+`/runs`' rule for `?status=`, which is also read and never written, and two more
+halves of it are kept: an unknown lane is **refused by name** in a notice rather
+than read as all work, since opening on every task when the link said
+operator-only reads as the operator-only ones; and the lane follows the URL when
+it changes under the mounted page (the sidebar's Taskboard is a navigation to
+this same route), adjusted in the render that saw the change rather than in an
+effect. `MAX_TASK_PAGE` lives in `apiTypes.ts` beside
 `MAX_LIST_TASK_BODY`, not in `tasks.ts`, because the dependency picker still asks
 for exactly one page of it and says when `total` was larger — written twice, it
 would ask for a number the route quietly reduced and then report a whole list it
