@@ -3,7 +3,7 @@ import { runVerify, verifyCommandFor, type VerifyOutcome } from "./landGate";
 import { runTrailers, trailerFlags, trailerParagraph, type Trailer } from "./runTrailers";
 import { openPullRequest, planDelivery, type DeliveryRequest } from "./delivery";
 import path from "node:path";
-import { addWorktree, BLANKED_MERGE_DRIVER_NOTE, git, headBranchOf } from "./git";
+import { addWorktree, BLANKED_MERGE_DRIVER_NOTE, git, headBranchOf, isSlotDirectory } from "./git";
 import { withRepoAdmin } from "./repoLock";
 import { checkoutWriter, claimCheckout, releaseCheckout } from "./checkoutClaim";
 import { db } from "./db";
@@ -2905,7 +2905,11 @@ export async function resolveCheckout(
   branch: string,
 ): Promise<ResolveCheckout> {
   const own = run.worktree_path;
-  if (own && fs.existsSync(own)) {
+  // A link there is not the run's checkout, whatever `HEAD` reads through it:
+  // one to another checkout of this branch passed the comparison below, and the
+  // link was returned as where to open the merge and spawn the agent (driven,
+  // board task 9e0badc3). Read as gone, so a checkout of its own is asked for.
+  if (own && isSlotDirectory(own)) {
     const head = await git(own, ["rev-parse", "--abbrev-ref", "HEAD"], NO_CLOCK);
     if (head.ok && head.stdout === branch) {
       // git gives a branch to one worktree at a time, so once the slot holds
@@ -3643,7 +3647,7 @@ async function abortInterruptedResolution(runId: string): Promise<void> {
 
   const checkouts: ResolveCheckout[] = [];
   const own = run.worktree_path;
-  if (own && path.dirname(own) === store && fs.existsSync(own)) {
+  if (own && path.dirname(own) === store && isSlotDirectory(own)) {
     const head = await git(own, ["rev-parse", "--abbrev-ref", "HEAD"], NO_CLOCK);
     if (head.ok && head.stdout === run.worktree_branch) {
       checkouts.push({ path: own, temporary: false });
@@ -4080,7 +4084,10 @@ function laterRunHolds(run: RunRow, slot: string): boolean {
 
 async function slotState(run: RunRow): Promise<SlotState> {
   const slot = run.worktree_path;
-  if (!slot || !fs.existsSync(slot)) {
+  // Gone, or a link, which reads as gone: through one, `headBranchOf` answers
+  // for whatever checkout it points at, and Commit then put that checkout's
+  // changes on this run's branch (driven, board task 9e0badc3).
+  if (!slot || !isSlotDirectory(slot)) {
     return {
       path: slot ?? null,
       checkedOutBranch: null,

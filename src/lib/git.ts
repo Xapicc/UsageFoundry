@@ -1745,6 +1745,35 @@ export function gitFailureReason(
 }
 
 /**
+ * Whether a recorded checkout slot is a directory standing at that path itself,
+ * and not a symbolic link, so that git may be run in it or handed it.
+ *
+ * Asked of `runs.worktree_path` before anything reads or acts there after the
+ * run. `existsSync` follows a link, and whatever can write the store — a chat
+ * turn, a run with isolation off on the mount root, an unconfined cycle — can
+ * plant one at a settled run's slot. Through it every git call answers for the
+ * checkout it points at: `headBranchOf` matches when that is another checkout
+ * of the run's branch, so Commit put its change on the branch, and the
+ * checkout sweep's `worktree remove <link>` deleted whichever live checkout it
+ * pointed at (both driven, board tasks 9e0badc3 and e057434a). A link reads as
+ * the checkout being gone, which is what each caller already has a sentence
+ * for. Any error reads the same way because that is what `existsSync`, which
+ * this replaces, answered for one (`ENOTDIR` once the store is a file, `ELOOP`).
+ *
+ * The leaf only: a store that is itself a link is still followed here, and
+ * `prepareWorktreeStore` refuses one only where a checkout is made (board task
+ * f21be77c). A check and not a guarantee, as at admission: a link planted
+ * between this and git's own resolution of the path still gets through.
+ */
+export function isSlotDirectory(slot: string): boolean {
+  try {
+    return fs.lstatSync(slot, { throwIfNoEntry: false })?.isDirectory() === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The branch a checkout has out, and whether git could say.
  *
  * `branch` is null both for a detached HEAD and for a read that failed, and

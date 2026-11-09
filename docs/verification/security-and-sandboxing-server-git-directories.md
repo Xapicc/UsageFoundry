@@ -4,6 +4,8 @@
 
 Split out of [security-and-sandboxing-server-git-fingerprints.md](security-and-sandboxing-server-git-fingerprints.md) on 2026-11-09, when the entry for board task `f3122092` would have taken that file past 20 KB; every entry above that one was moved from there unchanged.
 
+What this app's own git does at a worktree slot that is a symbolic link — at admission, at setup, and after the run — is in [security-and-sandboxing-server-git-slots.md](security-and-sandboxing-server-git-slots.md).
+
 ## Verified
 
 - **A directory below the top of the work tree made a git directory after the
@@ -252,33 +254,6 @@ Split out of [security-and-sandboxing-server-git-fingerprints.md](security-and-s
   Caveat: the race script is not committed, and nothing planted a slot
   link beside a real admission.
 
-- **A link planted at a worktree slot gets past admission today, and is
-  skipped, refused or unlinked with the change, 2026-11-09.** Board task
-  `d90a042d`, branch off `aeca455d`, git 2.39.5. Driven through the real
-  `createRun` and run loop, with `spawn`/`spawnSync` wrapped to record each
-  git child's cwd and an unspawnable `CLAUDE_BIN`. At `aeca455d`, a link at
-  `<slug>-1` to an empty directory inside the same repository's checkout
-  was handed out; `worktree add` wrote `.git` and every tracked file into
-  that directory, registered at its realpath, the operator's `git status`
-  read `?? empty-target/`, and the probe, `status`, `reset --hard` and two
-  `rev-parse`s ran there before the first cycle's `resolveWorkspaceFolder`
-  failed the run, no agent spawned. A dangling link was handed out and the
-  run failed on "already exists"; a link to a plain directory was skipped,
-  after one probe step ran in it. `git worktree remove --force <link>`
-  deleted the checkout the link pointed at, uncommitted file included,
-  which `resolveCheckout` and the boot cleanup ran on a link at
-  `<slug>-resolve-<id8>`. With the change both slot links are skipped to
-  `<slug>-2` with no git in them, a link planted after admission is refused
-  by name with nothing written, and both resolve paths unlink the link and
-  leave its target whole. `slotLeafLink.test.ts`' three cases,
-  `resolveCheckout.test.ts`' last two and the census case in
-  `orchestrator.test.ts` all failed against `aeca455d`'s source and pass
-  with the change; drive them with `npx tsc -p tsconfig.test.json --outDir
-  .test-build/<tag> && node --test
-  .test-build/<tag>/lib/slotLeafLink.test.js`. Caveat: the probe that read
-  the operator's status is not committed, and every link was planted from
-  the test, not by a chat turn.
-
 ## Not yet verified by hand
 
 - **Whether a work cycle can move a site's `objects/` or `refs/` away and
@@ -289,10 +264,3 @@ Split out of [security-and-sandboxing-server-git-fingerprints.md](security-and-s
   renames `R/.git/objects` away and back in a loop while a sibling run's
   `status` polls `R`, and count planted-program markers against refusals
   naming `R/.git`.
-
-- **Where a link planted between a slot's `lstat` and git's own `mkdir`
-  gets its checkout written.** Board task `d90a042d`. Inferred:
-  `worktree add` follows it and checks out where it points, and the first
-  cycle's `resolveWorkspaceFolder` then refuses the run, as at `aeca455d`
-  above. Settle with a `GIT_BIN` stub that plants the link when `worktree
-  add` is spawned, then reads where the checkout went.

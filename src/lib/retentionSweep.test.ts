@@ -458,6 +458,74 @@ describe("checkout reclaim across a continueBranch chain", () => {
     assert.equal(after.removed, 1, "the slot was never a candidate, so the keep above proves nothing");
     assert.equal(fs.existsSync(c.slot), false);
   });
+
+  it("never hands git a settled slot that is a symbolic link, and leaves the checkout it points at", async () => {
+    // The owner alone is the first case's control: reclaimable, as a directory.
+    // Its checkout is replaced by a link to another run's live, clean checkout,
+    // which anything that can write the store can plant. `held` and `slotHolder`
+    // are keyed on the stored path, so the live run's hold is not the link's,
+    // and `worktree remove <link>` resolves it and deletes the live checkout
+    // (measured, git 2.39.5).
+    const c = chain("linked-slot");
+    dbMod.db().prepare("DELETE FROM runs WHERE id = 'linked-slot-link'").run();
+    const live = path.join(path.dirname(c.slot), `${orchestrator.repoSlug(c.repo)}-3`);
+    gitIn(c.repo, "worktree", "add", "-q", "-b", "uf/linked-slot-live", live);
+    fs.writeFileSync(path.join(live, "live.txt"), "another run's committed work\n");
+    gitIn(live, "add", "-A");
+    gitIn(live, "commit", "-qm", "live work");
+    dbMod
+      .db()
+      .prepare(
+        `INSERT INTO runs (id, folder, prompt, status, budget, created_at, isolation, repo_root,
+                           worktree_path, worktree_branch, worktree_base_branch)
+         VALUES ('linked-slot-live', ?, 'task', 'running', '{}', ?, 'worktree', ?, ?,
+                 'uf/linked-slot-live', 'main')`,
+      )
+      .run(c.repo, NOW - DAY, c.repo, live);
+    gitIn(c.repo, "worktree", "remove", c.slot);
+    fs.symlinkSync(live, c.slot);
+
+    // Every git child, wherever it was spawned: `git()` runs a call in its cwd's
+    // realpath, so one through the link is spawned in `live`.
+    const through: string[] = [];
+    const childProcess = require("node:child_process") as Record<string, unknown>;
+    const real = { spawn: childProcess.spawn, spawnSync: childProcess.spawnSync } as Record<
+      "spawn" | "spawnSync",
+      (...args: unknown[]) => unknown
+    >;
+    for (const name of ["spawn", "spawnSync"] as const) {
+      childProcess[name] = (command: unknown, ...rest: unknown[]) => {
+        const args = rest[0] as string[];
+        const cwd = (rest[1] as { cwd: string }).cwd;
+        if (
+          cwd === c.slot ||
+          cwd === live ||
+          cwd.startsWith(`${live}${path.sep}`) ||
+          args.includes(c.slot) ||
+          args.includes(live)
+        ) {
+          through.push(`${cwd}: ${String(command)} ${args.filter((arg) => !arg.includes("=")).join(" ")}`);
+        }
+        return real[name](command, ...rest);
+      };
+    }
+    let swept: Awaited<ReturnType<typeof retention.sweepCheckouts>>;
+    try {
+      swept = await retention.sweepCheckouts(NOW);
+    } finally {
+      Object.assign(childProcess, real);
+      // A `running` row left behind is a live run to every describe after this.
+      dbMod.db().prepare("DELETE FROM runs WHERE id = 'linked-slot-live'").run();
+    }
+
+    assert.ok(
+      fs.existsSync(path.join(live, "live.txt")),
+      "the sweep removed another run's live checkout through a link at a settled run's slot",
+    );
+    assert.deepEqual(through, [], "the sweep ran git through the link");
+    assert.equal(swept.removed, 0);
+    assert.ok(fs.lstatSync(c.slot).isSymbolicLink(), "the link was not left as it was");
+  });
 });
 
 /**

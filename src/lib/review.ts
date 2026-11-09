@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CLAUDE_BIN, spawnCommand } from "./config";
 import { db } from "./db";
-import { headBranchOf } from "./git";
+import { headBranchOf, isSlotDirectory } from "./git";
 import { childCredentials, deprioritiseChildForOom } from "./privsep";
 import { diffAsText, runDiff, type RunDiff } from "./diff";
 import { agentsArgs, type AgentDefinition } from "./agents";
@@ -837,7 +837,11 @@ export async function windowRefusal(): Promise<string | null> {
  */
 async function reviewCwd(run: RunRow): Promise<string | null> {
   const work = workDirOf(run);
-  if (fs.existsSync(work)) {
+  // The slot's own leaf as well as the work directory under it: through a link
+  // there `headBranchOf` answers for the checkout it points at, and a review
+  // was started with that as its cwd (driven, board task 9e0badc3).
+  const slotStands = run.worktree_path === null || isSlotDirectory(run.worktree_path);
+  if (slotStands && fs.existsSync(work)) {
     const { branch } = await headBranchOf(work);
     if (!run.worktree_branch || branch === run.worktree_branch) return work;
   }

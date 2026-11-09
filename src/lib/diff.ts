@@ -1,5 +1,4 @@
-import fs from "node:fs";
-import { git, headBranchOf } from "./git";
+import { git, headBranchOf, isSlotDirectory } from "./git";
 import { patchTruncationMarker } from "./patch";
 import {
   describeFolder,
@@ -778,7 +777,8 @@ async function worktreeDiff(run: RunRow): Promise<RunDiff> {
  */
 async function uncommittedIn(run: RunRow): Promise<string[]> {
   const slot = run.worktree_path;
-  if (!slot || !fs.existsSync(slot)) return [];
+  // A link at the slot is not the run's checkout: see `isSlotDirectory`.
+  if (!slot || !isSlotDirectory(slot)) return [];
   const { branch } = await headBranchOf(slot);
   if (branch === null || branch !== run.worktree_branch) return [];
   // `trim: false` for the reason `worktreeDiff` states: these lines reach the
