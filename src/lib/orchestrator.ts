@@ -7361,9 +7361,10 @@ export function sandboxSettings(scope: SandboxScope): SandboxPolicy {
 
     case "assist":
       // Two children through one spawn, and the difference is the mode. The
-      // reviewer runs `--permission-mode plan` and writes nothing at all, so
-      // its set is the transcript directory below and nothing else — a
-      // read-only child, spelled as one. The conflict resolver runs
+      // reviewer runs `--permission-mode plan` and has nothing of its own to
+      // write, so its set is the transcript directory below and nothing else.
+      // Its `Bash` can still redirect a read into that set, an accepted reach
+      // (`docs/agent/security/assist-bash-writes.md`). The conflict resolver runs
       // `acceptEdits` and edits conflict markers in a throwaway checkout
       // (`land.ts`), so that checkout is named and the repository's `.git` is
       // deliberately **not**: it is not asked to run git, and the merge commit
