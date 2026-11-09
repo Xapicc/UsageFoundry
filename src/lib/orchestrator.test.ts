@@ -3294,6 +3294,78 @@ describe("buildArgs", () => {
     }
   });
 
+  it("keeps every CLAUDE.md inside the vault out of a reader, and only a reader", () => {
+    // Measured on 2.1.319: a reader whose folder contains the vault was shown
+    // the vault's root, nested and local CLAUDE.md and its `.claude/rules/` on
+    // its first read of a note, and with this entry none of them, while its
+    // own and the user CLAUDE.md still loaded. Vault writers can commit those
+    // files, so losing the entry is one vault write becoming standing
+    // instructions in such a reader, and every read would still answer. A
+    // writer keeps them: they are its own project's. On a resumed cycle and on
+    // an install with no write set too, since the entry rides neither.
+    const vaultPath = "/workspace/notes/Knowledge Vault";
+    for (const resumeSessionId of [null, "sess-1"]) {
+      for (const writableRoots of [null, ["/workspace/notes", "/workspace/notes/.git"]]) {
+        const overlayOf = (writable: boolean) => {
+          const args = buildArgs({
+            ...base,
+            isolated: false,
+            resumeSessionId,
+            writableRoots,
+            vaultSkill: { pluginDir: "/run/uf-skills/vault", vaultPath, writable },
+          });
+          return JSON.parse(args[args.indexOf("--settings") + 1]);
+        };
+        assert.deepEqual(overlayOf(false).claudeMdExcludes, ["/workspace/notes/Knowledge Vault/**"]);
+        assert.equal("claudeMdExcludes" in overlayOf(true), false, "a writer's own CLAUDE.md must load");
+      }
+    }
+    const withoutSkill = buildArgs({ ...base, isolated: false });
+    const plainOverlay = JSON.parse(withoutSkill[withoutSkill.indexOf("--settings") + 1]);
+    assert.equal("claudeMdExcludes" in plainOverlay, false, "an argv without the skill keeps its bytes");
+  });
+
+  it("spells the vault's CLAUDE.md exclusion so the CLI matches it literally", () => {
+    // The value is a picomatch glob. Measured on 2.1.319: with `(`, `)`, `+`,
+    // `@` or `|` in the path written as is, or escaped with a backslash, the
+    // entry matched nothing and the vault's CLAUDE.md loaded as if it were not
+    // there; a one-character class for each matched. A space, `$`, `^`, `.`, a
+    // backslash and the rest were matched as written, and `[^]` would negate.
+    const excludeFor = (vaultPath: string) => {
+      const args = buildArgs({
+        ...base,
+        isolated: false,
+        vaultSkill: { pluginDir: "/run/uf-skills/vault", vaultPath },
+      });
+      return JSON.parse(args[args.indexOf("--settings") + 1]).claudeMdExcludes;
+    };
+    assert.deepEqual(excludeFor("/w/Knowledge Vault (2024)"), ["/w/Knowledge Vault [(]2024[)]/**"]);
+    assert.deepEqual(excludeFor("/w/Vault+(x)"), ["/w/Vault[+][(]x[)]/**"]);
+    assert.deepEqual(excludeFor("/w/Vault@(y) a|b"), ["/w/Vault[@][(]y[)] a[|]b/**"]);
+    assert.deepEqual(excludeFor("/w/V$^.x%,;=&'~#"), ["/w/V$^.x%,;=&'~#/**"]);
+  });
+
+  it("reads an isolated run's project config from its own worktree, on every cycle", () => {
+    // Measured on 2.1.319: without the flag a linked worktree was offered its
+    // main checkout's untracked skills, agents and commands wherever it had no
+    // directory of that name, and the main checkout's `settings.local.json`
+    // outranked its own and ran a `SessionStart` hook in the run. With the flag
+    // none of that reached it and its own committed `.claude/` still did.
+    // `--resume` restores no flag, so a cycle that dropped it would reopen the
+    // door mid-run.
+    for (const resumeSessionId of [null, "sess-1"]) {
+      const args = buildArgs({ ...base, isolated: true, resumeSessionId, workDir: "/w/.uf-worktrees/repo-1" });
+      assert.equal(args.filter((a) => a === "--project-config-root").length, 1);
+      assert.equal(args[args.indexOf("--project-config-root") + 1], "/w/.uf-worktrees/repo-1");
+    }
+    // A run in the operator's own checkout or a plain folder has no main
+    // checkout to fall back to, and the flag left a plain folder's ancestors
+    // exactly as they were (measured): its argv keeps its bytes.
+    assert.equal(buildArgs({ ...base, isolated: false, workDir: "/w/repo" }).includes("--project-config-root"), false);
+    // No path, no flag: the CLI refuses a relative or missing one at the spawn.
+    assert.equal(buildArgs({ ...base, isolated: true }).includes("--project-config-root"), false);
+  });
+
   it("names no plugin flag when none are enabled", () => {
     // A bare `--plugin-dir` would swallow the following flag as its value.
     assert.equal(buildArgs({ ...base, isolated: false }).includes("--plugin-dir"), false);

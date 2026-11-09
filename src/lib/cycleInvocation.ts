@@ -1466,6 +1466,9 @@ export function buildArgs(opts: {
    * reached a reader's first request through `--add-dir` and no request through
    * the overlay entry. Vault writers can commit those files, so through the
    * flag one write into the vault would be a skill in every reader's context.
+   * The entry does not reach a vault inside the run's own folder, whose
+   * `CLAUDE.md` files load on access, so a reader also gets a
+   * `claudeMdExcludes` entry for the vault (see the overlay below).
    *
    * **And it grants write, so unless `writable` says otherwise the write is
    * taken back by mechanism.** The entry lands the vault in the session's
@@ -1609,8 +1612,12 @@ export function buildArgs(opts: {
    * The directory the cycle is spawned in, for a CLI that resolves its
    * workspace from a flag rather than from `cwd`.
    *
-   * Ignored by `buildArgs`, which needs no flag for it: `runIteration` passes
+   * `buildArgs` needs no flag for the workspace itself: `runIteration` passes
    * the same path to `spawn` and Claude Code takes its workspace from there.
+   * For an isolated run it is also `--project-config-root`, so that a linked
+   * worktree reads its `.claude/` and settings files from itself rather than
+   * from its main checkout (`docs/agent/security/project-config-discovery.md`).
+   * Absent leaves that flag off, which is the CLI's own fallback.
    * `buildCodexArgs` emits it as `-C`, and the reason it must is that `-C` is
    * also what `workspace-write` grants — a Codex cycle that stated no working
    * root would take one from wherever the process happened to start, and the
@@ -1706,6 +1713,17 @@ export function buildArgs(opts: {
   if (opts.permissionMode) args.push("--permission-mode", opts.permissionMode);
   if (opts.forwardSubAgentText) args.push("--forward-subagent-text");
   if (opts.effort) args.push("--effort", opts.effort);
+  // An isolated run reads its project config from its own worktree and nowhere
+  // else. Without the flag the pinned CLI falls back to the main checkout for a
+  // linked worktree, and the main checkout is not the run's: measured on
+  // 2.1.319, its untracked `.claude/skills/`, `agents/` and `commands/` were
+  // offered wherever the worktree had no directory of that name, and its
+  // `.claude/settings.local.json` outranked the worktree's own and ran its
+  // `SessionStart` hook. With the flag none of those reached the run, and the
+  // worktree's committed `.claude/` trees, its `settings.json` hooks and its
+  // own `settings.local.json` still applied. Transcripts, auto-memory and
+  // `--resume` were unchanged. See `workDir`.
+  if (opts.isolated && opts.workDir) args.push("--project-config-root", opts.workDir);
   // One encoder for every spawn site, because every way of getting the shape
   // wrong is silent when a member is merely offered and fails the spawn outright
   // when it is selected — see `agentsFlagValue` and `sessionAgentArgs`. This
@@ -1855,6 +1873,23 @@ export function buildArgs(opts: {
     ...(opts.scratchDir ? [opts.scratchDir] : []),
     ...(opts.vaultSkill ? [opts.vaultSkill.vaultPath] : []),
   ];
+  // And a reader loads no `CLAUDE.md` from inside the vault, for the reason it
+  // writes nothing there: vault writers can commit one, and a reader whose
+  // folder contains the vault was shown the vault's root, nested and local
+  // `CLAUDE.md` and its `.claude/rules/` the moment it read a note (measured on
+  // 2.1.319, plain folder and git repository alike). This entry kept all four
+  // out and nothing else: the reader's own and the user `CLAUDE.md` still
+  // loaded, and its reads of notes still answered. Every reader gets it, since
+  // for one whose folder does not contain the vault it matches nothing.
+  //
+  // The value is a picomatch glob, and `(`, `)`, `+`, `@` and `|` in a literal
+  // path made it match nothing at all, silently; a backslash escape did too,
+  // and a one-character class matched (measured on the same pin). The other
+  // glob characters never get here, because `prepareVaultSkill` answers
+  // `unavailable` for a vault path holding one.
+  const vaultClaudeMdExclude = vaultReadOnly
+    ? `${vaultReadOnly.replace(/[()+@|]/g, (c) => `[${c}]`)}/**`
+    : null;
   const overlay = {
     ...(opts.envPins ? { env: opts.envPins } : {}),
     apiKeyHelper: "",
@@ -1862,6 +1897,7 @@ export function buildArgs(opts: {
       blockWritesOutsideWorkingDirectories: true,
       ...(workingDirs.length > 0 ? { additionalDirectories: workingDirs } : {}),
     },
+    ...(vaultClaudeMdExclude ? { claudeMdExcludes: [vaultClaudeMdExclude] } : {}),
     ...(opts.writableRoots && opts.writableRoots.length > 0
       ? {
           sandbox: {
