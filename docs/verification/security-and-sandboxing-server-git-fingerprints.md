@@ -1,6 +1,8 @@
-# Verification: Security and sandboxing, what this app's own git runs from a repository a work cycle wrote — what the probe read and the call re-reads: includes, conditions, reftable and git directories
+# Verification: Security and sandboxing, what this app's own git runs from a repository a work cycle wrote — what the probe read and the call re-reads: includes, conditions and reftable
 
 [← Verification index](../verification.md)
+
+Which git directory the probe and the call read, directories made or unmade among them, is in [security-and-sandboxing-server-git-directories.md](security-and-sandboxing-server-git-directories.md).
 
 ## Verified
 
@@ -159,87 +161,6 @@
   include targets were unfolded; the top of the work tree is still
   `path.resolve(dir, cdup)`, which folds a symlink in the call's own
   directory, and that was not driven.
-
-- **A directory below the top of the work tree made a git directory after the
-  probe is found first, and fingerprinting what makes one refuses the call,
-  2026-11-08.** Board task `fbd6d8dd`, branch at `011f4457`, git 2.39.5 under
-  `env -i`. In a committed repository `B` with tracked `B/sub`, `add -A` from
-  `B/sub` ran a `filter.x.clean` defined only in a `config` naming `B` as its
-  `core.worktree` (`* filter=x` in its `info/attributes`) in four layouts,
-  each once its last piece was made and never before: `B/sub` given a `HEAD`
-  beside `objects/` and `refs/` (`rev-parse --absolute-git-dir` printed
-  `B/sub`, `--show-toplevel` `B`); an empty `B/sub/.git` directory given the
-  same; `B/sub` holding `HEAD` first and given `objects/` and `refs/`; and
-  `B/sub` holding `HEAD` and a `commondir` first and the directory it names
-  given `objects/`. Without `core.repositoryformatversion` git discarded the
-  `core.worktree` and the call failed "must be run in a work tree" (2.39.5
-  and 2.56.0); with a `commondir` it took one only from `config.worktree`
-  under `extensions.worktreeConfig`. `-c safe.bareRepository=explicit`
-  refused the first layout and ran the driver in the second. Through this
-  app's compiled `git()` and `gitSync()`, `gitFilterProbe.test.ts`'s four
-  cases, the stub making the last piece while the index is listed, ran the
-  plant at `011f4457` through `git()` and, with the loop cut to `gitSync()`
-  alone, through it too, on 2.39.5 and on the `v2.56.0` build; with the
-  change each is refused naming that piece, and a call from the
-  subdirectory with nothing made runs. The file passed 66 of 76 with 10
-  skipped on 2.39.5 and 76 of 76 on 2.56.0. A production caller, traced by
-  reading and not driven: `worktreeDiff`'s `status --porcelain`
-  (`diff.ts`) runs in a run's folder, which `probeIsolation` leaves below
-  the top for a run on a subdirectory. Caveat: a `commondir` is read when it
-  is first fingerprinted, so one whose target moves under it is seen only as
-  the file's change; and the git directory the probe found is not watched
-  for ceasing to be one.
-
-- **The git directory the probe found is refused once its `objects/` or
-  `refs/` is moved away, 2026-11-08.** Board task `9ef321d6`, branch at
-  `2dd9b3a8`, git 2.39.5 and the `v2.56.0` build. A repository `P` with
-  `filter.x.clean` in `P/.git/config` and `* filter=x` in its
-  `info/attributes`, holding a separate committed repository `R` at `P/r`
-  with a modified file and no driver: under plain git `add -A` in `R` ran
-  nothing, and once `R/.git/objects` or `R/.git/refs` was renamed away
-  `rev-parse --show-toplevel` there printed `P` and `add -A` ran `P`'s
-  driver. Through this app's compiled `git()` and `gitSync()`,
-  `gitFilterProbe.test.ts`'s stub renaming either away while the index is
-  listed, `P`'s driver ran through `git()` at `e51e3e12` on 2.39.5, and
-  through `git()` and `gitSync()` each alone with the new watch cut from the
-  compiled change on 2.39.5 and 2.56.0; with the change each call is refused
-  naming the directory moved. A ref written in `refs/` itself (`update-ref
-  refs/stash HEAD`) and a blob that makes a new fan-out directory in
-  `objects/`, each checked to move that directory's ctime, still run the
-  call, and a `configFingerprint` watch on either, mutated into the compiled
-  change, refused it. The file passed 70 of 80 with 10 skipped on 2.39.5 and
-  80 of 80 on 2.56.0. Caveat: a rename away and back keeps the inode, so a
-  directory away only while the probe reads is not seen; the probe then
-  lists the enclosing repository's drivers, and `R`'s own planted driver ran
-  in 8 of 8 calls through a scratch script on both gits (board task
-  `f3122092`). That a work cycle can make either move beside one of this
-  app's calls is inferred from its writing the common `.git`, not driven.
-
-- **A call naming its git directory with a leading `--git-dir=` is probed in
-  that one, and `readGitDir`'s listing asks no probe, 2026-11-08.** Board
-  task `507d7792`, branch at `5a81fa7b`, git 2.39.5 and the `v2.56.0` build.
-  A repository `A` with `filter.x.clean` in `A/.git/config` and `* filter=x`
-  in its `info/attributes`, and a separate repository `B` with a modified
-  file and no driver: under plain git `--git-dir=A/.git add -A` from `B` ran
-  `A`'s driver. Through this app's compiled `git()` and `gitSync()` at
-  `d271d406` the same call ran it too, through each alone, because every
-  probe step ran in `B` by discovery and read `B`'s configuration; with the
-  change it runs nothing and succeeds, and with the probe broken
-  (`gitFilterProbe.test.ts`'s stub mode `refused`) it fails naming the
-  probe. `readGitDir`'s `--git-dir=<common> config --list --show-scope
-  --show-origin -z --includes`, run from inside `A/.git` through a `GIT_BIN`
-  that logs each invocation, spawned 4 git children through each at
-  `d271d406` and 1 with the change, and with the probe broken it failed at
-  `d271d406` and lists `A`'s `local` records with the change. Cutting the
-  flag from the steps, leaving everything behind it unprobed, or restoring
-  the old gate in the compiled change each failed one of the three cases.
-  The file passed 73 of 83 with 10 skipped on 2.39.5 and 83 of 83 on 2.56.0,
-  and `gitDirRead.test.ts` and `gitDirWatch.test.ts` 11 and 30 of theirs.
-  Caveat: no production caller puts a content subcommand behind
-  `--git-dir=`, and the gate understands no other leading option: `-C A add
-  -A`, and `--git-dir A/.git --work-tree A add -A` as separate words, from
-  `B` still ran `A`'s driver through each on both gits, probed in `B` (board
-  task `c011fcd1`).
 
 ## Not yet verified by hand
 
