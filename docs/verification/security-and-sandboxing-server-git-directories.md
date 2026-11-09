@@ -165,6 +165,31 @@ Split out of [security-and-sandboxing-server-git-fingerprints.md](security-and-s
   The cwd's realpath is read once, before the first step, and nothing
   watches the link itself.
 
+- **A probed call's submodules are found from the top of the work tree, so
+  one behind `--git-dir=` from outside its `core.worktree` reaches them,
+  2026-11-09.** Board task `b934c65b`, branch at `4e79bc97`, git 2.39.5
+  only. A repository `A` holding an embedded repository `a` that holds `b`,
+  each a gitlink no `.gitmodules` names, with `filter.x.clean` and `*
+  filter=x` planted in `A/a/b/.git`, `b/s.txt` stat-dirty and
+  `core.worktree` set to `A`: under plain git from a directory outside `A`,
+  `--git-dir=A/.git rev-parse --show-cdup` printed `A`'s absolute path,
+  `ls-files --stage` printed the gitlink as `a`, from the top, and `add -A`
+  ran `b`'s driver. Through this app's compiled `git()` and `gitSync()` at
+  `4e79bc97` the same call ran it through each alone with `ok: true`, and
+  from `A` ran nothing: `populatedGitlinks` resolved `a` against the cwd,
+  found no `.git` there and probed no submodule. The same resolution folded
+  `../sm` onto a subdirectory spelled through a symlink, and a
+  superproject's `status` from there ran its submodule's driver through
+  each. With the listing made `--full-name` and its paths resolved against
+  the probe's `top`, all four run nothing and succeed. The file passed 84
+  of 94 with 10 skipped, and `git`, `gitDirRead`, `gitDirWatch`,
+  `blockStartupGit` and `checkoutGitClock` 62 of 69 with 7 skipped.
+  Caveat: not run on a 2.56.0 build. No production caller puts a probed
+  subcommand behind `--git-dir=` (its one producer, `readGitDir`, runs
+  `config`), so the first shape is latent; `--show-cdup` printing an
+  absolute path from outside a work tree was measured only with
+  `core.worktree` set.
+
 ## Not yet verified by hand
 
 - **Whether a work cycle can move a site's `objects/` or `refs/` away and

@@ -656,10 +656,17 @@ function probeSites(
 }
 
 /**
- * Every gitlink in the index, with paths relative to the directory it ran in
- * (`:/` reaches the whole tree from a subdirectory, as `../sm`).
+ * Every gitlink in the index (`:/` reaches the whole tree from a
+ * subdirectory), with paths relative to the top of the work tree.
+ *
+ * `--full-name` because without it a path is relative to wherever git took
+ * the call to stand: `../sm` from a subdirectory, but from the top for a call
+ * whose leading `--git-dir=` names a repository with `core.worktree`, run from
+ * outside that work tree. Resolved against the directory the call ran in, that
+ * one named no submodule, none was probed, and the call's child git in a
+ * nested repository ran its filter (board task b934c65b, measured, 2.39.5).
  */
-const GITLINK_LIST = ["ls-files", "--stage", "-z", "--", ":/"];
+const GITLINK_LIST = ["ls-files", "--full-name", "--stage", "-z", "--", ":/"];
 
 /**
  * The populated submodules in a probe site's index, each a probe site of its
@@ -687,13 +694,13 @@ const GITLINK_LIST = ["ls-files", "--stage", "-z", "--", ":/"];
  * applies before it starts the child, and whether or not `.gitmodules` names
  * it, because git recurses into one it does not (measured).
  */
-function populatedGitlinks(dir: string, output: string): string[] {
+function populatedGitlinks(top: string, output: string): string[] {
   const trees: string[] = [];
   for (const record of output.split("\0")) {
     if (!record.startsWith("160000 ")) continue;
     const tab = record.indexOf("\t");
     if (tab === -1) continue;
-    const tree = path.resolve(dir, record.slice(tab + 1));
+    const tree = path.resolve(top, record.slice(tab + 1));
     if (fs.existsSync(path.join(tree, ".git"))) trees.push(tree);
   }
   return trees;
@@ -719,7 +726,9 @@ const MAX_PROBE_SITES = 64;
  * watched where git never reads it (board task 10264b6b). `--show-cdup` prints
  * an empty line at the top and no line outside a work tree, where a relative
  * origin is relative to the site itself (measured, 2.39.5), which is why it
- * comes last: its absence moves no other line.
+ * comes last: its absence moves no other line. From outside the work tree a
+ * leading `--git-dir=`'s `core.worktree` names, it prints that work tree's
+ * absolute path (measured, 2.39.5), which `path.resolve` takes as it stands.
  */
 const SITE_PATHS = [
   "rev-parse",
@@ -1254,7 +1263,7 @@ function* prepareContentCall(
     if (index.code !== 0 || index.overflowed) {
       return { ok: false, reason: probeFailure(index, dir, args, gitlinkList) };
     }
-    queue.push(...populatedGitlinks(dir, index.stdout));
+    queue.push(...populatedGitlinks(top, index.stdout));
   }
 
   for (const [file, { fingerprint, before }] of watched) {

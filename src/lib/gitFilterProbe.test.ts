@@ -922,6 +922,47 @@ describe("a driver planted in a submodule's git directory runs in no child of th
     assert.equal(res.ok, true, res.stderr);
   });
 
+  it("git() and gitSync(): status from a subdirectory spelled through a symlink runs nothing", async () => {
+    // `../sm` folded onto the link named no submodule.
+    for (const viaSync of [false, true]) {
+      const { repo, marker } = submoduleRepo();
+      fs.mkdirSync(path.join(repo, "below"));
+      fs.symlinkSync(path.join(repo, "below"), `${repo}-link`);
+      const args = ["status", "--porcelain"];
+      const res = viaSync ? gitSync(`${repo}-link`, args) : await git(`${repo}-link`, args);
+
+      ranNothing(marker);
+      assert.equal(res.ok, true, `${viaSync ? "gitSync" : "git"}(): ${res.stderr}`);
+    }
+  });
+
+  /** `nestedEmbeddedRepo` with `core.worktree` naming its top, and a directory outside it. */
+  function nestedEmbeddedWorkTree(): { repo: string; elsewhere: string; marker: string } {
+    const { repo, marker } = nestedEmbeddedRepo();
+    plain(repo, ["config", "core.worktree", repo]);
+    const elsewhere = `${repo}-elsewhere`;
+    fs.mkdirSync(elsewhere);
+    return { repo, elsewhere, marker };
+  }
+
+  it("git() and gitSync(): add -A behind `--git-dir=`, from outside the core.worktree it names, runs nothing", async () => {
+    // From outside the work tree git prints the index's paths from its top,
+    // and resolved against the cwd they named no submodule (board task
+    // b934c65b). A fixture each, since a call that ran the filter once would
+    // leave nothing stat-dirty for the next.
+    for (const viaSync of [false, true]) {
+      for (const outside of [false, true]) {
+        const { repo, elsewhere, marker } = nestedEmbeddedWorkTree();
+        const cwd = outside ? elsewhere : repo;
+        const args = [`--git-dir=${path.join(repo, ".git")}`, "add", "-A"];
+        const res = viaSync ? gitSync(cwd, args) : await git(cwd, args);
+
+        ranNothing(marker);
+        assert.equal(res.ok, true, `${viaSync ? "gitSync" : "git"}() from ${cwd}: ${res.stderr}`);
+      }
+    }
+  });
+
   it("git(): add -A, which nothing tells not to recurse, runs nothing", async () => {
     const { repo, marker } = submoduleRepo();
     const res = await git(repo, ["add", "-A"]);
@@ -986,6 +1027,17 @@ describe("a driver planted in a submodule's git directory runs in no child of th
     const textconv = submoduleTextconvRepo();
     plain(textconv.repo, ["diff", "--no-ext-diff", "--no-textconv", "HEAD~1", "HEAD"]);
     fired("diff", textconv.marker);
+    const linked = submoduleRepo();
+    fs.mkdirSync(path.join(linked.repo, "below"));
+    fs.symlinkSync(path.join(linked.repo, "below"), `${linked.repo}-link`);
+    plain(`${linked.repo}-link`, ["status", "--porcelain"]);
+    fired("status through a symlink", linked.marker);
+    const outside = nestedEmbeddedWorkTree();
+    const gitDir = `--git-dir=${path.join(outside.repo, ".git")}`;
+    assert.equal(plain(outside.elsewhere, [gitDir, "rev-parse", "--show-cdup"]).trim(), outside.repo);
+    assert.match(plain(outside.elsewhere, [gitDir, "ls-files", "--stage"]), /^160000 \S+ 0\ta$/m);
+    plain(outside.elsewhere, [gitDir, "add", "-A"]);
+    fired("add -A behind --git-dir= from outside its core.worktree", outside.marker);
   });
 });
 
