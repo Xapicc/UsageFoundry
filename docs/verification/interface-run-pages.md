@@ -182,7 +182,9 @@ panels and the API payloads are in
   read from source rather than a pick-up driven in a browser.
 
 - **`/runs` opens narrowed to a finished status from a link, 2026-11-09**,
-  standalone bundle built from `3a67f03e` and served by hand (`npm run
+  standalone bundle built from the commit "Open /runs and /tasks narrowed from
+  the waiting line's links" (named by subject: the branch's hashes were
+  rewritten after the run) and served by hand (`npm run
   smoke-pages` on the same bundle: 104 of 104 page loads clean), a throwaway
   `DATA_DIR` holding nine settled runs (two needs-review, four failed, one
   stopped, two completed, ages from 1 hour to 30 days) and one paused run,
