@@ -229,13 +229,83 @@ function makeSandbox() {
   const dataDir = path.join(root, "data");
   const claudeHome = path.join(root, "claude-home");
   const workspace = path.join(root, "workspace");
-  // `projects/` present but empty: the app warns about a CLAUDE_HOME without
-  // one, and an empty one is the state a machine that has never run Claude Code
-  // is in — which is what we want every usage figure to read.
   for (const dir of [dataDir, path.join(claudeHome, "projects"), path.join(workspace, "project")]) {
     fs.mkdirSync(dir, { recursive: true });
   }
+  seedTranscripts(claudeHome, root);
   return { root, dataDir, claudeHome, workspace, claudeBin };
+}
+
+/**
+ * A few synthetic assistant turns under `CLAUDE_HOME/projects`, so `/` draws.
+ *
+ * With that directory empty, `GET /api/usage` answers `meta.entryCount === 0` and
+ * the dashboard renders `FirstRun` ("Nothing to measure yet") instead of
+ * everything below it: the window card, `CodexWindows`, `LiveTelemetry` and
+ * `InstallSpendCard`. Every page-load assertion this file makes was then about
+ * the nothing-state of the one page whose whole subject is the meters, at every
+ * width and skin, and the run read clean. `/usage` was the same.
+ *
+ * Written from what `parseLine` in `src/lib/transcripts.ts` reads and nothing
+ * more: `type: "assistant"`, a `message` with `id`, `model` and `usage`, a
+ * `requestId` (without both ids the line is keyed on its uuid, which is fine but
+ * is the weaker dedupe path), a parseable `timestamp`, and a `cwd` and
+ * `sessionId`. No effort, skill, agent or entrypoint field: nothing here is
+ * about those, and a fixture that carried them would be one more thing to keep
+ * in step with the parser.
+ *
+ * Timestamps are relative to *now*, and that is the point of generating the file
+ * here rather than committing one: the session window is the five hours after
+ * the first turn inside it, so a fixture dated at commit time would be a
+ * finished window by the time anyone ran this, and `/` would draw an idle
+ * session. The newest turn is ten minutes old and a pass takes a few minutes, so
+ * the window is open for all of it. The oldest turn is 30 hours back, in its own
+ * session, so the weekly window holds more than the session one does — two
+ * meters reading the same number would hide a mix-up between them.
+ *
+ * `claude-sonnet-4-5` because it is in `pricing.ts`'s table: an unpriced model
+ * would also draw the meters, but behind the "unpriced models" banner, and that
+ * is a different page.
+ *
+ * Invented, never copied from a real transcript: a real one carries prompts and
+ * paths that belong to somebody, and this pass is run by people who then paste
+ * its output and screenshots into tickets.
+ */
+function seedTranscripts(claudeHome, root) {
+  const projectDir = path.join(claudeHome, "projects", "-smoke-synthetic-project");
+  fs.mkdirSync(projectDir, { recursive: true });
+  const cwd = path.join(root, "synthetic-project");
+  const now = Date.now();
+  const minute = 60_000;
+  const sessions = [
+    { id: "00000000-0000-4000-8000-00000000a001", agesInMinutes: [30 * 60] },
+    { id: "00000000-0000-4000-8000-00000000a002", agesInMinutes: [40, 25, 10] },
+  ];
+  for (const session of sessions) {
+    const lines = session.agesInMinutes.map((age, turn) =>
+      JSON.stringify({
+        type: "assistant",
+        uuid: `${session.id.slice(-4)}-turn-${turn}`,
+        sessionId: session.id,
+        cwd,
+        requestId: `req_smoke_${session.id.slice(-4)}_${turn}`,
+        timestamp: new Date(now - age * minute).toISOString(),
+        isSidechain: false,
+        message: {
+          id: `msg_smoke_${session.id.slice(-4)}_${turn}`,
+          model: "claude-sonnet-4-5",
+          usage: {
+            input_tokens: 1_200 + turn * 300,
+            output_tokens: 800 + turn * 200,
+            cache_read_input_tokens: 40_000 + turn * 10_000,
+            cache_creation_input_tokens: 3_000,
+            cache_creation: { ephemeral_5m_input_tokens: 3_000, ephemeral_1h_input_tokens: 0 },
+          },
+        },
+      }),
+    );
+    fs.writeFileSync(path.join(projectDir, `${session.id}.jsonl`), lines.join("\n") + "\n");
+  }
 }
 
 /**
@@ -408,6 +478,31 @@ async function sendJSON(method, baseUrl, pathname, headers, body) {
     throw new Error(`${method} ${pathname} answered ${response.status}: ${text}`);
   }
   return JSON.parse(text);
+}
+
+/**
+ * Refuse to run if the sandbox's transcripts did not reach the usage route.
+ *
+ * Not an assertion about the interface — it reads an API, not the page, and it is
+ * the transcript counterpart of the check that `data-skin` arrived: everything
+ * the dashboard half of this pass measures is worthless if `seedTranscripts` wrote
+ * lines the parser rejects, because `/` then falls back to `FirstRun` and every
+ * assertion goes green over the nothing-state, which is the failure this seeding
+ * exists to end. A parser change that stopped accepting the fixture would
+ * otherwise return the pass to exactly that, silently.
+ */
+async function requireSeededUsage(baseUrl, headers) {
+  const response = await fetch(`${baseUrl}/api/usage`, { headers });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`GET /api/usage answered ${response.status}: ${text.slice(0, 300)}`);
+  const entryCount = JSON.parse(text)?.meta?.entryCount;
+  if (typeof entryCount !== "number" || entryCount <= 0) {
+    throw new Error(
+      `GET /api/usage reported meta.entryCount ${JSON.stringify(entryCount)} over the sandbox's ` +
+        "synthetic transcripts, so `/` would draw FirstRun instead of its meters. " +
+        "`seedTranscripts` no longer writes lines `parseLine` in src/lib/transcripts.ts accepts.",
+    );
+  }
 }
 
 /**
@@ -855,6 +950,7 @@ async function main() {
   try {
     await waitForHealth(baseUrl, headers, serverLog);
 
+    await requireSeededUsage(baseUrl, headers);
     const seeds = await seed(baseUrl, headers, sandbox.workspace);
     const pages = routes(patterns, seeds);
     console.log(
