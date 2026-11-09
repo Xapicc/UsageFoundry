@@ -133,6 +133,44 @@
   vault's skill or agent. These are filed as board tasks `687b0d2f` and
   `b2fd06d0`.
 
+- **A `claudeMdExcludes` entry for `<vault>/**` in a reader's `--settings`
+  keeps every `CLAUDE.md` inside the vault out of a reader whose folder
+  contains it, and changed nothing else measured, on 2.1.319, 2026-11-09.**
+  The linux-arm64 build at `/usr/local/bin/claude`, uid 1000, nested in an
+  agent's sandbox, under board task `b2fd06d0`. An uncommitted copy of
+  `write-boundary-probe.mjs` against a stub API with a dummy key, with the
+  reader argv `buildArgs` emits (the vault in `additionalDirectories`,
+  `Edit(//<vault>/**)`, `denyWrite`) and the setting on, one run per case. The
+  vault, a git repository one level below the cwd, held untracked a root
+  `CLAUDE.md`, a `CLAUDE.local.md`, a `.claude/rules/` file, a `sub/CLAUDE.md`,
+  a skill and an agent. The cwd held its own `CLAUDE.md` and a `sib/CLAUDE.md`,
+  and `CLAUDE_CONFIG_DIR` held a user `CLAUDE.md`. Without the entry, three
+  readers were shown the root, local and rules files in the request after
+  their first `Read` of a note, and the nested one after the `Read` beside it:
+  a plain-folder cwd under `bypassPermissions`, the same under `acceptEdits`,
+  and a git-repository cwd holding the vault as an ignored nested repository.
+  An isolated run in a worktree of that repository, reading the same notes in
+  its main checkout, was shown none. The skill and the agent reached no reader.
+  With the entry, none of the six vault markers reached any of the four, and
+  the cwd's, the sibling's and the user's did. Every read answered. Caveat: the
+  stub API, markers found in the request body, and the probe's argv rather
+  than one built by `runIteration`.
+
+- **How the entry has to be spelled, same pin and day.** Same harness, plain
+  folder, one run per name. With a vault directory named `Knowledge Vault
+  (2024)`, `Vault+(x)` or `Vault@(y) a|b` and the path written as is, no vault
+  `CLAUDE.md` was excluded. With each special character escaped with a
+  backslash, none was either. With each of `(`, `)`, `+`, `@` and `|` written as
+  a one-character class such as `[(]`, all were. Names holding `$^.%`,
+  `.,;=&`, `'~#` or a backslash were excluded as written, and `[$][^]` was not.
+  Then `write-boundary-probe.mjs` as committed under `b2fd06d0`, which gives
+  every reader the entry in `buildArgs`' spelling. In turn 9, a reader whose cwd
+  is the plain folder holding the scratch vault was shown neither the vault's
+  root nor its nested `CLAUDE.md`, read both notes and was refused its `Write`
+  into the vault. Its control, 9c, without the entry, was shown both. Every
+  other turn's checks held. Turn 8's two `Bash` steps went unanswered as before,
+  nested. Caveat: as above.
+
 ## Not yet verified by hand
 
 - **No work cycle spawned by the app has been seen refused.** The probe
@@ -176,3 +214,10 @@
   reader cycle with the skill on that makes a Bash call, `ls -la
   /workspace2/.claude` is unchanged and the cycle's log has no `bwrap:` line
   naming a path under `/workspace2`.
+
+- **No app-spawned reader has been seen given the `CLAUDE.md` exclusion.**
+  Settle: on a scratch install whose `WORKSPACE_ROOTS` is a parent of the
+  vault, start a cheap reader run on that parent folder with the vault skill
+  on, whose prompt reads a note. Its spawn argv's `--settings` must carry
+  `claudeMdExcludes: ["<vault>/**"]`, and its transcript must hold no
+  attachment naming the vault's `CLAUDE.md`.
