@@ -346,14 +346,18 @@ describe("a pick-up the CLI refuses to resume", () => {
     assert.ok(row.stop_reason?.includes(`claude --resume ${session}`), row.stop_reason ?? "");
     // The refusal's `result` has no `result` string, only `errors`, so the
     // sentence that says why used to be on the run's log alone. It follows the
-    // command and does not replace it.
+    // command and does not replace it. The refund's sentence comes last: the
+    // line reports no API time, no tokens and no cost (plan e5, and plan e10
+    // for a transcript that is there), so the retry's refusal is not charged
+    // either, and the reason says why the count is short of the spawns.
     assert.equal(
       row.stop_reason,
       "Could not resume this run's Claude Code session (exit 1). Its work is still on disk; " +
         `pick it up by hand with: claude --resume ${session}. ` +
-        `Claude Code said: “No conversation found with session ID: ${session}”.`,
+        `Claude Code said: “No conversation found with session ID: ${session}”. ` +
+        "This work cycle did not call the API, so it was not counted against the run's limit.",
     );
-    assert.equal(row.iterations, 2, "the attempt the retry replaced is not charged");
+    assert.equal(row.iterations, 1, "neither refused attempt is charged");
   });
 });
 

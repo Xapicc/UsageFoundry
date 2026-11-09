@@ -324,7 +324,7 @@ export const DEFERRED_UNAVAILABLE_REASON = "tool_deferred_unavailable";
  * Whether a cycle ended on a refusal the CLI made before it called the API, so
  * that the cycle it was charged is handed back.
  *
- * Three shapes, each measured on 2.1.319 against a stub API that logged every
+ * Four shapes, each measured on 2.1.319 against a stub API that logged every
  * request (`docs/verification/run-lifecycle-refused-cycles.md`).
  *
  * **A resume the CLI refuses because a deferred tool call's server is gone** (plan
@@ -335,6 +335,17 @@ export const DEFERRED_UNAVAILABLE_REASON = "tool_deferred_unavailable";
  * spawn that bought nothing, and a cap left as it was refused the next one at the
  * door ("already used N work cycles") for a reason that is not the operator's to
  * fix.
+ *
+ * **A resume the CLI refuses before its first turn though the transcript is
+ * there** (plan e10): an empty, a non-JSON or an unreadable transcript ("No
+ * conversation found with session ID"), or the line the CLI appends when the
+ * model ends the conversation ("Claude ended this conversation"). Each is a
+ * file `sessionTranscriptPresence` calls present, so the resume is spawned, and
+ * each writes a zeroed `error_during_execution` with zero turns, no startup
+ * reason, `duration_api_ms: 0`, a `total_cost_usd` of 0 and no request in the
+ * log. It is `cycleDidNoWork`'s second clause, so the loop retries it once and
+ * hands that spawn back itself; the second refusal ended the run
+ * `resume_failed` charged, and every press repeated the pair.
  *
  * **A startup failure written as a `result`** (`startup_failure_reason` set, plan
  * e8): `duration_api_ms: 0`, a `total_cost_usd` of 0, zero turns, an all-zero
@@ -360,17 +371,34 @@ export const DEFERRED_UNAVAILABLE_REASON = "tool_deferred_unavailable";
  * Claude-Code-only gate is the one both decisions read; `stdoutLines` is asked
  * again here rather than inherited from it, so that loosening that test cannot
  * widen this refund.
+ *
+ * The refused resume needs `resumed`, the cycle having been spawned with
+ * `--resume`, because that is the only place its shape was measured and a fresh
+ * start's zeroed result with no reason is unmeasured and stays charged. It
+ * names no startup reason, so the startup gate keeps a result that does. It
+ * needs no provider gate of its own: only Claude Code reports `duration_api_ms`,
+ * so a Codex cycle's `apiDurationMs` is null and fails it.
  */
 export function refusedWithoutApiCall(
   res: Pick<
     IterationResult,
-    "terminalReason" | "apiDurationMs" | "tokens" | "startupFailureReason" | "stdoutLines"
+    | "terminalReason"
+    | "apiDurationMs"
+    | "tokens"
+    | "startupFailureReason"
+    | "stdoutLines"
+    | "isError"
+    | "resultTurns"
   >,
   cycleCostUSD: number,
   startupSentence: string | null,
+  resumed: boolean,
 ): boolean {
   if (res.tokens !== 0 || cycleCostUSD > 0) return false;
   if (res.terminalReason === DEFERRED_UNAVAILABLE_REASON) return res.apiDurationMs === 0;
+  if (resumed && res.isError && res.resultTurns === 0 && res.startupFailureReason === null) {
+    return res.apiDurationMs === 0;
+  }
   if (startupSentence === null) return false;
   if (res.startupFailureReason !== null) return res.apiDurationMs === 0;
   return res.stdoutLines === 0;

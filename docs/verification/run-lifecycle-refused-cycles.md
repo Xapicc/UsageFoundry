@@ -5,7 +5,7 @@
 What a run records when the pinned CLI declines a cycle with a sentence of its
 own: a startup failure written to stderr alone, one written as a `result`
 carrying `startup_failure_reason`, and a `--resume` refused because a deferred
-tool call's server is gone (`startupFailureSentence`, `refusedWithoutApiCall`
+tool call's server is gone or its transcript will not load (`startupFailureSentence`, `refusedWithoutApiCall`
 and `IterationResult.errorText` in `src/lib/cycleInvocation.ts` and
 `handleStreamLine`). Split out of
 [run-lifecycle-hooks-and-endings.md](run-lifecycle-hooks-and-endings.md) on
@@ -233,6 +233,31 @@ first dated 2026-11-09 were moved verbatim.
   sentences and one result reason driven, so the stderr arm's reach to every
   other empty-stdout exit rests on the e9 ordering and not on a driven case.
 
+- **Four transcripts `startRun` calls present make a 2.1.319 `--resume`
+  refuse with nothing spent, and the retry's refusal is now handed back,
+  2026-11-09.** Board task `754a9c96`. New plan e10 (stub API, fake key,
+  requests counted per cycle; driven twice, same outcome): a good cycle per
+  cause, then its transcript damaged and resumed. **Refused**, each exit 1, no
+  request, one `error_during_execution` with `num_turns: 0`,
+  `duration_api_ms: 0`, `total_cost_usd: 0`, zero `usage`, no
+  `startup_failure_reason` and the resumed `session_id`: an empty file, one
+  not JSON and one at mode 000 (`No conversation found with session ID: <id>`),
+  and the `ended-by-model` line the CLI appends when the model ends the
+  conversation (`Claude ended this conversation. Start a new session to
+  continue.`). A directory under the name was refused too (`EISDIR`), but the
+  walk does not count it. **Resumed:** a torn last line, no user or assistant
+  line left, `version` rewritten to 1.0.0 or 9.0.0, a symlink, a mode-311
+  working directory, and a second child on a session the first was still
+  answering in.
+
+  Before the change the new `cycleEndingSentence.test.ts` cases, replaying the
+  captured line, failed on `iterations`: 2 against 1, the retry's refusal
+  charged. After it, 1 through two presses at the same cap. Six one-field changes (timed or unreported API time, a
+  moved cost, tokens, a turn, not an error) stay charged, and five mutations
+  of the compiled arm each failed only their own cases. Caveat: a replay; the
+  marker was planted, since EndConversation sits behind a server flag a fake
+  key never gets.
+
 ## Not yet verified by hand
 
 - **What `CLAUDE_CODE_DROP_UNAVAILABLE_DEFERRED_TOOL=1` does is the CLI's
@@ -268,3 +293,10 @@ first dated 2026-11-09 were moved verbatim.
   `cycleN.meta.json`'s `firstStdoutAt` with `requests.jsonl`. Also open: a
   nested-sandbox or OAuth-refresh cycle that hits the network before its first
   line (e9's three routes did not, but their sign-ins were made up).
+
+- **The model ending a conversation, and what leaves a real transcript empty
+  or unreadable, are not driven.** Plan e10 planted the `ended-by-model` line
+  and made the empty and mode-000 files by hand. Settle the first on an
+  account whose requests offer EndConversation: drive a cycle that calls it,
+  then resume. Settle the second by killing a child just after its
+  `system:init` and listing `projects/` for a zero-byte `<id>.jsonl`.

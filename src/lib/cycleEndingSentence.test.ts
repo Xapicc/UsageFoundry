@@ -221,6 +221,41 @@ const configFileInvalid = (changed: Record<string, unknown> = {}): Replay => ({
 });
 const CONFIG_FILE_INVALID = configFileInvalid();
 
+// 2.1.319, plan e10: a `--resume` the CLI refused although the transcript was
+// still on disk under the session's name, which is the only resume `startRun`
+// lets through. An empty, a non-JSON and an unreadable (mode 000) transcript
+// each said "No conversation found"; the line the CLI appends when the model
+// ends the conversation said `ENDED_BY_MODEL`. Each was one zeroed
+// `error_during_execution` result naming the resumed session, the sentence in
+// `errors` and on stderr, exit 1, and no request reached the stub.
+const ENDED_BY_MODEL = "Claude ended this conversation. Start a new session to continue.";
+const noConversation = (sessionId: string) =>
+  `No conversation found with session ID: ${sessionId}`;
+const resumeRefused = (
+  sessionId: string,
+  sentence: string,
+  changed: Record<string, unknown> = {},
+): Replay => ({
+  stdout: jsonLines({
+    type: "result",
+    subtype: "error_during_execution",
+    duration_ms: 0,
+    duration_api_ms: 0,
+    is_error: true,
+    num_turns: 0,
+    stop_reason: null,
+    session_id: sessionId,
+    total_cost_usd: 0,
+    usage: { input_tokens: 0, output_tokens: 0 },
+    permission_denials: [],
+    errors: [sentence],
+    result_index: 0,
+    ...changed,
+  }),
+  stderr: `${sentence}\n`,
+  code: 1,
+});
+
 /** What each child the loop spawns says, in spawn order. */
 let replies: Scripted[] = [];
 /** What each child was asked to `--resume`, and the prompt it was handed. */
@@ -592,6 +627,87 @@ describe("a startup failure the CLI reports as a result", () => {
   }
 });
 
+describe("a resume the CLI refuses with the transcript still on disk", () => {
+  /** A finished first segment whose transcript is on disk, as `startRun` asks. */
+  async function finishedRun() {
+    const run = start(["Still working."], 1);
+    const first = await settled(run.id);
+    assert.equal(first.status, "completed", first.stop_reason ?? "");
+    assert.ok(first.session_id, "the fixture's first cycle must leave a session to resume");
+    keepTranscript(first.session_id);
+    return { id: run.id, session: first.session_id };
+  }
+
+  it("is retried once, then costs the pick-up no cycle and says so", async () => {
+    const { id, session } = await finishedRun();
+    const refused = resumeRefused(session, noConversation(session));
+    replies.push(refused, refused);
+
+    pickUp(id, 2);
+    const row = await settled(id);
+
+    assert.deepEqual(
+      spawns.map((s) => s.resumed),
+      [null, session, session],
+      "the one retry a refused resume gets",
+    );
+    assert.equal(row.status, "failed");
+    assert.equal(row.ending_code, "resume_failed");
+    assert.ok(row.stop_reason?.includes(noConversation(session)), row.stop_reason ?? "");
+    assert.equal(row.iterations, 1, "neither refused spawn is counted");
+    assert.ok(row.stop_reason?.includes("did not call the API"), row.stop_reason ?? "");
+  });
+
+  it("leaves the cap alone, so the next press meets the CLI's refusal and not the door's", async () => {
+    // Capped at the two cycles the first segment and one press would use: left
+    // charged, the second press is refused at the door ("already used 2 work
+    // cycles") for spawns the CLI refused before it made a single request.
+    const { id, session } = await finishedRun();
+    const refused = resumeRefused(session, ENDED_BY_MODEL);
+    replies.push(refused, refused);
+
+    pickUp(id, 2);
+    const second = await settled(id);
+    assert.equal(second.iterations, 1);
+    assert.ok(second.stop_reason?.includes(ENDED_BY_MODEL), second.stop_reason ?? "");
+
+    replies.push(refused, refused);
+    pickUp(id, 2);
+    const third = await settled(id);
+    assert.equal(spawns.length, 5, "two spawns a press, the retry included");
+    assert.equal(third.ending_code, "resume_failed");
+    assert.equal(third.iterations, 1);
+  });
+
+  // The refund is only for a refusal that says in figures that it bought
+  // nothing, and each of these is one that did or might have. Left charged, the
+  // pick-up is counted exactly as it was before the refund existed. A fresh
+  // run's zeroed result with no startup reason is the startup arm's case "the
+  // CLI gave no startup reason" above, and stays charged because it resumed
+  // nothing.
+  for (const [what, changed] of [
+    ["an API call was timed", { duration_api_ms: 120 }],
+    ["the API call's duration is not reported", { duration_api_ms: undefined }],
+    ["the session's cost moved", { total_cost_usd: 0.5 }],
+    ["tokens were counted", { usage: { input_tokens: 7, output_tokens: 3 } }],
+    ["a turn was taken", { num_turns: 1 }],
+    ["the result is not an error", { subtype: "success", is_error: false }],
+  ] as const) {
+    it(`keeps the pick-up's cycle charged when ${what}`, async () => {
+      const { id, session } = await finishedRun();
+      const refused = resumeRefused(session, noConversation(session), changed);
+      replies.push(refused, refused);
+
+      pickUp(id, 2);
+      const row = await settled(id);
+
+      assert.equal(row.status, "failed");
+      assert.equal(row.iterations, 2, "the first segment's cycle and the pick-up's");
+      assert.ok(!row.stop_reason?.includes("did not call the API"), row.stop_reason ?? "");
+    });
+  }
+});
+
 describe("a resume refused for a deferred call whose tool is gone", () => {
   it("ends the run with the CLI's sentence, which names the tool and the two ways out", async () => {
     // The deferring cycle is a success with empty text, so the loop sends its
@@ -781,16 +897,19 @@ describe("startupFailureSentence", () => {
 });
 
 describe("refusedWithoutApiCall", () => {
+  // A `subtype: "success"` result, so not `isError`, and sixteen turns.
   const refused = {
     terminalReason: "tool_deferred_unavailable",
     apiDurationMs: 0,
     tokens: 0,
     startupFailureReason: null,
     stdoutLines: 1,
+    isError: false,
+    resultTurns: 16,
   };
 
   it("holds for the measured refusal, whose cost did not move", () => {
-    assert.equal(refusedWithoutApiCall(refused, 0, null), true);
+    assert.equal(refusedWithoutApiCall(refused, 0, null, true), true);
   });
 
   // Each of these is a cycle that may have bought something, and a refund of
@@ -804,7 +923,7 @@ describe("refusedWithoutApiCall", () => {
     ["no reason was given", { ...refused, terminalReason: null }, 0],
   ] as const) {
     it(`is false when ${what}`, () => {
-      assert.equal(refusedWithoutApiCall(res, cost, null), false);
+      assert.equal(refusedWithoutApiCall(res, cost, null, true), false);
     });
   }
 
@@ -819,10 +938,16 @@ describe("refusedWithoutApiCall", () => {
       tokens: 0,
       startupFailureReason: "config_file_invalid",
       stdoutLines: 1,
+      isError: true,
+      resultTurns: 0,
     };
+    // The fresh start plan e8 also captured. On a resume, the same result
+    // without its reason is a resume refused before its first turn, which is
+    // the arm below and not this one.
+    const resumed = false;
 
     it("holds when the result reports no API time, no tokens and no cost", () => {
-      assert.equal(refusedWithoutApiCall(result, 0, SENTENCE), true);
+      assert.equal(refusedWithoutApiCall(result, 0, SENTENCE, resumed), true);
     });
 
     for (const [what, res, cost, sentence] of [
@@ -834,7 +959,7 @@ describe("refusedWithoutApiCall", () => {
       ["the loop did not take it for a startup failure", result, 0, null],
     ] as const) {
       it(`is false when ${what}`, () => {
-        assert.equal(refusedWithoutApiCall(res, cost, sentence), false);
+        assert.equal(refusedWithoutApiCall(res, cost, sentence, resumed), false);
       });
     }
   });
@@ -848,10 +973,12 @@ describe("refusedWithoutApiCall", () => {
       tokens: 0,
       startupFailureReason: null,
       stdoutLines: 0,
+      isError: false,
+      resultTurns: null,
     };
 
     it("holds when nothing reached stdout", () => {
-      assert.equal(refusedWithoutApiCall(stderrOnly, 0, SENTENCE), true);
+      assert.equal(refusedWithoutApiCall(stderrOnly, 0, SENTENCE, false), true);
     });
 
     for (const [what, res, cost, sentence] of [
@@ -861,7 +988,47 @@ describe("refusedWithoutApiCall", () => {
       ["the loop did not take it for a startup failure", stderrOnly, 0, null],
     ] as const) {
       it(`is false when ${what}`, () => {
-        assert.equal(refusedWithoutApiCall(res, cost, sentence), false);
+        assert.equal(refusedWithoutApiCall(res, cost, sentence, false), false);
+      });
+    }
+  });
+
+  describe("for a resume refused before its first turn", () => {
+    // Plan e10: an empty, non-JSON or unreadable transcript, or the line the CLI
+    // appends when the model ends the conversation. It names no startup failure,
+    // so `startupFailureSentence` is null for it.
+    const refusedResume = {
+      terminalReason: null,
+      apiDurationMs: 0,
+      tokens: 0,
+      startupFailureReason: null,
+      stdoutLines: 1,
+      isError: true,
+      resultTurns: 0,
+    };
+
+    it("holds when the result reports no API time, no tokens and no cost", () => {
+      assert.equal(refusedWithoutApiCall(refusedResume, 0, null, true), true);
+    });
+
+    for (const [what, res, cost, resumed] of [
+      ["an API call was timed", { ...refusedResume, apiDurationMs: 1 }, 0, true],
+      ["the API duration was not reported", { ...refusedResume, apiDurationMs: null }, 0, true],
+      ["tokens were counted", { ...refusedResume, tokens: 1 }, 0, true],
+      ["the cycle's cost moved", refusedResume, 0.000001, true],
+      ["a turn was taken", { ...refusedResume, resultTurns: 1 }, 0, true],
+      ["no turn count was reported", { ...refusedResume, resultTurns: null }, 0, true],
+      ["the result is not an error", { ...refusedResume, isError: false }, 0, true],
+      ["the cycle resumed nothing", refusedResume, 0, false],
+      [
+        "it names a startup failure the loop did not take",
+        { ...refusedResume, startupFailureReason: "config_file_invalid" },
+        0,
+        true,
+      ],
+    ] as const) {
+      it(`is false when ${what}`, () => {
+        assert.equal(refusedWithoutApiCall(res, cost, null, resumed), false);
       });
     }
   });
