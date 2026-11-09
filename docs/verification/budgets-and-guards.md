@@ -100,6 +100,33 @@
   rendering of a refusal in a browser; `restartClosedView.test.ts` pins its text
   handling, and the sentence is the one the reopen route already shows.
 
+- **A fraction guard on a chat proposal, approved through `POST
+  /api/chat/[id]/proposals`, spawned its cycle unread; it is now refused,
+  2026-11-09.** A scratch drive, not kept, over a throwaway `DATA_DIR` with
+  `child_process.spawn` stubbed for `CLAUDE_BIN` (`costOutlierGuard.test.ts`'s
+  shape) and the fleet unpaused: `chatDefaultGuards.budget` set to
+  `{ maxIterations: 1, maxWeeklyFraction: 0.5 }` before the card was written (an
+  untemplated card freezes that set), `planUsageFromApi` off and no weekly
+  ceiling (`currentSnapshot().weekly.fraction` null), the compiled route's `POST`
+  called with `{ action: "approve", ids }`. Before the change: 200 with the run
+  in `started`, the proposal `approved`, the run `queued` then `running`, one
+  spawn, `run.guard_unreadable` at `info`, a `budget` event with `code:
+  "no_ceiling"` and `enforceable: false`, the run `completed` — the guard
+  recorded and never read. After: 400 carrying the weekly sentence led by the
+  card's title and ending "Nothing was decided", the proposal still `pending`,
+  no run row, no spawn. The kept test, `src/app/api/chat/[id]/proposals/route.test.ts`,
+  failed 6 of its 8 cases on the old door (the plain approval and the reject are
+  there to stop the refusal being widened) and failed only the Codex case with
+  `guardWindowsOf` forced to answer `claude`. Caveat: as the fleet entry's — a
+  stub stands in for the CLI, so this measures the loop's decision to spawn and
+  not a billed cycle, and the reading was empty because the scratch home had no
+  transcripts and no provider percentage, not because a real endpoint was down.
+  Not driven: the chat page's rendering of the refusal, which `ChatPanel`'s
+  `decide` puts under the button from the route's `error` as it does for the
+  install-limit refusal (read, not rendered); and the double click that the
+  route's ordering of its `await` guards against, read from `markProposal`'s
+  unconditional `UPDATE`, not run.
+
 ## Not yet verified by hand
 
 - **The process budget has never refused a real child in a browser, nor
