@@ -127,6 +127,23 @@
   driven whole on 2.56.0, and that `unresolvableMerge` keeps a resolver from
   starting is read from the code.
 
+- **On git 2.56.0 `landRun` answered `conflicts: ["shared.txt"]` for a merge
+  this app refused by blanking a driver, and now answers `[]`, 2026-11-08.**
+  Board task `31d91115`, branched from `main` at `fb373398`. `landRun` driven
+  whole in a scratch test (not committed) on a database, a repository with a
+  run's slot on a branch and `main` each changing a different line of
+  `shared.txt`, and a `landVerifyCommand` that sets `merge.evil.driver` and
+  appends `shared.txt merge=evil` to `.git/info/attributes` after the preview
+  and before the merge. With `GIT_BIN` at the `v2.56.0` build above, `merge` and
+  `squash` each refused with git's `cannot run :` line as the reason, and with
+  the change left the checkout clean with no `MERGE_HEAD` and `main` unmoved;
+  `conflicts` was `["shared.txt"]` with `refusedMerge`'s `blankedDriverLine`
+  check taken out of the compiled module and `[]` with it. On the image's 2.39.5 it was `[]` both
+  ways. `GIT_BIN` is what picks the git: a `PATH` with the 2.56.0 build first
+  left the app on `/usr/bin/git` and the unfixed module passing. Caveat: the
+  rest of the 2.56.0 shape (the `UU` entry, `MERGE_HEAD`) is the earlier entry's
+  measurement, and `resolveConflicts` was still not driven whole.
+
 ## Not yet verified by hand
 
 None yet.

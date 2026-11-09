@@ -2246,16 +2246,9 @@ async function mergeIntoCheckout(job: {
         );
 
   if (!merge.ok) {
-    const conflicts = await conflictedFiles(folder);
-    const unwound = await unwind(folder, strategy, conflicts.length > 0);
-    return {
-      ok: false,
-      reason: mergeRefusal(branch, merge.stderr, conflicts, unwound),
-      conflicts,
-      // Only over a checkout proved as it was: anything else is the
-      // operator's to look at before a second merge lands on top of it.
-      passing: conflicts.length === 0 && unwound === "restored" && passingRefusal(merge.stderr),
-    };
+    const unmerged = await conflictedFiles(folder);
+    const unwound = await unwind(folder, strategy, unmerged.length > 0);
+    return { ok: false, ...refusedMerge(branch, merge.stderr, unmerged, unwound) };
   }
 
   let squashCommit: string | null = null;
@@ -2575,6 +2568,37 @@ export function mergeRefusal(
   const lock = heldLock(stderr);
   if (lock) return lockRefusal(lock);
   return `git refused the merge, and your checkout is as it was: ${why}`;
+}
+
+/**
+ * What a refused merge answers with, from the files git left unmerged and what
+ * `unwind` made of the checkout.
+ *
+ * `unmerged` is the raw list, and it is read twice with different meanings:
+ * `passing` asks whether git left anything at all, which a blanked driver on
+ * git 2.54 and later does (the file it failed, listed unmerged), and
+ * `conflicts` is what the 400 body of `POST /api/runs/[id]/land` names as
+ * conflicting, which a file that merges cleanly under a driver this app would
+ * not run is not. `mergeRefusal` already says so in the reason; a `conflicts`
+ * that still listed the file contradicted it, on 2.56.0 only (board task
+ * `31d91115`). `unwind` is handed the raw list too, in `landRun`, because it
+ * must still see the MERGE_HEAD and unmerged paths the blank left.
+ *
+ * Exported for its test, `mergeRefusal`'s precedent.
+ */
+export function refusedMerge(
+  branch: string,
+  stderr: string,
+  unmerged: readonly string[],
+  unwound: Unwound,
+): { reason: string; conflicts: string[]; passing: boolean } {
+  return {
+    reason: mergeRefusal(branch, stderr, unmerged, unwound),
+    conflicts: blankedDriverLine(stderr) ? [] : [...unmerged],
+    // Only over a checkout proved as it was: anything else is the
+    // operator's to look at before a second merge lands on top of it.
+    passing: unmerged.length === 0 && unwound === "restored" && passingRefusal(stderr),
+  };
 }
 
 /**

@@ -16,6 +16,7 @@ import {
   passingRefusal,
   purgedMessage,
   purgeRefusal,
+  refusedMerge,
   selectBranchCandidates,
   selectProbeTargets,
   unresolvableMerge,
@@ -245,6 +246,37 @@ describe("a real merge a blanked merge driver failed", () => {
       unresolvableMerge("main", "uf/x", "fatal: refusing to merge unrelated histories", []),
       "git could not merge main into uf/x: fatal: refusing to merge unrelated histories",
     );
+  });
+
+  it("refusedMerge names no conflicting file for a blanked driver, on either git", () => {
+    // The 400 body of POST /api/runs/[id]/land is `conflicts` as returned, so
+    // on 2.56.0 it named f.txt as conflicting beside a reason saying this app
+    // refused to run the driver; the 2.39.5 case has always been [].
+    for (const [stderr, unmerged] of [[stderr256, ["f.txt"]], [stderr239, []]] as const) {
+      const refused = refusedMerge("uf/x", stderr, unmerged, "restored");
+      assert.deepEqual(refused.conflicts, [], stderr);
+      assert.match(refused.reason, /does not run a repository's merge drivers/);
+    }
+  });
+
+  it("refusedMerge is never a refusal to retry over files git left unmerged, blanked driver or not", () => {
+    // `passing` reads the raw list: a checkout with unmerged paths in it is
+    // not "as it was", whatever the 400 body names. Only the unretried
+    // lock-style refusals over a restored checkout may be passing.
+    const lock = "fatal: Unable to create '/r/.git/index.lock': File exists.";
+    // A lock line beside the blank is what separates the raw list from the
+    // shaped one: only the shaped one is empty, and it would read passing.
+    assert.equal(refusedMerge("uf/x", `${stderr256}\n${lock}`, ["f.txt"], "restored").passing, false);
+    assert.equal(refusedMerge("uf/x", stderr256, ["f.txt"], "mid-merge").passing, false);
+    assert.equal(refusedMerge("uf/x", lock, [], "restored").passing, true);
+    assert.equal(refusedMerge("uf/x", lock, [], "changed").passing, false);
+  });
+
+  it("refusedMerge still lists the files of a real conflict", () => {
+    const refused = refusedMerge("uf/x", "Auto-merging f.txt", ["f.txt", "d.txt"], "restored");
+    assert.deepEqual(refused.conflicts, ["f.txt", "d.txt"]);
+    assert.match(refused.reason, /Conflicting: f\.txt, d\.txt$/);
+    assert.equal(refused.passing, false);
   });
 });
 
