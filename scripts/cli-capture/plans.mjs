@@ -1,11 +1,11 @@
 // The capture plans drive.mjs ran on 2026-11-08 against claude 2.1.319, by
-// name. Prints one plan as JSON: node plans.mjs <e1..e9> <outdir>
+// name. Prints one plan as JSON: node plans.mjs <e1..e10> <outdir>
 // Every HOME and CLAUDE_CONFIG_DIR is a scratch directory under <outdir>, and
 // every credential is made up.
 import path from "node:path";
 
 const [name, outArg] = process.argv.slice(2);
-if (!name || !outArg) throw new Error("usage: node plans.mjs <e1..e9> <outdir>");
+if (!name || !outArg) throw new Error("usage: node plans.mjs <e1..e10> <outdir>");
 const O = path.resolve(outArg);
 const here = path.dirname(new URL(import.meta.url).pathname);
 const STD = ["--permission-mode", "acceptEdits", "--model", "claude-sonnet-4-5"];
@@ -108,6 +108,42 @@ const plans = {
     { label: "resume, global config corrupt", ...dirs(), files: { [`${O}/c/.claude.json`]: "{nope" }, args: STD, resumeFrom: 0, prompt: "continue" },
     { label: "fresh, global config corrupt", ...dirs(), args: STD, prompt: "SCN_DONE x" },
   ],
+  // What makes the CLI refuse a `--resume` whose transcript is still on disk
+  // under its own name, which is the only resume `startRun` lets through
+  // (`sessionTranscriptPresence`). Each cause gets its own session: one good
+  // cycle, then the transcript (or the folder) is damaged and the session
+  // resumed. Last, a second child resumes a session a first one is still
+  // answering in.
+  e10: (() => {
+    const out = [];
+    // An op with no `path` acts on the good cycle's transcript.
+    const onGood = (ops, good) => ops?.map((m) => (m.path ? m : { ...m, of: good }));
+    const cause = (label, mutate, extra = {}) => {
+      const d = { ...dirs(out.length / 2), ...(extra.cwd ? { cwd: extra.cwd } : {}) };
+      out.push({ label: `good cycle for: ${label}`, ...d, ...(out.length === 0 ? { files: notes } : {}), args: STD, prompt: "SCN_DONE x" });
+      const good = out.length - 1;
+      out.push({ label, ...d, args: STD, resumeFrom: good, prompt: "continue", mutate: onGood(mutate, good), undo: onGood(extra.undo, good) });
+    };
+    cause("last line torn in half", [{ op: "tail" }]);
+    cause("transcript is not JSON", [{ op: "replace", content: "this is not a transcript\n" }]);
+    cause("transcript is empty", [{ op: "replace", content: "" }]);
+    cause("no user or assistant line left", [{ op: "dropTypes", types: ["user", "assistant"] }]);
+    cause("written by an older CLI (version 1.0.0)", [{ op: "replaceAll", from: '"version":"2.1.319"', to: '"version":"1.0.0"' }]);
+    cause("written by a newer CLI (version 9.0.0)", [{ op: "replaceAll", from: '"version":"2.1.319"', to: '"version":"9.0.0"' }]);
+    cause("transcript unreadable (mode 000)", [{ op: "chmod", mode: 0o000 }], { undo: [{ op: "chmod", mode: 0o600 }] });
+    cause("transcript is a symlink", [{ op: "symlink" }]);
+    cause("transcript is a directory", [{ op: "dir" }]);
+    cause("working directory unreadable (mode 311)", [{ op: "chmod", path: `${O}/wsl`, mode: 0o311 }], { cwd: `${O}/wsl`, undo: [{ op: "chmod", path: `${O}/wsl`, mode: 0o755 }] });
+    // The line `markSessionEndedByModel` appends when the model calls
+    // EndConversation, a tool behind a server flag a fake key never gets.
+    cause("ended-by-model marker appended", [{ op: "endedByModel" }]);
+    const d = dirs(out.length / 2);
+    out.push({ label: "good cycle for: session held by a live child", ...d, args: STD, prompt: "SCN_DONE x" });
+    const good = out.length - 1;
+    out.push({ label: "first child, still answering", ...d, args: STD, resumeFrom: good, prompt: "SCN_LONGHOLD go on", detach: true, afterMs: 4000 });
+    out.push({ label: "second child, same session", ...d, args: STD, resumeFrom: good, prompt: "continue" });
+    return out;
+  })(),
 };
 
 if (!plans[name]) throw new Error(`no plan ${name}; have ${Object.keys(plans).join(", ")}`);

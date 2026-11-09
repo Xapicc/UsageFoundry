@@ -12557,7 +12557,12 @@ export async function startRun(id: string): Promise<void> {
       // Whether the CLI refused before it called the API, so the cycle the loop
       // charged at the spawn is handed back. `refusedWithoutApiCall` has the
       // measurements and the conditions.
-      const madeNoApiCall = refusedWithoutApiCall(res, cycleSpend.costUSD, startupSentence);
+      const madeNoApiCall = refusedWithoutApiCall(
+        res,
+        cycleSpend.costUSD,
+        startupSentence,
+        usedResume,
+      );
 
       // Say so when the live spend guard was blind. Exporting is configured by
       // `telemetryEnv`, but nothing guarantees the records arrive — an ingest
@@ -13075,11 +13080,12 @@ export async function startRun(id: string): Promise<void> {
           startupSentence ?? res.errorText,
         );
         // The loop incremented before it spawned, and a resume the CLI refused
-        // for a deferred call whose server is gone, or a start it refused for
-        // its argv or its configuration, made no API call. It ends the run, so
-        // nothing here repeats it — but every pick-up while the cause is still
-        // there repeats it, and each press charged a cycle that bought nothing
-        // until the cap itself refused the next one.
+        // for a deferred call whose server is gone or for a transcript it would
+        // not open — the retry above's second refusal — or a start it refused
+        // for its argv or its configuration, made no API call. It ends the run,
+        // so nothing here repeats it — but every pick-up while the cause is
+        // still there repeats it, and each press charged a cycle that bought
+        // nothing until the cap itself refused the next one.
         // `refusedWithoutApiCall` has the measurement and the conditions. Not
         // counted in `workedRefunds`, which is for refunds of a cycle that spent
         // something: this one is the opposite, and `ranWorkCycle` must go on
