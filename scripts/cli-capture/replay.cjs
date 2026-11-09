@@ -1,10 +1,11 @@
 // Replays cycles drive.mjs captured (stdout bytes, stderr bytes, exit code)
 // through this app's own run loop, by stubbing `spawn` the way
 // src/lib/resumeMissingTranscript.test.ts does, and prints each run's ending
-// and log. <capture-root> holds the e1..e7 directories plans.mjs names.
+// and log. <capture-root> holds the e1..e8 directories plans.mjs names.
 //   npx tsc -p tsconfig.test.json --outDir .test-build/capture --incremental false
 //   node scripts/cli-capture/replay.cjs <capture-root> $PWD/.test-build/capture <scenario>
-// Scenarios: deferred, startup-resumed, startup-fresh, longctx, multicycle, bg,
+// Scenarios: deferred, startup-resumed, startup-fresh, config-file, longctx,
+// multicycle, bg,
 // and two that are not loops: otlp (every captured /v1/logs body through
 // parseLogsPayload) and parsers (every stdout line through readChatEvent, and
 // the captured transcripts through readCompactions and compactionNotice).
@@ -118,6 +119,21 @@ const base = { folder: "project", mountId: null, prompt: "do the thing", origin:
       report("fresh run: startup failure", await settled(createRun({ ...base, budget: { maxIterations: 3 } }).id));
       replies = [cap("e5", 1)];
       report("fresh run: --settings not found", await settled(createRun({ ...base, budget: { maxIterations: 3 } }).id));
+    } else if (scenario === "config-file") {
+      // e8: a good cycle, then the resume and a fresh start with a corrupt
+      // `.claude.json`, which the CLI answers with a zero-turn result.
+      replies = [cap("e8", 0)];
+      const run = createRun({ ...base, budget: { maxIterations: 1 } });
+      const first = await settled(run.id);
+      report("segment 1: one DONE cycle", first);
+      keepTranscript(first.session_id);
+      replies = [cap("e8", 1), cap("e8", 1)];
+      assert.ok(reopenRun(run.id, { maxIterations: 4 }).ok);
+      const failed = await settled(run.id);
+      report("pick-up: config_file_invalid result (a second capture queued, to show a retry)", failed);
+      console.log(`session kept: ${failed.session_id === first.session_id}; spawns: ${spawns.length}`);
+      replies = [cap("e8", 2)];
+      report("fresh run: config_file_invalid result", await settled(createRun({ ...base, budget: { maxIterations: 3 } }).id));
     } else if (scenario === "longctx") {
       replies = [cap("e3", 5)];
       report("API key: long-context 429, exit 1", await settled(createRun({ ...base, budget: { maxIterations: 3 } }).id));
