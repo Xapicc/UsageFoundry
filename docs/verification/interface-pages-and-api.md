@@ -7,6 +7,28 @@ The runs list, the run inspector and `/runs/live` are in
 
 ## Verified
 
+- **`npm run smoke-pages` now opens every page file and draws `/`'s meters,
+  2026-11-09.** Against the standalone bundle built in the worktree, the pass
+  derived 26 pages from `src/app` and ran 104/104 loads clean at 390px and
+  1280px in both skins, exit 0. A copy of the script cut down to `/` and logging
+  the body text found "Session consumed" in `innerText` and `textContent` in all
+  four combinations, no "Nothing to measure yet", three meters, and the headings
+  *5-hour session*, *Trailing 7 days*, *What this app spent* and *This install,
+  last 24 hours*; the 1280 standard screenshot read $0.14 over 3 turns for the
+  session and $0.18 over 4 for the week, which is the four invented turns
+  `seedTranscripts` writes (one 30 hours old, in its own session). In a scratch
+  copy, a throwaway `src/app/zzprobe/[slug]/deeper/page.tsx` and
+  `runs/[id]/extra/page.tsx` made the script exit 1 naming both routes before
+  any build was read, and a throwaway static `aaprobe/page.tsx` raised the
+  count to 27 and was requested (a 404, the build predating it). **Caveat:**
+  `CodexWindows` is still not drawn — it needs a stored Codex sign-in — and no
+  live-telemetry card appears in the screenshot, because no run is in flight
+  (the seeded one fails in milliseconds), so that card's live state is still
+  unseen by the pass. The check that `/` is not on `FirstRun` is an API
+  precondition (`requireSeededUsage` reads `meta.entryCount`), not a text
+  assertion, so the script still asserts about load and never about content; the
+  text above was read by the cut-down copy, which is not committed.
+
 - **The Settings `Tools` section, in a browser against the production bundle,
   2026-09-12.** A throwaway install seeded with
   `UF_PY_TOOLS="ruff==0.5.0|/workspace/winnow|cozempic>=1.8,<2"` and
