@@ -35,8 +35,13 @@ Twenty are renderings rather than functions — every `*.test.tsx` in the tree, 
 | `queueOrder.test.ts` |  |
 | `repoSpendAdmission.test.ts` |  |
 | `runOrigin.test.ts` |  |
+| `runWriteOrder.test.ts` | [write-order] |
 | `slotProbes.test.ts` |  |
 | `windows.test.ts` | [harnesses], [pricing] |
+
+## [Run write order](testing/run-write-order.md)
+
+The cases in `runWriteOrder.test.ts`, listed under the section above, that pin the order runs are listed, queued, positioned and named in when several are written in one millisecond.
 
 ## [Work-cycle prompts, endings and deadlines](testing/work-cycle-prompts-and-endings.md)
 
@@ -442,6 +447,7 @@ done                              # names any test no topic file names
 It prints nothing as this is written. Whoever owns a file it names owes that file's topic file the paragraph stating what it earned against the bar above, and this page its row. Do not put the name in a topic file before the paragraph exists — not in a list, not in another test's paragraph — because a mention is all the check can see, and that would silence it for a test nobody wrote grounds for. It is a floor rather than a proof: it cannot tell a paragraph from a passing mention.
 
 [queue]: testing/run-queue-and-admission.md
+[write-order]: testing/run-write-order.md
 [cycle]: testing/work-cycle-prompts-and-endings.md
 [fleet]: testing/fleet-stop-and-hold.md
 [data-dir]: testing/data-dir-retention-and-migrations.md

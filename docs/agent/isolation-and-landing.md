@@ -31,7 +31,7 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - The check in front of Land, and what an empty one means. (was lines 69–81)
 - The check is per repository first, and the install-wide one is only what a repository did not name; a Dreaming night's land goes through it.
 - Which tree the check runs in is the whole of whether it checks anything. (was lines 83–97)
-- A review block's verify command is the one gate that switches a slot a later run took over; Land and Deliver refuse it.
+- A slot a later run took over is switched to the branch for the command, by Land and Deliver as by a review block.
 - Land is withheld on the gate's refusals that need no command run, and the card says why.
 
 ## [Commit trailers: which run wrote this](isolation-and-landing/commit-trailers.md)
@@ -59,6 +59,8 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - A slot a later run reused is switched back to the run's branch for the command, and put back after, because the block judges when every branch has finished and by then the early slots are somebody else's.
 - Anything that stops the switch refuses with the original sentence and says why nothing was switched, and nothing unrun is approved.
 - The borrow is exclusive, and the writers it keeps out are the reason, not a convenience.
+- The exclusion runs from the other side too, because `holdSlot` and `borrowSlot` only keep out what asks them (decided 2026-10-20, board tasks 92ffa0e0 and f6983243).
+- A pass is not recorded over a tree something wrote to.
 - The switch back is best effort and never a verdict.
 - What the check still cannot tell from the work, and the options not taken.
 - Land and Deliver switch a slot a later run took over, as the block does (decided 2026-10-08, board task 4b2c2080; a concurrency change).
@@ -67,6 +69,7 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 
 - The other exit. `deliverRun` pushes a run's branch and opens a pull request on the checkout's GitHub remote. (was lines 99–124)
 - Deliver decides on every URL its push goes to, never on the fetch URL, and reads them again after the verify gate.
+- The push carries the branch and nothing git's config adds to it.
 - A workflow's deliver block is the second caller, and it asks nothing the button does not.
 - Deliver refuses a branch that can still move, in Land's own words.
 - The Land card offers it once, and states every refusal instead of discovering one. (was lines 149–165)
