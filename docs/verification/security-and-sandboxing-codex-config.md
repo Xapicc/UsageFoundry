@@ -8,7 +8,10 @@ harness every entry here uses is the first entry's: a made-up API key or
 ChatGPT `auth.json`, the spawn environment's `HTTPS_PROXY` at loopback listener
 P with `NO_PROXY=127.0.0.1`, a planted file naming listener E, and a stub
 issuer behind `--experimental_issuer` for the device login. The real
-`/home/node/.codex` was never opened.
+`/home/node/.codex` was never opened. What a cycle loads from its checkout's
+`.codex/config.toml`, the guard on a `config.toml` that is not a file, and
+TokenEconomizer's Codex pruning continue in
+`security-and-sandboxing-codex-project-config.md`.
 
 ## Verified
 
