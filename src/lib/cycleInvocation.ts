@@ -196,6 +196,20 @@ export interface IterationResult {
    */
   startupFailureReason: string | null;
   /**
+   * `result.terminal_reason` verbatim off the last `result`, null when none
+   * carried one. The CLI's own statement of why a cycle ended, and for one value
+   * the only way to tell a refusal from a failure that did work: see
+   * `refusedWithoutApiCall`. Not narrowed to a union, `subtype`'s reason.
+   */
+  terminalReason: string | null;
+  /**
+   * The largest `result.duration_api_ms` any `result` of the cycle reported, in
+   * milliseconds, null when none carried one. The largest rather than the last
+   * because a cycle can write more than one result, and a refusal that closes
+   * the cycle must not hide a stretch before it that did call the API.
+   */
+  apiDurationMs: number | null;
+  /**
    * Lines the child wrote to stdout, counted before they are interpreted.
    *
    * Kept because a startup failure is told apart from every other non-zero
@@ -298,6 +312,43 @@ export function startupFailureSentence(
   if (res.exitCode <= 0 || res.sawResult || res.stdoutLines > 0) return null;
   const sentence = clipCliSentence(res.stderrTail);
   return sentence === "" ? null : sentence;
+}
+
+/**
+ * The `terminal_reason` of a `--resume` the CLI refuses because a deferred tool
+ * call's server is not there to run it (`docs/agent/run-lifecycle/resumed-sessions.md`).
+ */
+export const DEFERRED_UNAVAILABLE_REASON = "tool_deferred_unavailable";
+
+/**
+ * Whether a cycle ended on the CLI's refusal to resume a deferred call and made
+ * no API call, so that the cycle it was charged is handed back.
+ *
+ * Measured on 2.1.319 (plan e4, cycles D2 and D3): the refusal has
+ * `duration_api_ms: 0`, a `total_cost_usd` equal to the session's running total
+ * and an all-zero `usage`, and the CLI says the same again on every press for as
+ * long as the server is missing. The run ends `failed` each time, so a pick-up
+ * is the operator's own press, but each press charged a work cycle for a spawn
+ * that bought nothing, and a cap left as it was refused the next one at the door
+ * ("already used N work cycles") for a reason that is not the operator's to fix.
+ *
+ * **This is a spending-guard change, and it is read as one.** It lets a run's
+ * cycle count end below the number of children it spawned, so the test has to be
+ * affirmative on every way a cycle could have bought something: the CLI's reason
+ * is exactly this one, the API time is *reported* and zero (an absent figure is
+ * not evidence of none), no tokens were counted, and the session's cost did not
+ * move. A refusal that fails any of them stays charged.
+ */
+export function refusedWithoutApiCall(
+  res: Pick<IterationResult, "terminalReason" | "apiDurationMs" | "tokens">,
+  cycleCostUSD: number,
+): boolean {
+  return (
+    res.terminalReason === DEFERRED_UNAVAILABLE_REASON &&
+    res.apiDurationMs === 0 &&
+    res.tokens === 0 &&
+    cycleCostUSD <= 0
+  );
 }
 
 /**

@@ -57,7 +57,7 @@ assert.equal(
 
 const { createRun, getRun, reopenRun, exitStopReason } =
   require("./orchestrator") as typeof import("./orchestrator");
-const { startupFailureSentence, CLI_SENTENCE_LIMIT } =
+const { startupFailureSentence, refusedWithoutApiCall, CLI_SENTENCE_LIMIT } =
   require("./cycleInvocation") as typeof import("./cycleInvocation");
 
 // A populated projects tree, so a resume is checked against a real listing: an
@@ -143,7 +143,10 @@ const DEFERRED_SENTENCE =
   "mcp__dsrv__ping isn't available, so its deferred call didn't run. Reconnect the tool " +
   "and resume, or resume with a prompt and CLAUDE_CODE_DROP_UNAVAILABLE_DEFERRED_TOOL=1 " +
   "to drop the call and continue.";
-const refusedResult = (turns: number) => ({
+// `duration_api_ms: 0`, a `total_cost_usd` equal to the session's running total
+// and an all-zero `usage` are what the capture carried, and they are the
+// evidence that the refusal made no API call (plan e4, cycles D2 and D3).
+const refusedResult = (turns: number, changed: Record<string, unknown> = {}) => ({
   type: "result",
   subtype: "success",
   is_error: true,
@@ -151,11 +154,13 @@ const refusedResult = (turns: number) => ({
   terminal_reason: "tool_deferred_unavailable",
   result: DEFERRED_SENTENCE,
   num_turns: turns,
+  duration_api_ms: 0,
   session_id: DEFERRED_SESSION,
   total_cost_usd: 0.000105,
   usage: { input_tokens: 0, output_tokens: 0 },
   permission_denials: [],
   deferred_tool_use: DEFERRED_CALL,
+  ...changed,
 });
 const lifecycle = (state: string, uuid: string) => ({
   type: "command_lifecycle",
@@ -163,16 +168,17 @@ const lifecycle = (state: string, uuid: string) => ({
   state,
   session_id: DEFERRED_SESSION,
 });
-const DEFERRAL_REFUSED: Replay = {
+const refusal = (changed: Record<string, unknown> = {}): Replay => ({
   stdout: jsonLines(
     lifecycle("started", "c9a0d30a"),
-    refusedResult(16),
+    refusedResult(16, changed),
     lifecycle("cancelled", "c9a0d30a"),
-    refusedResult(16),
+    refusedResult(16, changed),
   ),
   stderr: "",
   code: 1,
-};
+});
+const DEFERRAL_REFUSED = refusal();
 
 // 2.1.319, plan e8: `$CLAUDE_CONFIG_DIR/.claude.json` is not JSON. The CLI
 // writes a zeroed `error_during_execution` result before exiting 1 — the one
@@ -491,24 +497,61 @@ describe("a resume refused for a deferred call whose tool is gone", () => {
     assert.ok(!row.stop_reason?.includes("claude --resume"), row.stop_reason ?? "");
   });
 
-  it("is refused again by a pick-up while the tool is still gone, once per press", async () => {
-    const run = start([DEFERRAL, DEFERRAL_REFUSED, DEFERRAL_REFUSED], 3);
+  it("is refused again by a pick-up while the tool is still gone, and costs it no cycle", async () => {
+    // Capped at the two cycles the first segment used, so that a refusal which
+    // stayed charged would leave the pick-up refused at the door.
+    const run = start([DEFERRAL, DEFERRAL_REFUSED, DEFERRAL_REFUSED, DEFERRAL_REFUSED], 2);
     const first = await settled(run.id);
     assert.equal(first.status, "failed");
+    assert.equal(first.iterations, 1, "the deferring cycle is counted and the refusal is not");
+    assert.ok(
+      first.stop_reason?.includes("did not call the API"),
+      "the reason says why the count is one short of the spawns",
+    );
     keepTranscript(DEFERRED_SESSION);
 
-    pickUp(run.id, 6);
+    // The same cap: it was the cycle the refusal charged that used to make this
+    // press, and the one after it, the door's "already used 2 work cycles".
+    pickUp(run.id, 2);
     const row = await settled(run.id);
 
     // Nothing re-enters the refusal on its own: the pick-up is the operator's
-    // press, it costs one spawn, and it ends with the sentence that says what
-    // to change before pressing again.
+    // press, it costs one spawn and no cycle, and it ends with the sentence that
+    // says what to change before pressing again.
     assert.equal(spawns.length, 3);
     assert.equal(spawns[2].resumed, DEFERRED_SESSION);
     assert.equal(row.status, "failed");
     assert.equal(row.ending_code, "exit_code");
+    assert.equal(row.iterations, 1);
     assert.ok(row.stop_reason?.includes("mcp__dsrv__ping isn't available"), row.stop_reason ?? "");
+
+    pickUp(run.id, 2);
+    const again = await settled(run.id);
+    assert.equal(spawns.length, 4, "and a third press is one more spawn, still free");
+    assert.equal(again.iterations, 1);
   });
+
+  // The refund is only for a cycle that bought nothing, and each of these is a
+  // refusal that did or might have. Left charged, the run is stopped at the
+  // cycle cap exactly as it was before the refund existed.
+  for (const [what, changed] of [
+    ["an API call was timed", { duration_api_ms: 120 }],
+    ["the API call's duration is not reported", { duration_api_ms: undefined }],
+    ["the session's cost moved", { total_cost_usd: 0.5 }],
+    ["tokens were counted", { usage: { input_tokens: 7, output_tokens: 3 } }],
+    ["the CLI gave another reason", { terminal_reason: "api_error" }],
+    ["the CLI gave no reason", { terminal_reason: undefined }],
+  ] as const) {
+    it(`keeps the cycle charged when ${what}`, async () => {
+      const run = start([DEFERRAL, refusal(changed)], 3);
+      const row = await settled(run.id);
+
+      assert.equal(row.status, "failed");
+      assert.equal(row.ending_code, "exit_code");
+      assert.equal(row.iterations, 2, "both spawns are counted");
+      assert.ok(!row.stop_reason?.includes("did not call the API"), row.stop_reason ?? "");
+    });
+  }
 
   it("does not read an error result's text as the provider refusing", async () => {
     // The decision about `apiError`: a success-subtype `is_error` result quotes
@@ -613,6 +656,29 @@ describe("startupFailureSentence", () => {
   ] as const) {
     it(`is null for ${what}`, () => {
       assert.equal(startupFailureSentence({ ...base, ...change }), null);
+    });
+  }
+});
+
+describe("refusedWithoutApiCall", () => {
+  const refused = { terminalReason: "tool_deferred_unavailable", apiDurationMs: 0, tokens: 0 };
+
+  it("holds for the measured refusal, whose cost did not move", () => {
+    assert.equal(refusedWithoutApiCall(refused, 0), true);
+  });
+
+  // Each of these is a cycle that may have bought something, and a refund of
+  // one lets a run's cycle cap be spent past without the guard seeing it.
+  for (const [what, res, cost] of [
+    ["an API call was timed", { ...refused, apiDurationMs: 1 }, 0],
+    ["the API duration was not reported", { ...refused, apiDurationMs: null }, 0],
+    ["tokens were counted", { ...refused, tokens: 1 }, 0],
+    ["the cycle's cost moved", refused, 0.000001],
+    ["the reason is another one", { ...refused, terminalReason: "api_error" }, 0],
+    ["no reason was given", { ...refused, terminalReason: null }, 0],
+  ] as const) {
+    it(`is false when ${what}`, () => {
+      assert.equal(refusedWithoutApiCall(res, cost), false);
     });
   }
 });

@@ -227,6 +227,7 @@ import {
   nextPrompt,
   priorReadsNotice,
   startsFresh,
+  refusedWithoutApiCall,
   startupFailureSentence,
   type CycleAdapter,
   type IterationResult,
@@ -8612,6 +8613,8 @@ export function runIteration(
       apiError: null,
       errorText: null,
       startupFailureReason: null,
+      terminalReason: null,
+      apiDurationMs: null,
       stdoutLines: 0,
       stderrTail: "",
       subagentNames: new Map(),
@@ -9938,6 +9941,14 @@ function handleStreamLine(
     if (typeof ev.subtype === "string" && ev.subtype) acc.subtype = ev.subtype;
     if (ev.subtype && ev.subtype !== "success") acc.isError = true;
     if (startupFailureReason !== null) acc.startupFailureReason = startupFailureReason;
+    // Read for `refusedWithoutApiCall`: the reason from the last result, the
+    // API time from the largest, so a later refusal cannot hide an earlier
+    // stretch that called the API.
+    acc.terminalReason =
+      typeof ev.terminal_reason === "string" && ev.terminal_reason ? ev.terminal_reason : null;
+    if (typeof ev.duration_api_ms === "number" && Number.isFinite(ev.duration_api_ms)) {
+      acc.apiDurationMs = Math.max(acc.apiDurationMs ?? 0, ev.duration_api_ms);
+    }
     acc.resultTurns = typeof ev.num_turns === "number" ? ev.num_turns : null;
     if (typeof ev.result === "string" && ev.result) acc.finalText = ev.result;
     // The CLI's sentence for a result that says it failed, kept apart from
@@ -12987,6 +12998,20 @@ export async function startRun(id: string): Promise<void> {
           looksLikeResumeFailure ? resumeTarget : null,
           startupSentence ?? res.errorText,
         );
+        // The loop incremented before it spawned, and a resume the CLI refused
+        // for a deferred call whose server is gone made no API call. It ends
+        // the run, so nothing here repeats it — but every pick-up while the
+        // server is missing repeats it, and each press charged a cycle that
+        // bought nothing until the cap itself refused the next one.
+        // `refusedWithoutApiCall` has the measurement and the conditions. Not
+        // counted in `workedRefunds`, which is for refunds of a cycle that spent
+        // something: this one is the opposite, and `ranWorkCycle` must go on
+        // reading it as a cycle in which nothing happened.
+        if (refusedWithoutApiCall(res, cycleSpend.costUSD)) {
+          iterations -= 1;
+          stopReason +=
+            " This work cycle did not call the API, so it was not counted against the run's limit.";
+        }
         finalStatus = "failed";
         endingCode = looksLikeResumeFailure ? "resume_failed" : "exit_code";
         break;
