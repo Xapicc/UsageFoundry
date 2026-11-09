@@ -49,6 +49,7 @@ The cases in `runWriteOrder.test.ts`, listed under the section above, that pin t
 |---|---|
 | `backgroundWork.test.ts` |  |
 | `cycleDeadline.test.ts` |  |
+| `cycleEndingSentence.test.ts` |  |
 | `priorReads.test.ts` |  |
 | `resumeMissingTranscript.test.ts` |  |
 

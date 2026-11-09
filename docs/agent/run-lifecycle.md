@@ -76,6 +76,8 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - A resume that comes back under a different id is logged, never treated as a failure.
 - The first cycle of a resumed segment is the one that can fail without doing anything.
 - A session whose transcript is gone is restarted before the cycle, not discovered by failing one.
+- A cycle the CLI refused to start is not a refused resume, and its stderr sentence is the stop reason.
+- A `result` that says `is_error: true` keeps its sentence in `IterationResult.errorText`, which is not `apiError`.
 
 ## [How a run ends: the terminus, cancellation, DONE, needs-review and verdicts](run-lifecycle/endings.md)
 

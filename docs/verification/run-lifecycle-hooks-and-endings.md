@@ -192,6 +192,51 @@ Phase 0 and Phase 2 of `proposals/ContinuousImprovement/`, because
   and no error, though no transcript could be written. Caveat: a replay, and
   only the startup failures listed.
 
+- **A resumed 2.1.319 cycle refused for a deferred MCP call now ends the run
+  with the CLI's sentence, and the long-context 429 still ends `refusal`,
+  2026-11-08.** Board task `872651ef`; the entry above has the behaviour it
+  replaces. Plan e4 was re-driven (`claude --version` 2.1.319, stub API, fake
+  key) and replayed through `startRun` and `reopenRun` with
+  `scripts/cli-capture/replay.cjs deferred`:
+  - **Segment 1** (D1 defers, exit 0; the loop resumes into it; D2 is
+    refused) ended `failed`, `ending_code: exit_code`, with `Claude Code
+    exited with code 1 and said: “mcp__dsrv__ping isn't available, so its
+    deferred call didn't run. Reconnect the tool and resume, or resume with a
+    prompt and CLAUDE_CODE_DROP_UNAVAILABLE_DEFERRED_TOOL=1 to drop the call
+    and continue.”.` Two spawns, no retry.
+  - **A pick-up with the server still missing** (D3) ended the same way, one
+    spawn per press, and nothing re-entered on its own.
+  - **A pick-up with the server back** (D4, then D5 `DONE`) completed with
+    `ending_code: done`.
+  - **The API-key long-context 429** (plan e3, cycle 5 re-captured) is exit 1,
+    a `<synthetic>` assistant message, and a `result` of `subtype: "success"`,
+    `is_error: true`, `terminal_reason: "api_error"`, `num_turns: 2`. It is
+    the same `is_error` shape. Replayed with `replay.cjs longctx` it still
+    ended `failed` with `ending_code: refusal`, because the sentence is read
+    as `errorText` and `apiError` is unchanged.
+
+  `src/lib/cycleEndingSentence.test.ts` replays the captured lines (usage and
+  `modelUsage` blocks dropped) and failed first on every case that asserts the
+  sentence. Caveat: a replay, one hook and one server, and the exit code is 1
+  on both `is_error` shapes seen, so what an exit-0 `is_error` result does is
+  unmeasured.
+
+- **A 2.1.319 startup failure now ends with the CLI's stderr sentence and is
+  not called a failed resume, 2026-11-08.** Board task `3a49f892`; the entry
+  above has the behaviour it replaces. Plan e5 was re-driven and its
+  `--mcp-config`-missing and `--settings`-missing captures replayed with
+  `replay.cjs startup-fresh`: both ended `failed`, `ending_code: exit_code`,
+  with `Claude Code exited with code 1 and said: “Error: Invalid MCP
+  configuration: MCP config file not found: <path>”.` and the
+  understated-spend sentence after it, and the sentence still in the log under
+  `stream: stderr`. The picked-up shape was not run through `replay.cjs`
+  (`startup-resumed` needs plan e1's DONE cycle, which was not re-driven);
+  `cycleEndingSentence.test.ts` pins it with the captured stderr bytes, a
+  kept transcript and `reopenRun`: two spawns rather than three, `exit_code`
+  rather than `resume_failed`, no `claude --resume` in the reason. A child
+  that dies with nothing on stderr still retries once and ends `resume_failed`.
+  Caveat: stubbed `spawn`, Claude Code only.
+
 ## Not yet verified by hand
 
 - **No billed cycle has run with the flag.** The stub API proves the shapes
@@ -244,3 +289,16 @@ Phase 0 and Phase 2 of `proposals/ContinuousImprovement/`, because
   then one `claude -p --output-format stream-json --verbose` cycle, and record
   the exit code, stdout and stderr. The 2.1.319 auto-mode exit (actions
   refused for want of a safety check) was not exercised either.
+
+- **What `CLAUDE_CODE_DROP_UNAVAILABLE_DEFERRED_TOOL=1` does is the CLI's
+  claim.** The stop reason quotes the sentence that offers it; no cycle was
+  driven with it set, so that it drops the call and the session carries on is
+  unverified, as is whether it reaches a cycle through this app's child
+  environment. Settle with plan e4: add a cycle after D2 with
+  `env: { CLAUDE_CODE_DROP_UNAVAILABLE_DEFERRED_TOOL: "1" }`, the server
+  missing, and a prompt, then read its `result`.
+
+- **A Codex startup failure is unmeasured.** `startupFailureSentence` is not
+  asked for a Codex run, which keeps its retry and `codex resume <id>`. Settle
+  by running `codex exec --json` with a missing `-c` config path under a
+  scratch `CODEX_HOME` and reading what reaches stdout and stderr.
