@@ -48,8 +48,8 @@ Split out of [security-and-sandboxing-server-git-directories.md](security-and-sa
   `retentionSweep.test.ts`' case failed against `c6a6e3ef` on the survival
   assertion and passes; the file passed 19 of 19. Caveat: the link was
   planted by the fixture, not by a chat turn, and the second `lstat` before
-  the removal narrows the window to git's own resolution of the path
-  without closing it.
+  the removal narrows the window to `git()`'s probe of the tree and git's
+  own resolution of the path without closing it.
 
 - **Every reader of a finished run's recorded slot ran git through a link
   planted there, and none does with the change, 2026-11-09.** Board task

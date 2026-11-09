@@ -538,9 +538,11 @@ export async function sweepCheckouts(now = Date.now()): Promise<{
       cutoff,
     );
     if (verdict.action !== "remove") continue;
-    // Asked again in the turn that spawns the removal: the git calls above are
-    // seconds of awaits in which the directory read clean can be swapped for a
-    // link, and `status` would not have seen it.
+    // Asked again just before the removal is handed to git: the git calls above
+    // are seconds of awaits in which the directory read clean can be swapped for
+    // a link, and `status` would not have seen it. `git()`'s own probe of the
+    // tree still runs between this and the removal, so the window is narrowed,
+    // not closed.
     if (!isSlotDirectory(row.worktree_path)) continue;
 
     const gone = await git(repoRoot, ["worktree", "remove", row.worktree_path]);

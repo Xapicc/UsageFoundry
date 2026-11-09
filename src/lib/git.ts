@@ -1760,9 +1760,10 @@ export function gitFailureReason(
  * for. Any error reads the same way because that is what `existsSync`, which
  * this replaces, answered for one (`ENOTDIR` once the store is a file, `ELOOP`).
  *
- * The leaf only: the store's own `lstat` is `prepareWorktreeStore`'s. A check
- * and not a guarantee, as at admission: a link planted between this and git's
- * own resolution of the path still gets through.
+ * The leaf only: a store that is itself a link is still followed here, and
+ * `prepareWorktreeStore` refuses one only where a checkout is made (board task
+ * f21be77c). A check and not a guarantee, as at admission: a link planted
+ * between this and git's own resolution of the path still gets through.
  */
 export function isSlotDirectory(slot: string): boolean {
   try {
