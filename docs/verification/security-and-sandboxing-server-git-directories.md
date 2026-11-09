@@ -142,6 +142,29 @@ Split out of [security-and-sandboxing-server-git-fingerprints.md](security-and-s
   `status` in 4 of 4 calls (board task `8e9fe2ed`); a work cycle making the
   move beside a call is inferred, not driven.
 
+- **A directory made a git directory above a cwd spelled through a symlink
+  is refused, now that the way up starts at the real path, 2026-11-09.**
+  Board task `cdf5ae4b`, branch at `3cee41f0`, git 2.39.5 only. The
+  fixture of `fbd6d8dd`'s entry above, `B/sub` holding all but the last
+  piece of a git directory, with a link `B-link` naming `B/sub/d` and the
+  call made from `B-link/x`: under plain git `rev-parse --show-cdup` there
+  printed `../../../`, and in each of the four layouts `add -A` ran the
+  driver once the last piece was made and never before. Through this app's
+  compiled `git()` and `gitSync()` at `3cee41f0`, the stub making the last
+  piece while the index is listed, all 8 calls (each layout through each)
+  ran the plant: `top` was `../../../` folded onto the link's spelling, a
+  directory above the fixture, so the walks from the cwd never passed
+  `B/sub`. With `top` and both walks taken from the cwd's realpath, all 8
+  are refused naming the piece made, and a call from `B/sub` and from
+  `B-link/x` with nothing made still runs. The file passed 82 of 92 with 10
+  skipped. Caveat: not run on a 2.56.0 build. No production caller passes
+  a symlink-spelled cwd, read in code and not driven: folders and
+  repository roots are realpathed by `resolveInMount`, Land, diff and
+  retention re-check them, and a worktree slot is `path.join`ed onto a
+  realpathed store, though its last component is never itself checked.
+  The cwd's realpath is read once, before the first step, and nothing
+  watches the link itself.
+
 ## Not yet verified by hand
 
 - **Whether a work cycle can move a site's `objects/` or `refs/` away and

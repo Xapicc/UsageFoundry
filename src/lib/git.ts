@@ -1171,7 +1171,13 @@ function* prepareContentCall(
           `printed ${JSON.stringify(located.stdout)}, not the five paths it was asked for`,
       };
     }
-    const top = path.resolve(dir, cdup);
+    // `--show-cdup` counts the parents git climbed from its own `getcwd()`,
+    // which is physical, so it is applied to the real path and the walks below
+    // start there. Folded onto a cwd spelled through a symlink, it named a
+    // directory above another tree, the walks watched directories git never
+    // passed, and a directory made a git directory on git's real way up ran its
+    // filter (board task cdf5ae4b, measured, 2.39.5).
+    const top = path.resolve(identity, cdup);
     // `commondir` is what places `config` and the branches, so the paths above
     // stand only while it does: a linked worktree's rewritten to name another
     // repository's `.git` ran a filter only that one defined, and git accepted
@@ -1180,7 +1186,7 @@ function* prepareContentCall(
     for (const file of [config, worktreeConfig, head, path.join(gitDir, "commondir")]) watch(file);
     for (const ref of refsBehindHead(head, gitDir, commonDir)) watch(ref, symrefFingerprint);
     for (const file of reftableFiles(gitDir, commonDir)) watch(file);
-    for (const entry of [...discoveryEntries(dir, top), gitDir]) watch(entry, locationFingerprint);
+    for (const entry of [...discoveryEntries(identity, top), gitDir]) watch(entry, locationFingerprint);
     // git takes the directory it found for a git directory only while the
     // common one holds `objects/` and `refs/`: with either moved away, its
     // discovery climbed past it to an enclosing repository and ran a filter
@@ -1192,7 +1198,7 @@ function* prepareContentCall(
     for (const entry of [path.join(commonDir, "objects"), path.join(commonDir, "refs")]) {
       watch(entry, locationFingerprint);
     }
-    const below = gitDirectoryInputs(dir, top);
+    const below = gitDirectoryInputs(identity, top);
     for (const file of below.asConfig) watch(file);
     for (const entry of below.asLocation) watch(entry, locationFingerprint);
 

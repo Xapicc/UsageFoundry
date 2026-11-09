@@ -1735,12 +1735,45 @@ describe("a subdirectory made a git directory between the probe and the call is 
     });
   }
 
+  /**
+   * A cwd two levels below `sub`, spelled through a link to the level between:
+   * folded onto the link, the way back up to the top passes no `sub`.
+   */
+  const linkedBelow = (repo: string, sub: string) => {
+    fs.mkdirSync(path.join(sub, "d", "x"), { recursive: true });
+    fs.symlinkSync(path.join(sub, "d"), `${repo}-link`);
+    return path.join(`${repo}-link`, "x");
+  };
+
+  it("git() and gitSync(): each way, made above a cwd spelled through a symlink, refuses the call", async () => {
+    // `--show-cdup` counts physical parents, and folded onto the link the walk
+    // from cwd never reached `sub` (board task cdf5ae4b).
+    for (const way of ways) {
+      for (const viaSync of [false, true]) {
+        const via = `${viaSync ? "gitSync" : "git"}(), ${way.says}`;
+        const { repo, sub, last, marker } = almostGitDir(way.candidate, way.missing);
+        const cwd = linkedBelow(repo, sub);
+        fs.writeFileSync(writeTarget, last);
+        fs.writeFileSync(rewriteContent, "ref: refs/heads/main\n");
+        setMode(path.basename(last) === "HEAD" ? "rewrite" : "make-dir");
+        const res = viaSync ? gitSync(cwd, ["add", "-A"]) : await git(cwd, ["add", "-A"]);
+        setMode("pass");
+
+        ranNothing(marker);
+        assert.equal(res.ok, false, `${via} ran the call`);
+        assert.ok(res.stderr.includes(`${last} changed while the filter probe read it`), `${via}: ${res.stderr}`);
+      }
+    }
+  });
+
   it("git() and gitSync(): a call from a subdirectory with nothing made there still runs", async () => {
     for (const viaSync of [false, true]) {
-      const { sub, marker } = almostGitDir((dir) => dir, "HEAD");
-      const res = viaSync ? gitSync(sub, ["add", "-A"]) : await git(sub, ["add", "-A"]);
-      ranNothing(marker);
-      assert.equal(res.ok, true, `${viaSync ? "gitSync" : "git"}(): ${res.stderr}`);
+      const { repo, sub, marker } = almostGitDir((dir) => dir, "HEAD");
+      for (const cwd of [sub, linkedBelow(repo, sub)]) {
+        const res = viaSync ? gitSync(cwd, ["add", "-A"]) : await git(cwd, ["add", "-A"]);
+        ranNothing(marker);
+        assert.equal(res.ok, true, `${viaSync ? "gitSync" : "git"}() in ${cwd}: ${res.stderr}`);
+      }
     }
   });
 
@@ -1752,6 +1785,20 @@ describe("a subdirectory made a git directory between the probe and the call is 
       complete(last);
       assert.equal(plain(sub, ["rev-parse", "--absolute-git-dir"]).trim(), way.candidate(sub), way.says);
       plain(sub, ["add", "-A"]);
+      assert.equal(fs.existsSync(marker), true, `${way.says}: the driver did not run`);
+    }
+  });
+
+  it("control: from a cwd spelled through a symlink, each runs its driver under plain git", () => {
+    for (const way of ways) {
+      const { repo, sub, last, marker } = almostGitDir(way.candidate, way.missing);
+      const cwd = linkedBelow(repo, sub);
+      plain(cwd, ["add", "-A"]);
+      assert.equal(fs.existsSync(marker), false, `${way.says}: the driver ran before the last piece was made`);
+      assert.equal(plain(cwd, ["rev-parse", "--show-cdup"]).trim(), "../../../", way.says);
+      complete(last);
+      assert.equal(plain(cwd, ["rev-parse", "--absolute-git-dir"]).trim(), way.candidate(sub), way.says);
+      plain(cwd, ["add", "-A"]);
       assert.equal(fs.existsSync(marker), true, `${way.says}: the driver did not run`);
     }
   });
