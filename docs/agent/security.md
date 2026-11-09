@@ -124,6 +124,14 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - A reviewer, resolver or validator in a linked worktree reads its project config from that worktree's top level, through `--project-config-root`, because without it the main checkout's untracked config reached the assists that judge a run.
 - What it does not cover.
 
+## [What a reviewer or validator may read](security/assist-read-boundary.md)
+
+- A reviewer or validator refuses a file-tool read outside its checkout, through `permissions.blockReadsOutsideWorkingDirectories` in the assist's one `--settings`, because `plan` refuses no read.
+- A sandbox `denyRead` would not have done it, and neither would a deny rule.
+- What it costs is a judge's reads of anything but its own checkout, and on this install that is almost nothing.
+- The resolver is left without it.
+- What it does not cover.
+
 ## [Middleware, login and sessions](security/middleware-login-and-sessions.md)
 
 - A monitor must not be handed the credential that starts agents. (was line 27)

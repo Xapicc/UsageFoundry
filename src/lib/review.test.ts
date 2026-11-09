@@ -316,6 +316,7 @@ describe("assistSettingsArgs — the endpoint a checkout's settings cannot move"
     return JSON.parse(args[args.indexOf("--settings") + 1]) as {
       env?: Record<string, string>;
       sandbox?: { filesystem: { allowWrite: string[] } };
+      permissions?: { blockReadsOutsideWorkingDirectories?: boolean };
       disableAllHooks?: boolean;
       apiKeyHelper?: unknown;
     };
@@ -324,9 +325,9 @@ describe("assistSettingsArgs — the endpoint a checkout's settings cannot move"
   it("turns every hook off, with or without a write set", () => {
     // Measured on 2.1.310: a checkout's `SessionStart` and `UserPromptSubmit`
     // hooks reached the validator's request until this was set.
-    assert.equal(overlayOf(assistSettingsArgs(null, {})).disableAllHooks, true);
+    assert.equal(overlayOf(assistSettingsArgs(null, {}, "plan")).disableAllHooks, true);
     const withSandbox = overlayOf(
-      assistSettingsArgs({ sandbox: { filesystem: { allowWrite: ["/w/repo"] } } }, {}),
+      assistSettingsArgs({ sandbox: { filesystem: { allowWrite: ["/w/repo"] } } }, {}, "plan"),
     );
     assert.equal(withSandbox.disableAllHooks, true);
     assert.deepEqual(withSandbox.sandbox?.filesystem.allowWrite, ["/w/repo"]);
@@ -336,15 +337,15 @@ describe("assistSettingsArgs — the endpoint a checkout's settings cannot move"
     // Measured on 2.1.310: hooks off, a checkout's helper still ran in the
     // validator and its key reached the request. `""` stopped it; `null` and an
     // absent key did not, so nothing but the empty string passes here.
-    assert.equal(overlayOf(assistSettingsArgs(null, {})).apiKeyHelper, "");
+    assert.equal(overlayOf(assistSettingsArgs(null, {}, "plan")).apiKeyHelper, "");
     const withSandbox = overlayOf(
-      assistSettingsArgs({ sandbox: { filesystem: { allowWrite: ["/w/repo"] } } }, {}),
+      assistSettingsArgs({ sandbox: { filesystem: { allowWrite: ["/w/repo"] } } }, {}, "plan"),
     );
     assert.equal(withSandbox.apiKeyHelper, "");
   });
 
   it("pins every listed variable on a stock install, which sends no write set", () => {
-    const settings = overlayOf(assistSettingsArgs(null, { ANTHROPIC_BASE_URL: "http://127.0.0.1:8789" }));
+    const settings = overlayOf(assistSettingsArgs(null, { ANTHROPIC_BASE_URL: "http://127.0.0.1:8789" }, "plan"));
     assert.deepEqual(Object.keys(settings.env ?? {}), [...PINNED_CYCLE_ENV]);
     assert.equal(settings.env?.ANTHROPIC_BASE_URL, "http://127.0.0.1:8789");
     // Left out rather than emptied, the checkout's value would be the only one.
@@ -355,7 +356,7 @@ describe("assistSettingsArgs — the endpoint a checkout's settings cannot move"
   it("shares the one --settings with the write set", () => {
     const allowWrite = ["/w/repo"];
     const settings = overlayOf(
-      assistSettingsArgs({ sandbox: { filesystem: { allowWrite } } }, { HTTPS_PROXY: "http://corp:3128" }),
+      assistSettingsArgs({ sandbox: { filesystem: { allowWrite } } }, { HTTPS_PROXY: "http://corp:3128" }, "plan"),
     );
     assert.equal(settings.env?.HTTPS_PROXY, "http://corp:3128");
     assert.deepEqual(settings.sandbox?.filesystem.allowWrite, allowWrite);
@@ -363,11 +364,15 @@ describe("assistSettingsArgs — the endpoint a checkout's settings cannot move"
 
   it("never puts a credential on the argv", () => {
     // `/proc/<pid>/cmdline` is readable by every process in the container.
-    const args = assistSettingsArgs(null, {
-      ANTHROPIC_API_KEY: "sk-ant-secret",
-      ANTHROPIC_AUTH_TOKEN: "bearer-secret",
-      CLAUDE_CODE_OAUTH_TOKEN: "oauth-secret",
-    });
+    const args = assistSettingsArgs(
+      null,
+      {
+        ANTHROPIC_API_KEY: "sk-ant-secret",
+        ANTHROPIC_AUTH_TOKEN: "bearer-secret",
+        CLAUDE_CODE_OAUTH_TOKEN: "oauth-secret",
+      },
+      "plan",
+    );
     assert.doesNotMatch(args.join(" "), /secret/);
   });
 
@@ -375,10 +380,31 @@ describe("assistSettingsArgs — the endpoint a checkout's settings cannot move"
     const previous = process.env.HTTPS_PROXY;
     process.env.HTTPS_PROXY = "http://corp:3128";
     try {
-      assert.equal(overlayOf(assistSettingsArgs(null, reviewEnv())).env?.HTTPS_PROXY, "http://corp:3128");
+      assert.equal(overlayOf(assistSettingsArgs(null, reviewEnv(), "plan")).env?.HTTPS_PROXY, "http://corp:3128");
     } finally {
       if (previous === undefined) delete process.env.HTTPS_PROXY;
       else process.env.HTTPS_PROXY = previous;
+    }
+  });
+
+  it("keeps a plan-mode assist's file-tool reads in its checkout, on every install", () => {
+    // Measured on 2.1.319 through `startAssist` and `startReview`: under `plan`
+    // a validator and a reviewer read another repository on the mount with
+    // `Read`, `Grep` and `Glob`, granted by nothing, with a managed sandbox and
+    // without one. This refused all of it; a sandbox `denyRead` refused none.
+    // On a stock install the overlay carries no write set, and the block must
+    // ride anyway.
+    const sandbox = { sandbox: { filesystem: { allowWrite: ["/w/cfg"] } } };
+    for (const overlay of [null, sandbox]) {
+      const settings = overlayOf(assistSettingsArgs(overlay, {}, "plan"));
+      assert.equal(settings.permissions?.blockReadsOutsideWorkingDirectories, true);
+      assert.equal(settings.disableAllHooks, true, "still the one --settings");
+    }
+    // The resolver keeps the argv it had: `acceptEdits` already asks before its
+    // `Read` leaves the checkout, and the block's sandbox half would hide `$HOME`
+    // from a build command an operator granted it.
+    for (const overlay of [null, sandbox]) {
+      assert.equal("permissions" in overlayOf(assistSettingsArgs(overlay, {}, "acceptEdits")), false);
     }
   });
 });

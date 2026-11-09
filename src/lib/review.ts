@@ -1241,7 +1241,11 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
     // stack exports can have been refreshed in between.
     const env = reviewEnv();
     args.push(
-      ...assistSettingsArgs(sandboxOverlayFor({ kind: "assist", cwd, permissionMode }), env),
+      ...assistSettingsArgs(
+        sandboxOverlayFor({ kind: "assist", cwd, permissionMode }),
+        env,
+        permissionMode,
+      ),
       ...assistConfigRootArgs(cwd),
     );
 
@@ -1387,8 +1391,9 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
 }
 
 /**
- * The assist's one `--settings`: the endpoint pins, no hooks, and the write
- * set where anything confines this child.
+ * The assist's one `--settings`: the endpoint pins, no hooks, the write set
+ * where anything confines this child, and a read-only judge's reads kept to its
+ * checkout.
  *
  * An assist runs in a run's checkout or a merge of one and passes no
  * `--setting-sources`, so the CLI applies the `env` of that checkout's
@@ -1421,20 +1426,41 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
  * and a command such as `true` sent an empty `Bearer` beside the key. The cost
  * is an operator's own user-scope helper, which no longer runs in an assist.
  *
+ * And, for the two that run `plan`, no file-tool read outside the checkout,
+ * because `plan` refuses nothing a tool only reads. Measured on 2.1.319 through
+ * `startAssist` and `startReview`: a validator and a reviewer read files in a
+ * directory beside the mount and in another repository on it with `Read`,
+ * `Grep`, `Glob` and a `../..` path, with no rule granting any of it, under this
+ * container's managed sandbox and with `/etc/claude-code` hidden alike. Their
+ * prompts carry a diff and a task the run wrote, and the verdict is stored and
+ * shown, so an instruction planted in either could have one quote another
+ * repository into it. `blockReadsOutsideWorkingDirectories` refused every one
+ * of those reads, and a `cat` of the same file through `Bash`, while reads in
+ * the checkout, a `git log` there and the CLI's own spilled tool output still
+ * worked. A `sandbox.filesystem.denyRead` naming the same directories refused
+ * none of them: it confines `Bash` and nothing else. The resolver is left
+ * without it: `acceptEdits` already asks before its `Read` leaves the
+ * checkout, and the setting's sandbox half hides `$HOME` from the build
+ * command an operator may grant it (`docs/agent/security/assist-read-boundary.md`).
+ *
  * Always emitted, a stock install's argv included: the write set is withheld
  * where no managed sandbox exists, but a stock install's checkout redirects the
- * credential exactly as any other's does. One flag for all three, because the
+ * credential exactly as any other's does. One flag for all of it, because the
  * CLI keeps only the last `--settings` it is given.
  */
 export function assistSettingsArgs(
   sandbox: SandboxOverlay | null,
   spawnEnv: Readonly<Record<string, string | undefined>>,
+  permissionMode: "plan" | "acceptEdits",
 ): string[] {
   return [
     "--settings",
     JSON.stringify({
       env: cycleEnvPins(spawnEnv),
       ...sandbox,
+      ...(permissionMode === "plan"
+        ? { permissions: { blockReadsOutsideWorkingDirectories: true } }
+        : {}),
       disableAllHooks: true,
       apiKeyHelper: "",
     }),
