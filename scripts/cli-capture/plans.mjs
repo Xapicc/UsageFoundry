@@ -1,11 +1,11 @@
 // The capture plans drive.mjs ran on 2026-11-08 against claude 2.1.319, by
-// name. Prints one plan as JSON: node plans.mjs <e1..e8> <outdir>
+// name. Prints one plan as JSON: node plans.mjs <e1..e9> <outdir>
 // Every HOME and CLAUDE_CONFIG_DIR is a scratch directory under <outdir>, and
 // every credential is made up.
 import path from "node:path";
 
 const [name, outArg] = process.argv.slice(2);
-if (!name || !outArg) throw new Error("usage: node plans.mjs <e1..e8> <outdir>");
+if (!name || !outArg) throw new Error("usage: node plans.mjs <e1..e9> <outdir>");
 const O = path.resolve(outArg);
 const here = path.dirname(new URL(import.meta.url).pathname);
 const STD = ["--permission-mode", "acceptEdits", "--model", "claude-sonnet-4-5"];
@@ -76,6 +76,18 @@ const plans = {
     { label: "--resume of an unknown id", ...dirs(2), args: [...STD, "--resume", "00000000-0000-4000-8000-000000000000"], prompt: "SCN_DONE x" },
     { label: "CLAUDE_CONFIG_DIR is a file", ...dirs(3), config: `${O}/cfgfile`, files: { [`${O}/cfgfile`]: "not a dir" }, args: STD, prompt: "SCN_DONE x" },
     { label: "--mcp-config not JSON", ...dirs(4), args: [...STD, "--mcp-config", `${O}/bad-mcp.json`], files: { [`${O}/bad-mcp.json`]: "{nope" }, prompt: "SCN_DONE x" },
+  ],
+  // What reaches stdout before the first API request: the stub holds its answer
+  // for three seconds, so a line that only appeared with the answer would show
+  // as `firstStdoutAt` after the request's `t` by about that long. A startup
+  // failure that is told by an empty stdout (`startupFailureSentence`) is read as
+  // a cycle that made no API call only while that ordering holds.
+  // One cycle per way the CLI is given its credential, since a sign-in may do
+  // work before its first line that an API key does not.
+  e9: [
+    { label: "api key", ...dirs(0), files: notes, args: STD, prompt: "SCN_HOLD x" },
+    { label: "CLAUDE_CODE_OAUTH_TOKEN", ...dirs(1), args: STD, apiKey: false, env: { CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-fake-envtoken" }, prompt: "SCN_HOLD x" },
+    { label: "stored sign-in", ...dirs(2), args: STD, apiKey: false, files: { [`${O}/c2/.credentials.json`]: oauth(true) }, prompt: "SCN_HOLD x" },
   ],
   // The OTel `effort` attribute.
   e6: [

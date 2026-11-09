@@ -4,7 +4,9 @@
 // proposals/CrossSessionCommunication/scripts/stub.mjs (same SSE shape), plus:
 // a `request-id` header (otlp.ts drops an api_request without one), OTLP
 // capture, per-prompt scenarios keyed on an `SCN_<NAME>` marker, an answer for
-// a compaction request, and a one-shot long-context 429.
+// a compaction request, a one-shot long-context 429, and a reply held back for
+// `SCN_HOLD` so that what the child wrote before the API answered can be told
+// from what it wrote after.
 //
 //   node scripts/cli-capture/plans.mjs <name> <outdir> > plan.json
 //   node scripts/cli-capture/drive.mjs <outdir> plan.json
@@ -83,6 +85,8 @@ function decide(body) {
       return text("pinged, step " + step);
     case "DONE":
       return text("all good\nDONE");
+    case "HOLD":
+      return text("held, then DONE", { delayMs: 3000 });
     default:
       return text("ok " + name + " " + step);
   }
@@ -95,6 +99,10 @@ function sse(res, headers, events) {
 }
 
 function respond(res, body, action) {
+  if (action.delayMs) {
+    setTimeout(() => respond(res, body, { ...action, delayMs: 0 }), action.delayMs);
+    return;
+  }
   const id = "msg_stub_" + ++seq;
   const headers = { "request-id": "req_stub_" + Date.now() + "_" + seq };
   if (action.kind === "error429") {
@@ -204,6 +212,8 @@ function runCli(port, c, i) {
     const out = fs.createWriteStream(path.join(outDir, `cycle${i}.stdout`));
     const err = fs.createWriteStream(path.join(outDir, `cycle${i}.stderr`));
     child.stdout.pipe(out); child.stderr.pipe(err);
+    let firstStdoutAt = null;
+    child.stdout.on("data", () => { firstStdoutAt ??= new Date().toISOString(); });
     const killer = setTimeout(() => child.kill("SIGKILL"), (c.timeoutS ?? 90) * 1000);
     child.on("close", (code, signal) => {
       clearTimeout(killer);
@@ -211,7 +221,10 @@ function runCli(port, c, i) {
       let sid = null;
       for (const l of lines) { try { const e = JSON.parse(l); if (e.session_id) sid = e.session_id; } catch {} }
       if (sid) fs.writeFileSync(path.join(outDir, `cycle${i}.sid`), sid);
-      const meta = { i, label: c.label, args, code, signal, ms: Date.now() - t0, lines: lines.length, sid };
+      // `startedAt` and `firstStdoutAt` are compared with `requests.jsonl`'s `t`:
+      // a child that has written a line before its first request has said so
+      // before it could spend anything.
+      const meta = { i, label: c.label, args, code, signal, ms: Date.now() - t0, lines: lines.length, sid, startedAt: new Date(t0).toISOString(), firstStdoutAt };
       fs.writeFileSync(path.join(outDir, `cycle${i}.meta.json`), JSON.stringify(meta, null, 1));
       log("cycles.jsonl", meta);
       resolve(meta);

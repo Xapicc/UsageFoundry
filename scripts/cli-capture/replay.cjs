@@ -1,7 +1,7 @@
 // Replays cycles drive.mjs captured (stdout bytes, stderr bytes, exit code)
 // through this app's own run loop, by stubbing `spawn` the way
 // src/lib/resumeMissingTranscript.test.ts does, and prints each run's ending
-// and log. <capture-root> holds the e1..e8 directories plans.mjs names.
+// and log. <capture-root> holds the e1..e9 directories plans.mjs names.
 //   npx tsc -p tsconfig.test.json --outDir .test-build/capture --incremental false
 //   node scripts/cli-capture/replay.cjs <capture-root> $PWD/.test-build/capture <scenario>
 // Scenarios: deferred, startup-resumed, startup-fresh, config-file, longctx,

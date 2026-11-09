@@ -180,6 +180,59 @@ first dated 2026-11-09 were moved verbatim.
   the refusal's reason on the `result` event for a warning at the door) were
   not driven or built.
 
+- **A startup failure's spawn makes no API call on 2.1.319, and the cycle it
+  was charged is now handed back, 2026-11-09.** Board task `61431eba`. Driven
+  with `scripts/cli-capture/` against the stub API, a fake key, and every
+  request the stub saw counted against the cycle whose start and duration
+  (`cycleN.meta.json`) contain it.
+  - **Said on stderr alone (plan e5).** `--mcp-config` file missing (exit 1,
+    0.5 s), `--settings` file missing (0.2 s) and `--mcp-config` not JSON
+    (0.3 s): no stdout line, one sentence on stderr, and **no request of any
+    kind** in all three. The control in the same plan, `CLAUDE_CONFIG_DIR`
+    pointed at a file, is not a startup failure on this pin: it exited 0 and
+    made one request, so the count does see a request when there is one.
+  - **Said as a `result` (plan e8).** Both corrupt-`.claude.json` cycles, the
+    resume and the fresh start: `startup_failure_reason: "config_file_invalid"`,
+    `duration_api_ms: 0`, `total_cost_usd: 0`, every `usage` count 0,
+    `num_turns: 0`, exit 1, and no request; the good cycle before them made
+    one.
+  - **What lets an empty stdout stand for "no request" (plan e9, new).** The
+    stub held its reply three seconds. The first stdout line, `system:init`,
+    reached the pipe 78 ms (API key), 56 ms (`CLAUDE_CODE_OAUTH_TOKEN`) and 52
+    ms (stored sign-in) before the first `/v1/messages` request, each cycle
+    made exactly one request, and the line was not waiting on the reply. A
+    child that wrote no line had not reached its first request.
+
+  Before the change, `scripts/cli-capture/replay.cjs` on those captured bytes
+  (through `startRun` and `reopenRun`, `spawn` stubbed): `startup-fresh` left
+  `iterations: 1` on both fresh runs and added "this run's spend is
+  understated" to the stop reason; `startup-resumed` ended the pick-up at
+  `iterations: 2` against a cap of 4; `config-file` ended the pick-up at 2 and
+  the fresh run at 1. After it: 0 and 0, with the stop reason ending "This work
+  cycle did not call the API, so it was not counted against the run's limit."
+  and no understated sentence; 1; and 1 and 0. `startup-resumed` replayed e8's
+  good cycle as its first segment, because e1 was not driven.
+
+  `refusedWithoutApiCall` gained an arm for each shape. The result-shaped arm
+  needs the figures the deferred refusal's does (API time reported and zero, no
+  tokens, cost not moved) and a loop that took the cycle for a startup failure;
+  the stderr-only arm needs the loop to have taken it for one and `stdoutLines`
+  0, because it has no figure and the three it does carry are zero only for
+  want of anything said. Pinned in `cycleEndingSentence.test.ts`, which failed
+  first on its six cases that expect a refund: for stderr alone a fresh run,
+  the pick-up at the failed press's own cap and a second press; for the result
+  a second press; and the predicate's two "holds" cases. Each arm's other
+  conditions are cases that stay charged (a timed or unreported duration,
+  tokens, a moved cost, no startup reason, a line on stdout, a loop that did
+  not take it for a startup failure). Four mutations of the compiled predicate
+  each failed the cases that carry them: the tokens-and-cost test removed (10
+  cases), the result arm's duration test replaced by `true` (4), the startup
+  gate removed (2) and `stdoutLines === 0` replaced by `true` (2). Not counted in
+  `worked_refunds`. Caveat: a stub API and a replay with a stubbed `spawn`;
+  Claude Code only (a Codex run keeps the cycle charged); three stderr
+  sentences and one result reason driven, so the stderr arm's reach to every
+  other empty-stdout exit rests on the e9 ordering and not on a driven case.
+
 ## Not yet verified by hand
 
 - **What `CLAUDE_CODE_DROP_UNAVAILABLE_DEFERRED_TOOL=1` does is the CLI's
@@ -198,7 +251,20 @@ first dated 2026-11-09 were moved verbatim.
 - **`org_config_required_unavailable` and `org_config_refused` have not been
   seen.** Both are written to every stream-json run as a zeroed result carrying
   `startup_failure_reason`, and `startupFailureSentence` treats any reason as a
-  refusal to start on the strength of `config_file_invalid` alone. Settle on an
+  refusal to start on the strength of `config_file_invalid` alone. Their cycles
+  are refunded on the figures their result reports, as `config_file_invalid`'s
+  is, so a result that reports no `duration_api_ms` or a nonzero one stays
+  charged; what is open is whether either reports zero. Settle on an
   account whose organization requires its managed settings: sign the container
   out of that organization (or block the settings endpoint) and run one
   `claude -p --output-format stream-json` cycle, then read the `result` line.
+
+- **The first-line-before-first-request ordering is measured on 2.1.319 only.**
+  The stderr-only refund depends on it, so a pin bump must re-run plan e9 and
+  see `firstStdoutAt` before the request's `t` for all three credential
+  routes, before the refund is trusted on the new pin: `node
+  scripts/cli-capture/plans.mjs e9 <outdir> > plan.json && node
+  scripts/cli-capture/drive.mjs <outdir> plan.json`, then compare each
+  `cycleN.meta.json`'s `firstStdoutAt` with `requests.jsonl`. Also open: a
+  nested-sandbox or OAuth-refresh cycle that hits the network before its first
+  line (e9's three routes did not, but their sign-ins were made up).

@@ -321,34 +321,59 @@ export function startupFailureSentence(
 export const DEFERRED_UNAVAILABLE_REASON = "tool_deferred_unavailable";
 
 /**
- * Whether a cycle ended on the CLI's refusal to resume a deferred call and made
- * no API call, so that the cycle it was charged is handed back.
+ * Whether a cycle ended on a refusal the CLI made before it called the API, so
+ * that the cycle it was charged is handed back.
  *
- * Measured on 2.1.319 (plan e4, cycles D2 and D3): the refusal has
- * `duration_api_ms: 0`, a `total_cost_usd` equal to the session's running total
- * and an all-zero `usage`, and the CLI says the same again on every press for as
- * long as the server is missing. The run ends `failed` each time, so a pick-up
- * is the operator's own press, but each press charged a work cycle for a spawn
- * that bought nothing, and a cap left as it was refused the next one at the door
- * ("already used N work cycles") for a reason that is not the operator's to fix.
+ * Three shapes, each measured on 2.1.319 against a stub API that logged every
+ * request (`docs/verification/run-lifecycle-refused-cycles.md`).
+ *
+ * **A resume the CLI refuses because a deferred tool call's server is gone** (plan
+ * e4, cycles D2 and D3): `duration_api_ms: 0`, a `total_cost_usd` equal to the
+ * session's running total and an all-zero `usage`, the same again on every press
+ * for as long as the server is missing. The run ends `failed` each time, so a
+ * pick-up is the operator's own press, but each press charged a work cycle for a
+ * spawn that bought nothing, and a cap left as it was refused the next one at the
+ * door ("already used N work cycles") for a reason that is not the operator's to
+ * fix.
+ *
+ * **A startup failure written as a `result`** (`startup_failure_reason` set, plan
+ * e8): `duration_api_ms: 0`, a `total_cost_usd` of 0, zero turns, an all-zero
+ * `usage`, and no request in the log. The same press-by-press charge.
+ *
+ * **A startup failure written to stderr alone** (plan e5: a missing or invalid
+ * `--mcp-config`, a missing `--settings`): no `result` and so no figure to read,
+ * which is the difficult one. What stands in for a figure is that no line reached
+ * stdout, because the CLI writes its `system:init` before it sends its first
+ * request and does not hold it back until the reply (plan e9: the first line
+ * arrived 77 ms before the request, with the reply held for three seconds). A
+ * child that never wrote a line never reached an API call. The three figures
+ * below are zero there only because nothing was said, so they are not evidence,
+ * and the empty stdout is the whole of it.
  *
  * **This is a spending-guard change, and it is read as one.** It lets a run's
- * cycle count end below the number of children it spawned, so the test has to be
- * affirmative on every way a cycle could have bought something: the CLI's reason
- * is exactly this one, the API time is *reported* and zero (an absent figure is
- * not evidence of none), no tokens were counted, and the session's cost did not
- * move. A refusal that fails any of them stays charged.
+ * cycle count end below the number of children it spawned, so every arm has to be
+ * affirmative on every way a cycle could have bought something: the figures are
+ * *reported* and zero (an absent one is not evidence of none), no tokens were
+ * counted, and the cycle's cost did not move. A cycle failing any of them stays
+ * charged. `startupSentence` is `startupFailureSentence`'s answer for this cycle,
+ * null for a provider the shapes were not measured on, so the loop's single
+ * Claude-Code-only gate is the one both decisions read; `stdoutLines` is asked
+ * again here rather than inherited from it, so that loosening that test cannot
+ * widen this refund.
  */
 export function refusedWithoutApiCall(
-  res: Pick<IterationResult, "terminalReason" | "apiDurationMs" | "tokens">,
+  res: Pick<
+    IterationResult,
+    "terminalReason" | "apiDurationMs" | "tokens" | "startupFailureReason" | "stdoutLines"
+  >,
   cycleCostUSD: number,
+  startupSentence: string | null,
 ): boolean {
-  return (
-    res.terminalReason === DEFERRED_UNAVAILABLE_REASON &&
-    res.apiDurationMs === 0 &&
-    res.tokens === 0 &&
-    cycleCostUSD <= 0
-  );
+  if (res.tokens !== 0 || cycleCostUSD > 0) return false;
+  if (res.terminalReason === DEFERRED_UNAVAILABLE_REASON) return res.apiDurationMs === 0;
+  if (startupSentence === null) return false;
+  if (res.startupFailureReason !== null) return res.apiDurationMs === 0;
+  return res.stdoutLines === 0;
 }
 
 /**
