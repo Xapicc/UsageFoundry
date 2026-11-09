@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 import { CLAUDE_BIN, spawnCommand } from "./config";
 import { db } from "./db";
 import { headBranchOf } from "./git";
@@ -1241,6 +1242,7 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
     const env = reviewEnv();
     args.push(
       ...assistSettingsArgs(sandboxOverlayFor({ kind: "assist", cwd, permissionMode }), env),
+      ...assistConfigRootArgs(cwd),
     );
 
     // Last, after every flag: a review's prompt quotes the run's task, and a
@@ -1437,6 +1439,38 @@ export function assistSettingsArgs(
       apiKeyHelper: "",
     }),
   ];
+}
+
+/**
+ * `--project-config-root` for an assist in a linked worktree, naming that
+ * worktree's top level, and nothing anywhere else.
+ *
+ * Without it the CLI reads part of a linked worktree's project config from the
+ * main checkout, whose untracked files are not the run's and are never in the
+ * diff. Measured on 2.1.319 through `startAssist`: a validator and a resolver
+ * in a run's worktree were shown the main checkout's untracked skill, agent
+ * and command and its `settings.local.json` `language`, and that file's
+ * `permissions.allow` let the resolver, under `acceptEdits`, read a file
+ * outside its checkout that it was otherwise refused. With the flag none of
+ * that reached either, and the worktree's own committed skills, agents,
+ * commands and `settings.json` (`language`, a `deny`) applied as before.
+ *
+ * The top level rather than `cwd`, because pointed at a subdirectory the flag
+ * left the checkout root's settings files unapplied, a worktree's committed
+ * `settings.json` included (measured, same pin). Nothing where `.git` is a directory or
+ * absent: a main checkout has no main checkout to fall back to and a plain
+ * folder's ancestor walk is not changed by the flag, so their argv keeps its
+ * bytes, as a work cycle's does (`docs/agent/security/project-config-discovery.md`).
+ * Read off the filesystem rather than off the run, so the resolver's
+ * throwaway checkout gets it, the reviewer's fallback to the main checkout
+ * does not, and a fourth kind of assist needs no caller to remember either.
+ */
+export function assistConfigRootArgs(cwd: string): string[] {
+  for (let dir = path.resolve(cwd); ; dir = path.dirname(dir)) {
+    const dotGit = fs.statSync(path.join(dir, ".git"), { throwIfNoEntry: false });
+    if (dotGit) return dotGit.isFile() ? ["--project-config-root", dir] : [];
+    if (path.dirname(dir) === dir) return [];
+  }
 }
 
 /**

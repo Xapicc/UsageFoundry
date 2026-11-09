@@ -829,8 +829,9 @@ export function evaluateBudget(
   // ordinary state of a stock install while the provider is unreachable — would
   // otherwise never reach the session check at all: a `live-resume` run at 97%
   // of a 50% 5-hour guard logs a line about the *weekly* guard and spawns the
-  // cycle anyway, and the runs a workflow member or a chat approval creates
-  // never pass `windowGuardRefusal`, so nothing catches it at the door either.
+  // cycle anyway, and a workflow member created after its press (a deferred
+  // node, a loop pass, an emitted run) never passes `windowGuardRefusal`, so
+  // nothing catches it at the door either.
   // A guard that can be read still wins, in the documented order, and the held
   // refusal is returned only once every readable one has passed.
   let unreadable: BudgetVerdict | null = null;
@@ -1321,7 +1322,7 @@ export function instanceBudgetNumberRefusal(
  * A **rolling** 24 hours, not a calendar day, and both halves of that are
  * deliberate. A calendar day would have to be cut in some zone — the container
  * runs in UTC and the operator does not, which is the failure `zonedMidnight`
- * already exists to fix for the dashboard's history — and a guard cut in the
+ * already exists to fix for `/usage`'s calendar history — and a guard cut in the
  * wrong zone refuses work for hours or authorises it for hours. It would also
  * be a cliff every run in the install crosses at the same instant, which is the
  * lockstep this app already has enough of.

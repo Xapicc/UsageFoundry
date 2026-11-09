@@ -23,6 +23,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 
 - All three of those modes bound what a cycle may *spend*, and none of them bounds a cycle that spends nothing — so a work cycle also has a deadline, and the deadline is silence rather than wall clock.
 - A cycle cut short by a pause is refunded to the counter.
+- A cycle the CLI refused for a deferred call whose server is gone is refunded, but only on the CLI's own word and a zero everywhere else.
 - A cycle that is only waiting on its background sub-agents is bound by three of these guards and not by the rest, and the duration limit is the one the CLI's wait ceiling has to carry (`run-lifecycle/background-work.md`).
 
 ## [Concurrency caps and the install's rolling limit](budgets-and-guards/concurrency-and-install-ceiling.md)
@@ -47,4 +48,4 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - Three rules follow from the column rather than from the arithmetic, and each fails silently.
 - One guard can now be extended, by a bounded count, and nothing else about the terminus rule moves.
 - A number a person typed that is not a number is refused where there is somebody to tell, and "off" is only `null`, `""`, `0` and absent.
-- Five doors ask `windowGuardRefusal` — `POST /api/runs`, the reopen route, per run the fleet pick-up and the restart notice's, and the chat approval's click — and workflow members and the dreaming pass do not.
+- Six doors ask `windowGuardRefusal` — `POST /api/runs`, the reopen route, per run the fleet pick-up and the restart notice's, the chat approval's click, and a workflow's press of Run (every block it can create) — and the later creators of workflow members (deferred nodes, loop passes, orchestrator emissions) and the dreaming pass do not, on purpose.

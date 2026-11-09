@@ -14,7 +14,7 @@ import { WindowHead, resetText } from "@/components/WindowHead";
 import {
   isProjectable,
   outlookLine,
-  windowOutlooks,
+  windowOutlook,
   type WindowOutlook,
 } from "@/components/windowOutlook";
 import { Badge } from "@/components/ui/Badge";
@@ -106,7 +106,6 @@ function OutlookLine({
   now: number;
 }) {
   const line = outlookLine(outlook, rate, now);
-  if (line === null) return null;
   return (
     <div
       className={`tabular-nums ${
@@ -365,21 +364,31 @@ export default function Dashboard() {
   const anyProviderReading =
     s.session.fractionMetric === "plan" || s.weekly.fractionMetric === "plan";
 
-  // One projected instant, set against the reset of the window it belongs to —
-  // see `windowOutlooks` for how that window is told, and when it cannot be.
-  const outlooks = windowOutlooks(
-    s.projectedExhaustionAt,
-    s.now,
-    { resetsAt: s.session.endsAt, projectable: isProjectable(s.session) },
-    {
-      resetsAt: weeklyResets ? s.weekly.endsAt : null,
-      projectable: isProjectable(s.weekly),
-    },
-  );
-  // The rate the projection extrapolates, said once: on the line that carries
-  // a run-out the week owns, and otherwise on the session's.
+  // Each window's own run-out against its own reset, never the snapshot's
+  // `projectedExhaustionAt`, which does not say whose it is.
+  const outlooks = {
+    session: windowOutlook(
+      {
+        resetsAt: s.session.endsAt,
+        projectable: isProjectable(s.session),
+        projectedAt: s.session.projectedExhaustionAt,
+      },
+      s.now,
+    ),
+    weekly: windowOutlook(
+      {
+        resetsAt: weeklyResets ? s.weekly.endsAt : null,
+        projectable: isProjectable(s.weekly),
+        projectedAt: s.weekly.projectedExhaustionAt,
+      },
+      s.now,
+    ),
+  };
+  // The rate the projection extrapolates, said once: on the week's line when
+  // only the week runs out, and otherwise on the session's, which is read first.
   const rate = `${fmtUSD(s.burnCostPerHour)}/h`;
-  const rateOnWeekly = outlooks.weekly.kind === "runs-out";
+  const rateOnWeekly =
+    outlooks.weekly.kind === "runs-out" && outlooks.session.kind !== "runs-out";
 
   // The provenance strip — where the transcripts were read from, how many
   // turns, the heap behind them — moved to `/usage` with the analysis it

@@ -1137,6 +1137,10 @@ async function fireIfDue(schedule: WorkflowSchedule, now: number): Promise<void>
   // Named as the schedule's, so the runs this fire creates are distinguishable
   // from the same graph started by hand. This is the one press of Run with
   // nobody present at all, which is exactly the case an audit column exists for.
+  //
+  // No Codex reading is handed in: `scheduleRefusal` above refuses a graph with
+  // a block that reports no cost, which a Codex block is, so `startWorkflow`'s
+  // per-block fraction question never needs one here.
   const outcome = startWorkflow(schedule.workflowId, snapshot, {
     kind: "schedule",
     scheduleId: schedule.id,

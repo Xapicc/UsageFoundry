@@ -170,6 +170,7 @@ Its cases are in `orchestrator.test.ts`, `shutdown.test.ts`, `stackWait.test.ts`
 | `scheduleFire.test.ts` |  |
 | `schedulePut.test.ts` |  |
 | `src/app/api/workflows/[id]/route.test.ts` |  |
+| `src/app/api/workflows/[id]/run/route.test.ts` |  |
 | `src/app/api/workflows/[id]/schedule/route.test.ts` |  |
 
 ## [Workflow canvas ordering and page formatting](testing/workflow-canvas-and-formatting.md)
@@ -398,7 +399,7 @@ Its cases are in `orchestrator.test.ts`; see that file's row above.
 | `codexRollout.test.ts` |  |
 | `mcpStatus.test.ts` |  |
 | `notify.test.ts` |  |
-| `review.test.ts` | [pricing], [landing], [stacks], [argv] |
+| `review.test.ts` | [pricing], [landing], [stacks], [argv], [sandbox] |
 | `toolComposition.test.ts` |  |
 
 Units that are about no test file in the tree:

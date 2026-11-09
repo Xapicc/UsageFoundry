@@ -67,6 +67,7 @@ function window(guardFraction: number | null, endsAt = 0): WindowState {
     guardFraction,
     limit: guardFraction === null ? null : 100,
     limitMetric: guardFraction === null ? null : "cost",
+    projectedExhaustionAt: null,
   };
 }
 

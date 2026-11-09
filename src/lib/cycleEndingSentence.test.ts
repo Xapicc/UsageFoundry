@@ -57,7 +57,7 @@ assert.equal(
 
 const { createRun, getRun, reopenRun, exitStopReason } =
   require("./orchestrator") as typeof import("./orchestrator");
-const { startupFailureSentence, CLI_SENTENCE_LIMIT } =
+const { startupFailureSentence, refusedWithoutApiCall, CLI_SENTENCE_LIMIT } =
   require("./cycleInvocation") as typeof import("./cycleInvocation");
 
 // A populated projects tree, so a resume is checked against a real listing: an
@@ -143,7 +143,10 @@ const DEFERRED_SENTENCE =
   "mcp__dsrv__ping isn't available, so its deferred call didn't run. Reconnect the tool " +
   "and resume, or resume with a prompt and CLAUDE_CODE_DROP_UNAVAILABLE_DEFERRED_TOOL=1 " +
   "to drop the call and continue.";
-const refusedResult = (turns: number) => ({
+// `duration_api_ms: 0`, a `total_cost_usd` equal to the session's running total
+// and an all-zero `usage` are what the capture carried, and they are the
+// evidence that the refusal made no API call (plan e4, cycles D2 and D3).
+const refusedResult = (turns: number, changed: Record<string, unknown> = {}) => ({
   type: "result",
   subtype: "success",
   is_error: true,
@@ -151,11 +154,13 @@ const refusedResult = (turns: number) => ({
   terminal_reason: "tool_deferred_unavailable",
   result: DEFERRED_SENTENCE,
   num_turns: turns,
+  duration_api_ms: 0,
   session_id: DEFERRED_SESSION,
   total_cost_usd: 0.000105,
   usage: { input_tokens: 0, output_tokens: 0 },
   permission_denials: [],
   deferred_tool_use: DEFERRED_CALL,
+  ...changed,
 });
 const lifecycle = (state: string, uuid: string) => ({
   type: "command_lifecycle",
@@ -163,14 +168,49 @@ const lifecycle = (state: string, uuid: string) => ({
   state,
   session_id: DEFERRED_SESSION,
 });
-const DEFERRAL_REFUSED: Replay = {
+const refusal = (changed: Record<string, unknown> = {}): Replay => ({
   stdout: jsonLines(
     lifecycle("started", "c9a0d30a"),
-    refusedResult(16),
+    refusedResult(16, changed),
     lifecycle("cancelled", "c9a0d30a"),
-    refusedResult(16),
+    refusedResult(16, changed),
   ),
   stderr: "",
+  code: 1,
+});
+const DEFERRAL_REFUSED = refusal();
+
+// 2.1.319, plan e8: `$CLAUDE_CONFIG_DIR/.claude.json` is not JSON. The CLI
+// writes a zeroed `error_during_execution` result before exiting 1 — the one
+// startup failure measured that arrives as a `result` — with the failure in
+// `errors` and `startup_failure_reason` set, and the same text on stderr. Its
+// `session_id` is minted for that result: no transcript exists under it, and it
+// is not the id `--resume` was given.
+const STARTUP_RESULT_SESSION = "f8ca75e1-b2cc-462c-a0a4-7edcbc45b4d7";
+const CONFIG_FILE_ERROR =
+  "Configuration error in /scratch/e8/c/.claude.json: JSON Parse error: Expected '}'\n" +
+  "A backup file exists at: /scratch/e8/c/backups/.claude.json.backup.1794187872118\n" +
+  'You can manually restore it by running: cp -f "/scratch/e8/c/backups/.claude.json.backup.1794187872118" "/scratch/e8/c/.claude.json"';
+const CONFIG_FILE_INVALID: Replay = {
+  stdout: jsonLines({
+    type: "result",
+    subtype: "error_during_execution",
+    duration_ms: 0,
+    duration_api_ms: 0,
+    is_error: true,
+    num_turns: 0,
+    stop_reason: null,
+    session_id: STARTUP_RESULT_SESSION,
+    total_cost_usd: 0,
+    permission_denials: [],
+    errors: [CONFIG_FILE_ERROR],
+    startup_failure_reason: "config_file_invalid",
+    result_index: 0,
+  }),
+  stderr:
+    "\nClaude configuration file at /scratch/e8/c/.claude.json is corrupted: JSON Parse error: Expected '}'\n" +
+    "The corrupted file has been backed up to: /scratch/e8/c/backups/.claude.json.corrupted.1794187874864\n\n" +
+    "Configuration error in /scratch/e8/c/.claude.json: JSON Parse error: Expected '}'\n",
   code: 1,
 };
 
@@ -370,6 +410,68 @@ describe("a cycle the CLI would not start", () => {
   });
 });
 
+describe("a startup failure the CLI reports as a result", () => {
+  it("is not called a resume failure on a picked-up run's first cycle", async () => {
+    // A third reply so that a retry, if the loop makes one, is an assertion
+    // failing below rather than the stub running out of script.
+    const run = start(["Still working.", CONFIG_FILE_INVALID, CONFIG_FILE_INVALID], 1);
+    const first = await settled(run.id);
+    assert.equal(first.status, "completed", first.stop_reason ?? "");
+    assert.ok(first.session_id, "the fixture's first cycle must leave a session to resume");
+    keepTranscript(first.session_id);
+
+    pickUp(run.id, 2);
+    const row = await settled(run.id);
+
+    // Zero turns and an error is `cycleDidNoWork`'s second clause, which is the
+    // shape of a refused resume; the reason is the CLI saying it was not.
+    assert.equal(spawns.length, 2, "one cycle before the pick-up and one after it, no retry");
+    assert.equal(spawns[1].resumed, first.session_id);
+    assert.equal(row.status, "failed");
+    assert.equal(row.ending_code, "exit_code");
+    assert.ok(row.stop_reason?.includes("Configuration error in"), row.stop_reason ?? "");
+    assert.ok(row.stop_reason?.includes("JSON Parse error"), row.stop_reason ?? "");
+    assert.ok(!row.stop_reason?.includes("Could not resume"), row.stop_reason ?? "");
+    assert.ok(!row.stop_reason?.includes("claude --resume"), row.stop_reason ?? "");
+  });
+
+  it("leaves the run's session where it was, so repairing the file continues the conversation", async () => {
+    // The result's `session_id` names a session that was never written. Adopted,
+    // it would replace the real one on the row, and the pick-up after the repair
+    // would find no transcript under it and start the task over.
+    const run = start(["Still working.", CONFIG_FILE_INVALID, "Back at it. DONE"], 1);
+    const first = await settled(run.id);
+    assert.ok(first.session_id);
+    keepTranscript(first.session_id);
+
+    pickUp(run.id, 2);
+    const failed = await settled(run.id);
+    assert.equal(failed.ending_code, "exit_code");
+    assert.equal(failed.session_id, first.session_id);
+    assert.equal(failed.session_cost_usd, first.session_cost_usd);
+
+    pickUp(run.id, 3);
+    const done = await settled(run.id);
+    assert.equal(done.status, "completed", done.stop_reason ?? "");
+    assert.equal(spawns[2].resumed, first.session_id, "the repaired pick-up resumes the real session");
+    assert.ok(
+      !spawns[2].prompt.includes("do the thing"),
+      "and does not send the task again as if nothing had happened",
+    );
+  });
+
+  it("ends a fresh run with the sentence and no session", async () => {
+    const run = start([CONFIG_FILE_INVALID], 3);
+    const row = await settled(run.id);
+
+    assert.equal(spawns.length, 1);
+    assert.equal(row.status, "failed");
+    assert.equal(row.ending_code, "exit_code");
+    assert.ok(row.stop_reason?.includes("Configuration error in"), row.stop_reason ?? "");
+    assert.equal(row.session_id, null, "a made-up id is not a session to resume");
+  });
+});
+
 describe("a resume refused for a deferred call whose tool is gone", () => {
   it("ends the run with the CLI's sentence, which names the tool and the two ways out", async () => {
     // The deferring cycle is a success with empty text, so the loop sends its
@@ -395,24 +497,61 @@ describe("a resume refused for a deferred call whose tool is gone", () => {
     assert.ok(!row.stop_reason?.includes("claude --resume"), row.stop_reason ?? "");
   });
 
-  it("is refused again by a pick-up while the tool is still gone, once per press", async () => {
-    const run = start([DEFERRAL, DEFERRAL_REFUSED, DEFERRAL_REFUSED], 3);
+  it("is refused again by a pick-up while the tool is still gone, and costs it no cycle", async () => {
+    // Capped at the two cycles the first segment used, so that a refusal which
+    // stayed charged would leave the pick-up refused at the door.
+    const run = start([DEFERRAL, DEFERRAL_REFUSED, DEFERRAL_REFUSED, DEFERRAL_REFUSED], 2);
     const first = await settled(run.id);
     assert.equal(first.status, "failed");
+    assert.equal(first.iterations, 1, "the deferring cycle is counted and the refusal is not");
+    assert.ok(
+      first.stop_reason?.includes("did not call the API"),
+      "the reason says why the count is one short of the spawns",
+    );
     keepTranscript(DEFERRED_SESSION);
 
-    pickUp(run.id, 6);
+    // The same cap: it was the cycle the refusal charged that used to make this
+    // press, and the one after it, the door's "already used 2 work cycles".
+    pickUp(run.id, 2);
     const row = await settled(run.id);
 
     // Nothing re-enters the refusal on its own: the pick-up is the operator's
-    // press, it costs one spawn, and it ends with the sentence that says what
-    // to change before pressing again.
+    // press, it costs one spawn and no cycle, and it ends with the sentence that
+    // says what to change before pressing again.
     assert.equal(spawns.length, 3);
     assert.equal(spawns[2].resumed, DEFERRED_SESSION);
     assert.equal(row.status, "failed");
     assert.equal(row.ending_code, "exit_code");
+    assert.equal(row.iterations, 1);
     assert.ok(row.stop_reason?.includes("mcp__dsrv__ping isn't available"), row.stop_reason ?? "");
+
+    pickUp(run.id, 2);
+    const again = await settled(run.id);
+    assert.equal(spawns.length, 4, "and a third press is one more spawn, still free");
+    assert.equal(again.iterations, 1);
   });
+
+  // The refund is only for a cycle that bought nothing, and each of these is a
+  // refusal that did or might have. Left charged, the run is stopped at the
+  // cycle cap exactly as it was before the refund existed.
+  for (const [what, changed] of [
+    ["an API call was timed", { duration_api_ms: 120 }],
+    ["the API call's duration is not reported", { duration_api_ms: undefined }],
+    ["the session's cost moved", { total_cost_usd: 0.5 }],
+    ["tokens were counted", { usage: { input_tokens: 7, output_tokens: 3 } }],
+    ["the CLI gave another reason", { terminal_reason: "api_error" }],
+    ["the CLI gave no reason", { terminal_reason: undefined }],
+  ] as const) {
+    it(`keeps the cycle charged when ${what}`, async () => {
+      const run = start([DEFERRAL, refusal(changed)], 3);
+      const row = await settled(run.id);
+
+      assert.equal(row.status, "failed");
+      assert.equal(row.ending_code, "exit_code");
+      assert.equal(row.iterations, 2, "both spawns are counted");
+      assert.ok(!row.stop_reason?.includes("did not call the API"), row.stop_reason ?? "");
+    });
+  }
 
   it("does not read an error result's text as the provider refusing", async () => {
     // The decision about `apiError`: a success-subtype `is_error` result quotes
@@ -453,7 +592,14 @@ describe("a resume refused for a deferred call whose tool is gone", () => {
 });
 
 describe("startupFailureSentence", () => {
-  const base = { exitCode: 1, sawResult: false, stdoutLines: 0, stderrTail: "Error: nope\n" };
+  const base = {
+    exitCode: 1,
+    sawResult: false,
+    stdoutLines: 0,
+    stderrTail: "Error: nope\n",
+    startupFailureReason: null,
+    errorText: null,
+  };
 
   it("flattens the CLI's lines into one sentence", () => {
     assert.equal(
@@ -471,6 +617,33 @@ describe("startupFailureSentence", () => {
     assert.ok(sentence?.endsWith("…"));
   });
 
+  describe("when the result names the startup failure itself", () => {
+    const named = {
+      ...base,
+      sawResult: true,
+      stdoutLines: 1,
+      startupFailureReason: "config_file_invalid",
+      errorText: "Configuration error in /x/.claude.json: JSON Parse error",
+    };
+
+    it("is the sentence the result carried, whatever else the cycle looks like", () => {
+      // Every condition the stderr-only shape needs is the opposite here: a
+      // result arrived, a line reached stdout, and stderr says the same again.
+      assert.equal(startupFailureSentence(named), named.errorText);
+      assert.equal(startupFailureSentence({ ...named, exitCode: 0 }), named.errorText);
+    });
+
+    it("falls back to stderr, then to the reason, rather than to null", () => {
+      // Null would hand the cycle back to the resume retry, which is the
+      // misfiling the reason exists to prevent.
+      assert.equal(startupFailureSentence({ ...named, errorText: null }), "Error: nope");
+      assert.equal(
+        startupFailureSentence({ ...named, errorText: null, stderrTail: "" }),
+        "config_file_invalid",
+      );
+    });
+  });
+
   // Each of these is a cycle that is not a refusal to start, and mistaking one
   // for it costs the retry and the resume command that a silent death earns.
   for (const [what, change] of [
@@ -483,6 +656,29 @@ describe("startupFailureSentence", () => {
   ] as const) {
     it(`is null for ${what}`, () => {
       assert.equal(startupFailureSentence({ ...base, ...change }), null);
+    });
+  }
+});
+
+describe("refusedWithoutApiCall", () => {
+  const refused = { terminalReason: "tool_deferred_unavailable", apiDurationMs: 0, tokens: 0 };
+
+  it("holds for the measured refusal, whose cost did not move", () => {
+    assert.equal(refusedWithoutApiCall(refused, 0), true);
+  });
+
+  // Each of these is a cycle that may have bought something, and a refund of
+  // one lets a run's cycle cap be spent past without the guard seeing it.
+  for (const [what, res, cost] of [
+    ["an API call was timed", { ...refused, apiDurationMs: 1 }, 0],
+    ["the API duration was not reported", { ...refused, apiDurationMs: null }, 0],
+    ["tokens were counted", { ...refused, tokens: 1 }, 0],
+    ["the cycle's cost moved", refused, 0.000001],
+    ["the reason is another one", { ...refused, terminalReason: "api_error" }, 0],
+    ["no reason was given", { ...refused, terminalReason: null }, 0],
+  ] as const) {
+    it(`is false when ${what}`, () => {
+      assert.equal(refusedWithoutApiCall(res, cost), false);
     });
   }
 });

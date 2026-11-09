@@ -1,11 +1,11 @@
 // The capture plans drive.mjs ran on 2026-11-08 against claude 2.1.319, by
-// name. Prints one plan as JSON: node plans.mjs <e1..e7> <outdir>
+// name. Prints one plan as JSON: node plans.mjs <e1..e8> <outdir>
 // Every HOME and CLAUDE_CONFIG_DIR is a scratch directory under <outdir>, and
 // every credential is made up.
 import path from "node:path";
 
 const [name, outArg] = process.argv.slice(2);
-if (!name || !outArg) throw new Error("usage: node plans.mjs <e1..e7> <outdir>");
+if (!name || !outArg) throw new Error("usage: node plans.mjs <e1..e8> <outdir>");
 const O = path.resolve(outArg);
 const here = path.dirname(new URL(import.meta.url).pathname);
 const STD = ["--permission-mode", "acceptEdits", "--model", "claude-sonnet-4-5"];
@@ -86,6 +86,16 @@ const plans = {
   // A background Bash task re-issued until the nested sandbox lets one start
   // (none did in 10 tries on 2026-11-08).
   e7: [{ label: "background Bash, retried", ...dirs(), args: STD, prompt: "SCN_BGRETRY start", timeoutS: 150 }],
+  // A startup failure that arrives as a `result` with `startup_failure_reason`
+  // set: the global config file is not JSON. One of the three reasons the CLI
+  // writes to every stream-json run; the other two (org_config_required_unavailable,
+  // org_config_refused) need a claude.ai sign-in whose organization requires its
+  // settings, which a made-up credential does not give.
+  e8: [
+    { label: "good cycle", ...dirs(), args: STD, prompt: "SCN_DONE x" },
+    { label: "resume, global config corrupt", ...dirs(), files: { [`${O}/c/.claude.json`]: "{nope" }, args: STD, resumeFrom: 0, prompt: "continue" },
+    { label: "fresh, global config corrupt", ...dirs(), args: STD, prompt: "SCN_DONE x" },
+  ],
 };
 
 if (!plans[name]) throw new Error(`no plan ${name}; have ${Object.keys(plans).join(", ")}`);

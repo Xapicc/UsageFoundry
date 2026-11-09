@@ -56,6 +56,12 @@ export interface WindowStateDTO {
   guardFraction: number | null;
   limit: number | null;
   limitMetric: "plan" | "tokens" | "cost" | null;
+  /**
+   * When this window runs out at the current burn, before its own reset, or
+   * null when it is not projected to. Set this against this window's reset,
+   * never `SnapshotDTO.projectedExhaustionAt`, which does not say whose it is.
+   */
+  projectedExhaustionAt: number | null;
 }
 
 /** Mirror of `PlanWindow` in `windows.ts`. */

@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
-import { currentSnapshot } from "@/lib/orchestrator";
-import { startWorkflow, type WorkflowFolder } from "@/lib/workflows";
-import { optionalObjectField, optionalStringField } from "@/lib/http";
+import { currentSnapshot } from "../../../../../lib/orchestrator";
+import { codexGuardSnapshot } from "../../../../../lib/codexAccount";
+import {
+  startWorkflow,
+  workflowGuardWindows,
+  type WorkflowFolder,
+} from "../../../../../lib/workflows";
+import { optionalObjectField, optionalStringField } from "../../../../../lib/http";
 import { instanceDTO } from "../../dto";
 import { auditMutation } from "../../../../../lib/requestLog";
 
@@ -34,6 +39,12 @@ type Ctx = { params: Promise<{ id: string }> };
  * does anything. The instance budget comes off the saved workflow and there is
  * no field here that could set one.
  *
+ * The same door asks each block's own fraction guard — the one its template or
+ * `chatDefaultGuards` hands its runs — against that block's provider's reading,
+ * so the Codex account's is fetched here too, and only when some block that
+ * runs on Codex carries one (`workflowGuardWindows`): a press with no fraction
+ * guard in it pays for no Codex read.
+ *
  * The body carries one thing, and only for a workflow saved with folders to
  * choose from: `folder`, which of those saved folders this press works in.
  * It is a choice and never a path — `startWorkflow` asks `chooseFolder`, which
@@ -49,10 +60,18 @@ async function postHandler(req: Request, ctx: Ctx) {
     return NextResponse.json({ error: chosen.error }, { status: 400 });
   }
 
-  const outcome = startWorkflow(id, await currentSnapshot(), {
-    kind: "manual",
-    folder: chosen.folder,
-  });
+  // Both readings before `startWorkflow`, which awaits nothing. The Codex one
+  // is fetched only when a block needs it.
+  const snapshot = await currentSnapshot();
+  const codexSnapshot = workflowGuardWindows(id).includes("codex")
+    ? await codexGuardSnapshot()
+    : undefined;
+  const outcome = startWorkflow(
+    id,
+    snapshot,
+    { kind: "manual", folder: chosen.folder },
+    codexSnapshot,
+  );
   if (!outcome.ok) {
     return NextResponse.json({ error: outcome.reason }, { status: 400 });
   }

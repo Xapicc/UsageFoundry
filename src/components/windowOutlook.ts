@@ -6,17 +6,11 @@ import { fmtDateTime } from "../lib/format";
 /**
  * What the dashboard's projection line under one Claude window can say.
  *
- * `buildSnapshot` projects every window it has a basis for, drops any candidate
- * past that window's own reset, and reports one instant — the earliest — as
- * `projectedExhaustionAt`, without recording whose it was. So the owner is
- * deduced here, from the only two facts that settle it: a window with nothing
- * to project against cannot own it, and neither can a window whose reset falls
- * before it, because every candidate of that window was at or before its reset
- * and would have won the `Math.min`. When both windows survive that, the instant
- * is the session's or the week's and nothing on the wire says which — so the
- * line says "session or week" rather than guessing. A guess here is the
- * expensive kind: naming the session when it is the week tells the operator to
- * wait for a reset that will not free them.
+ * Each window carries its own run-out from `buildSnapshot`, already bounded by
+ * that window's reset, so the line under a meter is about that meter alone. It
+ * used to be deduced from the snapshot's one earliest instant, which cannot say
+ * whose it is: before the session's reset, with both windows projectable, the
+ * line read "Session or week runs out" and the week got no line at all.
  */
 export type WindowOutlook =
   | { kind: "nothing-to-project" }
@@ -31,17 +25,15 @@ export type WindowOutlook =
       inMs: number;
       /** How long before this window's reset, or null for a trailing total. */
       beforeResetMs: number | null;
-      /** False when the instant could be the week's as well as this window's. */
-      certain: boolean;
-    }
-  /** The session's line names this window as one of the two it could be. */
-  | { kind: "named-in-session-line" };
+    };
 
 export interface OutlookWindow {
   /** When the consumed figure goes back to zero, or null for a trailing total. */
   resetsAt: number | null;
   /** Whether `buildSnapshot` had anything to project it against (`isProjectable`). */
   projectable: boolean;
+  /** This window's own `projectedExhaustionAt`, never the snapshot's. */
+  projectedAt: number | null;
 }
 
 /**
@@ -65,67 +57,27 @@ export function isProjectable(
   return w.fractionMetric !== null;
 }
 
-function hasReset(w: OutlookWindow, now: number): boolean {
-  return w.resetsAt !== null && w.resetsAt <= now;
-}
-
-function standing(w: OutlookWindow, now: number): WindowOutlook {
-  if (hasReset(w, now)) return { kind: "reset" };
-  if (!w.projectable) return { kind: "nothing-to-project" };
-  return { kind: "lasts", trailing: w.resetsAt === null };
-}
-
-function runsOut(
-  projectedAt: number,
-  now: number,
-  w: OutlookWindow,
-  certain: boolean,
-): WindowOutlook {
-  const at = Math.max(projectedAt, now);
-  return {
-    kind: "runs-out",
-    at,
-    inMs: at - now,
-    beforeResetMs: w.resetsAt === null ? null : w.resetsAt - at,
-    certain,
-  };
-}
-
 /**
- * Each Claude window's outlook from the snapshot's one projected instant.
+ * One Claude window's outlook from its own projected instant.
  *
- * Equal to the reset counts as running out — `buildSnapshot` keeps a candidate
- * at exactly its window's reset and drops one a millisecond past it.
+ * A reset that has passed outranks the projection, which was made against the
+ * window before it. Equal to the reset counts as running out — `buildSnapshot`
+ * keeps a candidate at exactly its window's reset and drops one a millisecond
+ * past it.
  */
-export function windowOutlooks(
-  projectedAt: number | null,
-  now: number,
-  session: OutlookWindow,
-  weekly: OutlookWindow,
-): { session: WindowOutlook; weekly: WindowOutlook } {
-  const canOwn = (w: OutlookWindow): boolean =>
-    projectedAt !== null &&
-    w.projectable &&
-    !hasReset(w, now) &&
-    (w.resetsAt === null || projectedAt <= w.resetsAt);
-
-  const sessionCan = canOwn(session);
-  const weeklyCan = canOwn(weekly);
-  // `projectedAt !== null` is implied by either `can`; restated for the compiler.
-  if (projectedAt === null || (!sessionCan && !weeklyCan)) {
-    return { session: standing(session, now), weekly: standing(weekly, now) };
-  }
-  if (sessionCan && weeklyCan) {
-    // On the session's line: its reset is the earlier one, so the margin it
-    // prints is the one that is true whichever window this turns out to be.
+export function windowOutlook(w: OutlookWindow, now: number): WindowOutlook {
+  if (w.resetsAt !== null && w.resetsAt <= now) return { kind: "reset" };
+  if (w.projectedAt !== null) {
+    const at = Math.max(w.projectedAt, now);
     return {
-      session: runsOut(projectedAt, now, session, false),
-      weekly: { kind: "named-in-session-line" },
+      kind: "runs-out",
+      at,
+      inMs: at - now,
+      beforeResetMs: w.resetsAt === null ? null : w.resetsAt - at,
     };
   }
-  return sessionCan
-    ? { session: runsOut(projectedAt, now, session, true), weekly: standing(weekly, now) }
-    : { session: standing(session, now), weekly: runsOut(projectedAt, now, weekly, true) };
+  if (!w.projectable) return { kind: "nothing-to-project" };
+  return { kind: "lasts", trailing: w.resetsAt === null };
 }
 
 /**
@@ -184,7 +136,7 @@ export function fmtLeft(usedFraction: number | null): string | null {
 }
 
 /**
- * The projection line's words, or null for none.
+ * The projection line's words.
  *
  * `rate` is the burn rate as printed ("$4.10/h"), handed only to the line that
  * carries it so it is said once in the card.
@@ -193,7 +145,7 @@ export function outlookLine(
   o: WindowOutlook,
   rate: string | null,
   now: number,
-): string | null {
+): string {
   const at = rate ? ` at ${rate}` : "";
   switch (o.kind) {
     case "nothing-to-project":
@@ -202,10 +154,7 @@ export function outlookLine(
       return "Reset since this reading";
     case "lasts":
       return `${o.trailing ? "Not projected to run out" : "Lasts to reset"}${at}`;
-    case "named-in-session-line":
-      return null;
     case "runs-out": {
-      const subject = o.certain ? "Runs out" : "Session or week runs out";
       const when = o.inMs < 60_000 ? "now" : `~${fmtInstant(o.at, now)} (in ${fmtSpan(o.inMs)})`;
       // Under a minute is "about when it resets" and never "<1m before": the
       // projection is an hour's rate extrapolated, and a margin that precise
@@ -215,8 +164,8 @@ export function outlookLine(
           ? ""
           : o.beforeResetMs < 60_000
             ? " — about when it resets"
-            : ` — ${fmtSpan(o.beforeResetMs)} before ${o.certain ? "reset" : "this reset"}`;
-      return `${subject} ${when}${at}${margin}`;
+            : ` — ${fmtSpan(o.beforeResetMs)} before reset`;
+      return `Runs out ${when}${at}${margin}`;
     }
   }
 }
