@@ -7,6 +7,7 @@ import { after, before, describe, it } from "node:test";
 
 import { PINNED_CYCLE_ENV } from "./cycleInvocation";
 import {
+  assistAllowedTools,
   assistConfigRootArgs,
   assistModel,
   assistSettingsArgs,
@@ -401,11 +402,42 @@ describe("assistSettingsArgs — the endpoint a checkout's settings cannot move"
       assert.equal(settings.disableAllHooks, true, "still the one --settings");
     }
     // The resolver keeps the argv it had: `acceptEdits` already asks before its
-    // `Read` leaves the checkout, and the block's sandbox half would hide `$HOME`
-    // from a build command an operator granted it.
+    // `Read` leaves the checkout, `assistAllowedTools` scopes its search tools,
+    // and on a stock install the block refused it a granted
+    // `go build -o /dev/null .` for naming a path outside the checkout.
     for (const overlay of [null, sandbox]) {
       assert.equal("permissions" in overlayOf(assistSettingsArgs(overlay, {}, "acceptEdits")), false);
     }
+  });
+});
+
+/**
+ * The resolver runs `acceptEdits`, which asks before a read leaves its checkout
+ * and so refuses one in a `-p` child, unless an allow rule covers the path. A
+ * bare `Grep` or `Glob` covers every path: measured on 2.1.319 through
+ * `startAssist`, the resolver's `Read` of another directory was refused while
+ * its `Grep` and `Glob` of the same directory returned the files, under this
+ * container's managed sandbox and stock alike. Nothing about that looks wrong;
+ * the resolution completes and its report is stored.
+ */
+describe("assistAllowedTools — how far an assist's search tools reach", () => {
+  it("names Grep and Glob for the checkout only, never bare", () => {
+    // Named they must be: with `Bash` present the CLI drops both from the tool
+    // list unless an entry names them, and a scoped entry was measured to keep
+    // them offered and to refuse the outside directory.
+    for (const granted of [assistAllowedTools([], []), assistAllowedTools(["Bash(npm run typecheck)"], ["Bash(go:*)"])]) {
+      assert.deepEqual(
+        granted.filter((entry) => /^(Grep|Glob)\b/.test(entry)),
+        ["Grep(./**)", "Glob(./**)"],
+      );
+    }
+  });
+
+  it("keeps the operator's commands and then the stacks' grants after them", () => {
+    assert.deepEqual(assistAllowedTools(["Bash(npm run typecheck)"], ["Bash(go:*)"]).slice(2), [
+      "Bash(npm run typecheck)",
+      "Bash(go:*)",
+    ]);
   });
 });
 

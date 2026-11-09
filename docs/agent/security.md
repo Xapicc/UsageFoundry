@@ -129,7 +129,7 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - A reviewer or validator refuses a file-tool read outside its checkout, through `permissions.blockReadsOutsideWorkingDirectories` in the assist's one `--settings`, because `plan` refuses no read.
 - A sandbox `denyRead` would not have done it, and neither would a deny rule.
 - What it costs is a judge's reads of anything but its own checkout, and on this install that is almost nothing.
-- The resolver is left without it.
+- The resolver is left without it, and its `Grep` and `Glob` are granted for its checkout instead.
 - What it does not cover.
 
 ## [Middleware, login and sessions](security/middleware-login-and-sessions.md)

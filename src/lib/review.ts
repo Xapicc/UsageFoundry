@@ -27,7 +27,6 @@ import {
   isShuttingDown,
   promptArgs,
   sandboxOverlayFor,
-  SEARCH_TOOLS,
   signalTree,
   trackAssistChild,
   workDirOf,
@@ -509,10 +508,11 @@ export interface AssistRequest {
    * `--permission-mode plan` precisely so that nothing it does can write, and a
    * command granted through this field would be the one hole in that.
    *
-   * What the spawn adds below this is `SEARCH_TOOLS`, and the difference is the
-   * point rather than an exception to it: this field names *commands* a child
-   * may run without being asked, where that names two read-only tools the CLI
-   * would otherwise not offer at all. The bound stays capability, not count.
+   * What the spawn adds below this is `Grep` and `Glob` for the checkout
+   * (`assistAllowedTools`), and the difference is the point rather than an
+   * exception to it: this field names *commands* a child may run without being
+   * asked, where that names two read-only tools the CLI would otherwise not
+   * offer at all. The bound stays capability, not count.
    */
   allowedTools?: string[];
   /**
@@ -1193,12 +1193,12 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
     // Additive, exactly as `ISOLATED_GIT_TOOLS` is on a work cycle: this names
     // what skips the prompt and everything else still follows the mode above.
     //
-    // `SEARCH_TOOLS` is here rather than at the call sites, and it is why this
-    // no longer needs the emptiness guard the flag used to carry — a bare
+    // The search tools are here rather than at the call sites, and they are why
+    // this no longer needs the emptiness guard the flag used to carry — a bare
     // `--allowedTools` would take the next flag as its value, and this list is
-    // never empty now. It is also the one grant the reviewer gets: naming
+    // never empty now. They are also the one grant the reviewer gets: naming
     // `Grep` and `Glob` is what makes the CLI offer them at all, they read and
-    // cannot write, and `--permission-mode plan` is still the whole of what
+    // cannot write, they are named for the checkout (`assistAllowedTools`), and `--permission-mode plan` is still the whole of what
     // stops a review changing anything. The operator's own list stays behind
     // them, so `resolveAllowedTools` remains the only thing that can name a
     // *command*, and `resolvePrompt` still sees only that list.
@@ -1214,7 +1214,7 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
     // statement of intent this app does not have. A reviewer that could run
     // `terraform apply` while reading a diff would be a defect.
     const stacks = permissionMode === "plan" ? { allow: [], deny: [] } : stackGrants();
-    args.push("--allowedTools", ...SEARCH_TOOLS, ...(allowedTools ?? []), ...stacks.allow);
+    args.push("--allowedTools", ...assistAllowedTools(allowedTools ?? [], stacks.allow));
 
     // The one flag this argv did not carry before. It is pushed only when a
     // stack actually denies something, so an install with no stack keeps an
@@ -1440,8 +1440,11 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
  * worked. A `sandbox.filesystem.denyRead` naming the same directories refused
  * none of them: it confines `Bash` and nothing else. The resolver is left
  * without it: `acceptEdits` already asks before its `Read` leaves the
- * checkout, and the setting's sandbox half hides `$HOME` from the build
- * command an operator may grant it (`docs/agent/security/assist-read-boundary.md`).
+ * checkout, its `Grep` and `Glob` are granted for the checkout alone
+ * (`assistAllowedTools`), and on 2.1.319 the setting refused it a granted
+ * `go build -o /dev/null .` on a stock install while refusing none of its
+ * `Bash` reads under the managed sandbox, whose auto-allow approved them first
+ * (`docs/agent/security/assist-read-boundary.md`).
  *
  * Always emitted, a stock install's argv included: the write set is withheld
  * where no managed sandbox exists, but a stock install's checkout redirects the
@@ -1465,6 +1468,35 @@ export function assistSettingsArgs(
       apiKeyHelper: "",
     }),
   ];
+}
+
+/**
+ * What an assist's `--allowedTools` names: its search tools, then the
+ * operator's commands, then what the install's stacks grant.
+ *
+ * `Grep` and `Glob` are named for the checkout, not bare, because an allow rule
+ * with no path covers every path. Measured on 2.1.319 through `startAssist`:
+ * the resolver, under `acceptEdits`, was refused a `Read` of a directory beside
+ * the mount and of another repository on it, and its bare-granted `Grep` and
+ * `Glob` of the same places returned their contents, under this container's
+ * managed sandbox and stock alike. Its prompt carries conflicted content the
+ * run wrote and its report is stored, so that was a planted instruction's way
+ * to quote another repository. Scoped, both were refused as the `Read` was,
+ * reads in the checkout still worked, and the CLI still offered both tools,
+ * which it drops whenever `Bash` is present unless an entry names them, so
+ * naming them stays necessary. `./**` rather than the absolute path because it
+ * is relative to the child's cwd, which is the checkout, and so carries no
+ * path a folder's own name could turn into a pattern. The plan-mode assists
+ * get the same entries; their outside reads are refused by
+ * `assistSettingsArgs` whatever this says.
+ */
+const ASSIST_SEARCH_TOOLS = ["Grep(./**)", "Glob(./**)"];
+
+export function assistAllowedTools(
+  allowedTools: readonly string[],
+  stackAllow: readonly string[],
+): string[] {
+  return [...ASSIST_SEARCH_TOOLS, ...allowedTools, ...stackAllow];
 }
 
 /**

@@ -100,6 +100,54 @@ same run inside `unshare -rm`, with a tmpfs over `/etc/claude-code`, then a nest
   sandbox proxy's denial of `registry.npmjs.org:443`. Caveat: the files were
   not checked on disk, and no write into its checkout was attempted.
 
+- **`Grep` and `Glob` named with a path stay offered and refuse the
+  resolver's outside search, on 2.1.319, 2026-11-09.** Under board task
+  `5c80f4a8`, under the managed sandbox, the wrapper replaced the resolver's
+  bare `Grep` and `Glob` on `--allowedTools`. With `Grep(//<checkout>/**)`,
+  `Grep(./**)` or `Grep(<checkout>/**)`, and the same for `Glob`, the first
+  request still listed both tools. The outside `Grep` and `Glob` came back
+  "Claude requested permissions to read from <dir>, but you haven't granted it
+  yet", and the same two in the checkout returned its files. With only
+  `Read(//<checkout>/**)` in their place, neither tool was offered, and every
+  call came back "No such tool available". Caveat: one run per spelling.
+
+- **Built from this branch, `Grep(./**)` and `Glob(./**)` hold for all three
+  kinds, same pin and day.** The resolver and the validator, under the managed
+  sandbox and stock, and the reviewer under the managed sandbox, carried the
+  two entries and no bare name. Each was refused the outside `Grep`, `Glob` and
+  `Read`, the resolver as above and the plan-mode two by the setting. Each
+  still returned its checkout's `Grep`, `Glob` and `CHANGED.md`. Caveat: the
+  reviewer was not rerun stock.
+
+- **The setting's sandbox half leaves the resolver's build caches in place,
+  same pin and day.** On the resolver under the managed sandbox, the `bwrap`
+  shim showed a `--tmpfs` over the scratch `$HOME`, then a `--bind` of its
+  `.npm`, `go` and `.cache`. A `Bash` `ls -a $HOME` listed only those three
+  with the setting. Without it, `.claude`, `.config`, `.mcp.json` and a planted
+  marker were listed beside them. A `go build -o /dev/null .` of a module with
+  one dependency printed its success both ways, with the module and build
+  caches seeded under the scratch `HOME`. Caveat: the stacks' `bin` was put on
+  the rig's `PATH` by hand. The sandbox proxy denied `proxy.golang.org` both
+  times, and the build did not need it.
+
+- **Stock, the setting refused the resolver a granted build command, same pin
+  and day.** `go build -o /dev/null .`, granted by the stacks' `Bash(go:*)`,
+  came back "go names '/dev/null', outside the working directories, which the
+  read block does not allow without asking". Without the setting it ran.
+  `npm run check`, granted by name, ran both ways. With the setting,
+  `go build ./...`, `go vet ./...` and `npm run check > /dev/null` ran.
+
+- **The resolver's `Bash` reads outside its checkout, same pin and day.** Under
+  the managed sandbox, a `cat` of the outside file and a `python -c` printing
+  it both returned its marker, with the setting and without. Stock, without
+  the setting, the `cat` was refused "cat in '<path>' was blocked. For
+  security, Claude Code may only concatenate files from the allowed working
+  directories". The `python -c`, granted by the stacks' `Bash(python:*)`,
+  returned the marker. Stock with the setting, both were refused, the
+  `python -c` as "python runs inline code, which cannot be checked against the
+  read block". Caveat: under the managed sandbox each command needed four or
+  five attempts past the nested-`bwrap` error before it ran.
+
 ## Not yet verified by hand
 
 - **The server as root, dropping the child to the agent uid.** Every case above
@@ -120,3 +168,8 @@ same run inside `unshare -rm`, with a tmpfs over `/etc/claude-code`, then a nest
   catch was refused for that reason alone. Settle: with a real login, have a
   validator run `cat "$(printf %s /workspace/<other repo>)/<file>"`, and record
   whether it runs, with the setting and without it.
+
+- **No resolver started by a running server has been seen carrying the scoped
+  search entries.** Settle: on a scratch install, let a merge conflict start a
+  resolution. The child's `--allowedTools` in `/proc/<pid>/cmdline` must hold
+  `Grep(./**)` and `Glob(./**)` and no bare `Grep` or `Glob`.
