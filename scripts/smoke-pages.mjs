@@ -30,12 +30,15 @@
  * equal to `clientWidth` and assertion 3 green. `clippedOverflow` below carries
  * the measurement that proved it.
  *
- * `/` is visited twice. The second visit has its `/api/usage` poll answered from
- * a fixture (`usageWithCodexAndLiveTelemetry`) so the two cards the sandbox cannot
- * produce — `CodexWindows` and `LiveTelemetry` with a run working — are drawn
- * under the same four assertions. It is still a load check: nothing is clicked
- * and no text is looked for; the only extra check is on the harness, that the
- * fixture was in fact served.
+ * `/` is visited three times. The second and third visits have their
+ * `/api/usage` poll answered from a fixture (`USAGE_FIXTURES`), so the states the
+ * sandbox cannot produce are drawn under the same four assertions: the second
+ * carries `CodexWindows` and `LiveTelemetry` with a run working, the third the
+ * window meters filled with a percentage and a run-out line (an install that is
+ * signed in or has a ceiling). The plain visit stays as it is — no credential, no
+ * ceiling, hatched meters — because that is what most installs see. It is still a
+ * load check: nothing is clicked and no text is looked for; the only extra check
+ * is on the harness, that the fixture was in fact served.
  *
  * Assertion 2 has no exception list, and `/knowledge` is why it does not need
  * one. That page is the only one here whose interesting half — the note list,
@@ -396,6 +399,153 @@ function usageWithCodexAndLiveTelemetry(real) {
     },
   };
 }
+
+/**
+ * Throw if `object` lacks any of `keys`.
+ *
+ * A fixture that overrides a key the real response no longer carries invents a
+ * field the page does not read, and the visit then draws the plain page under the
+ * fixture's name — the failure `served.count` cannot see, because the route was
+ * still hit.
+ */
+function requireKeys(object, keys, where) {
+  for (const key of keys) {
+    if (object === null || typeof object !== "object" || !(key in object)) {
+      throw new Error(
+        `GET /api/usage no longer carries \`${where}.${key}\`, so the plan-ceilings fixture ` +
+          "would override a field the page does not read. Update usageWithPlanCeilings.",
+      );
+    }
+  }
+}
+
+/**
+ * What `/api/usage` answers on an install that is signed in to Claude Code, or has
+ * typed a ceiling: both window meters filled, a percentage, and a run-out line
+ * under each.
+ *
+ * The sandbox cannot reach this state for real. The plan reading needs the CLI's
+ * OAuth credential and a call to Anthropic, and the other road to a ceiling is a
+ * setting — which `PUT /api/settings` would write into the data directory every
+ * other visit then reads, turning the plain `/` visit into a state most installs
+ * are not in. The plain visit's hatched meters and "No percentages available"
+ * notice are deliberately the dashboard of an install with neither, so the
+ * fixture lives in the browser, on the one visit that asks for it.
+ *
+ * Provider-backed, as `makeWindow` in `src/lib/windows.ts` emits it: `fraction`,
+ * `planFraction` and `guardFraction` are one number, `fractionMetric` and
+ * `limitMetric` are "plan" and `limit` is null because the provider names a
+ * percentage and not a ceiling. `meta.hasSessionCeiling`/`hasWeeklyCeiling` are
+ * what take the "No percentages available" notice off the page. Spend, tokens and
+ * turns stay the sandbox's own: a window's `agg` is the transcripts' and nothing
+ * here claims otherwise.
+ *
+ * Both windows run out before they reset, which is the longest line the dashboard
+ * prints under a meter ("Runs out ~Nov 11, 03:10 PM (in 2d 5h) — 1d 19h before
+ * reset", the session's with the burn rate as well) and the one most likely to
+ * wrap at 390. Reset instants are relative to the response's own `snapshot.now` for
+ * `seedTranscripts`'s reason, and the session's sits 150 minutes out so the
+ * sandbox's three recent turns, the newest of which is ten minutes old, are inside
+ * the 5-hour window the fixture claims.
+ */
+function usageWithPlanCeilings(real) {
+  const snapshot = real?.snapshot;
+  const now = snapshot?.now;
+  if (typeof now !== "number") {
+    throw new Error(
+      `GET /api/usage answered a snapshot.now of ${JSON.stringify(now)}, so the fixture has no instant ` +
+        "to put the resets and the run-outs after.",
+    );
+  }
+  const windowKeys = [
+    "label",
+    "startsAt",
+    "endsAt",
+    "fraction",
+    "planFraction",
+    "guardFraction",
+    "fractionMetric",
+    "limit",
+    "limitMetric",
+    "projectedExhaustionAt",
+  ];
+  requireKeys(snapshot.session, windowKeys, "snapshot.session");
+  requireKeys(snapshot.weekly, windowKeys, "snapshot.weekly");
+  requireKeys(snapshot, ["plan", "currentPlan"], "snapshot");
+  requireKeys(real.meta, ["hasSessionCeiling", "hasWeeklyCeiling", "planUsageFromApi"], "meta");
+
+  const minute = 60_000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  const providerWindow = (base, { label, fraction, startsAt, endsAt, projectedExhaustionAt }) => ({
+    ...base,
+    label,
+    startsAt,
+    endsAt,
+    fraction,
+    planFraction: fraction,
+    guardFraction: fraction,
+    fractionMetric: "plan",
+    limit: null,
+    limitMetric: "plan",
+    projectedExhaustionAt,
+  });
+
+  const sessionEndsAt = now + 150 * minute;
+  const weeklyEndsAt = now + 4 * day;
+  const plan = {
+    session: { utilization: 0.62, resetsAt: sessionEndsAt },
+    weekly: { utilization: 0.38, resetsAt: weeklyEndsAt },
+    scopedWeekly: [],
+    fetchedAt: now - minute,
+  };
+  return {
+    ...real,
+    snapshot: {
+      ...snapshot,
+      session: providerWindow(snapshot.session, {
+        label: snapshot.session.label,
+        fraction: plan.session.utilization,
+        startsAt: sessionEndsAt - 5 * hour,
+        endsAt: sessionEndsAt,
+        projectedExhaustionAt: now + 75 * minute,
+      }),
+      weekly: providerWindow(snapshot.weekly, {
+        // `buildSnapshot` calls a week with a known reset "Weekly quota" and one
+        // without "Trailing 7 days"; keeping the sandbox's label beside a reset
+        // instant would draw a heading that contradicts the line next to it.
+        label: "Weekly quota",
+        fraction: plan.weekly.utilization,
+        startsAt: weeklyEndsAt - 7 * day,
+        endsAt: weeklyEndsAt,
+        projectedExhaustionAt: now + 52 * hour,
+      }),
+      plan,
+      currentPlan: plan,
+    },
+    meta: {
+      ...real.meta,
+      hasSessionCeiling: true,
+      hasWeeklyCeiling: true,
+      planUsageFromApi: true,
+    },
+  };
+}
+
+/**
+ * The `/api/usage` answers a visit can be given, each with the sentence the
+ * harness uses when the page never asked for it.
+ */
+const USAGE_FIXTURES = {
+  codexAndTelemetry: {
+    build: usageWithCodexAndLiveTelemetry,
+    drew: "the Codex and live-telemetry cards",
+  },
+  planCeilings: {
+    build: usageWithPlanCeilings,
+    drew: "the filled meters and run-out lines",
+  },
+};
 
 /**
  * Serve the artifact that actually ships, or fall back to `next start`.
@@ -905,20 +1055,20 @@ function widestOffender() {
 }
 
 /**
- * Answer the page's own `/api/usage` polls with the real response plus the
- * fixture's two keys, and count how many it answered.
+ * Answer the page's own `/api/usage` polls with the real response as `build`
+ * rewrites it, and count how many it answered.
  *
  * The count is a check on this harness and not on the interface: a route
  * pattern that stopped matching (the poll moved, or its query changed shape)
  * would leave the visit drawing the plain page under the fixtured visit's name
- * and report both cards present. `/api/usage/remaining` is a different route and
- * is left alone by matching the whole pathname.
+ * and report the fixture's states present. `/api/usage/remaining` is a different
+ * route and is left alone by matching the whole pathname.
  *
  * A fixture that fails is `abort`ed and recorded rather than thrown: an error
  * inside a route handler is not delivered to `checkPage`, and the request would
  * hang until the navigation timeout and be reported as a timeout.
  */
-async function serveUsageFixture(page) {
+async function serveUsageFixture(page, build) {
   const served = { count: 0, errors: [] };
   await page.route(
     (url) => url.pathname === "/api/usage",
@@ -929,7 +1079,7 @@ async function serveUsageFixture(page) {
           await route.fulfill({ response });
           return;
         }
-        const body = usageWithCodexAndLiveTelemetry(await response.json());
+        const body = build(await response.json());
         served.count += 1;
         await route.fulfill({
           status: 200,
@@ -945,11 +1095,11 @@ async function serveUsageFixture(page) {
   return served;
 }
 
-async function checkPage(context, baseUrl, route, width, skin, withUsageFixture = false) {
+async function checkPage(context, baseUrl, route, width, skin, usageFixture = null) {
   const page = await context.newPage();
   const problems = [];
   const consoleErrors = [];
-  const fixture = withUsageFixture ? await serveUsageFixture(page) : null;
+  const fixture = usageFixture !== null ? await serveUsageFixture(page, usageFixture.build) : null;
   page.on("console", (message) => {
     if (message.type() === "error") consoleErrors.push(message.text());
   });
@@ -974,8 +1124,7 @@ async function checkPage(context, baseUrl, route, width, skin, withUsageFixture 
       for (const message of fixture.errors) problems.push(`usage fixture failed: ${message}`);
       if (fixture.count === 0 && fixture.errors.length === 0) {
         problems.push(
-          "usage fixture was never requested: this visit drew the plain page, not the Codex " +
-            "and live-telemetry cards",
+          `usage fixture was never requested: this visit drew the plain page, not ${usageFixture.drew}`,
         );
       }
     }
@@ -1122,11 +1271,21 @@ async function main() {
     const seeds = await seed(baseUrl, headers, sandbox.workspace);
     const pages = [
       ...routes(patterns, seeds),
-      // The second visit to `/`, named apart so a failure says which of the two
-      // it was. Appended rather than replacing the plain one: that visit is the
-      // only one that draws the idle line where the live card goes and no Codex
-      // section, which is what most installs see.
-      { pattern: "/ [codex + live telemetry]", url: "/", withUsageFixture: true },
+      // The second and third visits to `/`, named apart so a failure says which
+      // of the three it was. Appended rather than replacing the plain one: that
+      // visit is the only one that draws the idle line where the live card goes,
+      // no Codex section, and the hatched meters under the "No percentages
+      // available" notice, which is what most installs see.
+      {
+        pattern: "/ [codex + live telemetry]",
+        url: "/",
+        usageFixture: USAGE_FIXTURES.codexAndTelemetry,
+      },
+      {
+        pattern: "/ [plan ceilings + run-out]",
+        url: "/",
+        usageFixture: USAGE_FIXTURES.planCeilings,
+      },
     ];
     console.log(
       `${pages.length} page visits × ${SKINS.length} skins × ${WIDTHS.length} widths ` +
@@ -1150,8 +1309,8 @@ async function main() {
             [storageKey, skin.attribute],
           );
         }
-        for (const { pattern: name, url, withUsageFixture } of pages) {
-          const result = await checkPage(context, baseUrl, url, width, skin, withUsageFixture);
+        for (const { pattern: name, url, usageFixture } of pages) {
+          const result = await checkPage(context, baseUrl, url, width, skin, usageFixture ?? null);
           checked += 1;
           const where = `${skin.name.padEnd(8)} ${String(width).padEnd(5)}`;
           if (result.problems.length === 0) {
