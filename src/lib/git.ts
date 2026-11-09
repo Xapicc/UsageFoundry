@@ -1073,6 +1073,8 @@ interface PrepareStep {
 type Prepared =
   | {
       ok: true;
+      /** Where the call is spawned: the directory the probe read, by realpath. */
+      cwd: string;
       args: string[];
       /** The pins and blanks, spliced in ahead of the subcommand. */
       extra: string[];
@@ -1093,9 +1095,10 @@ type Prepared =
  * subcommand but `merge-tree`, which writes no work tree, the index listing its
  * populated submodules, which become sites. An include under `~user/` or
  * `%(prefix)/` costs one more, to place it, and the common configuration has
- * none. Before the probe, each site's configuration files, its git directory's
- * `commondir`, HEAD and the refs behind it, the `.git` entries and git
- * directory it was found through, the `objects/` and `refs/` that keep that
+ * none. Every step runs in the site's realpath, and the call in its cwd's.
+ * Before the probe, each site as spelled, its configuration files, its git
+ * directory's `commondir`, HEAD and the refs behind it, the `.git` entries and
+ * git directory it was found through, the `objects/` and `refs/` that keep that
  * one a git directory, and what would make a directory below the top a git
  * directory are fingerprinted, and after it every include target. Then every
  * watched file is fingerprinted again, last thing
@@ -1143,6 +1146,7 @@ function* prepareContentCall(
   };
   const queue = [...sites.dirs];
   const seen = new Set<string>();
+  let callDir = cwd;
   for (let i = 0; i < queue.length; i++) {
     const dir = queue[i];
     // A submodule reached twice, through a symlink or a gitlink back up the
@@ -1152,8 +1156,21 @@ function* prepareContentCall(
     try {
       identity = fs.realpathSync(dir);
     } catch {}
+    // Every path watched below is physical, so a link in the site's spelling
+    // re-pointed at another repository once the probe had read changed none of
+    // them, and the call chdir'd through it and ran that one's driver (board
+    // task 9e508616, measured, 2.39.5). So each step runs in the realpath, as
+    // does the call for its own cwd, and a link re-pointed after this sends
+    // none of them elsewhere; and the spelling is watched, so a call whose cwd
+    // stopped naming the directory the probe read is refused rather than run
+    // where the caller no longer points. A `worktree remove` operand is git's
+    // to resolve, so for that site the watch is all there is. Ahead of the
+    // check below, because a second spelling of a site already read is a link
+    // that can be re-pointed too.
+    watch(dir, locationFingerprint);
     if (seen.has(identity)) continue;
     seen.add(identity);
+    if (i === 0) callDir = identity;
     if (seen.size > MAX_PROBE_SITES) {
       return {
         ok: false,
@@ -1167,7 +1184,7 @@ function* prepareContentCall(
     // `status` find their git directory for themselves.
     const named = i === 0 && namedGitDir !== null ? [namedGitDir] : [];
     const sitePaths = [...named, ...SITE_PATHS];
-    const located = yield { dir, args: sitePaths };
+    const located = yield { dir: identity, args: sitePaths };
     if (located.code !== 0 || located.overflowed) {
       return { ok: false, reason: probeFailure(located, dir, args, sitePaths) };
     }
@@ -1225,7 +1242,7 @@ function* prepareContentCall(
       };
     }
     const probe = yield {
-      dir,
+      dir: identity,
       args: [...named, siteMarkerInclude(gitDir), ...FILTER_PROBE],
       env: { [PROBE_MARKER_VAR]: marker },
     };
@@ -1250,7 +1267,7 @@ function* prepareContentCall(
         continue;
       }
       const step = placeWithGit(target.placedByGit);
-      const placed = yield { dir, args: step };
+      const placed = yield { dir: identity, args: step };
       if (placed.code !== 0 || placed.overflowed) {
         return { ok: false, reason: probeFailure(placed, dir, args, step) };
       }
@@ -1272,7 +1289,7 @@ function* prepareContentCall(
     // linked worktree, behind `core.worktree` and inside a git directory
     // (measured).
     const gitlinkList = [`--git-dir=${gitDir}`, ...GITLINK_LIST];
-    const index = yield { dir, args: gitlinkList };
+    const index = yield { dir: identity, args: gitlinkList };
     if (index.code !== 0 || index.overflowed) {
       return { ok: false, reason: probeFailure(index, dir, args, gitlinkList) };
     }
@@ -1292,6 +1309,7 @@ function* prepareContentCall(
   }
   return {
     ok: true,
+    cwd: callDir,
     args: QUIETED.has(args[0]) ? [...call.slice(0, at), args[0], "--quiet", ...args.slice(1)] : call,
     extra: [...SUBMODULE_PINS, ...neutralizers(filters, merges, hooks)],
     mergeDrivers: [...merges],
@@ -1354,7 +1372,7 @@ export const GIT_SYNC_TIMEOUT_MS = 20_000;
  * below.
  */
 export function gitSync(cwd: string, args: string[]): GitResult {
-  let call = { args, extra: [] as string[], mergeDrivers: [] as string[] };
+  let call = { cwd, args, extra: [] as string[], mergeDrivers: [] as string[] };
   if (needsProbe(args)) {
     const steps = prepareContentCall(cwd, args);
     let step = steps.next();
@@ -1362,7 +1380,7 @@ export function gitSync(cwd: string, args: string[]): GitResult {
     if (!step.value.ok) return { ok: false, stdout: "", stderr: step.value.reason, code: null };
     call = step.value;
   }
-  const res = spawnGitSync(cwd, call.args, call.extra);
+  const res = spawnGitSync(call.cwd, call.args, call.extra);
 
   return explainBlankedMergeDrivers(
     {
@@ -1495,7 +1513,7 @@ export async function git(
     input?: string;
   } = {},
 ): Promise<GitResult & { overflowed: boolean; timedOutAfterMs: number | null }> {
-  let call = { args, extra: [] as string[], mergeDrivers: [] as string[] };
+  let call = { cwd, args, extra: [] as string[], mergeDrivers: [] as string[] };
   if (needsProbe(args)) {
     const steps = prepareContentCall(cwd, args);
     let step = steps.next();
@@ -1527,7 +1545,7 @@ export async function git(
   }
 
   // `signal` is the probe's to read; the public result has never carried it.
-  const { signal: _signal, ...result } = await spawnGit(cwd, call.args, call.extra, opts);
+  const { signal: _signal, ...result } = await spawnGit(call.cwd, call.args, call.extra, opts);
   return explainBlankedMergeDrivers(result, call.mergeDrivers);
 }
 

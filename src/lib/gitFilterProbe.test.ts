@@ -29,9 +29,12 @@ const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-git-probe
 const modeFile = path.join(root, "mode");
 /** The program the plant modes write into a repository's configuration. */
 const plantFile = path.join(root, "plant");
-/** Where `plant-include` and `rewrite` write, what `make-dir` makes and what the `move-away` modes move, absolute. */
+/**
+ * Where `plant-include` and `rewrite` write, what `make-dir` makes, what the
+ * `move-away` modes move and the link `repoint-link` re-points, absolute.
+ */
 const writeTarget = path.join(root, "write-target");
-/** What `rewrite` writes there. */
+/** What `rewrite` writes there, and where `repoint-link` points the link. */
 const rewriteContent = path.join(root, "rewrite-content");
 const realGit = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
 const gitStub = path.join(root, "git");
@@ -86,6 +89,8 @@ fs.writeFileSync(
     `      flip-head) '${realGit}' symbolic-ref HEAD refs/heads/uf/x ;;`,
     `      rewrite) cat '${rewriteContent}' > "$(cat '${writeTarget}')" ;;`,
     `      make-dir) mkdir -p "$(cat '${writeTarget}')" ;;`,
+    // `-n`, so the link is replaced rather than followed into the directory it names.
+    `      repoint-link) ln -sfn "$(cat '${rewriteContent}')" "$(cat '${writeTarget}')" ;;`,
     `      move-away) '${realGit}' "$@"; status=$?; mv "$(cat '${writeTarget}')" "$(cat '${writeTarget}').away"; exit $status ;;`,
     `      move-away-while-listing) target="$(cat '${writeTarget}')"; mv "$target" "$target.away"; echo "$target" >> '${root}/moved'`,
     `        '${realGit}' "$@"; status=$?; mv "$target.away" "$target"; exit $status ;;`,
@@ -2141,6 +2146,85 @@ describe("a git directory the probe found that stops being one is refused", () =
       assert.equal(plain(inner, ["rev-parse", "--show-toplevel"]).trim(), outer, part);
       plain(inner, ["add", "-A"]);
       assert.equal(fs.existsSync(marker), true, `${part}: the enclosing repository's driver did not run`);
+    }
+  });
+});
+
+/**
+ * A cwd spelled through a symlink, whose link is re-pointed at another
+ * repository once the probe has read the one it named. Every path the probe
+ * watched was physical, so nothing it read changed, and the call chdir'd
+ * through the link into a repository the probe never read and ran its driver
+ * (board task 9e508616, measured, 2.39.5). Replacing a cwd that is not spelled
+ * through a link was already refused, because the physical paths watched
+ * resolve through whatever stands there.
+ */
+describe("a cwd spelled through a symlink re-pointed between the probe and the call is refused", () => {
+  /**
+   * `<clean>-link`, a link to a repository with no driver, and a repository
+   * with a planted clean filter it can be re-pointed at, which leaves `marker`
+   * if it runs; each has a `d/`, for a cwd with the link above its leaf.
+   */
+  function linkedPair(): { link: string; planted: string; marker: string } {
+    const clean = path.join(root, `repo${count++}`);
+    committedRepo(clean, "f.txt");
+    fs.writeFileSync(path.join(clean, "f.txt"), "two\n");
+    const { repo: planted, marker } = plantedRepo();
+    for (const repo of [clean, planted]) fs.mkdirSync(path.join(repo, "d"));
+    const link = `${clean}-link`;
+    fs.symlinkSync(clean, link);
+    return { link, planted, marker };
+  }
+
+  after(() => setMode("pass"));
+
+  it("git() and gitSync(): the link re-pointed while the index is listed refuses the call, naming the cwd", async () => {
+    for (const viaSync of [false, true]) {
+      for (const below of ["", "d"]) {
+        const { link, planted, marker } = linkedPair();
+        const cwd = below ? path.join(link, below) : link;
+        fs.writeFileSync(writeTarget, link);
+        fs.writeFileSync(rewriteContent, planted);
+        setMode("repoint-link");
+        const res = viaSync ? gitSync(cwd, ["add", "-A"]) : await git(cwd, ["add", "-A"]);
+        setMode("pass");
+
+        const via = `${viaSync ? "gitSync" : "git"}() in ${cwd}`;
+        ranNothing(marker);
+        assert.equal(fs.realpathSync(link), planted, `${via}: the listing did not re-point the link`);
+        assert.equal(res.ok, false, `${via} ran the call`);
+        assert.equal(res.code, null);
+        assert.ok(res.stderr.includes(`${cwd} changed while the filter probe read it`), `${via}: ${res.stderr}`);
+      }
+    }
+  });
+
+  it("git() and gitSync(): a call through a link nobody re-points runs, with the drivers where it leads blanked", async () => {
+    // Refusing every cwd spelled through a link would pass the case above.
+    for (const viaSync of [false, true]) {
+      const { repo, marker } = plantedRepo();
+      fs.mkdirSync(path.join(repo, "d"));
+      const link = `${repo}-link`;
+      fs.symlinkSync(repo, link);
+      for (const cwd of [link, path.join(link, "d")]) {
+        fs.writeFileSync(path.join(repo, "f.txt"), `${cwd}\n`);
+        const res = viaSync ? gitSync(cwd, ["add", "-A"]) : await git(cwd, ["add", "-A"]);
+        ranNothing(marker);
+        assert.equal(res.ok, true, `${viaSync ? "gitSync" : "git"}() in ${cwd}: ${res.stderr}`);
+      }
+    }
+  });
+
+  it("control: under plain git, the cwd re-pointed runs the driver of the repository it now names", () => {
+    for (const below of ["", "d"]) {
+      const { link, planted, marker } = linkedPair();
+      const cwd = below ? path.join(link, below) : link;
+      plain(cwd, ["add", "-A"]);
+      assert.equal(fs.existsSync(marker), false, `${cwd}: the driver ran before the link was re-pointed`);
+      fs.unlinkSync(link);
+      fs.symlinkSync(planted, link);
+      plain(cwd, ["add", "-A"]);
+      assert.equal(fs.existsSync(marker), true, `${cwd}: the driver did not run`);
     }
   });
 });

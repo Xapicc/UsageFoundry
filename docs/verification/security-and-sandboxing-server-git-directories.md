@@ -219,6 +219,39 @@ Split out of [security-and-sandboxing-server-git-fingerprints.md](security-and-s
   skipped, `land.test.ts` 110 of 110. Caveat: not run on a 2.56.0 build; a
   work cycle making the move beside a call is inferred, not driven.
 
+- **A cwd spelled through a symlink re-pointed after the probe is refused,
+  and the probe and the call run in its realpath, 2026-11-09.** Board task
+  `9e508616`, branch at `2546e1fe`, git 2.39.5 and a built 2.56.0. Two
+  committed repositories, `A` with no driver and `C` with `filter.x.clean`,
+  `* filter=x` in `.git/info/attributes` and a modified `f.txt`, and
+  `L -> A`, each with a `d/`. Under plain git, `add -A` in `L` and in `L/d`
+  ran nothing, and with `L` re-pointed at `C` ran the driver. Through the
+  compiled `git()` and `gitSync()` at `ad9de7f9`, a `GIT_BIN` stub running
+  `ln -sfn C L` on the probe's `ls-files` ran the driver with `ok: true` in
+  all four calls, each spelling through each. With each site's spelling
+  watched by `locationFingerprint`, every step run in the site's realpath
+  and the call in its cwd's, all four are refused with `<cwd> changed while
+  the filter probe read it`, and a call through an unchanged link to `C`
+  runs with the driver blanked. A scratch writer replacing `L` atomically
+  (`symlink`, then `rename`) between `A` and `C` nonstop, 300 calls each
+  through `gitSync()` and `git()`: `ad9de7f9` ran the driver on 40 and 35;
+  the spelling watched with the steps and the call still in it, the brief's
+  fix, on 9 and 13; the change on 0 of 1000 and 0 of 1000, refusing 637
+  and 608. Cost on a real worktree slot,
+  `/workspace/.uf-worktrees/usagefoundry-721638d11c0b-7` on virtiofs:
+  17.6 µs a `locationFingerprint`, two per site, beside a probed
+  `status --porcelain` there of median 206 ms at `ad9de7f9` and 202 ms
+  with the change, n=40, which is noise. Slot leaf: a dangling link at a
+  slot reads as absent to `allocateSlotPath`'s `fs.existsSync`, and
+  `git worktree add` refuses it with "already exists", exit 128; a link to
+  an empty directory is followed, git registers the target's realpath and
+  the slot stays a link (measured). A link to any directory reads as
+  present, and `slotIsDirty` (`orchestrator.ts`) runs
+  `gitSync(<slot>, ["status", "--porcelain"])` through it (read). The file
+  passed 101 of 101 on 2.56.0 and 91 of 101 with 10 skipped on 2.39.5.
+  Caveat: the race script is not committed, and nothing planted a slot
+  link beside a real admission.
+
 ## Not yet verified by hand
 
 - **Whether a work cycle can move a site's `objects/` or `refs/` away and
@@ -229,3 +262,15 @@ Split out of [security-and-sandboxing-server-git-fingerprints.md](security-and-s
   renames `R/.git/objects` away and back in a loop while a sibling run's
   `status` polls `R`, and count planted-program markers against refusals
   naming `R/.git`.
+
+- **Whether a link planted at a worktree slot gets past admission.** Board
+  task `9e508616`. Read, not driven: a link at `<store>/<slug>-N` to an
+  empty directory inside the same repository's checkout would read clean to
+  `slotIsDirty` and not foreign to `foreignSlotOwner`, so `allocateSlotPath`
+  would return it, `worktree add` would check out through it, and the
+  run's first cycle would then throw at `resolveWorkspaceFolder`, after
+  `addWorktree`'s `reset --hard` and `recordGitDirBaseline` had run `git()`
+  through the link. Settle with a scratch `DATA_DIR`, a stub `CLAUDE_BIN`
+  and the `log-calls` `GIT_BIN` stub: plant the link, start an isolated run
+  on that repository, and read where the checkout was written and which git
+  calls ran with the link as their cwd.
