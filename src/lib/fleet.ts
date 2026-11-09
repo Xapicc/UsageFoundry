@@ -247,9 +247,12 @@ export function fleetState(): FleetState {
  * millisecond and a workflow creates a chain inside one, so a tie would leave
  * the order to `id`, which is random. `created_at` is the tie-break instead —
  * `restartClosedRuns`' order, and the one the queue promotes in, since each pick
- * up promotes before the next is decided. Only edges inside the list matter: a
- * run that is not being picked up does not change while this loop runs, except
- * through `reviveBlockedDependents`, which already follows a chain transitively.
+ * up promotes before the next is decided — and `rowid`, the write order, breaks
+ * a shared millisecond exactly as `queueCompare` does: a fan-out lands in one,
+ * and ordered on `id` its runs would be picked up, and so started, in UUID order.
+ * Only edges inside the list matter: a run that is not being picked up does not
+ * change while this loop runs, except through `reviveBlockedDependents`, which
+ * already follows a chain transitively.
  *
  * Ids with no row come last, where `reopenFleet` refuses them by name.
  */
@@ -258,7 +261,7 @@ function dependenciesFirst(ids: readonly string[]): string[] {
   if (unique.length < 2) return unique;
   const marks = unique.map(() => "?").join(",");
   const nodes = db()
-    .prepare(`SELECT id FROM runs WHERE id IN (${marks}) ORDER BY created_at, id`)
+    .prepare(`SELECT id FROM runs WHERE id IN (${marks}) ORDER BY created_at, rowid`)
     .all(...unique) as Array<{ id: string }>;
   const edges = db()
     .prepare(
