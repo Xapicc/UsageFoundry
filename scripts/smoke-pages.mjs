@@ -78,6 +78,7 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
@@ -537,6 +538,36 @@ function serverEnv(sandbox, token, port, envDir) {
     UF_PY_TOOLS: "ruff==0.5.0|/workspace/mytool",
     UF_GH_EXTENSIONS: "dlvhdr/gh-dash",
   };
+}
+
+/**
+ * The bearer token the throwaway server is started with. Not a credential: it
+ * exists so the pass runs against the middleware every real install has
+ * switched on, rather than against UF_ALLOW_NO_AUTH, whose banner is on every
+ * page and would be measured as part of every layout.
+ *
+ * It has to be long enough to say nothing at boot, for the same reason. Under
+ * `MIN_TOKEN_LENGTH` the dashboard draws a warn-tone `configProblems` notice
+ * above its grid ("UF_AUTH_TOKEN is shorter than 32 characters…"), which this
+ * pass would then measure as part of `/` at every width and in both skins — the
+ * notice is real for an operator and a fixture artefact here. The bound is read
+ * out of `authGuard.ts` rather than copied, so raising it makes the pass draw
+ * the page it did before instead of quietly measuring one with a notice on it;
+ * the read throws if the declaration changes shape, because a silent fallback
+ * to some remembered number is exactly the drift this avoids. `randomBytes(n)`
+ * as hex is `2n` characters, so asking for `MIN_TOKEN_LENGTH` bytes clears the
+ * bound with room and needs no rounding.
+ */
+function smokeToken() {
+  const file = path.join(REPO, "src", "lib", "authGuard.ts");
+  const declaration = /export const MIN_TOKEN_LENGTH = (\d+);/.exec(fs.readFileSync(file, "utf8"));
+  if (declaration === null) {
+    throw new Error(
+      `could not find \`export const MIN_TOKEN_LENGTH = <number>;\` in ${file}, so the smoke ` +
+        "token cannot be sized against it. Update smokeToken() in scripts/smoke-pages.mjs.",
+    );
+  }
+  return randomBytes(Number(declaration[1])).toString("hex");
 }
 
 async function waitForHealth(baseUrl, headers, log) {
@@ -1035,6 +1066,7 @@ async function main() {
   const port = await freePort();
   const target = stageServer(port);
   console.log(`${target.banner}\n`);
+  const token = smokeToken();
 
   let sandbox;
   try {
@@ -1057,10 +1089,6 @@ async function main() {
     );
   }
 
-  // Not a credential: it exists so the pass runs against the middleware every
-  // real install has switched on, rather than against UF_ALLOW_NO_AUTH, whose
-  // banner is on every page and would be measured as part of every layout.
-  const token = `smoke-${Math.random().toString(36).slice(2)}`;
   const baseUrl = `http://127.0.0.1:${port}`;
   const headers = { authorization: `Bearer ${token}` };
 
