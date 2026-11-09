@@ -829,8 +829,9 @@ export function evaluateBudget(
   // ordinary state of a stock install while the provider is unreachable — would
   // otherwise never reach the session check at all: a `live-resume` run at 97%
   // of a 50% 5-hour guard logs a line about the *weekly* guard and spawns the
-  // cycle anyway, and the runs a workflow member or a chat approval creates
-  // never pass `windowGuardRefusal`, so nothing catches it at the door either.
+  // cycle anyway, and a workflow member created after its press (a deferred
+  // node, a loop pass, an emitted run) never passes `windowGuardRefusal`, so
+  // nothing catches it at the door either.
   // A guard that can be read still wins, in the documented order, and the held
   // refusal is returned only once every readable one has passed.
   let unreadable: BudgetVerdict | null = null;
