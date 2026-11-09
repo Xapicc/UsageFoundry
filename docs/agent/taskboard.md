@@ -135,6 +135,9 @@ The paragraphs themselves live in `docs/agent/taskboard/`, one topic file per he
 - The judge is never told that a run claims to be finished, and the prompt is a measuring instrument rather than a setting.
 - What the judge is shown is the branch, and uncommitted work is named as not delivered.
 - An unfinished verdict buys work cycles, and it may extend exactly one guard.
+
+## [The validator's budget, its verdict row and what kind of verifier it is](taskboard/completion-validation-verifier.md)
+
 - A validation is the third `AssistKind`, the only child this app starts without being asked, and the two things that follow are not optional.
 - The check is a weak verifier and the strong one is deliberately absent.
 
