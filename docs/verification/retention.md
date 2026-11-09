@@ -36,6 +36,16 @@
   the stratified permutation over the same 1,500 runs took 73 ms. Synthetic ids
   and readings, so it bounds the readback's CPU and says nothing about the figures.
 
+- **`newestRunPerSlot` ending on `rowid DESC` keeps `idx_runs_created` and costs
+  0.08 ms, 2026-11-08.** SQLite 3.53.2 over 50,000 `runs` rows, every tenth an
+  isolated checkout, in groups of 25 sharing a `created_at`: the plan is `SCAN runs
+  USING INDEX idx_runs_created` before and the same plus `USE TEMP B-TREE FOR LAST
+  TERM OF ORDER BY` after, the median of 101 reads moved from 0.377 ms to 0.457 ms
+  at the query's 500-row limit, and for one shared stamp the old order returned the
+  group's oldest-written checkout row first and the new one its newest. Synthetic
+  rows, one machine; the sweep runs every six hours, so it bounds the cost and
+  decides nothing else.
+
 ## Not yet verified by hand
 
 - **The retention sweep under a CLI that names transcripts differently.** On a
