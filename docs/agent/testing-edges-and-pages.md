@@ -4,7 +4,7 @@
 
 This page is the second half of the index at [testing.md](testing.md), which holds the bar every test is held to, the check that the index is complete and the first sections. It is built the same way: one section per topic file under `testing/`, each with a table of the test files whose grounds that file holds. A test file's row is on the page that holds its section, and its "Also in" cell names the other topic files that hold grounds for it, as there.
 
-## [Auth, credentials, config, settings and the run streams](testing/auth-config-and-status-routes.md)
+## [Auth, credentials, config and the request log](testing/auth-config-and-status-routes.md)
 
 | Test file | Also in |
 |---|---|
@@ -12,21 +12,26 @@ This page is the second half of the index at [testing.md](testing.md), which hol
 | `config.test.ts` |  |
 | `configCheck.test.ts` |  |
 | `credential-audit.test.ts` |  |
-| `http.test.ts` | [harnesses] |
-| `otlp.test.ts` |  |
 | `requestLog.test.ts` |  |
 | `sessionToken.test.ts` |  |
+| `src/app/api/login/route.test.ts` | [sign-in], [bodies] |
+| `src/middleware.test.ts` | [sign-in] |
+
+## [Request bodies, settings, the run streams and the run doors](testing/request-bodies-settings-and-run-streams.md)
+
+| Test file | Also in |
+|---|---|
+| `http.test.ts` | [harnesses] |
+| `otlp.test.ts` |  |
 | `settings.test.ts` |  |
 | `src/app/api/fleet/route.test.ts` |  |
 | `src/app/api/jsonObjectBody.test.ts` |  |
-| `src/app/api/login/route.test.ts` | [sign-in] |
 | `src/app/api/otlp/v1/logs/route.test.ts` |  |
 | `src/app/api/runs/[id]/reopen/route.test.ts` |  |
 | `src/app/api/runs/[id]/stream/route.test.ts` |  |
 | `src/app/api/runs/route.test.ts` |  |
 | `src/app/api/runs/live/stream/route.test.ts` | [harnesses] |
 | `src/app/api/settings/route.test.ts` | [harnesses] |
-| `src/middleware.test.ts` | [sign-in] |
 
 ## [Provider sign-in: the Claude and Codex auth modules](testing/provider-sign-in.md)
 
@@ -163,5 +168,6 @@ This page is the second half of the index at [testing.md](testing.md), which hol
 [cards]: testing/components-usage-and-run-cards.md
 [stacks]: testing/stacks-and-tool-inventory.md
 [harnesses]: testing/test-harnesses.md
+[bodies]: testing/request-bodies-settings-and-run-streams.md
 [edges]: testing/dependency-edges-and-rivals.md
 [token-economizer]: testing/token-economizer.md
