@@ -2979,6 +2979,29 @@ describe("a work cycle cannot take the Codex denial's directory away from root",
     bootWithOutput(home, [rootStat]);
     assert.deepEqual(fs.readdirSync(path.join(home, ".uf-cycle-homes")), ["0123abcd"], "root's anchors were not kept");
     assert.equal(movedAside(home, ".uf-cycle-homes"), null);
+
+    // A home a restart cut its cycle off in is still 1770 and full of the
+    // cycle's files; it is stripped to its anchor. A finished anchor is left.
+    const crashed = scratchHome((home) => {
+      const live = path.join(home, ".uf-cycle-homes", "live");
+      const anchor = path.join(home, ".uf-cycle-homes", "anchor");
+      for (const dir of [live, anchor]) {
+        fs.mkdirSync(dir, { recursive: true });
+        fs.symlinkSync(path.join(home, "sessions"), path.join(dir, "sessions"));
+      }
+      fs.symlinkSync(path.join(home, "auth.json"), path.join(live, "auth.json"));
+      fs.writeFileSync(path.join(live, "config.toml"), "");
+      fs.mkdirSync(path.join(live, ".tmp", "arg0"), { recursive: true });
+      fs.chmodSync(live, 0o1770);
+      fs.chmodSync(anchor, 0o755);
+    });
+    const calls = boot(crashed, [rootStat]);
+    const live = path.join(crashed, ".uf-cycle-homes", "live");
+    assert.deepEqual(fs.readdirSync(live), ["sessions"], "the cut-off cycle's home was not stripped to its anchor");
+    assert.equal(calls.includes(`chmod 0755 ${live}`), true, JSON.stringify(calls));
+    assert.equal(fs.readlinkSync(path.join(live, "sessions")), path.join(crashed, "sessions"));
+    assert.equal(fs.existsSync(path.join(crashed, "auth.json")), true, "the strip went through a link");
+    assert.equal(calls.includes(`chmod 0755 ${path.join(crashed, ".uf-cycle-homes", "anchor")}`), false, "touched a finished anchor");
   });
 
   it("moves a config.toml leftover aside whatever a cycle planted at the names the clock predicts", () => {

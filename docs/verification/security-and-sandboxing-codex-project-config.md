@@ -239,4 +239,6 @@ environment's proxy at a closed or logging loopback port with
   directory to be `drwxrwx--T root node` with root's links and the agents'
   `config.toml`. After it, expect a `sessions`-only anchor at 0755 if the
   cycle started its thread, and nothing if it resumed one. Then reopen the
-  run and expect its next cycle to resume the thread.
+  run and expect its next cycle to resume the thread. Last, `docker compose
+  restart usagefoundry` while a Codex cycle runs: expect that cycle's home to
+  come back as a `sessions`-only anchor at 0755.

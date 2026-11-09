@@ -301,6 +301,22 @@ if [ -n "${UF_AGENT_UID:-}" ] && [ -d "$CODEX_HOME_VOLUME" ]; then
     echo "[usagefoundry] cannot make $codex_homes a directory only root can" \
          "list — every Codex work cycle will be refused until it is one." >&2
   fi
+  # A home whose cycle the server did not outlive is still the agents' to write
+  # in (1770), with the cycle's files in it: stripped here to the anchor the
+  # server leaves after a cycle, its `sessions` link, since which thread it
+  # started is not known here. Root's `rm -rf` of what the agents wrote is safe
+  # at this point and no later one: nothing but this script is running, so
+  # nothing can swap a directory for a link while it descends.
+  for codex_cycle_home in "$codex_homes"/*; do
+    { [ -d "$codex_cycle_home" ] && [ ! -L "$codex_cycle_home" ]; } || continue
+    [ "$(stat -c '%a' -- "$codex_cycle_home" 2>/dev/null)" = 1770 ] || continue
+    for codex_entry in "$codex_cycle_home"/* "$codex_cycle_home"/.[!.]* "$codex_cycle_home"/..?*; do
+      { [ -e "$codex_entry" ] || [ -L "$codex_entry" ]; } || continue
+      { [ "$codex_entry" = "$codex_cycle_home/sessions" ] && [ -L "$codex_entry" ]; } && continue
+      rm -rf -- "$codex_entry"
+    done
+    chmod 0755 "$codex_cycle_home" 2>/dev/null
+  done
 
   codex_home_locked=yes
   if ! chown "0:${UF_AGENT_GID:-$UF_AGENT_UID}" "$CODEX_HOME_VOLUME" 2>/dev/null ||
