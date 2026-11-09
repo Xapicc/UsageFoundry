@@ -5241,6 +5241,101 @@ describe("handleStreamLine on an unrecognised event type", () => {
     assert.deepEqual([...acc.unknownEventTypes], []);
     assert.equal(logs.filter((l) => l.includes("does not recognise")).length, 0);
   });
+
+  // The lines are 2.1.319's own, off a `--resume` of a session whose deferred
+  // tool call can run again (scripts/cli-capture plan e4, cycle D4, driven with
+  // `--include-hook-events` as `buildArgs` passes it): the `hook_response` the
+  // app stores, then the same hook's result a second time as a top-level
+  // `attachment`, bracketed by `command_lifecycle` frames. Only the
+  // `command` path is shortened.
+  const DEFERRED_SESSION = "6f856e2a-112b-4f9c-b6e9-87acb12d3862";
+  const hookResponse = {
+    type: "system",
+    subtype: "hook_response",
+    hook_id: "ee046b36-cfdb-4bf2-89eb-83a06cb63f03",
+    hook_name: "PreToolUse:mcp__dsrv__ping",
+    hook_event: "PreToolUse",
+    output: "hook stderr line\n",
+    stdout: "",
+    stderr: "hook stderr line\n",
+    exit_code: 0,
+    outcome: "success",
+    uuid: "aee9c4b4-ff37-45ad-b6d5-1f1f6b6ff40a",
+    session_id: DEFERRED_SESSION,
+  };
+  const hookAttachment = {
+    attachment: {
+      type: "hook_success",
+      hookName: "PreToolUse:mcp__dsrv__ping",
+      toolUseID: "toolu_stub_1",
+      hookEvent: "PreToolUse",
+      content: "",
+      stdout: "",
+      stderr: "hook stderr line\n",
+      exitCode: 0,
+      command: "/scripts/cli-capture/defer-hook.sh",
+      durationMs: 7,
+    },
+    type: "attachment",
+    uuid: "62ca8448-b017-411f-9efe-09983c1b35f6",
+    timestamp: "2026-11-09T00:52:58.126Z",
+    session_id: DEFERRED_SESSION,
+    parent_tool_use_id: null,
+  };
+  const lifecycle = (state: string) => ({
+    type: "command_lifecycle",
+    command_uuid: "e87b21c4-3eb3-4ab3-b20e-303e1fa090b0",
+    state,
+    uuid: "837fb77e-3c48-4cb4-8fbb-cc7e3025f273",
+    session_id: DEFERRED_SESSION,
+  });
+
+  // Two frames that carry no cost, no session change and no stop reason and
+  // arrive on every resume that retries a deferred call. Delete either branch
+  // and each such cycle logs an "unrecognised event" naming the CLI's own
+  // framing, and files an `ops_events` row for it once per boot — a warning
+  // that cries wolf is how the real one is missed.
+  it("does not file a command_lifecycle frame or a hook_success attachment as a vocabulary it has lost", () => {
+    const { acc, logs } = run([
+      lifecycle("started"),
+      hookResponse,
+      hookAttachment,
+      lifecycle("completed"),
+      lifecycle("cancelled"),
+    ]);
+    assert.deepEqual([...acc.unknownEventTypes], []);
+    assert.equal(logs.filter((l) => l.includes("does not recognise")).length, 0);
+  });
+
+  // The attachment's `stdout` and `stderr` are nested, where `clipHookEvent`
+  // reads only a hook event's own top-level fields, so storing it would keep a
+  // second, unclipped copy of what the `hook_response` already holds clipped.
+  // What is pinned is that the one record of the hook is still there.
+  it("still stores the hook_response the attachment repeats, and nothing for the attachment", () => {
+    const runId = insertRun();
+    const acc = fresh();
+    for (const line of [lifecycle("started"), hookResponse, hookAttachment]) {
+      parseLine(runId, JSON.stringify(line), acc, () => {});
+    }
+    const messages = runEvents(runId).events.map(
+      (e) => (e.payload as { message?: string }).message,
+    );
+    assert.deepEqual(messages, ["system:hook_response"]);
+  });
+
+  // Dropped by the one subtype measured, not by the type: the CLI describes
+  // `attachment` as an internal union with its wire shape still pending, and a
+  // subtype nobody has looked at — a hook that blocked, an at-mentioned file —
+  // is exactly what the unrecognised-event line exists to surface.
+  it("still files an attachment of a subtype nobody has measured", () => {
+    const { acc, logs } = run([
+      { ...hookAttachment, attachment: { type: "queued_command", prompt: "x" } },
+      { ...hookAttachment, attachment: "not an object" },
+    ]);
+    assert.deepEqual([...acc.unknownEventTypes], ["attachment"]);
+    assert.equal(logs.filter((l) => l.includes("does not recognise")).length, 1);
+  });
+
 });
 
 /**
