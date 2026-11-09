@@ -59,6 +59,7 @@ assert.equal(
 const {
   createRun,
   getRun,
+  promoteQueued,
   reconcileOnBoot,
   releaseDependents,
   releaseStackWaits,
@@ -594,6 +595,7 @@ describe("a dependent behind a run the provider refused after it worked", () => 
  * nothing was spent, and the row beside it said `$0.37` spent.
  */
 describe("a run its guard refuses after a refunded cycle that worked", () => {
+  const { setNewWorkPaused } = settings;
   const OVERLOADED =
     'API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}';
   let seq = 0;
@@ -643,15 +645,36 @@ describe("a run its guard refuses after a refunded cycle that worked", () => {
 
   // A run refused before its first cycle did nothing, which is what `blocked`
   // says. The time limit is the guard that can refuse one: `0` is "off" for the
-  // spending limit, and a time limit smaller than any elapsed minute is not.
+  // spending limit.
+  //
+  // The run is held queued and its clock backdated past the limit, rather than
+  // given a limit nothing could have elapsed under. The guard reads whole
+  // milliseconds, and `startRun` stamps `started_at` and takes the first reading
+  // a snapshot read later, so a limit of `1e-9` minutes was refused only when
+  // that read took a millisecond: the file failed `1 !== 0` on `iterations`
+  // under load. Elapsed time of zero against a positive limit is correctly
+  // admitted — a first cycle that depended on the clock ticking would be a
+  // coin-flip for every run — so the premise is made true instead of hoped for.
+  // A queued row with a stamped start is the state a run resumed from a park is
+  // in, and `startRun` keeps it (`COALESCE(started_at, ?)`).
   it("control: a run refused before it spent anything or spawned a child still ends blocked", async () => {
     seq += 1;
-    const id = start(`cost-limited-${seq}`, [], { maxIterations: 1, maxDurationMinutes: 1e-9 });
+    setNewWorkPaused(true);
+    let id: string;
+    try {
+      id = start(`cost-limited-${seq}`, [], { maxIterations: 1, maxDurationMinutes: 1 });
+      assert.equal(getRun(id)!.status, "queued", "the premise: held, so no loop has read the clock yet");
+      db().prepare("UPDATE runs SET started_at = ? WHERE id = ?").run(Date.now() - 2 * 60_000, id);
+    } finally {
+      setNewWorkPaused(false);
+    }
+    promoteQueued();
     const row = await settled(id);
     assert.equal(row.iterations, 0);
     assert.equal(row.spent_usd, 0);
     assert.equal(argvs.length, 0, "the premise: no child ever spawned");
     assert.equal(row.status, "blocked", row.stop_reason ?? "");
+    assert.match(row.stop_reason ?? "", /1-minute time limit/, "the premise: the time limit refused it");
   });
 });
 
