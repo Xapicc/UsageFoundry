@@ -1258,7 +1258,20 @@ function* prepareContentCall(
     }
 
     if (args[0] === "merge-tree") continue;
-    const gitlinkList = [...named, ...GITLINK_LIST];
+    // Pinned to the git directory `SITE_PATHS` found: by discovery, with its
+    // `objects/` or `refs/` moved away only while the index was listed, git
+    // listed an enclosing repository's index, which names none of the site's
+    // gitlinks, and a driver planted in a submodule's git directory ran (board
+    // task 8e9fe2ed, measured, 2.39.5). Named, a directory without either is
+    // no repository to `ls-files`, exit 128, so the call fails closed; the
+    // probe cannot be pinned so, as `siteMarkerInclude` says. The git
+    // directory rather than the common one, which in a linked worktree holds
+    // the main checkout's index. No `--work-tree`: under `--full-name` the
+    // paths are the index's own wherever git takes the top to be, and this
+    // listed what discovery did from a subdirectory, through a symlink, in a
+    // linked worktree, behind `core.worktree` and inside a git directory
+    // (measured).
+    const gitlinkList = [`--git-dir=${gitDir}`, ...GITLINK_LIST];
     const index = yield { dir, args: gitlinkList };
     if (index.code !== 0 || index.overflowed) {
       return { ok: false, reason: probeFailure(index, dir, args, gitlinkList) };

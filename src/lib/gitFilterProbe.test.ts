@@ -29,7 +29,7 @@ const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-git-probe
 const modeFile = path.join(root, "mode");
 /** The program the plant modes write into a repository's configuration. */
 const plantFile = path.join(root, "plant");
-/** Where `plant-include` and `rewrite` write, what `make-dir` makes and what `move-away` and `move-away-while-probing` move, absolute. */
+/** Where `plant-include` and `rewrite` write, what `make-dir` makes and what the `move-away` modes move, absolute. */
 const writeTarget = path.join(root, "write-target");
 /** What `rewrite` writes there. */
 const rewriteContent = path.join(root, "rewrite-content");
@@ -76,13 +76,19 @@ fs.writeFileSync(
     "  fi",
     // What the probe read, changed after it while the index is listed: an
     // included file written, HEAD moved, or any other file rewritten.
+    // `move-away` moves once the listing is done, because the listing, pinned
+    // to the git directory, fails on one without it and would refuse the call
+    // before the watch is reached; `move-away-while-listing` moves it around
+    // the listing alone.
     `  if [ "$arg" = "ls-files" ]; then`,
     '    case "$mode" in',
     `      plant-include) printf '[filter "x"]\\n\\tclean = %s\\n' "$(cat '${plantFile}')" > "$(cat '${writeTarget}')" ;;`,
     `      flip-head) '${realGit}' symbolic-ref HEAD refs/heads/uf/x ;;`,
     `      rewrite) cat '${rewriteContent}' > "$(cat '${writeTarget}')" ;;`,
     `      make-dir) mkdir -p "$(cat '${writeTarget}')" ;;`,
-    `      move-away) mv "$(cat '${writeTarget}')" "$(cat '${writeTarget}').away" ;;`,
+    `      move-away) '${realGit}' "$@"; status=$?; mv "$(cat '${writeTarget}')" "$(cat '${writeTarget}').away"; exit $status ;;`,
+    `      move-away-while-listing) target="$(cat '${writeTarget}')"; mv "$target" "$target.away"; echo "$target" >> '${root}/moved'`,
+    `        '${realGit}' "$@"; status=$?; mv "$target.away" "$target"; exit $status ;;`,
     // Real git with the arguments in a file, for a write that is not a file's: a ref update in a reftable.
     `      run-git) '${realGit}' $(cat '${root}/run-git-args') ;;`,
     "    esac",
@@ -776,12 +782,13 @@ function plantInGitDir(gitDir: string, keys: [string, string][], attribute = "fi
 }
 
 /**
- * A superproject whose submodule `sm`, cloned the way `git submodule add` does,
- * has a clean filter planted in `.git/modules/sm/`, and a stat-dirty file.
+ * A superproject in `within` whose submodule `sm`, cloned the way `git
+ * submodule add` does, has a clean filter planted in `.git/modules/sm/`, and a
+ * stat-dirty file.
  */
-function submoduleRepo(): { repo: string; marker: string } {
+function submoduleRepo(within = root): { repo: string; marker: string } {
   const name = `repo${count++}`;
-  const repo = path.join(root, name);
+  const repo = path.join(within, name);
   committedRepo(`${repo}-src`);
   committedRepo(repo, "top.txt");
   plain(repo, ["-c", "protocol.file.allow=always", "submodule", "add", "-q", `${repo}-src`, "sm"]);
@@ -811,6 +818,26 @@ function nestedEmbeddedRepo(): { repo: string; marker: string } {
   plantInGitDir(path.join(repo, "a", "b", ".git"), [["filter.x.clean", prog]]);
   staleFile(path.join(repo, "a", "b", "s.txt"));
   return { repo, marker };
+}
+
+/**
+ * A linked worktree `<repo>-wt` whose branch adds a repository `e` as a gitlink
+ * no `.gitmodules` names, with the filter planted in `e`'s own `.git`: the
+ * worktree's index lists it and the main checkout's does not.
+ */
+function worktreeEmbeddedRepo(): { tree: string; marker: string } {
+  const name = `repo${count++}`;
+  const repo = path.join(root, name);
+  committedRepo(repo, "top.txt");
+  const tree = `${repo}-wt`;
+  plain(repo, ["worktree", "add", "-q", "-b", "wt", tree]);
+  committedRepo(path.join(tree, "e"));
+  plain(tree, ["-c", "advice.addEmbeddedRepo=false", "add", "e"]);
+  plain(tree, ["commit", "-q", "-m", "e"]);
+  const { prog, marker } = plantProgram(name);
+  plantInGitDir(path.join(tree, "e", ".git"), [["filter.x.clean", prog]]);
+  staleFile(path.join(tree, "e", "s.txt"));
+  return { tree, marker };
 }
 
 /**
@@ -963,6 +990,18 @@ describe("a driver planted in a submodule's git directory runs in no child of th
     }
   });
 
+  it("git() and gitSync(): status in a linked worktree runs nothing of a repository only its index lists", async () => {
+    // The index is the worktree's own git directory's, not the common one's.
+    for (const viaSync of [false, true]) {
+      const { tree, marker } = worktreeEmbeddedRepo();
+      const args = ["status", "--porcelain"];
+      const res = viaSync ? gitSync(tree, args) : await git(tree, args);
+
+      ranNothing(marker);
+      assert.equal(res.ok, true, `${viaSync ? "gitSync" : "git"}(): ${res.stderr}`);
+    }
+  });
+
   it("git(): add -A, which nothing tells not to recurse, runs nothing", async () => {
     const { repo, marker } = submoduleRepo();
     const res = await git(repo, ["add", "-A"]);
@@ -1038,6 +1077,9 @@ describe("a driver planted in a submodule's git directory runs in no child of th
     assert.match(plain(outside.elsewhere, [gitDir, "ls-files", "--stage"]), /^160000 \S+ 0\ta$/m);
     plain(outside.elsewhere, [gitDir, "add", "-A"]);
     fired("add -A behind --git-dir= from outside its core.worktree", outside.marker);
+    const worktree = worktreeEmbeddedRepo();
+    plain(worktree.tree, ["status", "--porcelain"]);
+    fired("status in a linked worktree", worktree.marker);
   });
 });
 
@@ -1979,6 +2021,38 @@ describe("a git directory the probe found that stops being one is refused", () =
     });
   }
 
+  /** `submoduleRepo` inside a repository with no driver and no gitlink of its own. */
+  function submoduleWithin(): { repo: string; marker: string } {
+    const outer = path.join(root, `repo${count++}`);
+    committedRepo(outer, "f.txt");
+    return submoduleRepo(outer);
+  }
+
+  for (const part of ["objects", "refs"]) {
+    it(`git() and gitSync(): its ${part}/ moved away only while the index is listed refuses the call`, async () => {
+      // By discovery the listing read the enclosing repository's index, which
+      // names no gitlink, so the submodule was never probed (board task
+      // 8e9fe2ed).
+      const moves = path.join(root, "moved");
+      for (const viaSync of [false, true]) {
+        const via = viaSync ? "gitSync" : "git";
+        const { repo, marker } = submoduleWithin();
+        const moved = path.join(repo, ".git", part);
+        fs.writeFileSync(writeTarget, moved);
+        fs.rmSync(moves, { force: true });
+        setMode("move-away-while-listing");
+        const res = viaSync ? gitSync(repo, ["status", "--porcelain"]) : await git(repo, ["status", "--porcelain"]);
+        setMode("pass");
+
+        ranNothing(marker);
+        assert.equal(fs.readFileSync(moves, "utf8"), `${moved}\n`, `${via}(): the stub did not move it once`);
+        assert.equal(fs.existsSync(moved), true, "the stub did not move it back");
+        assert.equal(res.ok, false, `${via}() ran the call`);
+        assert.match(res.stderr, /so git status was not run: git --git-dir=\S+ ls-files .*not a git repository/, `${via}(): ${res.stderr}`);
+      }
+    });
+  }
+
   it("git() and gitSync(): an enclosing repository that includes the probe's marker file itself is still refused", async () => {
     // The marker it lists is in its own scope, not the command line's.
     for (const viaSync of [false, true]) {
@@ -2038,6 +2112,23 @@ describe("a git directory the probe found that stops being one is refused", () =
       fs.renameSync(`${moved}.away`, moved);
       plain(inner, ["add", "-A"]);
       assert.equal(fs.existsSync(marker), true, `${part}: the inner repository's driver did not run`);
+    }
+  });
+
+  it("control: under plain git, either moved away has the superproject's listing name no gitlink, and status runs the submodule's driver", () => {
+    for (const part of ["objects", "refs"]) {
+      const { repo, marker } = submoduleWithin();
+      const listing = ["ls-files", "--stage", "--", ":/"];
+      assert.match(plain(repo, listing), /^160000 \S+ 0\tsm$/m, part);
+      const moved = path.join(repo, ".git", part);
+      fs.renameSync(moved, `${moved}.away`);
+      const listed = plain(repo, listing);
+      assert.doesNotMatch(listed, /^160000 /m, `${part}: the listing still named a gitlink`);
+      assert.match(listed, /\t\.\.\/f\.txt$/m, `${part}: the listing did not read the enclosing repository`);
+      fs.renameSync(`${moved}.away`, moved);
+      assert.equal(fs.existsSync(marker), false, `${part}: the driver ran before status`);
+      plain(repo, ["status", "--porcelain"]);
+      assert.equal(fs.existsSync(marker), true, `${part}: the submodule's driver did not run`);
     }
   });
 
