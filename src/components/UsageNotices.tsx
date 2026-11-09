@@ -58,6 +58,17 @@ export function UsageNotices({
     snapshot.session.agg.tokens.cacheWriteUnattributed,
     snapshot.weekly.agg.tokens.cacheWriteUnattributed,
   );
+  // The hatched span is drawn on the dashboard's window meters only. There the
+  // notices sit under them; `/usage` has no meters and draws the notices first,
+  // so "above" would point at nothing.
+  const hatchedSpan =
+    page === "dashboard" ? (
+      <>the hatched span above</>
+    ) : (
+      <>
+        the hatched span on the <Link href="/">Dashboard</Link>&rsquo;s meters
+      </>
+    );
 
   return (
     <>
@@ -90,8 +101,8 @@ export function UsageNotices({
           <strong>Unpriced models seen:</strong>{" "}
           <span className="mono">{meta.unpricedModels.join(", ")}</span>. They
           count toward volume at $0, so dollar figures here are a floor. The
-          budget guard charges them a conservative rate instead (the hatched
-          span above), so a run can stop before the solid bar looks full.
+          budget guard charges them a conservative rate instead ({hatchedSpan}),
+          so a run can stop before the solid bar looks full.
         </Notice>
       )}
 
@@ -106,7 +117,7 @@ export function UsageNotices({
           <strong>Cache writes with no declared lifetime:</strong>{" "}
           {fmtTokens(unattributedCacheWrite)}. Billed at 1.25× or 2× input and
           the records do not say which: figures here take the cheaper rate, the
-          budget guard the dearer one (the hatched span above).
+          budget guard the dearer one ({hatchedSpan}).
         </Notice>
       )}
 

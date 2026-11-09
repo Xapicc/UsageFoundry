@@ -81,6 +81,20 @@ test("/usage carries the cache bound and not the ceiling notice", () => {
   assert.doesNotMatch(html, NO_PERCENTAGES);
 });
 
+test("the hatched span is pointed at where each page has it", () => {
+  // `/` draws the notices under its meters. `/usage` has no meters and draws
+  // the notices above everything, so "above" there points at nothing.
+  for (const c of [{ unpriced: true }, { sessionCacheWrite: 1_000 }]) {
+    assert.match(render("dashboard", c), /\(the hatched span above\)/);
+    const usage = render("usage", c);
+    assert.doesNotMatch(usage, /above/);
+    assert.match(
+      usage,
+      /\(the hatched span on the <a href="\/">Dashboard<\/a>’s meters\)/,
+    );
+  }
+});
+
 test("nothing renders on either page while nothing is wrong", () => {
   assert.equal(render("dashboard"), "");
   assert.equal(render("usage"), "");
