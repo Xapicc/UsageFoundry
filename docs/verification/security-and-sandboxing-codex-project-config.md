@@ -142,6 +142,25 @@ environment's proxy at a closed or logging loopback port with
   the request was read, not a model's behaviour; one model (`gpt-6-astra`); a
   fresh home per run.
 
+- **The boot now moves aside a regular `config.toml` the agents cannot read
+  or Codex cannot load, and leaves root's, 2026-11-09.** Board task
+  `e7b6d31e`, codex-cli 0.153.4. The entrypoint's `CODEX_HOME` block,
+  extracted and run under `dash` and `bash` against scratch homes, with
+  `chown`, `chmod` and `setpriv` stubbed, since this was not root, and the
+  real CLI first on root's `PATH`. It moved `[[[`, a byte that is not UTF-8,
+  `model = 5`, and the agents' own file at 0000 or 0200, each into a
+  `.moved-aside.XXXXXX` directory, and the boot line quoted Codex's own
+  `Error loading configuration` line. It left a trusted entry, an empty file,
+  0400 and a file beside an API-key `auth.json`, and `login status` changed
+  nothing in the home or in the `HOME` it was given. Two new
+  `deployment.test.ts` cases failed on the old block and pass now. Their stub
+  CLI also covers a file of another uid, which was moved, and three that were
+  left: a root-owned file (by a `stat` stub), which Codex was never shown, a
+  load error naming another file, and a child that gave no answer, with a
+  warning. Dropping the root skip from either check, or the file-name filter,
+  each failed one case. Caveat: not as root and not in a container. The real
+  `setpriv` drop and the home's traversal by the agent gid are read, not run.
+
 ## Not yet verified by hand
 
 - **The agent uid's `rm` and `mkdir` at `config.toml` in a booted container,
@@ -163,5 +182,8 @@ environment's proxy at a closed or logging loopback port with
   next Codex cycle to be refused with `… is owned by uid 0, not by uid 1000`.
   As the agent uid, `chmod 000` it: expect `… is mode 0000`, with Settings →
   Codex naming the read. And as the agent uid, `printf '[[[' >` it: expect
-  `Codex cannot load its configuration (…:1:3: …)` in both places. Board task
-  `9dd37c12` decides whether root's file needs refusing at all.
+  `Codex cannot load its configuration (…:1:3: …)` in both places. Then, for the
+  last two, `docker compose restart usagefoundry`: expect the boot log's
+  `moved it to …/.moved-aside.…/config.toml` and the next cycle to run, and
+  root's file still in place (board task `e7b6d31e`). Board task `9dd37c12`
+  decides whether root's file needs refusing at all.

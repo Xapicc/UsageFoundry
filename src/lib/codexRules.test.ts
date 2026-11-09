@@ -199,9 +199,12 @@ describe("prepareCodexRules", () => {
           const reason = delivery.kind === "unavailable" ? delivery.reason : "";
           assert.equal(reason.includes(`${config} cannot be read by this server's uid`), true, reason);
           assert.match(reason, /loads its repository's \.codex\/config\.toml/);
-          // The boot moves only a thing that is not a file aside, so the
-          // refusal must not send the operator to a restart that changes nothing.
-          assert.match(reason, /a restart does not/);
+          // Without a uid split the boot's CODEX_HOME block does not run, so
+          // the refusal must not send the operator to a restart that changes
+          // nothing.
+          assert.match(reason, /Rename it aside yourself/);
+          assert.match(reason, /only under a uid split/);
+          assert.doesNotMatch(reason, /Restarting the container/);
         } finally {
           fs.rmSync(config, { force: true });
         }
@@ -349,7 +352,7 @@ describe("prepareCodexRules when the cycle runs under another uid", () => {
     assert.equal(mod.prepareCodexRules(self, self).kind, "ready");
   });
 
-  it("refuses a config.toml the cycle's uid does not own, sending nobody to a restart", () => {
+  it("refuses a config.toml the cycle's uid does not own, naming what the boot does with it", () => {
     // Board task `93f1c142`. The trust write renames a new file over this one,
     // and the sticky home refuses that to anyone but the file's owner: root's
     // own file, or the agents' under a changed UF_AGENT_UID. The rename refusal
@@ -363,7 +366,11 @@ describe("prepareCodexRules when the cycle runs under another uid", () => {
       true,
       reason,
     );
-    assert.match(reason, /a restart does not/);
+    // Board task `e7b6d31e`: the entrypoint's chown loop gives a file of
+    // another non-root uid back to the agents, and moves it aside if it cannot.
+    // Root's it leaves, and that sentence needs a root-owned file the suite
+    // cannot make.
+    assert.equal(reason.includes(`Restarting the container gives it back to uid ${self + 1}`), true, reason);
   });
 
   it("refuses a config.toml its owner cannot read, and passes one it can only read", () => {
@@ -380,6 +387,8 @@ describe("prepareCodexRules when the cycle runs under another uid", () => {
         true,
         reason,
       );
+      // Board task `e7b6d31e`: the boot now moves such a file aside.
+      assert.match(reason, /Restarting the container moves it aside \(/);
     }
     homeWithMode(0o1770);
     fs.writeFileSync(configFile(), "");
@@ -465,7 +474,9 @@ describe("codexConfigLoadFailure", () => {
       assert.equal(typeof reason, "string", `read no failure in: ${why}`);
       assert.equal(reason!.includes(`Codex cannot load its configuration (${why})`), true, reason!);
       assert.match(reason!, /loads its repository's \.codex\/config\.toml/);
-      assert.match(reason!, /Rename it aside yourself/);
+      // Board task `e7b6d31e`: the boot moves such a file aside unless it is
+      // root's, which the line cannot say.
+      assert.match(reason!, /Restarting the container moves it aside unless root owns it/);
     }
   });
 

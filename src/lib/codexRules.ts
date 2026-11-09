@@ -171,17 +171,31 @@ export function codexConfigUnusableBecause(
 }
 
 /**
- * What a cycle loses over a regular `config.toml` it cannot use, and the one
- * remedy there is. The boot moves only a thing that is not a file aside, so
- * this says to rename it by hand rather than to restart.
+ * What a cycle loses over a regular `config.toml` it cannot use, and what
+ * removes it.
+ *
+ * Each remedy says what `docker-entrypoint.sh`'s `CODEX_HOME` block does with
+ * that file at boot (board task `e7b6d31e`), since a sentence that sends the
+ * operator to a restart which changes nothing costs them the restart and then
+ * the reading. Under the uid split it moves aside a regular file the agents
+ * cannot read or Codex cannot load, after its chown loop has given a file of
+ * another non-root uid back to the agents. It leaves root's file alone,
+ * because only root can make one, and without the split it does not run.
  */
-function regularConfigRefusal(problem: string): string {
+function regularConfigRefusal(problem: string, remedy: string): string {
   return (
     `${problem}. A Codex work cycle writes its project trust entry into ${CODEX_CONFIG_FILE} by ` +
     `reading it and renaming a new file over it, and one that cannot loads its repository's ` +
-    `.codex/config.toml, which can start the MCP servers that file names. Rename it aside ` +
-    `yourself and the next cycle makes a new one; a restart does not, because the container ` +
-    `moves aside only something that is not a file.`
+    `.codex/config.toml, which can start the MCP servers that file names. ${remedy}`
+  );
+}
+
+/** The boot moves it aside; the operator's file only if root does not own it. */
+function movedAsideAtBoot(unlessRoots: boolean): string {
+  return (
+    `Restarting the container moves it aside${unlessRoots ? " unless root owns it" : ""} ` +
+    `(docker-entrypoint.sh, at every boot), and the next cycle makes a new one; without the ` +
+    `container, rename it aside yourself.`
   );
 }
 
@@ -195,6 +209,8 @@ function regularConfigUnusableBecause(stat: fs.Stats, cycleUid: number | null): 
       return regularConfigRefusal(
         `${CODEX_CONFIG_FILE} cannot be read by this server's uid ${process.getuid?.() ?? "?"}, ` +
           `which Codex runs as here: ${(err as Error).message}`,
+        `Rename it aside yourself, or make it readable, and the next cycle makes a new one; the ` +
+          `container's boot moves it aside only under a uid split, which this server does not have.`,
       );
     }
   }
@@ -202,6 +218,13 @@ function regularConfigUnusableBecause(stat: fs.Stats, cycleUid: number | null): 
     return regularConfigRefusal(
       `${CODEX_CONFIG_FILE} is owned by uid ${stat.uid}, not by uid ${cycleUid}, which Codex work ` +
         `cycles run as, and the sticky CODEX_HOME refuses a rename over it to anyone but its owner`,
+      stat.uid === 0
+        ? `Only root can make a file root's, so the container's boot takes this one for the ` +
+            `operator's own and leaves it where it is: give it to uid ${cycleUid} or rename it ` +
+            `aside yourself, and the next cycle makes a new one.`
+        : `Restarting the container gives it back to uid ${cycleUid}, or moves it aside if it ` +
+            `cannot (docker-entrypoint.sh, at every boot); without the container, rename it aside ` +
+            `yourself and the next cycle makes a new one.`,
     );
   }
   const mode = stat.mode & 0o7777;
@@ -209,6 +232,7 @@ function regularConfigUnusableBecause(stat: fs.Stats, cycleUid: number | null): 
     return regularConfigRefusal(
       `${CODEX_CONFIG_FILE} is mode ${mode.toString(8).padStart(4, "0")}, which its owner, ` +
         `the uid Codex work cycles run as, cannot read`,
+      movedAsideAtBoot(false),
     );
   }
   return null;
@@ -242,9 +266,13 @@ export function codexConfigLoadFailure(output: string): string | null {
     .find((l) => l.startsWith(CONFIG_LOAD_ERROR));
   if (line === undefined) return null;
   const reason = line.slice(CONFIG_LOAD_ERROR.length).trim().slice(0, 300);
+  // Root's file is the one the boot leaves, and nothing in the line says whose
+  // the file is; under the split the cycle is refused on root's before Codex
+  // is asked, so only the sign-in children's panel needs the clause.
   return regularConfigRefusal(
     `Codex cannot load its configuration (${reason || "it gave no reason"}), so its sign-in ` +
       `children cannot start over it either`,
+    movedAsideAtBoot(true),
   );
 }
 

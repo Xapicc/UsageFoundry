@@ -226,23 +226,127 @@ if [ -n "${UF_AGENT_UID:-}" ] && [ -d "$CODEX_HOME_VOLUME" ]; then
   # the agents' file. Into a `mktemp -d` directory with `-T`, for the `rules`
   # block's two reasons: a link or a directory planted at a clock-stamped name
   # failed this `mv` too, leaving the cycles refused.
-  codex_config="$CODEX_HOME_VOLUME/config.toml"
-  if [ -L "$codex_config" ] || { [ -e "$codex_config" ] && [ ! -f "$codex_config" ]; }; then
+  #
+  # **A regular file the cycles cannot use goes the same way** (board task
+  # `e7b6d31e`): one the agents do not own, since the sticky bit refuses them
+  # the rename over it, and one whose owner read bit is off, which failed the
+  # write (0000 and 0200, measured on 0.153.4), are what `codexRules.ts`
+  # refuses on, and the chown loop above has by now re-owned the agents' own
+  # under a changed UF_AGENT_UID. A cycle can `chmod 000` the file, so before
+  # this one cycle stopped all Codex work until somebody renamed it by hand.
+  # **Root's file is left where it is.** Only root can make one, so it is the
+  # operator's deliberate doing, and whether it widens a cycle is board task
+  # `9dd37c12`'s measurement; the cycles stay refused over it with a sentence
+  # saying so. The parse half is after the lock, below.
+  #
+  # Prints where the thing went, having moved it, or fails having moved
+  # nothing. Empty unless the `mv` succeeded, and `rmdir` takes nothing else.
+  codex_move_aside() {
     codex_aside=
     if codex_aside="$(mktemp -d "$CODEX_HOME_VOLUME/.moved-aside.XXXXXX" 2>/dev/null)" &&
-       mv -T -- "$codex_config" "$codex_aside/config.toml" 2>/dev/null; then
+       mv -T -- "$1" "$codex_aside/${1##*/}" 2>/dev/null; then
+      printf '%s\n' "$codex_aside/${1##*/}"
+      return 0
+    fi
+    [ -z "$codex_aside" ] || rmdir "$codex_aside" 2>/dev/null
+    return 1
+  }
+  codex_config="$CODEX_HOME_VOLUME/config.toml"
+  if [ -L "$codex_config" ] || { [ -e "$codex_config" ] && [ ! -f "$codex_config" ]; }; then
+    if codex_moved="$(codex_move_aside "$codex_config")"; then
       echo "[usagefoundry] $codex_config was not a file; moved it to" \
-           "$codex_aside/config.toml, and Codex will make a new one." >&2
+           "$codex_moved, and Codex will make a new one." >&2
     else
-      [ -z "$codex_aside" ] || rmdir "$codex_aside" 2>/dev/null
       echo "[usagefoundry] cannot move $codex_config aside — it is not a file, so" \
            "every Codex work cycle and sign-in will be refused until it is gone." >&2
     fi
+  elif [ -f "$codex_config" ]; then
+    codex_config_stat="$(stat -c '%u %a' -- "$codex_config" 2>/dev/null || echo '')"
+    codex_config_uid="${codex_config_stat%% *}"
+    codex_config_mode="${codex_config_stat#* }"
+    codex_config_unusable=
+    if [ -z "$codex_config_stat" ] || [ "$codex_config_uid" = 0 ]; then
+      :
+    elif [ "$codex_config_uid" != "$UF_AGENT_UID" ]; then
+      codex_config_unusable="owned by uid $codex_config_uid, not by the agents' uid $UF_AGENT_UID"
+    elif [ "$(( 0$codex_config_mode & 0400 ))" -eq 0 ]; then
+      codex_config_unusable="mode $(printf '%04d' "$codex_config_mode"), which its owner cannot read"
+    fi
+    if [ -n "$codex_config_unusable" ]; then
+      if codex_moved="$(codex_move_aside "$codex_config")"; then
+        echo "[usagefoundry] $codex_config was $codex_config_unusable, so no Codex" \
+             "work cycle could write its trust entry there; moved it to" \
+             "$codex_moved, and Codex will make a new one." >&2
+      else
+        echo "[usagefoundry] cannot move $codex_config aside — it is" \
+             "$codex_config_unusable, so every Codex work cycle will be refused" \
+             "until it is renamed." >&2
+      fi
+    fi
   fi
+  codex_home_locked=yes
   if ! chown "0:${UF_AGENT_GID:-$UF_AGENT_UID}" "$CODEX_HOME_VOLUME" 2>/dev/null ||
      ! chmod 1770 "$CODEX_HOME_VOLUME" 2>/dev/null; then
     echo "[usagefoundry] cannot make $CODEX_HOME_VOLUME root's and sticky — every" \
          "Codex work cycle will be refused, because a cycle could replace its rules/." >&2
+    codex_home_locked=
+  fi
+
+  # And one Codex itself cannot load: `[[[`, a byte that is not UTF-8, or valid
+  # TOML of the wrong type, `model = 5` (board task `e7b6d31e`). Asked of
+  # Codex, as `codexConfigLoadRefusal` asks it before every cycle, with the
+  # same `login status`, the same two pins and the agents' uid, because this
+  # image has no TOML parser and a second one would differ from Codex's where
+  # a cycle looks. That child writes nothing in the home, makes no connection
+  # and refreshes no token (measured on 0.153.4), and is 13–19 ms. After the
+  # lock, because before it a home the agents cannot traverse would read as
+  # a file they cannot load, and only on a line that names this file, so a
+  # managed config Codex failed on is not blamed on it.
+  #
+  # **Valid TOML of the wrong type is moved too**, though the trust write
+  # survives it and an operator may have meant to fix it. The cycles are
+  # refused over it all the same, so leaving it stops all Codex work until it
+  # is fixed by hand, which is this block's whole defect; the line does not say
+  # who wrote it, and a cycle can write `model = 5` as easily as `[[[`; it is
+  # moved, not deleted, and the boot line says where; and cycles run with
+  # `--ignore-user-config`, so no key in it ever reached one. Root's file is
+  # skipped here too. A child that could not answer leaves the file alone and
+  # says so, and the cycle-time check still refuses over it.
+  #
+  # `codex` is looked up on root's PATH, which is the server's and so the one
+  # it finds `CODEX_BIN` on (compose never forwards that variable), and handed
+  # to the agents by path, for `uv_as_agent`'s reason: theirs puts directories
+  # a work cycle writes first.
+  if [ -n "$codex_home_locked" ] && [ -f "$codex_config" ] && [ ! -L "$codex_config" ] &&
+     [ "$(stat -c '%u' -- "$codex_config" 2>/dev/null || echo 0)" != 0 ] &&
+     codex_bin="$(command -v codex)"; then
+    codex_load_status=0
+    codex_load="$(setpriv --reuid="$UF_AGENT_UID" --regid="${UF_AGENT_GID:-$UF_AGENT_UID}" \
+                          --clear-groups \
+                    env -i HOME=/home/node PATH="$PATH" \
+                      CODEX_HOME="$CODEX_HOME_VOLUME" FORCE_COLOR=0 \
+                      timeout 20 "$codex_bin" \
+                        -c 'cli_auth_credentials_store="file"' \
+                        -c 'forced_chatgpt_workspace_id=[]' \
+                        login status 2>&1)" || codex_load_status=$?
+    codex_load_error="$(printf '%s\n' "$codex_load" |
+                        grep -F 'Error loading configuration:' |
+                        grep -F -- "$codex_config" | head -n 1)"
+    if [ -n "$codex_load_error" ]; then
+      if codex_moved="$(codex_move_aside "$codex_config")"; then
+        echo "[usagefoundry] Codex could not load $codex_config, so every Codex" \
+             "work cycle was refused over it; moved it to $codex_moved, and Codex" \
+             "will make a new one. Codex said: $codex_load_error" >&2
+      else
+        echo "[usagefoundry] cannot move $codex_config aside — Codex cannot load" \
+             "it, so every Codex work cycle will be refused until it is renamed." \
+             "Codex said: $codex_load_error" >&2
+      fi
+    elif [ "$codex_load_status" -gt 1 ]; then
+      echo "[usagefoundry] could not ask $codex_bin whether it can load" \
+           "$codex_config (exit $codex_load_status), so it was left as it is; a" \
+           "Codex work cycle is still refused if it cannot." >&2
+    fi
   fi
 fi
 

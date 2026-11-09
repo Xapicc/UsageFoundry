@@ -2579,6 +2579,22 @@ describe("a work cycle cannot take the Codex denial's directory away from root",
    * the old gate read as "nothing to do".
    */
   function boot(home: string, extraStubs: string[] = []): string[] {
+    return bootWithOutput(home, extraStubs).calls;
+  }
+
+  /**
+   * `boot`, also returning what the block printed, with `env` over the stock
+   * install's. `setpriv` is recorded and then runs the rest of its argv, since
+   * the suite is not root, and the `codex` it finds is `fakeCodex`, so whether the boot
+   * asks Codex and what it does with the answer is what is pinned here; what
+   * the real CLI answers is `docs/verification/`'s. The boot finds `codex` on
+   * root's `PATH`, so the fake goes first on it.
+   */
+  function bootWithOutput(
+    home: string,
+    extraStubs: string[] = [],
+    env: Record<string, string> = {},
+  ): { calls: string[]; stderr: string } {
     const calls = path.join(path.dirname(home), "calls.log");
     fs.rmSync(calls, { force: true });
     const block = codexHomeBlock().replace(
@@ -2588,6 +2604,8 @@ describe("a work cycle cannot take the Codex denial's directory away from root",
     const stubs = [
       'chown() { printf "chown %s\\n" "$*" >> "$UF_TEST_CALLS"; }',
       'chmod() { printf "chmod %s\\n" "$*" >> "$UF_TEST_CALLS"; }',
+      'setpriv() { printf "setpriv %s\\n" "$*" >> "$UF_TEST_CALLS"; ' +
+        'while [ "${1#--}" != "$1" ]; do shift; done; "$@"; }',
       ...extraStubs,
     ].join("\n");
     const result = spawnSync("sh", ["-c", `${stubs}\n${block}`], {
@@ -2597,12 +2615,54 @@ describe("a work cycle cannot take the Codex denial's directory away from root",
         UF_AGENT_UID: String(uid),
         UF_AGENT_GID: String(gid),
         UF_TEST_CALLS: calls,
+        PATH: `${path.dirname(fakeCodex(home))}:${process.env.PATH}`,
+        ...env,
       },
     });
     assert.equal(result.status, 0, result.stderr);
-    return fs.existsSync(calls)
-      ? fs.readFileSync(calls, "utf8").split("\n").filter(Boolean)
-      : [];
+    return {
+      calls: fs.existsSync(calls)
+        ? fs.readFileSync(calls, "utf8").split("\n").filter(Boolean)
+        : [],
+      stderr: result.stderr,
+    };
+  }
+
+  /**
+   * A `codex` that answers `login status` as 0.153.4 did over the shapes the
+   * boot has to tell apart, and logs its argv and environment beside the home,
+   * since the boot hands it nothing else to write to. `[[[` gets the line the
+   * real CLI printed over it; `managed` a load error that names another file;
+   * `crash` no answer at all.
+   */
+  function fakeCodex(home: string): string {
+    const bin = path.join(path.dirname(home), "bin", "codex");
+    fs.mkdirSync(path.dirname(bin), { recursive: true });
+    const log = path.join(path.dirname(home), "codex.log");
+    fs.writeFileSync(
+      bin,
+      [
+        "#!/bin/sh",
+        `{ printf 'argv %s\\n' "$*"; env | sed 's/^/env /'; } >> '${log}'`,
+        'config="$CODEX_HOME/config.toml"',
+        'case "$(head -c 16 "$config" 2>/dev/null)" in',
+        '  "[[["*) echo "Error loading configuration: $config:1:3: unquoted keys cannot be empty, expected letters, numbers, \\`-\\`, \\`_\\`"; exit 1 ;;',
+        '  managed*) echo "Error loading configuration: /etc/codex/managed_config.toml:1:1: invalid type"; exit 1 ;;',
+        "  crash*) exit 3 ;;",
+        "esac",
+        "echo 'Not logged in'",
+        "exit 1",
+        "",
+      ].join("\n"),
+    );
+    fs.chmodSync(bin, 0o755);
+    return bin;
+  }
+
+  /** What `fakeCodex` was run with, one line per argv and variable, or null if it never ran. */
+  function codexLog(home: string): string[] | null {
+    const log = path.join(path.dirname(home), "codex.log");
+    return fs.existsSync(log) ? fs.readFileSync(log, "utf8").split("\n").filter(Boolean) : null;
   }
 
   /** A volume as the agents leave it: a sign-in, a thread, and whatever `extra` adds. */
@@ -2787,6 +2847,99 @@ describe("a work cycle cannot take the Codex denial's directory away from root",
     boot(home);
     assert.equal(fs.readFileSync(path.join(home, "config.toml"), "utf8"), "y = 2\n");
     assert.deepEqual(fs.readdirSync(home).filter((name) => name.includes("moved-aside")), []);
+  });
+
+  /**
+   * Board task `e7b6d31e`. A regular `config.toml` the agents do not own, or
+   * whose owner read bit is off, refuses every Codex cycle (`codexRules.ts`),
+   * since the trust write failed over 0000 and 0200 and the sticky home refuses
+   * a rename over another uid's file, and a cycle can `chmod 000` its own. The
+   * boot used to leave every regular file, so one cycle stopped all Codex work
+   * until somebody renamed the file by hand. Root's file is the operator's,
+   * since only root can make one, and stays, unread by Codex.
+   */
+  it("moves aside a regular config.toml the agents cannot own or read, and leaves root's", () => {
+    const unusable: [string, number, Record<string, string>][] = [
+      ["mode 0000", 0o000, {}],
+      ["mode 0200", 0o200, {}],
+      ["another uid's", 0o600, { UF_AGENT_UID: String(uid + 1) }],
+    ];
+    for (const [what, mode, env] of unusable) {
+      const home = scratchHome((home) => {
+        fs.writeFileSync(path.join(home, "config.toml"), "y = 2\n");
+        fs.chmodSync(path.join(home, "config.toml"), mode);
+      });
+      const { stderr } = bootWithOutput(home, [], env);
+      assert.equal(fs.readdirSync(home).includes("config.toml"), false, `a config.toml that is ${what} is still there`);
+      const aside = movedAside(home, "config.toml");
+      assert.notEqual(aside, null, `a config.toml that is ${what} was deleted rather than moved aside`);
+      assert.equal((fs.lstatSync(aside!).mode & 0o777).toString(8), mode.toString(8), "the boot changed what it moved");
+      assert.match(stderr, /could write its trust entry there; moved it to/);
+    }
+
+    const readable = scratchHome((home) => {
+      fs.writeFileSync(path.join(home, "config.toml"), "y = 2\n");
+      fs.chmodSync(path.join(home, "config.toml"), 0o400);
+    });
+    bootWithOutput(readable);
+    assert.equal(fs.readFileSync(path.join(readable, "config.toml"), "utf8"), "y = 2\n", "moved a file its owner can read");
+
+    // `stat` reports root as the owner of `config.toml` and of nothing else,
+    // since the suite cannot make a root-owned file. Unreadable and unparseable
+    // both, so neither check has an excuse to touch it.
+    const rootStat =
+      'stat() { case "$*" in *"/config.toml") command stat "$@" | sed "s/^[0-9]*/0/" ;; ' +
+      '*) command stat "$@" ;; esac; }';
+    const roots = scratchHome((home) => {
+      fs.writeFileSync(path.join(home, "config.toml"), "[[[");
+      fs.chmodSync(path.join(home, "config.toml"), 0o200);
+    });
+    bootWithOutput(roots, [rootStat]);
+    assert.equal(fs.readdirSync(roots).includes("config.toml"), true, "moved root's config.toml aside");
+    assert.equal(codexLog(roots), null, "asked Codex about root's config.toml");
+  });
+
+  /**
+   * Board task `e7b6d31e`, the parse half. `[[[`, a byte that is not UTF-8
+   * and `model = 5` each make `login status` print `Error loading
+   * configuration` naming the file, and `codexConfigLoadRefusal` then refuses
+   * every Codex cycle, so the boot asks the same child the same way and moves
+   * the file aside on that line. A line naming another file is not this
+   * file's fault, and a child that could not answer is not a verdict.
+   */
+  it("moves aside a config.toml Codex cannot load, asking as the agents with none of the boot's environment", () => {
+    const home = scratchHome((home) => fs.writeFileSync(path.join(home, "config.toml"), "[[["));
+    const { calls, stderr } = bootWithOutput(home, [], { UF_AUTH_TOKEN: "uf-test-secret" });
+    assert.equal(fs.readdirSync(home).includes("config.toml"), false, "an unloadable config.toml is still there");
+    const aside = movedAside(home, "config.toml");
+    assert.notEqual(aside, null, "an unloadable config.toml was deleted rather than moved aside");
+    assert.equal(fs.readFileSync(aside!, "utf8"), "[[[");
+    assert.match(stderr, /Codex said: Error loading configuration: .*config\.toml:1:3: unquoted keys/);
+
+    // As the agents, after the home is theirs to traverse, with the panel's pins.
+    const asked = calls.findIndex((c) => c.startsWith("setpriv "));
+    assert.notEqual(asked, -1, `never dropped to the agents to ask Codex: ${JSON.stringify(calls)}`);
+    assert.match(calls[asked], new RegExp(`^setpriv --reuid=${uid} --regid=${gid} --clear-groups env -i `));
+    assert.ok(asked > calls.indexOf(`chmod 1770 ${home}`), "asked Codex before the home was locked");
+    const log = codexLog(home)!;
+    assert.ok(
+      log.includes(`argv -c cli_auth_credentials_store="file" -c forced_chatgpt_workspace_id=[] login status`),
+      JSON.stringify(log),
+    );
+    assert.ok(log.includes(`env CODEX_HOME=${home}`), JSON.stringify(log));
+    assert.deepEqual(log.filter((l) => /^env UF_/.test(l)), [], "Codex was handed the boot's UF_ variables");
+
+    for (const [what, contents, warned] of [
+      ["a load error that names another file", "managed\n", null],
+      ["a child that gave no answer", "crash\n", /could not ask .* whether it can load/],
+      ["a file Codex loads", "y = 2\n", null],
+    ] as const) {
+      const home = scratchHome((home) => fs.writeFileSync(path.join(home, "config.toml"), contents));
+      const { stderr } = bootWithOutput(home);
+      assert.equal(fs.readFileSync(path.join(home, "config.toml"), "utf8"), contents, `moved ${what} aside`);
+      if (warned) assert.match(stderr, warned);
+      else assert.equal(stderr, "", `said something over ${what}`);
+    }
   });
 
   it("moves a config.toml leftover aside whatever a cycle planted at the names the clock predicts", () => {
