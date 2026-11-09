@@ -12502,6 +12502,17 @@ export async function startRun(id: string): Promise<void> {
       const sessionCostBeforeCycle = sessionCostUSD;
       sessionCostUSD = cycleSpend.sessionCostUSD;
 
+      // Claude Code only: the startup shapes are measured on that CLI (a Codex
+      // startup failure is unmeasured). Asked here and not where the exit is
+      // handled, because the refund below reads it too and so does
+      // `incompleteIteration`.
+      const startupSentence =
+        run.provider === "codex" ? null : startupFailureSentence(res);
+      // Whether the CLI refused before it called the API, so the cycle the loop
+      // charged at the spawn is handed back. `refusedWithoutApiCall` has the
+      // measurements and the conditions.
+      const madeNoApiCall = refusedWithoutApiCall(res, cycleSpend.costUSD, startupSentence);
+
       // Say so when the live spend guard was blind. Exporting is configured by
       // `telemetryEnv`, but nothing guarantees the records arrive — an ingest
       // that fails leaves `telemetrySpendSince` returning zero, and a guard
@@ -12548,7 +12559,12 @@ export async function startRun(id: string): Promise<void> {
       // Latched, not assigned: a cycle that died before reporting its cost
       // leaves the run's total understated for the rest of the run, and a
       // later cycle that reports normally does not undo that.
-      incompleteIteration ||= !res.sawResult;
+      //
+      // Not for a cycle that provably called no API: a startup failure told by
+      // an empty stdout reports no result either, and "this run's spend is
+      // understated" beside "this work cycle did not call the API" is a
+      // contradiction an operator reads one sentence apart.
+      incompleteIteration ||= !res.sawResult && !madeNoApiCall;
       // No `sessionId = res.sessionId` here: the stream callback above already
       // adopted it, the moment it was reported rather than once the cycle
       // returned. Re-reading it from the result would be a second write path
@@ -12984,8 +13000,6 @@ export async function startRun(id: string): Promise<void> {
         // not carry — so it is the plain exit with the CLI's sentence, retried
         // by nobody. Whether it said so on stderr or in a `result`'s
         // `startup_failure_reason` is `startupFailureSentence`'s to tell.
-        const startupSentence =
-          run.provider === "codex" ? null : startupFailureSentence(res);
         const looksLikeResumeFailure =
           usedResume &&
           cyclesThisSegment === 1 &&
@@ -13015,15 +13029,16 @@ export async function startRun(id: string): Promise<void> {
           startupSentence ?? res.errorText,
         );
         // The loop incremented before it spawned, and a resume the CLI refused
-        // for a deferred call whose server is gone made no API call. It ends
-        // the run, so nothing here repeats it — but every pick-up while the
-        // server is missing repeats it, and each press charged a cycle that
-        // bought nothing until the cap itself refused the next one.
+        // for a deferred call whose server is gone, or a start it refused for
+        // its argv or its configuration, made no API call. It ends the run, so
+        // nothing here repeats it — but every pick-up while the cause is still
+        // there repeats it, and each press charged a cycle that bought nothing
+        // until the cap itself refused the next one.
         // `refusedWithoutApiCall` has the measurement and the conditions. Not
         // counted in `workedRefunds`, which is for refunds of a cycle that spent
         // something: this one is the opposite, and `ranWorkCycle` must go on
         // reading it as a cycle in which nothing happened.
-        if (refusedWithoutApiCall(res, cycleSpend.costUSD)) {
+        if (madeNoApiCall) {
           iterations -= 1;
           stopReason +=
             " This work cycle did not call the API, so it was not counted against the run's limit.";

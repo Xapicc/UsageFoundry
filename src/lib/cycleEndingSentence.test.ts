@@ -26,8 +26,9 @@ import { after, describe, it } from "node:test";
  * is a field of the cycle's result and the stop reason is chosen in the loop,
  * so this drives real segments through `startRun` and `reopenRun` against a
  * stubbed child, as `resumeMissingTranscript.test.ts` does, replaying the
- * captured bytes. The fixtures are the captured lines with the usage and
- * `modelUsage` blocks dropped, which nothing here reads.
+ * captured bytes. The fixtures are the captured lines with the `modelUsage`
+ * block dropped and `usage` cut to its two token counts, which is all the loop
+ * reads of either.
  *
  * Its own file with the environment set before anything is required, for the
  * reason every database-backed test here needs it: `config.ts` fixes `DATA_DIR`
@@ -191,7 +192,10 @@ const CONFIG_FILE_ERROR =
   "Configuration error in /scratch/e8/c/.claude.json: JSON Parse error: Expected '}'\n" +
   "A backup file exists at: /scratch/e8/c/backups/.claude.json.backup.1794187872118\n" +
   'You can manually restore it by running: cp -f "/scratch/e8/c/backups/.claude.json.backup.1794187872118" "/scratch/e8/c/.claude.json"';
-const CONFIG_FILE_INVALID: Replay = {
+// Zero figures throughout, as captured: `duration_api_ms: 0`, a `total_cost_usd`
+// of 0 and an all-zero `usage` are what says the CLI made no API call
+// (`scripts/cli-capture`, plan e8: no request reached the stub in either cycle).
+const configFileInvalid = (changed: Record<string, unknown> = {}): Replay => ({
   stdout: jsonLines({
     type: "result",
     subtype: "error_during_execution",
@@ -202,17 +206,20 @@ const CONFIG_FILE_INVALID: Replay = {
     stop_reason: null,
     session_id: STARTUP_RESULT_SESSION,
     total_cost_usd: 0,
+    usage: { input_tokens: 0, output_tokens: 0 },
     permission_denials: [],
     errors: [CONFIG_FILE_ERROR],
     startup_failure_reason: "config_file_invalid",
     result_index: 0,
+    ...changed,
   }),
   stderr:
     "\nClaude configuration file at /scratch/e8/c/.claude.json is corrupted: JSON Parse error: Expected '}'\n" +
     "The corrupted file has been backed up to: /scratch/e8/c/backups/.claude.json.corrupted.1794187874864\n\n" +
     "Configuration error in /scratch/e8/c/.claude.json: JSON Parse error: Expected '}'\n",
   code: 1,
-};
+});
+const CONFIG_FILE_INVALID = configFileInvalid();
 
 /** What each child the loop spawns says, in spawn order. */
 let replies: Scripted[] = [];
@@ -408,6 +415,74 @@ describe("a cycle the CLI would not start", () => {
     assert.equal(row.ending_code, "resume_failed");
     assert.ok(row.stop_reason?.includes(`claude --resume ${first.session_id}`), row.stop_reason ?? "");
   });
+
+  it("costs a fresh run no work cycle, and says so rather than calling its spend understated", async () => {
+    // Nothing reached stdout, and the CLI writes its `init` before it can send a
+    // request (`scripts/cli-capture`, plan e9), so the child never got as far as
+    // an API call. The stop reason must not also say the run's spend is
+    // understated: that is about a cycle that may have spent without reporting.
+    const run = start([MCP_CONFIG_MISSING], 1);
+    const row = await settled(run.id);
+
+    assert.equal(row.ending_code, "exit_code");
+    assert.equal(row.iterations, 0, "the spawn is not a work cycle the run used");
+    assert.ok(row.stop_reason?.includes("did not call the API"), row.stop_reason ?? "");
+    assert.ok(!row.stop_reason?.includes("understated"), row.stop_reason ?? "");
+  });
+
+  it("leaves a fresh run's cap alone, so the press after the repair is not refused at the door", async () => {
+    // Capped at the one cycle the failure used to be charged: left charged, the
+    // pick-up is refused with "already used 1 work cycles" before it spawns.
+    const run = start([MCP_CONFIG_MISSING, "Back at it. DONE"], 1);
+    const failed = await settled(run.id);
+    assert.equal(failed.iterations, 0);
+
+    pickUp(run.id, 1);
+    const row = await settled(run.id);
+
+    assert.equal(row.status, "completed", row.stop_reason ?? "");
+    assert.equal(row.iterations, 1, "the cycle that worked is the only one counted");
+  });
+
+  it("is refused again by a pick-up while the file is still missing, and costs it no cycle", async () => {
+    // The same cap on every press: each charged cycle used to bring the next
+    // press one closer to the door's refusal, for a cause the operator fixes in
+    // a file and not by raising the cap.
+    const run = start(["Still working.", MCP_CONFIG_MISSING, MCP_CONFIG_MISSING], 1);
+    const first = await settled(run.id);
+    assert.equal(first.iterations, 1);
+    assert.ok(first.session_id);
+    keepTranscript(first.session_id);
+
+    pickUp(run.id, 2);
+    const second = await settled(run.id);
+    assert.equal(second.ending_code, "exit_code");
+    assert.equal(second.iterations, 1);
+
+    pickUp(run.id, 2);
+    const third = await settled(run.id);
+    assert.equal(spawns.length, 3, "a second press is one more spawn");
+    assert.equal(third.iterations, 1, "and still no cycle");
+  });
+
+  it("keeps a child that wrote its init before it died charged, and says its spend may be understated", async () => {
+    // A line on stdout is the one thing this refund is read from, and a child
+    // that wrote one may have been paid for; the CLI wrote it before it could
+    // send its first request, so there is no way to tell from here that it did
+    // not.
+    const started: Replay = {
+      stdout: jsonLines({ type: "system", subtype: "init", session_id: "s-warn" }),
+      stderr: "(node:1) Warning: something unrelated\n",
+      code: 1,
+    };
+    const run = start([started], 3);
+    const row = await settled(run.id);
+
+    assert.equal(row.ending_code, "exit_code");
+    assert.equal(row.iterations, 1);
+    assert.ok(!row.stop_reason?.includes("did not call the API"), row.stop_reason ?? "");
+    assert.ok(row.stop_reason?.includes("understated"), row.stop_reason ?? "");
+  });
 });
 
 describe("a startup failure the CLI reports as a result", () => {
@@ -450,7 +525,10 @@ describe("a startup failure the CLI reports as a result", () => {
     assert.equal(failed.session_id, first.session_id);
     assert.equal(failed.session_cost_usd, first.session_cost_usd);
 
-    pickUp(run.id, 3);
+    // The cap the failed press had: the refused spawn was not a cycle the run
+    // used, so the DONE below is the second and last one, not the third, and a
+    // cap of 3 would send the DONE back for another cycle the script lacks.
+    pickUp(run.id, 2);
     const done = await settled(run.id);
     assert.equal(done.status, "completed", done.stop_reason ?? "");
     assert.equal(spawns[2].resumed, first.session_id, "the repaired pick-up resumes the real session");
@@ -470,6 +548,48 @@ describe("a startup failure the CLI reports as a result", () => {
     assert.ok(row.stop_reason?.includes("Configuration error in"), row.stop_reason ?? "");
     assert.equal(row.session_id, null, "a made-up id is not a session to resume");
   });
+
+  it("costs the pick-up no cycle, however many times the file is still corrupt", async () => {
+    // Capped at the two cycles the first segment and one press would use: left
+    // charged, the second press is refused at the door ("already used 2 work
+    // cycles") for a cycle the CLI refused before it made a single request.
+    const run = start(["Still working.", CONFIG_FILE_INVALID, CONFIG_FILE_INVALID], 1);
+    const first = await settled(run.id);
+    assert.ok(first.session_id);
+    keepTranscript(first.session_id);
+
+    pickUp(run.id, 2);
+    const second = await settled(run.id);
+    assert.equal(second.ending_code, "exit_code");
+    assert.equal(second.iterations, 1, "the failed spawn is not counted");
+    assert.ok(second.stop_reason?.includes("did not call the API"), second.stop_reason ?? "");
+
+    pickUp(run.id, 2);
+    const third = await settled(run.id);
+    assert.equal(spawns.length, 3);
+    assert.equal(third.iterations, 1);
+  });
+
+  // The refund is only for a result that says in figures that it bought
+  // nothing, and each of these is one that did or might have. Left charged, the
+  // run is counted exactly as it was before the refund existed.
+  for (const [what, changed] of [
+    ["an API call was timed", { duration_api_ms: 120 }],
+    ["the API call's duration is not reported", { duration_api_ms: undefined }],
+    ["the session's cost moved", { total_cost_usd: 0.5 }],
+    ["tokens were counted", { usage: { input_tokens: 7, output_tokens: 3 } }],
+    ["the CLI gave no startup reason", { startup_failure_reason: undefined }],
+  ] as const) {
+    it(`keeps the cycle charged when ${what}`, async () => {
+      const run = start([configFileInvalid(changed)], 3);
+      const row = await settled(run.id);
+
+      assert.equal(row.status, "failed");
+      assert.equal(row.ending_code, "exit_code");
+      assert.equal(row.iterations, 1, "the spawn is counted");
+      assert.ok(!row.stop_reason?.includes("did not call the API"), row.stop_reason ?? "");
+    });
+  }
 });
 
 describe("a resume refused for a deferred call whose tool is gone", () => {
@@ -661,10 +781,16 @@ describe("startupFailureSentence", () => {
 });
 
 describe("refusedWithoutApiCall", () => {
-  const refused = { terminalReason: "tool_deferred_unavailable", apiDurationMs: 0, tokens: 0 };
+  const refused = {
+    terminalReason: "tool_deferred_unavailable",
+    apiDurationMs: 0,
+    tokens: 0,
+    startupFailureReason: null,
+    stdoutLines: 1,
+  };
 
   it("holds for the measured refusal, whose cost did not move", () => {
-    assert.equal(refusedWithoutApiCall(refused, 0), true);
+    assert.equal(refusedWithoutApiCall(refused, 0, null), true);
   });
 
   // Each of these is a cycle that may have bought something, and a refund of
@@ -678,9 +804,67 @@ describe("refusedWithoutApiCall", () => {
     ["no reason was given", { ...refused, terminalReason: null }, 0],
   ] as const) {
     it(`is false when ${what}`, () => {
-      assert.equal(refusedWithoutApiCall(res, cost), false);
+      assert.equal(refusedWithoutApiCall(res, cost, null), false);
     });
   }
+
+  // `startupFailureSentence`'s answer for the cycle, which the loop settles
+  // once and which is null for a provider the shapes were not measured on.
+  const SENTENCE = "Error: Invalid MCP configuration: MCP config is not a valid JSON";
+
+  describe("for a startup failure the CLI wrote as a result", () => {
+    const result = {
+      terminalReason: null,
+      apiDurationMs: 0,
+      tokens: 0,
+      startupFailureReason: "config_file_invalid",
+      stdoutLines: 1,
+    };
+
+    it("holds when the result reports no API time, no tokens and no cost", () => {
+      assert.equal(refusedWithoutApiCall(result, 0, SENTENCE), true);
+    });
+
+    for (const [what, res, cost, sentence] of [
+      ["an API call was timed", { ...result, apiDurationMs: 1 }, 0, SENTENCE],
+      ["the API duration was not reported", { ...result, apiDurationMs: null }, 0, SENTENCE],
+      ["tokens were counted", { ...result, tokens: 1 }, 0, SENTENCE],
+      ["the cycle's cost moved", result, 0.000001, SENTENCE],
+      ["the CLI named no startup failure", { ...result, startupFailureReason: null }, 0, SENTENCE],
+      ["the loop did not take it for a startup failure", result, 0, null],
+    ] as const) {
+      it(`is false when ${what}`, () => {
+        assert.equal(refusedWithoutApiCall(res, cost, sentence), false);
+      });
+    }
+  });
+
+  describe("for a startup failure written to stderr alone", () => {
+    // No result, so no figure: every one is zero because nothing was said, and
+    // what stands in for a measurement is that no line reached stdout.
+    const stderrOnly = {
+      terminalReason: null,
+      apiDurationMs: null,
+      tokens: 0,
+      startupFailureReason: null,
+      stdoutLines: 0,
+    };
+
+    it("holds when nothing reached stdout", () => {
+      assert.equal(refusedWithoutApiCall(stderrOnly, 0, SENTENCE), true);
+    });
+
+    for (const [what, res, cost, sentence] of [
+      ["a line reached stdout", { ...stderrOnly, stdoutLines: 1 }, 0, SENTENCE],
+      ["tokens were counted", { ...stderrOnly, tokens: 1 }, 0, SENTENCE],
+      ["the cycle's cost moved", stderrOnly, 0.000001, SENTENCE],
+      ["the loop did not take it for a startup failure", stderrOnly, 0, null],
+    ] as const) {
+      it(`is false when ${what}`, () => {
+        assert.equal(refusedWithoutApiCall(res, cost, sentence), false);
+      });
+    }
+  });
 });
 
 describe("exitStopReason with the CLI's sentence", () => {

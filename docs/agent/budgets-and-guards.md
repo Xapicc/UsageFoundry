@@ -24,6 +24,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - All three of those modes bound what a cycle may *spend*, and none of them bounds a cycle that spends nothing — so a work cycle also has a deadline, and the deadline is silence rather than wall clock.
 - A cycle cut short by a pause is refunded to the counter.
 - A cycle the CLI refused for a deferred call whose server is gone is refunded, but only on the CLI's own word and a zero everywhere else.
+- A cycle the CLI refused to start is refunded on the same terms, from the figures it reports where it reports any and from an empty stdout where it does not.
 - A cycle that is only waiting on its background sub-agents is bound by three of these guards and not by the rest, and the duration limit is the one the CLI's wait ceiling has to carry (`run-lifecycle/background-work.md`).
 
 ## [Concurrency caps and the install's rolling limit](budgets-and-guards/concurrency-and-install-ceiling.md)
