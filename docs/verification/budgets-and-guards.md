@@ -127,6 +127,42 @@
   route's ordering of its `await` guards against, read from `markProposal`'s
   unconditional `UPDATE`, not run.
 
+- **A fraction guard on a workflow block's template, started through a press of
+  Run, spawned its member unread; the press now refuses it, and the later
+  creators still start theirs and record it, 2026-11-09.** A scratch drive, not
+  kept, over a throwaway `DATA_DIR` with `child_process.spawn` stubbed for
+  `CLAUDE_BIN` (`costOutlierGuard.test.ts`'s shape) and the fleet unpaused: one
+  run block whose template held `{ maxIterations: 1, maxWeeklyFraction: 0.5 }`
+  (and, separately, `maxSessionFraction`), `planUsageFromApi` off and no ceiling
+  (`currentSnapshot()`'s fractions null), the compiled `startWorkflow` called as
+  the route calls it. Before: `ok: true`, the member `queued` then `running`, one
+  spawn, `run.guard_unreadable` at `info`, a `budget` event with `code:
+  "no_ceiling"` and `enforceable: false`, the run `completed`. After: `ok:
+  false` with the window's sentence led by the block's name, no instance row, no
+  run, no spawn. The three later creators were driven the same way with the
+  guard added to the template **after** the press: a node behind an orchestrator
+  block (`advanceInstanceRound`), a run that block emitted (`emitBlockRuns`) and
+  a repeated block's pass (`stepPass`, with the guard on the template before the
+  press, which the new door refuses, so that pass was only reached on the old
+  build). Each of the first two spawned with the same `no_ceiling` /
+  `enforceable: false` event on its own feed, on the old build and on the new
+  one, which is the record the deferred paths rely on instead of a refusal. The
+  kept test, `src/app/api/workflows/[id]/run/route.test.ts`, failed 8 of its 10
+  cases on the old door (the plain press and the Codex block with a reading of
+  its own are the two that pass there, to stop the refusal being widened), and
+  mutating the compiled tree failed only the two Codex cases when the
+  route fetched no Codex reading, when the provider was dropped from the
+  refusal, and when `workflowGuardWindows` always answered `claude`. Caveat: a stub stands in
+  for the CLI, so this measures the decision to spawn and not a billed cycle, and
+  the reading was empty because the scratch home had no transcripts and no
+  provider percentage, not because a real endpoint was down. Not driven:
+  `stepPass` on the new build (the guard is refused before a pass can exist, so
+  it was only reached before the change), the workflow page's rendering of the
+  refusal beside Run (the route's `error` goes where the instance budget's
+  already does, read, not rendered), and a Codex block with a readable window
+  through the real app-server, which the test stands in for with the usage
+  cache.
+
 ## Not yet verified by hand
 
 - **The process budget has never refused a real child in a browser, nor

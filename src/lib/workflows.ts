@@ -82,11 +82,16 @@ import {
 } from "./land";
 import {
   INSTANCE_ENFORCEABLE_CODES,
+  carriesFractionGuard,
   evaluateInstanceBudget,
+  fractionGuardRefusal,
+  guardWindowsOf,
   instanceBudgetIsOff,
   normalizeInstanceBudget,
   spendHeadroom,
   type BudgetVerdict,
+  type GuardSnapshots,
+  type GuardWindows,
   type InstanceBudgetPolicy,
   type InstanceProgress,
   type SpendHeadroom,
@@ -132,7 +137,7 @@ import {
 import { getTemplate, listTemplates, type RunTemplate } from "./templates";
 import { WORKSPACE_MOUNTS, mountById } from "./config";
 import { dataDirRefusal } from "./serverLock";
-import { notStringRefusal } from "./http";
+import { isJsonObject, notStringRefusal } from "./http";
 import { gitSync } from "./git";
 import {
   passMemberId,
@@ -4179,6 +4184,60 @@ export type WorkflowTrigger =
   | { kind: "schedule"; scheduleId: string };
 
 /**
+ * Whether a node is planned as a run when a workflow is pressed.
+ *
+ * An orchestrator block is, although it becomes none: what is refused for it is
+ * refused for the runs it will emit, which take its template's guards. A merge
+ * block, a deliver block, a loop, a review and a gate are not, and there is
+ * nothing left to plan for any of them — none names a template, a mount, a
+ * folder or a task. One predicate for `startWorkflow` and
+ * `workflowGuardWindows`, so the readings a caller fetches are the readings
+ * the press asks for.
+ */
+function plansARun(node: WorkflowNode): boolean {
+  return !(
+    node.kind === "merge" ||
+    node.kind === "deliver" ||
+    node.kind === "loop" ||
+    node.kind === "review" ||
+    node.kind === "gate"
+  );
+}
+
+/** A planned run's budget as the record the guard helpers read; see `planBudget` in `chat.ts`. */
+function budgetRecordOf(budget: unknown): Record<string, unknown> {
+  return isJsonObject(budget) ? budget : {};
+}
+
+/**
+ * Which providers' windows a press of this workflow will judge its blocks'
+ * fraction guards against.
+ *
+ * `startWorkflow` awaits nothing, so the route fetches the readings first —
+ * `fleetGuardWindows`' and `approvalGuardWindows`' job for their doors. Only
+ * the windows some block will actually need, so a press whose guards carry no
+ * fraction, which is every one on a stock install, pays for no transcript scan
+ * and no Codex read. Read off the saved graph and not the chosen-folder copy
+ * `startWorkflow` plans from: a folder changes where a block works and never
+ * which guards it takes. A reading this misses is refused by `startWorkflow` as
+ * one that could not be read, which is the safe way to be wrong.
+ */
+export function workflowGuardWindows(id: string): GuardWindows[] {
+  const workflow = getWorkflow(id);
+  if (!workflow) return [];
+  const defaults = chatGuards();
+  const needed = new Set<GuardWindows>();
+  for (const node of workflow.graph.nodes) {
+    if (!plansARun(node)) continue;
+    const template = node.templateId ? getTemplate(node.templateId) : null;
+    if (carriesFractionGuard(budgetRecordOf(guardsFor(template, defaults).budget))) {
+      needed.add(guardWindowsOf({ provider: node.provider || null }));
+    }
+  }
+  return [...needed];
+}
+
+/**
  * Turn a workflow into runs — every block, in one synchronous pass.
  *
  * Synchronous from the first `createRun` to the last, with no `await` between
@@ -4214,6 +4273,15 @@ export type WorkflowTrigger =
  * error channel, rather than tripping at the first block's guard check and
  * halting a graph that never should have started.
  *
+ * **The same door asks the per-run guard of every block**, which is a different
+ * budget from the instance's: the one a block's template (or `chatDefaultGuards`)
+ * hands its runs. `codexSnapshot` is the Codex account's reading for a block that
+ * runs on Codex, fetched by the caller as `workflowGuardWindows` says; a block
+ * on Codex with a fraction guard and no such reading is refused as one that
+ * could not be checked. A schedule's fire passes none, and needs none:
+ * `scheduleRefusal` refuses a workflow with a block that reports no cost, which
+ * a Codex block is, so a schedule never presses a graph that holds one.
+ *
  * `trigger` records *which* press of Run this was, and it grants nothing: there
  * is still no field on it that can reach a guard, a permission mode or an
  * isolation choice, so a schedule remains "the same `startWorkflow`, with
@@ -4225,6 +4293,7 @@ export function startWorkflow(
   id: string,
   snapshot: UsageSnapshot,
   trigger: WorkflowTrigger = { kind: "manual" },
+  codexSnapshot?: UsageSnapshot,
 ): StartOutcome {
   // Before the instance row exists. `createRun` refuses too, but that refusal
   // would arrive mid-pass and take the rollback path — an instance recorded
@@ -4305,16 +4374,10 @@ export function startWorkflow(
   // on its own account, which is where the guards a pass runs under come from.
   const defaults = chatGuards();
   const plans = new Map<string, Omit<CreateRunInput, "dependsOn" | "origin">>();
+  const readings: GuardSnapshots = { claude: snapshot };
+  if (codexSnapshot) readings.codex = codexSnapshot;
   for (const node of graph.nodes) {
-    if (
-      node.kind === "merge" ||
-      node.kind === "deliver" ||
-      node.kind === "loop" ||
-      node.kind === "review" ||
-      node.kind === "gate"
-    ) {
-      continue;
-    }
+    if (!plansARun(node)) continue;
     const plan = planNode(
       node,
       node.templateId ? getTemplate(node.templateId) : null,
@@ -4336,6 +4399,27 @@ export function startWorkflow(
         ? readyToCreate(plan.input, node.name)
         : modelOnList(plan.input, node.name, getSettings().modelCatalogue);
     if (!ready.ok) return { ok: false, reason: ready.reason };
+
+    // A fraction guard with nothing to read, said here where a person is
+    // pressing the button. `createRun` does not ask and the pre-cycle guard only
+    // records it (`RUN_ENFORCEABLE_CODES`), so without this the member starts
+    // and its guard is never evaluated. Every node is asked, not only the runs
+    // this pass creates: a block a loop repeats and an orchestrator block's
+    // emitted runs are created hours later, with nobody here, and take the same
+    // template's guards — so this is the only moment a refusal can reach a
+    // person for them. The three later creators (`advanceInstanceRound`,
+    // `stepPass`, `emitBlockRuns`) deliberately do not ask: a reading that
+    // lapses under a running instance is a provider outage and not a guard the
+    // operator failed to set, `blocked` is terminal and cascades down the chain
+    // behind it, and they are synchronous with no reading in hand. The member's
+    // own pre-cycle check records it on its feed, which is the same answer the
+    // instance budget's `no_ceiling` gets after this door (`INSTANCE_ENFORCEABLE_CODES`).
+    const unread = fractionGuardRefusal(
+      { provider: ready.input.provider ?? null },
+      budgetRecordOf(ready.input.budget),
+      readings,
+    );
+    if (unread) return { ok: false, reason: `“${node.name}”: ${unread}` };
     plans.set(node.id, ready.input);
   }
 
@@ -6788,6 +6872,8 @@ function advanceInstanceRound(instanceId: string): boolean {
       upsertBlock(instanceId, node, "blocked", ready.reason);
       continue;
     }
+    // No fraction-guard question here: `startWorkflow` asked it of this node at
+    // the press, and `blocked` would be terminal for a reading that merely lapsed.
     try {
       const run = createRun({
         ...ready.input,
@@ -7869,6 +7955,7 @@ function stepPass(
       wrote = true;
       continue;
     }
+    // No fraction-guard question here either, for `advanceInstanceRound`'s reason.
     plans.push({
       nodeId: node.id,
       input: ready.input,
@@ -10181,6 +10268,8 @@ function createEmitted(
         failures.push(`“${spec.title}” was not started: ${ready.reason}`);
         continue;
       }
+      // No fraction-guard question here either: the orchestrator block was
+      // planned at the press, with this template's guards.
       const run = createRun({
         ...ready.input,
         dependsOn: spec.dependsOn.map((d) => ({

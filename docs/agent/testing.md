@@ -170,6 +170,7 @@ Its cases are in `orchestrator.test.ts`, `shutdown.test.ts`, `stackWait.test.ts`
 | `scheduleFire.test.ts` |  |
 | `schedulePut.test.ts` |  |
 | `src/app/api/workflows/[id]/route.test.ts` |  |
+| `src/app/api/workflows/[id]/run/route.test.ts` |  |
 | `src/app/api/workflows/[id]/schedule/route.test.ts` |  |
 
 ## [Workflow canvas ordering and page formatting](testing/workflow-canvas-and-formatting.md)
