@@ -193,3 +193,14 @@ the full $75, and the neighbours: Opus 4.1 still resolves to its own row, and an
 undated `claude-opus-4-9` or a different snapshot date stays null, because a
 dated key is not a catch-all. The first, second and fourth failed against the
 table without the dated keys; the alias and neighbour cases passed on it.
+
+**`transcripts.ts`'s `parseLine` passing `at` is pinned by a scan, because the
+lookup's own cases cannot see whether a call site names the instant.**
+`transcriptPromptTier.test.ts`'s second case writes two Sonnet 5.5 records of a
+million cache reads each, one the last millisecond before
+`SONNET_5_5_CACHE_READ_CUT_AT` and one at it, and asserts $0.20 and $0.10 on
+`costUSD` with `costGuardUSD` equal. Drop `at` and every turn from before the cut
+is priced at today's 0.05×, so the weekly meter and the budget guard under-read
+history with nothing failing. Measured against the compiled `parseLine`: with `at`
+dropped, or with `Date.now()` passed in its place, the first record shows $0.10 for
+$0.20; with a fixed instant before the cut, the second shows $0.20 for $0.10.
