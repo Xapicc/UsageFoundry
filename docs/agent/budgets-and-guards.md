@@ -14,13 +14,16 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - `live` also reads them on a global ticker (`liveGuardTick`, `settings.liveGuardIntervalSeconds`, floor 15s) while a child is in flight, and interrupts it.
 - `live-resume` is `live`, except the 5-hour window parks the run instead of ending it.
 - `LIVE_ENFORCEABLE_CODES` is the whitelist.
-- All three of those modes bound what a cycle may *spend*, and none of them bounds a cycle that spends nothing — so a work cycle also has a deadline, and the deadline is silence rather than wall clock.
 - Every one of those three bounds is a bound on a count of cycles, so the run's own spending limit is enforced somewhere else as well — inside the CLI.
 - `run_cost`/`run_tokens` are live only because telemetry makes them live — this is the one place OTLP feeds a budget decision.
 - A Codex run's `run_tokens` is live off its session rollout, and its `run_cost` is never live because there is no cost.
 - A guard whose input is optional is not a guard, so the input stops being optional.
-- A cycle that is only waiting on its background sub-agents is bound by three of these guards and not by the rest, and the duration limit is the one the CLI's wait ceiling has to carry (`run-lifecycle/background-work.md`).
+
+## [A cycle's silence deadline, the refund when a pause cuts it and the wait on background sub-agents](budgets-and-guards/silence-refunds-and-background-waits.md)
+
+- All three of those modes bound what a cycle may *spend*, and none of them bounds a cycle that spends nothing — so a work cycle also has a deadline, and the deadline is silence rather than wall clock.
 - A cycle cut short by a pause is refunded to the counter.
+- A cycle that is only waiting on its background sub-agents is bound by three of these guards and not by the rest, and the duration limit is the one the CLI's wait ceiling has to carry (`run-lifecycle/background-work.md`).
 
 ## [Concurrency caps and the install's rolling limit](budgets-and-guards/concurrency-and-install-ceiling.md)
 
