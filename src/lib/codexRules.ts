@@ -130,7 +130,9 @@ export function codexConfigUnusableBecause(followLinks: boolean): string | null 
     stat = followLinks ? fs.statSync(CODEX_CONFIG_FILE) : fs.lstatSync(CODEX_CONFIG_FILE);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw err;
+    // A reason rather than a throw, so `prepareCodexRules` does not report a
+    // link loop here as the denial failing to write.
+    return `${CODEX_CONFIG_FILE} could not be checked: ${(err as Error).message}`;
   }
   if (stat.isFile()) return null;
   const what = stat.isSymbolicLink()
@@ -141,7 +143,7 @@ export function codexConfigUnusableBecause(followLinks: boolean): string | null 
   return (
     `${CODEX_CONFIG_FILE} is ${what}. A Codex work cycle writes its project trust entry there, ` +
     `and one that cannot loads its repository's .codex/config.toml, which can start the MCP ` +
-    `servers that file names; Codex's sign-in children fail on anything but a file there too. ` +
+    `servers that file names; Codex's sign-in children fail on a directory there too. ` +
     `Restarting the container moves it aside (docker-entrypoint.sh, at every boot); without the ` +
     `container, rename it yourself and Codex makes a new one.`
   );
