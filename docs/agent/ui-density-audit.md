@@ -25,9 +25,11 @@
 > window in the window card now reads what is left of it, when it resets
 > (absolute, then relative), its meter, and one line saying whether it runs
 > out before that reset at the current burn — the burn rate rides on that
-> line. `projectedExhaustionAt` is the earliest instant across both windows,
-> and `windowOutlooks` (`src/components/windowOutlook.ts`) works out whose it
-> is, or says "session or week" when the snapshot cannot tell. Codex windows
+> line. Since 2026-11-09 each window carries its own `projectedExhaustionAt`
+> and `windowOutlook` (`src/components/windowOutlook.ts`) sets it against that
+> window's reset, so the week has its own line in every state; before that the
+> line was deduced from the snapshot's one earliest instant and read "session
+> or week" when it could not tell whose that was. Codex windows
 > use the same layout without a projection, because Codex reports no rate.
 > The prose that explained each reading moved into one `How these are read`
 > fold at the foot of the card, under §1.1's rule 5. A pinned reset and a

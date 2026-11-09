@@ -688,9 +688,9 @@ describe("provider-reported utilisation", () => {
  * The exhaustion projection, which is arithmetic whose only output is a date on
  * a card — there is nothing about a wrong one that looks wrong.
  *
- * It extrapolates the trailing hour's burn against each configured ceiling and
- * reports the earliest result, and every window it projects zeroes its consumed
- * figure at a reset. Measured on this install: a 5-hour window 1.2h from
+ * It extrapolates the trailing hour's burn against each configured ceiling,
+ * keeps each window's earliest result on that window and reports the earlier of
+ * the two, and every window it projects zeroes its consumed figure at a reset. Measured on this install: a 5-hour window 1.2h from
  * resetting projected 8.8h out, a weekly candidate sat 32.6h out, and the
  * earliest-wins rule returned the session one — a stated instant 7.6h after the
  * window it describes had already reset. Because `Math.min` always takes the
@@ -721,6 +721,8 @@ describe("projected exhaustion", () => {
     // in one — so the answer is the weekly candidate, $189 out at the same
     // rate, and not an instant 7.9h into a window that will have reset empty.
     assert.equal(snap.projectedExhaustionAt, now + 18.9 * HOUR);
+    assert.equal(snap.session.projectedExhaustionAt, null);
+    assert.equal(snap.weekly.projectedExhaustionAt, now + 18.9 * HOUR);
   });
 
   it("keeps a session projection that lands inside its own window", () => {
@@ -732,6 +734,9 @@ describe("projected exhaustion", () => {
       now,
     );
     assert.equal(snap.projectedExhaustionAt, now + 0.4 * HOUR);
+    assert.equal(snap.session.projectedExhaustionAt, now + 0.4 * HOUR);
+    // The week keeps its own figure rather than the session's earlier one.
+    assert.equal(snap.weekly.projectedExhaustionAt, now + 18.9 * HOUR);
   });
 
   it("keeps a weekly projection that lands inside the week", () => {
@@ -745,6 +750,48 @@ describe("projected exhaustion", () => {
       planWeek(now + 3 * 24 * HOUR),
     );
     assert.equal(snap.projectedExhaustionAt, now + 3.3 * HOUR);
+    assert.equal(snap.weekly.projectedExhaustionAt, now + 3.3 * HOUR);
+    // No session ceiling and no session reading: nothing to project it against.
+    assert.equal(snap.session.projectedExhaustionAt, null);
+  });
+
+  // The case the snapshot's one instant could not tell apart: it falls before
+  // the session's reset, and both windows have a basis, so it could be either.
+  // A weekly reading of 68.75% at $11 is a $16 allowance; $5 of it at $10/h is
+  // half an hour, inside a session that resets in one.
+  const planWeekAt = (utilization: number) => ({
+    ...planWeek(now + 3 * 24 * HOUR),
+    weekly: { utilization, resetsAt: now + 3 * 24 * HOUR },
+  });
+
+  it("gives a week that runs out inside the current session its own instant", () => {
+    const snap = buildSnapshot(
+      burning,
+      { ...NO_LIMITS, sessionCostLimit: 100 },
+      now,
+      null,
+      planWeekAt(0.6875),
+    );
+    assert.equal(snap.session.endsAt, now + HOUR);
+    assert.equal(snap.session.fractionMetric, "cost");
+    assert.equal(snap.weekly.projectedExhaustionAt, now + 0.5 * HOUR);
+    // The session's own candidate is 8.9h out, past its reset: it lasts, and
+    // it is the week that stops work in half an hour.
+    assert.equal(snap.session.projectedExhaustionAt, null);
+    assert.equal(snap.projectedExhaustionAt, now + 0.5 * HOUR);
+  });
+
+  it("keeps both instants when both windows run out inside the session", () => {
+    const snap = buildSnapshot(
+      burning,
+      { ...NO_LIMITS, sessionCostLimit: 15 },
+      now,
+      null,
+      planWeekAt(0.6875),
+    );
+    assert.equal(snap.session.projectedExhaustionAt, now + 0.4 * HOUR);
+    assert.equal(snap.weekly.projectedExhaustionAt, now + 0.5 * HOUR);
+    assert.equal(snap.projectedExhaustionAt, now + 0.4 * HOUR);
   });
 
   it("still projects a trailing 7-day window, which has no reset to drop it at", () => {
@@ -755,6 +802,7 @@ describe("projected exhaustion", () => {
     const snap = buildSnapshot(burning, { ...NO_LIMITS, weeklyCostLimit: 200 }, now);
     assert.equal(snap.weekly.label, "Trailing 7 days");
     assert.equal(snap.projectedExhaustionAt, now + 18.9 * HOUR);
+    assert.equal(snap.weekly.projectedExhaustionAt, now + 18.9 * HOUR);
   });
 
   it("reports no projection rather than a zero when every candidate is dropped", () => {
@@ -770,6 +818,8 @@ describe("projected exhaustion", () => {
       planWeek(now + 2 * HOUR),
     );
     assert.equal(snap.projectedExhaustionAt, null);
+    assert.equal(snap.session.projectedExhaustionAt, null);
+    assert.equal(snap.weekly.projectedExhaustionAt, null);
   });
 
   // The meter under a provider reading shows the provider's percentage, so a
@@ -801,6 +851,8 @@ describe("projected exhaustion", () => {
     assert.notEqual(snap.projectedExhaustionAt, null);
     const minutes = ((snap.projectedExhaustionAt ?? 0) - now) / 60_000;
     assert.ok(Math.abs(minutes - 10.43) < 0.01, `projected ${minutes} minutes out`);
+    assert.equal(snap.session.projectedExhaustionAt, snap.projectedExhaustionAt);
+    assert.equal(snap.weekly.projectedExhaustionAt, null);
   });
 
   it("offers no fallback to the typed ceiling when the reading has no spend to scale", () => {
@@ -815,6 +867,7 @@ describe("projected exhaustion", () => {
     );
     assert.equal(snap.session.fractionMetric, "plan");
     assert.equal(snap.projectedExhaustionAt, null);
+    assert.equal(snap.session.projectedExhaustionAt, null);
   });
 });
 

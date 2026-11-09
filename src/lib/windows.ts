@@ -274,6 +274,18 @@ export interface WindowState {
    */
   limit: number | null;
   limitMetric: "plan" | "tokens" | "cost" | null;
+  /**
+   * When this window runs out at the current burn: the earliest of its own
+   * candidates, each bounded by this window's reset, or null when none lands
+   * before it.
+   *
+   * Per window because the snapshot's minimum cannot say whose it is. Read off
+   * that one instant, the dashboard could not tell a session running out
+   * before its reset from a week running out inside the same session, and
+   * naming the wrong one tells the operator to wait for a reset that frees
+   * nothing.
+   */
+  projectedExhaustionAt: number | null;
 }
 
 export interface WeeklyAnchor {
@@ -407,7 +419,7 @@ function fractionOf(value: number, limit: number | null): number | null {
  */
 type DerivedWindow = Omit<
   WindowState,
-  "label" | "planFraction" | "fractionMetric" | "limitMetric"
+  "label" | "planFraction" | "fractionMetric" | "limitMetric" | "projectedExhaustionAt"
 > & {
   fractionMetric: "cost" | "tokens" | null;
   limitMetric: "cost" | "tokens" | null;
@@ -754,6 +766,9 @@ export interface UsageSnapshot {
   /**
    * Projected epoch ms at which the binding window is exhausted at the
    * current burn rate, or null when nothing is projected to run out.
+   *
+   * The earlier of the two windows' own `projectedExhaustionAt`, and it does
+   * not say which: anything that sets it against a reset reads the window's.
    */
   projectedExhaustionAt: number | null;
   byModel: Array<{ model: string; agg: Aggregate }>;
@@ -913,6 +928,9 @@ function allowanceImpliedBy(
  * the precedence below the whole of the rule: which figure a meter reports and
  * which one a guard acts on depend on this window's own three readings and on
  * nothing else about the snapshot around it.
+ *
+ * Its run-out is the one field it cannot fill: that needs the trailing hour's
+ * burn, which is the snapshot's, so `buildSnapshot` adds it.
  */
 function makeWindow(
   label: string,
@@ -934,7 +952,7 @@ function makeWindow(
    * only part of the derived figure that reading has not already counted.
    */
   sinceFetchCostGuardUSD = 0,
-): WindowState {
+): Omit<WindowState, "projectedExhaustionAt"> {
   const derived = buildWindow(startsAt, endsAt, agg, costLimit, tokenLimit);
   const planFraction = planWindow ? planWindow.utilization : null;
 
@@ -1152,7 +1170,7 @@ export function buildSnapshot(
     }
   }
 
-  const session = makeWindow(
+  const sessionReading = makeWindow(
     "5-hour session",
     sessionStart,
     sessionStart + FIVE_HOURS_MS,
@@ -1164,7 +1182,7 @@ export function buildSnapshot(
     sessionSinceFetch,
   );
 
-  const weekly = makeWindow(
+  const weeklyReading = makeWindow(
     weeklyReset !== null ? "Weekly quota" : "Trailing 7 days",
     wkStart,
     wkEnd,
@@ -1189,7 +1207,7 @@ export function buildSnapshot(
   // allowance `allowanceImpliedBy` measures it against.
   const burnGuardPerHour = recentAgg.costGuardUSD;
 
-  // Project against every ceiling a window is measured by and report the
+  // Project each window against every ceiling it is measured by and keep its
   // earliest. Each metric is projected with its own burn rate — projecting a
   // cost ceiling from a token rate (or vice versa) would be meaningless for a
   // workload whose token/cost ratio moves with cache-read volume.
@@ -1229,7 +1247,7 @@ export function buildSnapshot(
   // offers nothing here (`planFraction` is null when one stands alone), since
   // its percentage is of Opus-only spend and the burn rate is all-model.
   const candidatesFor = (
-    w: WindowState,
+    w: Omit<WindowState, "projectedExhaustionAt">,
     costLimit: number | null,
     tokenLimit: number | null,
     sinceFetchCostGuardUSD: number,
@@ -1249,24 +1267,39 @@ export function buildSnapshot(
           etaFor(w.tokens, tokenLimit, burnTokensPerHour, resetsAt),
         ];
 
-  const candidates = [
-    ...candidatesFor(
-      session,
-      limits.sessionCostLimit,
-      limits.sessionTokenLimit,
-      sessionSinceFetch,
-      session.endsAt,
-    ),
-    ...candidatesFor(
-      weekly,
-      limits.weeklyCostLimit,
-      limits.weeklyTokenLimit,
-      weeklySinceFetch,
-      weeklyResetsAt,
-    ),
-  ].filter((v): v is number => v !== null);
+  const earliest = (candidates: Array<number | null>): number | null => {
+    const kept = candidates.filter((v): v is number => v !== null);
+    return kept.length ? Math.min(...kept) : null;
+  };
 
-  const projectedExhaustionAt = candidates.length ? Math.min(...candidates) : null;
+  const session: WindowState = {
+    ...sessionReading,
+    projectedExhaustionAt: earliest(
+      candidatesFor(
+        sessionReading,
+        limits.sessionCostLimit,
+        limits.sessionTokenLimit,
+        sessionSinceFetch,
+        sessionReading.endsAt,
+      ),
+    ),
+  };
+  const weekly: WindowState = {
+    ...weeklyReading,
+    projectedExhaustionAt: earliest(
+      candidatesFor(
+        weeklyReading,
+        limits.weeklyCostLimit,
+        limits.weeklyTokenLimit,
+        weeklySinceFetch,
+        weeklyResetsAt,
+      ),
+    ),
+  };
+  const projectedExhaustionAt = earliest([
+    session.projectedExhaustionAt,
+    weekly.projectedExhaustionAt,
+  ]);
 
   const byModel = groupBy(weekEntries, (e) => e.model).map(({ key, agg }) => ({
     model: key,
