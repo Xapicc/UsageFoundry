@@ -14,7 +14,12 @@
 // writer, and the setting carried in the same `--settings` overlay as the
 // sandbox write set. The vault rides `permissions.additionalDirectories` there,
 // as `buildArgs` gives it since 2026-11-08, with a skill, an agent and a
-// CLAUDE.md planted in its `.claude/`; a reader that is shown any of them fails. Every write is judged by the file afterwards, never by
+// CLAUDE.md planted in its `.claude/`; a reader that is shown any of them fails.
+// A reader also carries `buildArgs`' `claudeMdExcludes` entry for the vault, and
+// a run in a linked worktree `--project-config-root <its worktree>`, both since
+// 2026-11-09. The main checkout holds an untracked skill, agent, command and a
+// `settings.local.json` with a `SessionStart` hook; a worktree run with the flag
+// that is shown any of them fails. Every write is judged by the file afterwards, never by
 // what the tool said; what the tool said is printed beside it, because that is
 // what the model reads.
 //
@@ -36,6 +41,11 @@
 //      checkout's file.
 //   8. `Bash` with the setting on, in a turn of its own because nested in an
 //      agent's sandbox a Bash call can hang until the turn's timeout.
+//   9. a reader whose cwd is a plain folder containing the vault reads a note:
+//      none of the vault's CLAUDE.md files may reach it; 9c. the same without
+//      the `claudeMdExcludes` entry, as the control that shows they would.
+//   10c. a worktree run without `--project-config-root`, as the control that
+//      shows the main checkout's planted `.claude/` would reach it.
 //
 // PROBE_TURN=<n> runs only that turn; PROBE_DEBUG=1 prints every tool result
 // whole; PROBE_DUMP_DIR=<dir> keeps each turn's first request to the model.
@@ -115,7 +125,26 @@ function plant() {
   fs.mkdirSync(path.join(vault, ".claude", "agents"), { recursive: true });
   fs.writeFileSync(path.join(vault, ".claude", "agents", "planted.md"), "---\nname: vault-planted-agent\ndescription: VAULT-PLANTED-AGENT-MARKER\n---\nbody\n");
   fs.writeFileSync(path.join(vault, "CLAUDE.md"), "VAULT-PLANTED-CLAUDE-MD-MARKER\n");
+  // Deeper than the root, and loaded on access rather than at start.
+  fs.mkdirSync(path.join(vault, "sub"), { recursive: true });
+  fs.writeFileSync(path.join(vault, "sub", "CLAUDE.md"), "VAULT-PLANTED-SUB-CLAUDE-MD-MARKER\n");
+  fs.writeFileSync(path.join(vault, "sub", "deep.md"), "VAULT-DEEP-BODY\n");
+  // What anything that writes the main checkout could leave there for every
+  // later worktree run, untracked: the CLI's fallback for a linked worktree.
+  const mainSkill = path.join(repo, ".claude", "skills", "main-planted-skill");
+  fs.mkdirSync(mainSkill, { recursive: true });
+  fs.writeFileSync(path.join(mainSkill, "SKILL.md"), "---\nname: main-planted-skill\ndescription: MAIN-PLANTED-SKILL-MARKER\n---\nbody\n");
+  for (const kind of ["agents", "commands"]) {
+    fs.mkdirSync(path.join(repo, ".claude", kind), { recursive: true });
+    fs.writeFileSync(path.join(repo, ".claude", kind, "main-planted.md"), `---\nname: main-planted-${kind}\ndescription: MAIN-PLANTED-${kind.toUpperCase()}-MARKER\n---\nbody\n`);
+  }
+  fs.writeFileSync(
+    path.join(repo, ".claude", "settings.local.json"),
+    JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: "command", command: "echo MAIN-PLANTED-HOOK-MARKER" }] }] } }),
+  );
 }
+const MAIN_MARKERS = ["MAIN-PLANTED-SKILL-MARKER", "MAIN-PLANTED-AGENTS-MARKER", "MAIN-PLANTED-COMMANDS-MARKER", "MAIN-PLANTED-HOOK-MARKER"];
+const VAULT_MARKERS = ["VAULT-PLANTED-SKILL-MARKER", "VAULT-PLANTED-AGENT-MARKER", "VAULT-PLANTED-CLAUDE-MD-MARKER", "VAULT-PLANTED-SUB-CLAUDE-MD-MARKER", "vault-planted-skill", "vault-planted-agent"];
 
 const exists = (p) => fs.existsSync(p);
 const contains = (p, s) => exists(p) && fs.readFileSync(p, "utf8").includes(s);
@@ -229,6 +258,15 @@ function vaultWriterSteps() {
   ];
 }
 
+// The vault's CLAUDE.md files load when a file beside or below them is read,
+// so the reads are the trigger; the write is the reader's deny, still in force.
+function containingReaderSteps() {
+  return [
+    ...isolatedSteps().filter((s) => /\(reader\)/.test(s.label)),
+    { label: "Read a deeper vault note (reader)", name: "Read", input: () => ({ file_path: path.join(vault, "sub", "deep.md") }), expect: "read", check: (_ctx, r) => r.includes("VAULT-DEEP-BODY") },
+  ];
+}
+
 function projectSettingsSteps(expectOutside) {
   return [
     W("Write in its own checkout", path.join(worktree, "p-own.txt"), "lands"),
@@ -285,8 +323,11 @@ function startStub(calls, results, ctx) {
         for (const marker of ["PLANTED-SKILL-MARKER", "PLANTED-AGENT-MARKER", "PLANTED-CLAUDE-MD-MARKER", "planted-probe-skill", "planted-probe-agent"]) {
           if (raw.includes(marker)) ctx.markers.add(marker);
         }
-        for (const marker of ["VAULT-PLANTED-SKILL-MARKER", "VAULT-PLANTED-AGENT-MARKER", "VAULT-PLANTED-CLAUDE-MD-MARKER", "vault-planted-skill", "vault-planted-agent"]) {
+        for (const marker of VAULT_MARKERS) {
           if (raw.includes(marker)) ctx.vaultMarkers.add(marker);
+        }
+        for (const marker of MAIN_MARKERS) {
+          if (raw.includes(marker)) ctx.mainMarkers.add(marker);
         }
         // On the first request only, before any tool input has named a path:
         // whether the environment section's "Additional working directories"
@@ -326,7 +367,7 @@ function startStub(calls, results, ctx) {
   return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve({ server, port: server.address().port })));
 }
 
-async function turn(label, { cwd, permissionMode, settingInOverlay, addDirs = [], additionalDirectories, vaultBy = "additionalDirectories", readerOfVault = false, projectSetting, steps, timeoutMs = TURN_TIMEOUT_MS }) {
+async function turn(label, { cwd, permissionMode, settingInOverlay, addDirs = [], additionalDirectories, vaultBy = "additionalDirectories", readerOfVault = false, projectSetting, steps, timeoutMs = TURN_TIMEOUT_MS, claudeMdExcludes = true, projectConfigRoot = true }) {
   plantFresh();
   if (projectSetting !== undefined) {
     fs.mkdirSync(path.join(cwd, ".claude"), { recursive: true });
@@ -337,12 +378,15 @@ async function turn(label, { cwd, permissionMode, settingInOverlay, addDirs = []
     { ...s, step: true },
   ]);
   const results = new Map();
-  const ctx = { turnId: label.split(".")[0], scratchpad: null, markers: new Set(), vaultMarkers: new Set(), mainRequests: 0, toolNames: [], scratchListed: false, vaultListed: false };
+  const ctx = { turnId: label.split(".")[0], scratchpad: null, markers: new Set(), vaultMarkers: new Set(), mainMarkers: new Set(), mainRequests: 0, toolNames: [], scratchListed: false, vaultListed: false };
   const { server, port } = await startStub(calls, results, ctx);
   // The write set an isolated run gets (`sandboxSettings`): its checkout, the
-  // repository's .git, the config dir and the temporary directory.
-  const allowWrite = [cwd, path.join(cwd === vaultWorktree ? vault : repo, ".git"), configDir, tmp];
+  // repository's .git, the config dir and the temporary directory. A run on a
+  // plain folder has no repository to add.
+  const inWorktree = cwd === worktree || cwd === vaultWorktree;
+  const allowWrite = [cwd, ...(cwd === mount ? [] : [path.join(cwd === vaultWorktree ? vault : repo, ".git")]), configDir, tmp];
   const workingDirs = [...(additionalDirectories ?? []), ...(vaultBy === "additionalDirectories" ? [vault] : [])];
+  const excludesVault = readerOfVault && vaultBy === "additionalDirectories" && claudeMdExcludes;
   const overlay = {
     apiKeyHelper: "",
     ...(settingInOverlay || workingDirs.length > 0
@@ -353,11 +397,14 @@ async function turn(label, { cwd, permissionMode, settingInOverlay, addDirs = []
           },
         }
       : {}),
+    // `buildArgs`' spelling: a one-character class for each of `()+@|`.
+    ...(excludesVault ? { claudeMdExcludes: [`${vault.replace(/[()+@|]/g, (c) => `[${c}]`)}/**`] } : {}),
     sandbox: { filesystem: readerOfVault ? { allowWrite, denyWrite: [vault] } : { allowWrite } },
   };
   const args = [
     "-p", "--output-format", "stream-json", "--verbose",
     "--permission-mode", permissionMode,
+    ...(inWorktree && projectConfigRoot ? ["--project-config-root", cwd] : []),
     "--disallowedTools", "Bash(pkill:*)", "Bash(killall:*)", ...(readerOfVault ? [`Edit(/${vault}/**)`] : []),
     ...(vaultBy === "add-dir" ? ["--add-dir", vault] : []), ...addDirs.flatMap((d) => ["--add-dir", d]),
     "--settings", JSON.stringify(overlay),
@@ -393,12 +440,22 @@ async function turn(label, { cwd, permissionMode, settingInOverlay, addDirs = []
   console.log(`  worktree tools on offer: ${["EnterWorktree", "ExitWorktree"].filter((t) => ctx.toolNames.includes(t)).join(", ") || "none"}`);
   if (addDirs.length > 0 || additionalDirectories) console.log(`  planted markers seen in the request: ${[...ctx.markers].join(", ") || "none"}`);
   console.log(`  the vault's planted markers seen in the request: ${[...ctx.vaultMarkers].join(", ") || "none"}`);
+  console.log(`  the main checkout's planted markers seen in the request: ${[...ctx.mainMarkers].join(", ") || "none"}`);
+  console.log(`  --project-config-root: ${inWorktree && projectConfigRoot ? "yes" : "no"}; claudeMdExcludes for the vault: ${excludesVault ? "yes" : "no"}`);
   let ok = true;
   // A reader handed the vault through the overlay must be shown nothing the
-  // vault's `.claude/` holds; under `--add-dir` that is the control's to show.
-  if (readerOfVault && vaultBy === "additionalDirectories") {
+  // vault holds; under `--add-dir`, or without the exclusion in a folder that
+  // contains the vault, that is the control's to show.
+  if (readerOfVault && vaultBy === "additionalDirectories" && (excludesVault || cwd !== mount)) {
     ok = ctx.vaultMarkers.size === 0;
-    console.log(`  ${ok ? "ok  " : "FAIL"} the vault's planted skill, agent and CLAUDE.md kept from a reader's request`);
+    console.log(`  ${ok ? "ok  " : "FAIL"} the vault's planted skill, agent and CLAUDE.md files kept from a reader's request`);
+  }
+  // A run in the repository's worktree with the flag must be shown nothing the
+  // main checkout holds untracked.
+  if (cwd === worktree && projectConfigRoot) {
+    const held = ctx.mainMarkers.size === 0;
+    if (!held) ok = false;
+    console.log(`  ${held ? "ok  " : "FAIL"} the main checkout's planted skill, agent, command and hook kept from a worktree run`);
   }
   calls.forEach((c, i) => {
     if (!c.step) return;
@@ -442,6 +499,9 @@ const TURNS = [
   ["6", "setting only in the checkout's .claude/settings.json", { cwd: worktree, permissionMode: "bypassPermissions", settingInOverlay: false, projectSetting: true, readerOfVault: true, steps: projectSettingsSteps("refused") }],
   ["7", "setting on in --settings, false in the checkout's .claude/settings.json", { cwd: worktree, permissionMode: "bypassPermissions", settingInOverlay: true, projectSetting: false, readerOfVault: true, steps: projectSettingsSteps("refused") }],
   ["8", "Bash under the setting, bypassPermissions", { cwd: worktree, permissionMode: "bypassPermissions", settingInOverlay: true, readerOfVault: true, steps: bashSteps(), timeoutMs: Number(process.env.PROBE_BASH_TURN_TIMEOUT_MS ?? 90_000) }],
+  ["9", "reader whose cwd is a plain folder containing the vault, with claudeMdExcludes", { cwd: mount, permissionMode: "bypassPermissions", settingInOverlay: true, readerOfVault: true, steps: containingReaderSteps() }],
+  ["9c", "reader whose cwd is a plain folder containing the vault, no claudeMdExcludes (control)", { cwd: mount, permissionMode: "bypassPermissions", settingInOverlay: true, readerOfVault: true, claudeMdExcludes: false, steps: containingReaderSteps() }],
+  ["10c", "isolated run without --project-config-root (control)", { cwd: worktree, permissionMode: "bypassPermissions", settingInOverlay: true, readerOfVault: true, projectConfigRoot: false, steps: projectSettingsSteps("refused") }],
 ];
 
 let exitCode = 0;
