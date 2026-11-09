@@ -1612,8 +1612,12 @@ export function buildArgs(opts: {
    * The directory the cycle is spawned in, for a CLI that resolves its
    * workspace from a flag rather than from `cwd`.
    *
-   * Ignored by `buildArgs`, which needs no flag for it: `runIteration` passes
+   * `buildArgs` needs no flag for the workspace itself: `runIteration` passes
    * the same path to `spawn` and Claude Code takes its workspace from there.
+   * For an isolated run it is also `--project-config-root`, so that a linked
+   * worktree reads its `.claude/` and settings files from itself rather than
+   * from its main checkout (`docs/agent/security/project-config-discovery.md`).
+   * Absent leaves that flag off, which is the CLI's own fallback.
    * `buildCodexArgs` emits it as `-C`, and the reason it must is that `-C` is
    * also what `workspace-write` grants — a Codex cycle that stated no working
    * root would take one from wherever the process happened to start, and the
@@ -1709,6 +1713,17 @@ export function buildArgs(opts: {
   if (opts.permissionMode) args.push("--permission-mode", opts.permissionMode);
   if (opts.forwardSubAgentText) args.push("--forward-subagent-text");
   if (opts.effort) args.push("--effort", opts.effort);
+  // An isolated run reads its project config from its own worktree and nowhere
+  // else. Without the flag the pinned CLI falls back to the main checkout for a
+  // linked worktree, and the main checkout is not the run's: measured on
+  // 2.1.319, its untracked `.claude/skills/`, `agents/` and `commands/` were
+  // offered wherever the worktree had no directory of that name, and its
+  // `.claude/settings.local.json` outranked the worktree's own and ran its
+  // `SessionStart` hook. With the flag none of those reached the run, and the
+  // worktree's committed `.claude/` trees, its `settings.json` hooks and its
+  // own `settings.local.json` still applied. Transcripts, auto-memory and
+  // `--resume` were unchanged. See `workDir`.
+  if (opts.isolated && opts.workDir) args.push("--project-config-root", opts.workDir);
   // One encoder for every spawn site, because every way of getting the shape
   // wrong is silent when a member is merely offered and fails the spawn outright
   // when it is selected — see `agentsFlagValue` and `sessionAgentArgs`. This

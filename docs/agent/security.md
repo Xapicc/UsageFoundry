@@ -116,6 +116,13 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - What it does not cover.
 - What is still open.
 
+## [What a work cycle loads from directories that are not its own](security/project-config-discovery.md)
+
+- An isolated run reads its project config from its own worktree, through `--project-config-root <workDir>`, because without the flag the CLI reads part of it from the main checkout.
+- The flag changed nothing else that was measured, and it costs the operator's uncommitted config in the main checkout.
+- A run on a plain folder is still offered its ancestors' `.claude/`, and that is accepted.
+- What it does not cover.
+
 ## [Middleware, login and sessions](security/middleware-login-and-sessions.md)
 
 - A monitor must not be handed the credential that starts agents. (was line 27)

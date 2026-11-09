@@ -3345,6 +3345,27 @@ describe("buildArgs", () => {
     assert.deepEqual(excludeFor("/w/V$^.x%,;=&'~#"), ["/w/V$^.x%,;=&'~#/**"]);
   });
 
+  it("reads an isolated run's project config from its own worktree, on every cycle", () => {
+    // Measured on 2.1.319: without the flag a linked worktree was offered its
+    // main checkout's untracked skills, agents and commands wherever it had no
+    // directory of that name, and the main checkout's `settings.local.json`
+    // outranked its own and ran a `SessionStart` hook in the run. With the flag
+    // none of that reached it and its own committed `.claude/` still did.
+    // `--resume` restores no flag, so a cycle that dropped it would reopen the
+    // door mid-run.
+    for (const resumeSessionId of [null, "sess-1"]) {
+      const args = buildArgs({ ...base, isolated: true, resumeSessionId, workDir: "/w/.uf-worktrees/repo-1" });
+      assert.equal(args.filter((a) => a === "--project-config-root").length, 1);
+      assert.equal(args[args.indexOf("--project-config-root") + 1], "/w/.uf-worktrees/repo-1");
+    }
+    // A run in the operator's own checkout or a plain folder has no main
+    // checkout to fall back to, and the flag left a plain folder's ancestors
+    // exactly as they were (measured): its argv keeps its bytes.
+    assert.equal(buildArgs({ ...base, isolated: false, workDir: "/w/repo" }).includes("--project-config-root"), false);
+    // No path, no flag: the CLI refuses a relative or missing one at the spawn.
+    assert.equal(buildArgs({ ...base, isolated: true }).includes("--project-config-root"), false);
+  });
+
   it("names no plugin flag when none are enabled", () => {
     // A bare `--plugin-dir` would swallow the following flag as its value.
     assert.equal(buildArgs({ ...base, isolated: false }).includes("--plugin-dir"), false);
