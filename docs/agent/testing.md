@@ -266,9 +266,14 @@ Cases in `loopSection.test.ts` and `workflows.test.ts`, each listed under its ow
 | Test file | Also in |
 |---|---|
 | `git.test.ts` | [landing] |
-| `gitFilterProbe.test.ts` |  |
 | `runTrailers.test.ts` |  |
 | `runTrailersCycle.test.ts` |  |
+
+## [The filter probe in front of this app's git](testing/git-filter-probe.md)
+
+| Test file | Also in |
+|---|---|
+| `gitFilterProbe.test.ts` |  |
 
 ## [Landing, delivery and the land gate](testing/landing-and-delivery.md)
 
