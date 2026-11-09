@@ -241,6 +241,7 @@ Cases in `loopSection.test.ts` and `workflows.test.ts`, each listed under its ow
 | `dto.test.ts` |  |
 | `proposalContinuation.test.ts` |  |
 | `remoteReads.test.ts` |  |
+| `src/app/api/chat/[id]/proposals/route.test.ts` |  |
 
 ## [Taskboard authority, moves and a run's board](testing/taskboard-authority-and-moves.md)
 
