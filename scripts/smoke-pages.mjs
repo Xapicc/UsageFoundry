@@ -30,6 +30,13 @@
  * equal to `clientWidth` and assertion 3 green. `clippedOverflow` below carries
  * the measurement that proved it.
  *
+ * `/` is visited twice. The second visit has its `/api/usage` poll answered from
+ * a fixture (`usageWithCodexAndLiveTelemetry`) so the two cards the sandbox cannot
+ * produce — `CodexWindows` and `LiveTelemetry` with a run working — are drawn
+ * under the same four assertions. It is still a load check: nothing is clicked
+ * and no text is looked for; the only extra check is on the harness, that the
+ * fixture was in fact served.
+ *
  * Assertion 2 has no exception list, and `/knowledge` is why it does not need
  * one. That page is the only one here whose interesting half — the note list,
  * the backlinks, the health rows, the graph — exists only once a knowledge base
@@ -306,6 +313,87 @@ function seedTranscripts(claudeHome, root) {
     );
     fs.writeFileSync(path.join(projectDir, `${session.id}.jsonl`), lines.join("\n") + "\n");
   }
+}
+
+/**
+ * What `/api/usage` carries for the two cards the sandbox cannot make it carry
+ * for real: `codex` (the `CodexWindows` section of the window card) and
+ * `telemetry` (the `LiveTelemetry` card with a run working).
+ *
+ * A fixture answered in the browser, not a staged install, and each half has its
+ * own reason. `codex` is set only when `codexSignInStored()` finds
+ * `$CODEX_HOME/auth.json`, and then `codexUsage()` asks a spawned `codex
+ * app-server` for the account's rate limits over its own JSON-RPC; staging that
+ * means a stub app server that speaks the protocol, and what it would exercise
+ * is the server's reading of a plan, which `codexAccount.test.ts` already owns.
+ * This file is about what the page does with the answer. `telemetry` is a
+ * `GROUP BY` over `otlp_requests` joined to a run whose status is `running`, and
+ * the sandbox's `CLAUDE_BIN` exits in milliseconds, so no run is ever live long
+ * enough for a visit to see one.
+ *
+ * Built from the real response rather than written whole: every other field on
+ * the page is then the server's, and only these two keys are invented. Times are
+ * relative to the response's own `snapshot.now` for `seedTranscripts`'s reason —
+ * `currentCodexReading` drops a window whose reset is behind `now`, so a fixed
+ * instant would draw the hatched "reset since this reading" meters instead.
+ *
+ * Two runs are listed of three, so the card's "cheaper runs are in the total but
+ * not listed" line is drawn as well, and the listed ids are invented, differing in the first eight characters
+ * because the card shows only those: nothing here is a real run, credential or
+ * transcript.
+ */
+function usageWithCodexAndLiveTelemetry(real) {
+  const now = real?.snapshot?.now;
+  if (typeof now !== "number") {
+    throw new Error(
+      `GET /api/usage answered a snapshot.now of ${JSON.stringify(now)}, so the fixture has no instant ` +
+        "to put the Codex resets and the last request after.",
+    );
+  }
+  const minute = 60_000;
+  const lastAt = now - 20_000;
+  return {
+    ...real,
+    codex: {
+      plan: {
+        session: { utilization: 0.42, resetsAt: now + 150 * minute },
+        weekly: { utilization: 0.18, resetsAt: now + 4 * 24 * 60 * minute },
+        scopedWeekly: [],
+        fetchedAt: now - minute,
+        sessionMinutes: 300,
+        weeklyMinutes: 10_080,
+        planType: "plus",
+        limitReached: null,
+      },
+      error: null,
+    },
+    telemetry: {
+      requests: 14,
+      costUSD: 1.37,
+      tokens: 482_000,
+      lastAt,
+      runCount: 3,
+      workingRunCount: 1,
+      runs: [
+        {
+          runId: "0000b001-0000-4000-8000-000000000001",
+          status: "running",
+          requests: 9,
+          costUSD: 0.91,
+          tokens: 301_000,
+          lastAt,
+        },
+        {
+          runId: "0000b002-0000-4000-8000-000000000002",
+          status: "completed",
+          requests: 4,
+          costUSD: 0.4,
+          tokens: 150_000,
+          lastAt: now - 12 * minute,
+        },
+      ],
+    },
+  };
 }
 
 /**
@@ -785,10 +873,52 @@ function widestOffender() {
   return worst;
 }
 
-async function checkPage(context, baseUrl, route, width, skin) {
+/**
+ * Answer the page's own `/api/usage` polls with the real response plus the
+ * fixture's two keys, and count how many it answered.
+ *
+ * The count is a check on this harness and not on the interface: a route
+ * pattern that stopped matching (the poll moved, or its query changed shape)
+ * would leave the visit drawing the plain page under the fixtured visit's name
+ * and report both cards present. `/api/usage/remaining` is a different route and
+ * is left alone by matching the whole pathname.
+ *
+ * A fixture that fails is `abort`ed and recorded rather than thrown: an error
+ * inside a route handler is not delivered to `checkPage`, and the request would
+ * hang until the navigation timeout and be reported as a timeout.
+ */
+async function serveUsageFixture(page) {
+  const served = { count: 0, errors: [] };
+  await page.route(
+    (url) => url.pathname === "/api/usage",
+    async (route) => {
+      try {
+        const response = await route.fetch();
+        if (!response.ok()) {
+          await route.fulfill({ response });
+          return;
+        }
+        const body = usageWithCodexAndLiveTelemetry(await response.json());
+        served.count += 1;
+        await route.fulfill({
+          status: 200,
+          headers: { "content-type": "application/json", "cache-control": "no-store" },
+          body: JSON.stringify(body),
+        });
+      } catch (error) {
+        served.errors.push(error.message);
+        await route.abort();
+      }
+    },
+  );
+  return served;
+}
+
+async function checkPage(context, baseUrl, route, width, skin, withUsageFixture = false) {
   const page = await context.newPage();
   const problems = [];
   const consoleErrors = [];
+  const fixture = withUsageFixture ? await serveUsageFixture(page) : null;
   page.on("console", (message) => {
     if (message.type() === "error") consoleErrors.push(message.text());
   });
@@ -808,6 +938,16 @@ async function checkPage(context, baseUrl, route, width, skin) {
     }
 
     await page.waitForTimeout(SETTLE_MS);
+
+    if (fixture !== null) {
+      for (const message of fixture.errors) problems.push(`usage fixture failed: ${message}`);
+      if (fixture.count === 0 && fixture.errors.length === 0) {
+        problems.push(
+          "usage fixture was never requested: this visit drew the plain page, not the Codex " +
+            "and live-telemetry cards",
+        );
+      }
+    }
 
     // Not a check of the interface but of this harness: everything the skin axis
     // asserts is worthless if the attribute never arrived, and it would arrive
@@ -952,9 +1092,16 @@ async function main() {
 
     await requireSeededUsage(baseUrl, headers);
     const seeds = await seed(baseUrl, headers, sandbox.workspace);
-    const pages = routes(patterns, seeds);
+    const pages = [
+      ...routes(patterns, seeds),
+      // The second visit to `/`, named apart so a failure says which of the two
+      // it was. Appended rather than replacing the plain one: that visit is the
+      // only one that draws the idle line where the live card goes and no Codex
+      // section, which is what most installs see.
+      { pattern: "/ [codex + live telemetry]", url: "/", withUsageFixture: true },
+    ];
     console.log(
-      `${pages.length} pages × ${SKINS.length} skins × ${WIDTHS.length} widths ` +
+      `${pages.length} page visits × ${SKINS.length} skins × ${WIDTHS.length} widths ` +
         `against ${baseUrl}\n`,
     );
 
@@ -975,8 +1122,8 @@ async function main() {
             [storageKey, skin.attribute],
           );
         }
-        for (const { pattern: name, url } of pages) {
-          const result = await checkPage(context, baseUrl, url, width, skin);
+        for (const { pattern: name, url, withUsageFixture } of pages) {
+          const result = await checkPage(context, baseUrl, url, width, skin, withUsageFixture);
           checked += 1;
           const where = `${skin.name.padEnd(8)} ${String(width).padEnd(5)}`;
           if (result.problems.length === 0) {
@@ -999,7 +1146,7 @@ async function main() {
   const failedPages = new Set(failures.map((f) => f.name));
   console.log(
     `\n${checked - failures.length}/${checked} page loads clean; ` +
-      `${failedPages.size} of the ${checked / (SKINS.length * WIDTHS.length)} pages ` +
+      `${failedPages.size} of the ${checked / (SKINS.length * WIDTHS.length)} page visits ` +
       `failed in some skin at some width.`,
   );
   if (failures.length > 0) {
