@@ -7,6 +7,37 @@ The runs list, the run inspector and `/runs/live` are in
 
 ## Verified
 
+- **`npm run smoke-pages` draws `/`'s meters filled, with a percentage and a
+  run-out line, 2026-11-09.** A third visit to `/`, named `/ [plan ceilings +
+  run-out]`, answers the page's `/api/usage` polls with the server's response
+  rewritten by `usageWithPlanCeilings`: both windows provider-backed (62% and
+  38% used, `fractionMetric` and `limitMetric` "plan", `limit` null), a `plan`
+  and `currentPlan` fetched a minute ago, `meta.hasSessionCeiling` and
+  `hasWeeklyCeiling` true, and both windows projected to run out before their
+  reset. A fixture rather than a staged install because the sandbox has no
+  Claude credential and a ceiling set through `PUT /api/settings` would be read
+  by every later visit. Against the standalone bundle: 28 visits, **112/112
+  clean**, exit 0. A throwaway copy cut down to the three visits of `/`
+  (not committed) read the body text in all four skin and width combinations:
+  the plain visit still carries "No percentages available", "no ceiling set" and
+  "Nothing to project against" and no "% left"; the codex visit is unchanged
+  (the same three strings plus `Codex` and "working"); the new one has none of
+  the three strings, "38% left" and "62% left", and a "Runs out" line under each
+  meter. All four screenshots were read. At 390px both run-out lines wrap to two
+  lines inside a 324px box with `scrollWidth` equal to `clientWidth`, so nothing
+  clips. **Caveat:** the figures are invented, so this is the page's drawing of a
+  provider reading, not the server's; the weekly heading first read "Trailing 7
+  days" beside a reset instant because the fixture kept the sandbox's label, and
+  `buildSnapshot` calls a week with a known reset "Weekly quota", which the
+  fixture now sets. Not drawn: a per-model wall line, a guard band above the
+  fill, the "Lasts to reset" and "Reset since this reading" outlooks, and the
+  install card with a limit. The `requireKeys` guard that stops the fixture
+  overriding a field the response no longer carries was exercised: with a
+  nonexistent key added to its list in the cut-down copy, exactly the four new
+  visits failed with "GET /api/usage no longer carries
+  `snapshot.session.noSuchWindowKey`", the other eight loads stayed clean, and
+  the pass exited 1.
+
 - **`npm run smoke-pages` draws `CodexWindows` and the live `LiveTelemetry`
   card on `/`, 2026-11-09.** A second visit to `/`, named `/ [codex + live
   telemetry]`, answers the page's `/api/usage` polls with the server's own
