@@ -2619,10 +2619,11 @@ export function refusalStopReason(
  * spawns). A local run is still Claude Code.
  *
  * `cliSentence` is the CLI's own account of why, when it gave one — a startup
- * failure's stderr line, or the text of a result that said `is_error: true` —
- * and it is only ever quoted on the plain exit. A cycle that could not resume
- * its session names the hand command instead, which is the answer to a
- * different question.
+ * failure's stderr line, or the text or `errors` of a result that said
+ * `is_error: true`. On the plain exit it is the whole account. A cycle that
+ * could not resume its session leads with the hand command, which is what the
+ * operator can do, and quotes the sentence after it as a second sentence, which
+ * is why: the command answers a different question and must not be displaced.
  */
 export function exitStopReason(
   provider: RunProviderDTO | null,
@@ -2640,7 +2641,8 @@ export function exitStopReason(
       : `${cli} exited with code ${exitCode}.`;
   }
   const command = codex ? `codex resume ${resumeTarget}` : `claude --resume ${resumeTarget}`;
-  return `Could not resume this run's ${cli} session (exit ${exitCode}). Its work is still on disk; pick it up by hand with: ${command}`;
+  const pickUp = `Could not resume this run's ${cli} session (exit ${exitCode}). Its work is still on disk; pick it up by hand with: ${command}`;
+  return cliSentence ? `${pickUp}. ${cli} said: “${cliSentence}”.` : pickUp;
 }
 
 /**
@@ -9577,6 +9579,28 @@ function attachmentSubtype(ev: Record<string, unknown>): unknown {
     : undefined;
 }
 
+/**
+ * The CLI's sentence off a result's `errors` array, or null when there is none.
+ *
+ * `errors` is `z.array(z.string())` on the error variants of the result schema
+ * (`error_during_execution`, `error_max_turns`, `error_max_budget_usd`,
+ * `error_max_structured_output_retries`) and absent on `success`, which carries
+ * `result` instead, read out of the 2.1.319 binary. Its description calls it
+ * the failure message of a known startup failure, which is the measured
+ * refusal of a `--resume` of an unknown id: no `result` string, one entry.
+ * More than one entry is unmeasured, so they are joined into one line rather
+ * than the first taken and the rest lost, and anything that is not a string is
+ * skipped rather than trusted, as a build that moves the field must not break
+ * the cycle that carried it.
+ */
+function resultErrorsSentence(raw: unknown): string | null {
+  if (!Array.isArray(raw)) return null;
+  const messages = raw.filter(
+    (entry): entry is string => typeof entry === "string" && entry.trim() !== "",
+  );
+  return messages.length === 0 ? null : messages.join(" ");
+}
+
 /** Interpret one line of Claude Code's `stream-json` output. */
 function handleStreamLine(
   runId: string,
@@ -9905,8 +9929,16 @@ function handleStreamLine(
     // fails the cycle stays the exit code's to say, which is 1 on every shape
     // measured; an exit-0 `is_error` result is unmeasured, and promoting it to
     // `isError` would change what ends a run on a guess.
-    if (ev.is_error === true && typeof ev.result === "string" && ev.result.trim()) {
-      acc.errorText = clipCliSentence(ev.result);
+    //
+    // From `errors` when there is no `result` string, which is the shape of a
+    // refused resume (`error_during_execution`, zero turns): the CLI's only
+    // account of why sits there, and it was read by nobody.
+    if (ev.is_error === true) {
+      const said =
+        typeof ev.result === "string" && ev.result.trim()
+          ? ev.result
+          : resultErrorsSentence(ev.errors);
+      if (said) acc.errorText = clipCliSentence(said);
     }
 
     // Second-best source for a refusal, behind the `<synthetic>` message: the

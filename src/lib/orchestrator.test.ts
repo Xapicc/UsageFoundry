@@ -5336,6 +5336,69 @@ describe("handleStreamLine on an unrecognised event type", () => {
     assert.equal(logs.filter((l) => l.includes("does not recognise")).length, 1);
   });
 
+  // The sentence a failed `result` gives for itself, which the stop reason of a
+  // cycle that failed on its exit code quotes. `errors` is an array of strings
+  // on the error variants of the 2.1.319 result schema and the refused resume
+  // is the one measured carrier: `scripts/cli-capture` plan e5, cycle 2.
+  describe("the sentence off a result that says it failed", () => {
+    const refusedResume = {
+      type: "result",
+      subtype: "error_during_execution",
+      duration_ms: 0,
+      duration_api_ms: 0,
+      is_error: true,
+      num_turns: 0,
+      stop_reason: null,
+      session_id: "00000000-0000-4000-8000-000000000000",
+      total_cost_usd: 0,
+      permission_denials: [],
+      errors: ["No conversation found with session ID: 00000000-0000-4000-8000-000000000000"],
+      result_index: 0,
+    };
+
+    it("reads it from errors when the result has no result string", () => {
+      const { acc } = run([refusedResume]);
+      assert.equal(
+        acc.errorText,
+        "No conversation found with session ID: 00000000-0000-4000-8000-000000000000",
+      );
+      // Only the text is taken: whether the cycle failed is still the subtype's
+      // and the exit code's to say, as before.
+      assert.equal(acc.isError, true);
+      assert.equal(acc.resultTurns, 0);
+    });
+
+    it("prefers a result string, as the deferred-call refusal carries", () => {
+      const { acc } = run([
+        {
+          ...refusedResume,
+          subtype: "success",
+          result: "mcp__dsrv__ping isn't available, so its deferred call didn't run.",
+          errors: ["ignored"],
+        },
+      ]);
+      assert.equal(acc.errorText, "mcp__dsrv__ping isn't available, so its deferred call didn't run.");
+    });
+
+    // More than one entry is unmeasured, so what is pinned is that none is lost
+    // and that a build which moves the field cannot break the cycle that carried it.
+    it("joins several entries, skips what is not a string, and clips what is long", () => {
+      assert.equal(
+        run([{ ...refusedResume, errors: ["first", 7, null, "  ", "second\nline"] }]).acc.errorText,
+        "first second line",
+      );
+      const long = run([{ ...refusedResume, errors: ["x".repeat(5_000)] }]).acc.errorText;
+      assert.ok(long !== null && long.length < 1_000 && long.endsWith("…"), String(long?.length));
+      for (const errors of [[], "not an array", null, [42]]) {
+        assert.equal(run([{ ...refusedResume, errors }]).acc.errorText ?? null, null);
+      }
+    });
+
+    it("reads nothing off a result that does not say it failed", () => {
+      const { acc } = run([{ ...refusedResume, is_error: false }]);
+      assert.equal(acc.errorText ?? null, null);
+    });
+  });
 });
 
 /**
