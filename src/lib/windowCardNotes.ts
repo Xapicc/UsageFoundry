@@ -5,8 +5,8 @@ import { fmtPct } from "./format";
  * Where the 5-hour reset instant on the dashboard's window card came from.
  *
  * Three provenances for one clock, and each gets its own sentence: the
- * provider's instant matches `/usage` exactly, a pinned one was typed by the
- * operator, and a derived one can sit minutes off.
+ * provider's instant matches Claude Code's `/usage` exactly, a pinned one was
+ * typed by the operator, and a derived one can sit minutes off.
  */
 export type SessionResetSource = "provider" | "pinned" | "derived";
 

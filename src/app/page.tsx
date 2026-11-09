@@ -555,14 +555,14 @@ export default function Dashboard() {
             <ul className="mt-2 max-w-[68ch] list-disc space-y-1 pl-5 marker:text-ink-faint">
               {cardNotes.sessionResetSource === "provider" ? (
                 <li>
-                  The 5-hour reset is Anthropic&rsquo;s own instant, so it matches{" "}
-                  <span className="mono">/usage</span> exactly.
+                  The 5-hour reset is Anthropic&rsquo;s own instant, so it matches
+                  Claude Code&rsquo;s <span className="mono">/usage</span> exactly.
                 </li>
               ) : cardNotes.sessionResetSource === "derived" ? (
                 <li>
                   The 5-hour reset (marked ~) is derived from your own turns, so it
-                  can sit minutes off what <span className="mono">/usage</span>{" "}
-                  reports. <Link href="/settings">Pin it</Link> if they disagree.
+                  can sit minutes off what Claude Code&rsquo;s{" "}
+                  <span className="mono">/usage</span> reports. <Link href="/settings">Pin it</Link> if they disagree.
                 </li>
               ) : null}
               {anyProviderReading && (

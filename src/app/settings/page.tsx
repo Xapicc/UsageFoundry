@@ -3503,8 +3503,8 @@ export default function SettingsPage() {
             label="Read plan usage from Anthropic"
             description={
               <>
-                The account-wide figure <span className="mono">/usage</span>{" "}
-                shows, read with the credential the CLI already keeps here; the
+                The account-wide figure Claude Code&rsquo;s{" "}
+                <span className="mono">/usage</span> shows, read with the credential the CLI already keeps here; the
                 only percentage on the dashboard that is measured rather than
                 estimated
               </>
