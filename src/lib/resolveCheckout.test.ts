@@ -617,3 +617,128 @@ describe("a symbolic link at the path a resolution's checkout is made in", () =>
     assert.equal(fs.lstatSync(aux, { throwIfNoEntry: false }), undefined, "the link was left");
   });
 });
+
+/**
+ * A finished run's own slot replaced by a symbolic link to another checkout of
+ * the same branch, holding an uncommitted change — a checkout moved away with
+ * a link left in its place, or one planted by anything that can write the
+ * store. `headBranchOf` through the link answers the run's branch, which is the
+ * only comparison the readers of `worktree_path` made before acting, so every
+ * one of them ran git in the other checkout (driven, board task 9e0badc3).
+ */
+function ownSlotLinkedAway(name: string) {
+  const branch = `uf/${name}`;
+  const repo = makeRepo(name, [branch]);
+  fixtureGit(repo, ["config", "user.email", "test@example.invalid"]);
+  fixtureGit(repo, ["config", "user.name", "Test"]);
+  const base = fixtureGit(repo, ["rev-parse", "main"]);
+  const elsewhere = path.join(ws, ".uf-worktrees", `${name}-elsewhere`);
+  fixtureGit(repo, ["worktree", "add", "-q", elsewhere, branch]);
+  fs.writeFileSync(path.join(elsewhere, "README.md"), "uncommitted, in another checkout\n");
+  const slot = path.join(ws, ".uf-worktrees", `${name}-slot`);
+  fs.symlinkSync(elsewhere, slot);
+
+  const runId = `linked-${name}`;
+  db()
+    .prepare(
+      `INSERT INTO runs (id, folder, prompt, status, budget, max_iterations, iterations,
+                         created_at, finished_at, work_dir, isolation, repo_root, worktree_path,
+                         worktree_branch, worktree_base, worktree_base_branch)
+       VALUES (?, ?, 'change the readme', 'completed', '{"maxIterations":1}', 1, 1, ?, ?, ?,
+               'worktree', ?, ?, ?, ?, 'main')`,
+    )
+    .run(runId, repo, Date.now(), Date.now(), slot, repo, slot, branch, base);
+  return { runId, run: getRun(runId)!, repo, slot, elsewhere, branch };
+}
+
+/**
+ * Every git child spawned while `body` ran in `link` or `target`, or handed
+ * either by name. Wrapped at `spawn` rather than at `git()`'s export because
+ * `headBranchOf` calls `git()` from inside `git.ts`, where a mock of the export
+ * cannot see it, and because `git()` spawns a call in its cwd's realpath, so
+ * one made through the link is spawned in `target`.
+ */
+async function gitSpawnedThrough(
+  link: string,
+  target: string,
+  body: () => Promise<unknown>,
+): Promise<string[]> {
+  const childProcess = require("node:child_process") as Record<string, unknown>;
+  const real = { spawn: childProcess.spawn, spawnSync: childProcess.spawnSync } as Record<
+    "spawn" | "spawnSync",
+    (...args: unknown[]) => unknown
+  >;
+  const through: string[] = [];
+  for (const name of ["spawn", "spawnSync"] as const) {
+    childProcess[name] = (command: unknown, ...rest: unknown[]) => {
+      const args = rest[0] as string[];
+      const cwd = (rest[1] as { cwd: string }).cwd;
+      if (
+        command === config.GIT_BIN &&
+        (cwd === link ||
+          cwd === target ||
+          cwd.startsWith(`${target}${path.sep}`) ||
+          args.includes(link) ||
+          args.includes(target))
+      ) {
+        through.push(`${cwd}: git ${args.filter((arg) => !arg.includes("=")).join(" ")}`);
+      }
+      return real[name](command, ...rest);
+    };
+  }
+  try {
+    await body();
+  } finally {
+    Object.assign(childProcess, real);
+  }
+  return through;
+}
+
+describe("a run's own slot replaced by a link to a checkout of its branch", () => {
+  it("is not handed to a resolution, and no git runs through it", async () => {
+    const { run, repo, slot, elsewhere, branch } = ownSlotLinkedAway("linked-resolve");
+    fs.writeFileSync(path.join(elsewhere, "README.md"), "seed\n");
+
+    let outcome: unknown = null;
+    const through = await gitSpawnedThrough(slot, elsewhere, async () => {
+      outcome = await resolveCheckout(repo, run, branch).catch((err: Error) => err);
+    });
+
+    assert.deepEqual(through, [], "resolveCheckout ran git through the link");
+    // Read as gone, so a checkout of its own is asked for; git will not give a
+    // second one the branch the other checkout has out, and says where it is.
+    assert.ok(outcome instanceof Error, `the resolution was handed ${JSON.stringify(outcome)}`);
+    assert.match(outcome.message, /Could not create a checkout to resolve in/);
+    assert.ok(fs.lstatSync(slot).isSymbolicLink(), "the link was not left as it was");
+  });
+
+  it("refuses a Commit as a checkout that is gone, and commits nothing from the other one", async () => {
+    const { runId, repo, slot, elsewhere, branch } = ownSlotLinkedAway("linked-commit");
+    const tip = fixtureGit(repo, ["rev-parse", branch]);
+
+    let committed = null as Awaited<ReturnType<typeof land.commitPending>> | null;
+    const through = await gitSpawnedThrough(slot, elsewhere, async () => {
+      committed = await land.commitPending(runId, "Keep the run's notes");
+    });
+
+    assert.deepEqual(through, [], "Commit ran git through the link");
+    assert.equal(fixtureGit(repo, ["rev-parse", branch]), tip, "another checkout's change was committed onto the branch");
+    assert.equal(committed!.ok, false);
+    assert.match(committed!.ok ? "" : committed!.reason, /The checkout this run worked in is gone/);
+    assert.equal(
+      fs.readFileSync(path.join(elsewhere, "README.md"), "utf8"),
+      "uncommitted, in another checkout\n",
+    );
+  });
+
+  it("is left alone by the boot cleanup, with no git run through it", async () => {
+    const { runId, slot, elsewhere } = ownSlotLinkedAway("linked-boot");
+
+    const through = await gitSpawnedThrough(slot, elsewhere, () =>
+      land.abortInterruptedResolutions([runId]),
+    );
+
+    assert.deepEqual(through, [], "the boot cleanup ran git through the link");
+    assert.ok(fs.lstatSync(slot).isSymbolicLink(), "the link was not left as it was");
+  });
+});
