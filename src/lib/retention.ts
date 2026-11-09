@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { BACKUP_DIR, DB_PATH, PROJECTS_DIR } from "./config";
 import { db, getJSON, setJSON } from "./db";
-import { git } from "./git";
+import { git, isSlotDirectory } from "./git";
 import { exportHoldoutEvidence, type HoldoutExportSummary } from "./holdoutExport";
 import { chainRuns, isLandedTip } from "./land";
 import {
@@ -487,7 +487,14 @@ export async function sweepCheckouts(now = Date.now()): Promise<{
       cutoff,
     );
     if (cheap.action !== "remove") continue;
-    if (!fs.existsSync(row.worktree_path)) continue;
+    // Gone, or a symbolic link, which this app never makes at a slot and never
+    // hands to git: `worktree remove <link>` resolves it and deletes the checkout
+    // it points at, and `held` and `slotHolder` are keyed on the stored path, so
+    // a live run's checkout behind a link at a settled run's slot was removed
+    // from under it (driven, board task e057434a). Skipped rather than unlinked:
+    // the sweep removes checkouts this app made, and a link removed by hand is
+    // a free slot to `allocateSlotPath` at once.
+    if (!isSlotDirectory(row.worktree_path)) continue;
     if (probes >= MAX_RECLAIM_PROBES) break;
     probes++;
 
@@ -531,6 +538,10 @@ export async function sweepCheckouts(now = Date.now()): Promise<{
       cutoff,
     );
     if (verdict.action !== "remove") continue;
+    // Asked again in the turn that spawns the removal: the git calls above are
+    // seconds of awaits in which the directory read clean can be swapped for a
+    // link, and `status` would not have seen it.
+    if (!isSlotDirectory(row.worktree_path)) continue;
 
     const gone = await git(repoRoot, ["worktree", "remove", row.worktree_path]);
     if (!gone.ok) continue;
