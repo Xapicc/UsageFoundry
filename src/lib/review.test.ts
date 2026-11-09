@@ -316,8 +316,9 @@ describe("assistSettingsArgs — the endpoint a checkout's settings cannot move"
     assert.equal(args.filter((a) => a === "--settings").length, 1, "one --settings, or one half is dropped");
     return JSON.parse(args[args.indexOf("--settings") + 1]) as {
       env?: Record<string, string>;
-      sandbox?: { filesystem: { allowWrite: string[] } };
+      sandbox?: { filesystem: { allowWrite: string[] }; autoAllowBashIfSandboxed?: boolean };
       permissions?: { blockReadsOutsideWorkingDirectories?: boolean };
+      useAutoModeDuringPlan?: boolean;
       disableAllHooks?: boolean;
       apiKeyHelper?: unknown;
     };
@@ -407,6 +408,30 @@ describe("assistSettingsArgs — the endpoint a checkout's settings cannot move"
     // `go build -o /dev/null .` for naming a path outside the checkout.
     for (const overlay of [null, sandbox]) {
       assert.equal("permissions" in overlayOf(assistSettingsArgs(overlay, {}, "acceptEdits")), false);
+    }
+  });
+
+  it("leaves a plan-mode assist's Bash nothing to run but what the CLI reads as read-only", () => {
+    // Measured on 2.1.319 through `startAssist` and `startReview`: under `plan`
+    // a write into the checkout, a `touch` or `cp` into `/tmp` and a fetch were
+    // not refused but handed to auto mode's safety check, which a real API
+    // runs, under the managed sandbox and stock alike. With this off each was
+    // refused as needing approval, and `git log` and `git diff` still ran.
+    const sandbox = { sandbox: { filesystem: { allowWrite: ["/w/cfg"] } } };
+    for (const overlay of [null, sandbox]) {
+      assert.equal(overlayOf(assistSettingsArgs(overlay, {}, "plan")).useAutoModeDuringPlan, false);
+    }
+    // Never approved for being sandboxed either, beside the write set rather
+    // than in place of it. A stock install still sends no sandbox key.
+    const managed = overlayOf(assistSettingsArgs(sandbox, {}, "plan"));
+    assert.equal(managed.sandbox?.autoAllowBashIfSandboxed, false);
+    assert.deepEqual(managed.sandbox?.filesystem.allowWrite, ["/w/cfg"]);
+    assert.equal("sandbox" in overlayOf(assistSettingsArgs(null, {}, "plan")), false);
+    // The resolver runs the build commands it was granted, and is not `plan`.
+    for (const overlay of [null, sandbox]) {
+      const resolver = overlayOf(assistSettingsArgs(overlay, {}, "acceptEdits"));
+      assert.equal("useAutoModeDuringPlan" in resolver, false);
+      assert.equal(resolver.sandbox?.autoAllowBashIfSandboxed, undefined);
     }
   });
 });

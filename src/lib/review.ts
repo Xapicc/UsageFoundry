@@ -48,7 +48,8 @@ import {
  *   - Neither is ever automatic. Both cost money, and spend nobody asked for is
  *     spend nobody authorised — so nothing in the run loop reaches this module.
  *   - Each gets the narrowest permission mode that can do its job: a review
- *     runs `--permission-mode plan` and cannot write at all; a resolution runs
+ *     runs `--permission-mode plan`, with auto mode's check off, and is not
+ *     meant to write at all; a resolution runs
  *     `acceptEdits` **inside an isolated checkout**, never in the operator's,
  *     and is not allowed to run git — the app commits, after it has checked.
  *   - Cost never reaches `runs.spent_usd`. That column is a floor of what
@@ -443,10 +444,11 @@ export async function startReview(
     run,
     kind: "review",
     cwd,
-    // The one guarantee that a review cannot change the repository. Chosen over
+    // What keeps a review's file tools from changing the repository. Chosen over
     // an explicit `--disallowed-tools` list because a named mode survives a CLI
     // upgrade: a deny list has to grow an entry for every new write tool, and it
-    // fails *open* when it does not.
+    // fails *open* when it does not. Its `Bash` needs `assistSettingsArgs` too:
+    // `plan` hands a command it does not read as read-only to auto mode's check.
     permissionMode: "plan",
     prompt: buildPrompt(run, diff, text, certifying),
     counts: { files: diff.files.length, shown, truncated },
@@ -481,8 +483,9 @@ export interface AssistRequest {
    * singular one.** A run and an orchestrator block now *are* the agent they
    * name (`sessionAgentArgs`); this stays an offer, because a review is not a
    * run and has no operator-chosen role to take. What it is is fixed by this
-   * module — `--permission-mode plan` so nothing it does can write, its own
-   * prompt, and a cost that lands in `run_reviews` rather than `runs.spent_usd`
+   * module — `--permission-mode plan` and what `assistSettingsArgs` adds to it,
+   * its own prompt, and a cost that lands in `run_reviews` rather than
+   * `runs.spent_usd`
    * — and selecting somebody's saved agent here would replace exactly that.
    *
    * Nothing supplies this today: no caller of `startAssist` passes one, so a
@@ -504,9 +507,10 @@ export interface AssistRequest {
    * Absent means none, deliberately rather than by omission: this decides what
    * an unattended child may run in somebody's repository, and a call site that
    * could acquire it by forgetting is the wrong shape for that. **The reviewer
-   * passes nothing here and must keep passing nothing** — it is
-   * `--permission-mode plan` precisely so that nothing it does can write, and a
-   * command granted through this field would be the one hole in that.
+   * passes nothing here and must keep passing nothing** — it runs
+   * `--permission-mode plan` with auto mode's check off (`assistSettingsArgs`)
+   * so that its `Bash` runs only what the CLI reads as read-only, and a command
+   * granted through this field would be a hole in that.
    *
    * What the spawn adds below this is `Grep` and `Glob` for the checkout
    * (`assistAllowedTools`), and the difference is the point rather than an
@@ -1198,8 +1202,9 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
     // `--allowedTools` would take the next flag as its value, and this list is
     // never empty now. They are also the one grant the reviewer gets: naming
     // `Grep` and `Glob` is what makes the CLI offer them at all, they read and
-    // cannot write, they are named for the checkout (`assistAllowedTools`), and `--permission-mode plan` is still the whole of what
-    // stops a review changing anything. The operator's own list stays behind
+    // cannot write, they are named for the checkout (`assistAllowedTools`), and
+    // `plan` with what `assistSettingsArgs` adds to it is what stops a review
+    // changing anything. The operator's own list stays behind
     // them, so `resolveAllowedTools` remains the only thing that can name a
     // *command*, and `resolvePrompt` still sees only that list.
     // What the install's stacks grant, and what they take back. Read here
@@ -1209,10 +1214,13 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
     // remembering to pass it.
     //
     // **Nothing for a reviewer, and that is the design rather than an
-    // omission.** `01c-` §5: `plan` is read-only, so a reviewer cannot invoke a
-    // tool whatever any allowlist says, and a grant on its argv would be a
-    // statement of intent this app does not have. A reviewer that could run
-    // `terraform apply` while reading a diff would be a defect.
+    // omission.** `01c-` §5 called `plan` read-only, and on its own it is not:
+    // on 2.1.319 it handed a `Bash` command it did not read as read-only to
+    // auto mode's safety check rather than refusing it. `assistSettingsArgs`
+    // turns that check off, and a grant here would be exactly the command
+    // nothing then stands in front of, as well as a statement of intent this app
+    // does not have. A reviewer that could run `terraform apply` while reading a
+    // diff would be a defect.
     const stacks = permissionMode === "plan" ? { allow: [], deny: [] } : stackGrants();
     args.push("--allowedTools", ...assistAllowedTools(allowedTools ?? [], stacks.allow));
 
@@ -1224,7 +1232,7 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
 
     // What this child may write, if anything confines it at all. The same
     // encoder the work cycle and the chat use, handed the one thing that
-    // differs: a reviewer under `plan` writes nothing and gets a read-only set,
+    // differs: a reviewer under `plan` has nothing of its own to write,
     // where the conflict resolver under `acceptEdits` gets its throwaway
     // checkout — and nothing else, since it is not the thing that commits.
     //
@@ -1446,6 +1454,20 @@ async function spawnAssist(id: string, req: SpawnedAssist): Promise<void> {
  * `Bash` reads under the managed sandbox, whose auto-allow approved them first
  * (`docs/agent/security/assist-read-boundary.md`).
  *
+ * And, for the same two, no `Bash` command but what the CLI reads as read-only,
+ * because `plan` refuses none. Measured on 2.1.319: under `plan` a write into
+ * the checkout, a `touch` or `cp` into `/tmp` and a fetch were handed to auto
+ * mode's safety check rather than refused, and a real API runs that check; the
+ * one reviewer this install ran, on 2.1.280, wrote to `/tmp` and ran `tsc` and
+ * `node --test` without an error. `useAutoModeDuringPlan: false` turned each of
+ * those into a refusal while `git log`, `git diff` and a `cd` into the checkout
+ * ahead of them still ran. `autoAllowBashIfSandboxed: false` changed nothing
+ * measurable on the pin, where the sandbox's auto-allow approved none of them
+ * in `plan`; it rides the write set so that no pin can approve a command for
+ * being sandboxed. What neither stops, under the managed sandbox, is a
+ * read-only command's output redirected into the write set outside the
+ * checkout (`docs/agent/security/assist-bash-writes.md`).
+ *
  * Always emitted, a stock install's argv included: the write set is withheld
  * where no managed sandbox exists, but a stock install's checkout redirects the
  * credential exactly as any other's does. One flag for all of it, because the
@@ -1456,13 +1478,19 @@ export function assistSettingsArgs(
   spawnEnv: Readonly<Record<string, string | undefined>>,
   permissionMode: "plan" | "acceptEdits",
 ): string[] {
+  const isPlan = permissionMode === "plan";
   return [
     "--settings",
     JSON.stringify({
       env: cycleEnvPins(spawnEnv),
-      ...sandbox,
-      ...(permissionMode === "plan"
-        ? { permissions: { blockReadsOutsideWorkingDirectories: true } }
+      ...(sandbox && isPlan
+        ? { sandbox: { ...sandbox.sandbox, autoAllowBashIfSandboxed: false } }
+        : sandbox),
+      ...(isPlan
+        ? {
+            permissions: { blockReadsOutsideWorkingDirectories: true },
+            useAutoModeDuringPlan: false,
+          }
         : {}),
       disableAllHooks: true,
       apiKeyHelper: "",

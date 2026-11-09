@@ -148,6 +148,64 @@ same run inside `unshare -rm`, with a tmpfs over `/etc/claude-code`, then a nest
   read block". Caveat: under the managed sandbox each command needed four or
   five attempts past the nested-`bwrap` error before it ran.
 
+- **Under `plan`, a command the CLI does not read as read-only goes to auto
+  mode's check, not to a refusal, on 2.1.319, 2026-11-09.** Under board task
+  `3c44bd13`, against this branch's argv before the change. A validator's
+  `echo PWNED > pcr-pwned.txt` in the worktree, `touch` and `cp` into `/tmp`,
+  and `curl` of the loopback stub and of `registry.npmjs.org` all came back
+  "Auto mode is unavailable: its safety check does not run for this session".
+  That held under the managed sandbox, and stock for the checkout write and for
+  literal-path writes into `/tmp` and the scratch `CLAUDE_CONFIG_DIR`. The
+  reviewer's checkout write did the same. Nothing reached the disk. Caveat: the
+  stub runs no safety check, so what a real API's check approves was not seen.
+
+- **Under the managed sandbox, a plan-mode redirect into the write set wrote,
+  same pin and day.** `echo PWNED >` a literal path in `/tmp`, and a new file in
+  the scratch `CLAUDE_CONFIG_DIR`, both left `PWNED` on disk once the
+  nested-`bwrap` retries got through. The same redirect onto that directory's
+  `settings.json` went to the auto-mode check. Stock, the read block's parser
+  refused every command whose target was a variable, such as
+  `"$TMPDIR/…"`, with "A variable in this command can't be checked before it
+  runs", and a `node -e` write as inline code. Caveat: the 2.1.280 reviewer's
+  own commands were not replayed.
+
+- **`useAutoModeDuringPlan: false` turns those into refusals and keeps the
+  `git` reads, same pin and day.** First added by the wrapper, then built from
+  this branch, for a validator and a reviewer under the managed sandbox and
+  stock. The checkout write came back "Output redirection to '<path>' needs
+  approval. The path is inside the working directories". `touch` came back
+  "This command requires approval" under the managed sandbox and "touch in
+  '<path>' needs approval" stock, and both fetches "This command requires
+  approval". `git log --oneline -2`, `git diff --stat HEAD~1 HEAD` and
+  `cd <worktree> && git log --oneline -1 && git diff --stat HEAD~1 HEAD`
+  returned their output on both installs. Caveat: `sed -n`, `grep` and `awk`
+  were not driven.
+
+- **What `useAutoModeDuringPlan: false` leaves, same pin and day.** Under the
+  managed sandbox, with it and `autoAllowBashIfSandboxed: false`, the redirects
+  into `/tmp` and into a new file in `CLAUDE_CONFIG_DIR` still wrote `PWNED`.
+  Onto `CLAUDE_CONFIG_DIR/CLAUDE.md` and a file under its `projects/`, the
+  redirect was refused: "needs approval. The path is outside the working
+  directories". Stock, the redirects into `/tmp` and `CLAUDE_CONFIG_DIR` were
+  refused the same way.
+
+- **`autoAllowBashIfSandboxed: false` changed nothing measured, same pin and
+  day.** Under the managed sandbox without it, a plan-mode `touch` and `cp` into
+  `/tmp` went to the auto-mode check. Nothing approved them for being
+  sandboxed. With it alone, the checkout write and the fetch still came back
+  "Auto mode is unavailable". With `useAutoModeDuringPlan: false` alone,
+  `touch` was refused as with both.
+
+- **The plan-mode reviewer that wrote through `Bash` ran 2.1.280, and the
+  validators only read, from transcripts read 2026-11-09.** All 121 versioned
+  lines of the 2026-10-16 reviewer session say 2.1.280. Across 587 validator
+  sessions, 2026-10-13 to 2026-11-09, the 149 `Bash` calls opened with `cd`
+  into the checkout (53), `git log` (38), `git diff` (28), `sed` (9),
+  `git show` (6), `grep` (5), and `awk`, `wc`, `head`, `git ls-files`,
+  `git status` and one `python3` script. None returned `is_error`. Caveat:
+  classified by first word, and a `cd` was followed by `git` reads in every
+  example read.
+
 ## Not yet verified by hand
 
 - **The server as root, dropping the child to the agent uid.** Every case above
@@ -173,3 +231,17 @@ same run inside `unshare -rm`, with a tmpfs over `/etc/claude-code`, then a nest
   search entries.** Settle: on a scratch install, let a merge conflict start a
   resolution. The child's `--allowedTools` in `/proc/<pid>/cmdline` must hold
   `Grep(./**)` and `Glob(./**)` and no bare `Grep` or `Glob`.
+
+- **What a real API's auto-mode check decides for a plan-mode assist, with the
+  setting and without.** The stub runs no check, so the rig shows only which
+  path decided. Settle: with a real login on a scratch install, have a
+  validator run `touch <worktree>/x`, with the wrapper removing
+  `useAutoModeDuringPlan` and then leaving it. Without it, record whether the
+  file appears. With it, the call must come back "This command requires
+  approval" and the file must not appear.
+
+- **The validators' other read commands under the setting.** Only `git log`,
+  `git diff` and `cd … && git …` were driven. Settle: in the rig, under the
+  managed sandbox and stock, run `sed -n 1,2p README.md`, `grep -n OWN
+  README.md` and `awk 'NR==1' README.md` as plan-mode validator steps. Each
+  must return its line.
