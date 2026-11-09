@@ -117,7 +117,7 @@ Its cases are in `orchestrator.test.ts`, `shutdown.test.ts`, `stackWait.test.ts`
 | Test file | Also in |
 |---|---|
 | `pricing.test.ts` |  |
-| `templates.test.ts` | [functions] |
+| `templates.test.ts` | [functions], [refusals], [bodies], [run-form] |
 
 ## [The model catalogue and model discovery](testing/model-catalogue-and-discovery.md)
 
@@ -199,7 +199,7 @@ Its cases are in `orchestrator.test.ts`, `shutdown.test.ts`, `stackWait.test.ts`
 |---|---|
 | `loopMergeOwnership.test.ts` |  |
 | `loopSection.test.ts` | [fleet], [loop-endings] |
-| `workflows.test.ts` | [functions], [pricing], [workflows], [decider], [pick-ups], [cycle], [edges], [loop-board], [loop-endings], [schedule-routes] |
+| `workflows.test.ts` | [functions], [pricing], [workflows], [decider], [pick-ups], [cycle], [edges], [loop-board], [loop-endings], [schedule-routes], [refusals], [chat], [delivery], [fleet], [local], [merge-queue], [bodies], [queue], [task-deps], [gates] |
 
 Units that are about no test file in the tree:
 
@@ -259,7 +259,7 @@ Cases in `loopSection.test.ts` and `workflows.test.ts`, each listed under its ow
 
 | Test file | Also in |
 |---|---|
-| `src/app/api/mcp/route.test.ts` | [projects] |
+| `src/app/api/mcp/route.test.ts` | [projects], [bodies], [harnesses], [refusals] |
 | `taskComments.test.ts` |  |
 | `taskDepGraph.test.ts` |  |
 | `taskDeps.test.ts` |  |
@@ -366,8 +366,8 @@ Cases in `landAfterVerify.test.ts`, `landUnwind.test.ts`, `land.test.ts` and `me
 | Test file | Also in |
 |---|---|
 | `agentRegistry.test.ts` |  |
-| `agents.test.ts` |  |
-| `privsep.test.ts` | [knowledge] |
+| `agents.test.ts` | [refusals] |
+| `privsep.test.ts` | [chat-child], [knowledge] |
 | `sandbox.test.ts` |  |
 | `schedules.test.ts` | [proposals] |
 | `serverLock.test.ts` | [data-dir] |
@@ -477,3 +477,6 @@ It prints nothing as this is written. Whoever owns a file it names owes that fil
 [edges]: testing/dependency-edges-and-rivals.md
 [run-form]: testing/run-form-limits.md
 [token-economizer]: testing/token-economizer.md
+[local]: testing/local-provider.md
+[bodies]: testing/request-bodies-settings-and-run-streams.md
+[gates]: testing/workflow-gates.md

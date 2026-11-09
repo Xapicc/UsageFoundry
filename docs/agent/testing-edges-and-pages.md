@@ -193,7 +193,7 @@ Units that are about no test file in the tree:
 
 | Test file | Also in |
 |---|---|
-| `tokenEconomizer.test.ts` | [argv], [deployment] |
+| `tokenEconomizer.test.ts` |  |
 
 [queue]: testing/run-queue-and-admission.md
 [cycle]: testing/work-cycle-prompts-and-endings.md
@@ -201,7 +201,6 @@ Units that are about no test file in the tree:
 [samples]: testing/context-samples.md
 [run-page]: testing/run-page-panels-and-file-maps.md
 [argv]: testing/spawn-argv-and-child-env.md
-[deployment]: testing/container-and-deployment.md
 [sign-in]: testing/sign-in-limits.md
 [ui-kit]: testing/components-meter-markdown-and-kit.md
 [cards]: testing/components-usage-and-run-cards.md
