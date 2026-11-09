@@ -1387,18 +1387,30 @@ export function buildArgs(opts: {
    * mechanism of its own, so `--resume` drops it and re-passing it per cycle
    * covers it in exactly the same breath.
    *
-   * `vaultPath` is separate from the directory because it becomes `--add-dir`.
-   * The vault is not the run's workspace, and an isolated run's checkout is the
+   * `vaultPath` is separate from the directory because it becomes a working
+   * directory, a `permissions.additionalDirectories` entry in the overlay. The
+   * vault is not the run's workspace, and an isolated run's checkout is the
    * only directory it gets by default, so without this the skill would name a
    * path the run may not read — a skill that reads as available and fails on
-   * use, which is the failure this whole feature is built to avoid.
+   * use, which is the failure this whole feature is built to avoid. Measured on
+   * 2.1.319: with neither this nor `--add-dir`, an `acceptEdits` reader's
+   * `Read` of a note was refused as ungranted.
+   *
+   * **Never `--add-dir`, though both make a working directory**, because that
+   * flag also loads the directory's `.claude/skills/` and `.claude/agents/`.
+   * Measured on 2.1.319: a skill and an agent planted in the vault's `.claude/`
+   * reached a reader's first request through `--add-dir` and no request through
+   * the overlay entry. Vault writers can commit those files, so through the
+   * flag one write into the vault would be a skill in every reader's context.
    *
    * **And it grants write, so unless `writable` says otherwise the write is
-   * taken back by mechanism.** `--add-dir` lands the vault in the session's
+   * taken back by mechanism.** The entry lands the vault in the session's
    * sandbox write set and makes it a working directory the file tools edit
-   * without asking. Measured on 2.1.310 against a stub API, a run with only
-   * that flag created and edited notes through `Write` and `Edit` and had the
-   * vault bound read-write for `Bash`. Two things close it, and each closes
+   * without asking, exactly as `--add-dir` did (measured on 2.1.319: bwrap got
+   * the vault as `--bind`, and a writer's `Write` into it landed). Measured on
+   * 2.1.310 against a stub API, a run with only `--add-dir` created and edited
+   * notes through `Write` and `Edit` and had the vault bound read-write for
+   * `Bash`. Two things close it, and each closes
    * only its own half: an `Edit(//<vault>/**)` deny refused `Write` and `Edit`
    * under `acceptEdits` and `bypassPermissions` alike but left the `Bash`
    * mount read-write; a `denyWrite` in the `--settings` overlay put a
@@ -1421,7 +1433,8 @@ export function buildArgs(opts: {
    * here would have to re-earn the "not restored by `--resume`, therefore on
    * every cycle's argv" rule that this list already has. It ships hooks and no
    * skill, so unlike the vault skill it puts nothing into the window and needs
-   * no `--add-dir`: the directories it guards are the ones the run already has.
+   * no working directory of its own: the directories it guards are the ones the
+   * run already has.
    *
    * `readGuard.ts` carries what it does and why it is off by default. Optional
    * for `pluginDirs`' reason — the call sites in the tests need not thread it,
@@ -1711,12 +1724,6 @@ export function buildArgs(opts: {
   // restored by `--resume`, therefore on every cycle's argv rather than only the
   // first. No `--strict-mcp-config` beside it — see `taskboard`.
   if (claudeTaskboard) args.push("--mcp-config", claudeTaskboard.mcpConfigPath);
-  // The run's cwd is its workspace and needs no flag; this is the one
-  // directory it is told about that is not its own. `--add-dir` is variadic,
-  // which is worth knowing when moving it — measured against the pinned CLI, a
-  // flag immediately after it parses as a flag rather than being eaten as
-  // another directory, so it is safe here in the middle of the argv.
-  if (opts.vaultSkill) args.push("--add-dir", opts.vaultSkill.vaultPath);
   if (opts.resumeSessionId) args.push("--resume", opts.resumeSessionId);
   // **No `--autocompact`, and nothing else bounds a cycle's context either.**
   // The flag was replaced by a boundary pruner (winnow), which has since been
@@ -1749,9 +1756,10 @@ export function buildArgs(opts: {
   // The vault's `denyWrite` is withheld wherever the write set is, for
   // `sandboxOverlay`'s reason with `denyRead`: a write config of any kind binds
   // `/` read-only and rw-binds only what is allowed, so a deny with no allow
-  // beside it is a policy nobody has measured. It outranks the write grant
-  // `--add-dir` made — measured, the CLI hands bwrap the vault's `--bind` and
-  // then a `--ro-bind` of the same path.
+  // beside it is a policy nobody has measured. It outranks the write grant the
+  // vault's `additionalDirectories` entry makes — measured on 2.1.319, the CLI
+  // hands bwrap the vault's `--bind` and then a `--ro-bind` of the same path,
+  // as it did for `--add-dir` on 2.1.310.
   //
   // And an empty `apiKeyHelper`, always, because the CLI runs a helper named by
   // the checkout's `settings.local.json` or `settings.json` or by the user
@@ -1772,14 +1780,23 @@ export function buildArgs(opts: {
   // `acceptEdits`: honoured from this overlay, `true` here outranks a `false`
   // in the checkout's own settings, and the refusal came back to the model as
   // a tool error naming the working directories. It is the file tools' only:
-  // the vault reader's deny stays, because `--add-dir` makes the vault a
-  // working directory, and `Bash` is still confined by the write set alone.
+  // the vault reader's deny stays, because the vault's entry below makes the
+  // vault a working directory, and `Bash` is still confined by the write set
+  // alone.
+  //
+  // The vault rides `additionalDirectories` for readers and writers alike, and
+  // never `--add-dir` (see `vaultSkill`). After the scratch directory, so an
+  // argv without the skill keeps every byte it had.
+  const workingDirs = [
+    ...(opts.scratchDir ? [opts.scratchDir] : []),
+    ...(opts.vaultSkill ? [opts.vaultSkill.vaultPath] : []),
+  ];
   const overlay = {
     ...(opts.envPins ? { env: opts.envPins } : {}),
     apiKeyHelper: "",
     permissions: {
       blockWritesOutsideWorkingDirectories: true,
-      ...(opts.scratchDir ? { additionalDirectories: [opts.scratchDir] } : {}),
+      ...(workingDirs.length > 0 ? { additionalDirectories: workingDirs } : {}),
     },
     ...(opts.writableRoots && opts.writableRoots.length > 0
       ? {
@@ -2046,7 +2063,7 @@ export function buildCodexArgs(opts: Parameters<typeof buildArgs>[0]): string[] 
   // the overlay Claude Code takes.
   //
   // **The vault is deliberately not among them**, though Claude Code gets it as
-  // `--add-dir`. For Claude that flag is what lets the vault skill's path be
+  // a working directory. For Claude that is what lets the vault skill's path be
   // read, and its write grant is taken back by an `Edit` deny and a sandbox
   // `denyWrite` (see `vaultSkill`). For Codex both halves are different: every
   // sandbox mode here reads the whole filesystem already — measured: `ls` of the

@@ -418,9 +418,10 @@ const VAULT_GLOB_CHARS = /[*?[\]{}!]/;
  * Whether a run may write the vault, which it may only when the vault is its
  * own workspace.
  *
- * `--add-dir` is what lets a run read the vault, and it lands the vault in the
- * run's write set too, so every other run has the write taken back by
- * `buildArgs`. Which run is *not* one of those is decided by the paths the run
+ * The vault's working-directory entry (`permissions.additionalDirectories` in
+ * the cycle's overlay) is what lets a run read the vault, and it lands the
+ * vault in the run's write set too, so every other run has the write taken
+ * back by `buildArgs`. Which run is *not* one of those is decided by the paths the run
  * loop already re-proved for the spawn: its checkout, and the repository behind
  * it. Either one at or below the vault is a run working on the vault — the
  * operator's own vault run, an isolated one in a worktree under the vault's

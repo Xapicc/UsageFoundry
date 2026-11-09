@@ -14,7 +14,7 @@ Read before editing the `permissions` key of the `--settings` overlay or the `sc
 
 - **What it does not cover.**
   - **`Bash`.** The CLI's schema says the setting does not limit shell commands, MCP tools, the programs hooks run, or the memory tools. `Bash` is confined by the sandbox write set alone, and only where a managed sandbox is on. On the stock install a cycle's `Bash` still writes anywhere the agent uid can, the main checkout included.
-  - **The vault.** `--add-dir <vault>` makes the vault a working directory, so the setting lets the file tools write it: a vault writer's `Write` into the vault landed with the setting on. A reader keeps both of its denies, `Edit(//<vault>/**)` and `denyWrite`, for [vault-write-boundary.md](vault-write-boundary.md)'s reasons.
+  - **The vault.** Its `permissions.additionalDirectories` entry makes the vault a working directory, so the setting lets the file tools write it: a vault writer's `Write` into the vault landed with the setting on. A reader keeps both of its denies, `Edit(//<vault>/**)` and `denyWrite`, for [vault-write-boundary.md](vault-write-boundary.md)'s reasons.
   - **Codex cycles, the chat child, the reviewer and the conflict resolver.** None of them is built by `buildArgs`'s overlay. Codex has its own sandbox. The chat is given every mount as an `--add-dir`, so the setting would refuse it little. The assists' argv is `assistSettingsArgs` in `review.ts`.
   - **`EnterWorktree` and `ExitWorktree`.** The schema says the setting takes both off the tools on offer. Neither was on offer to a `-p` session with the setting off either, so a run loses nothing it had.
 

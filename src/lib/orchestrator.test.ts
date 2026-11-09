@@ -2860,6 +2860,9 @@ describe("buildArgs", () => {
     const end = rest.findIndex((a) => a.startsWith("--"));
     return end === -1 ? rest : rest.slice(0, end);
   };
+  /** The overlay's working directories: where the vault and the scratch directory ride. */
+  const workingDirsOf = (args: string[]): string[] =>
+    JSON.parse(args[args.indexOf("--settings") + 1]).permissions?.additionalDirectories ?? [];
 
   it("puts a stack's grant on the allow flag and its denial on the deny flag", () => {
     const args = buildArgs({
@@ -3166,13 +3169,15 @@ describe("buildArgs", () => {
     // Without this the skill names a path the run may not read: an isolated run
     // gets its own checkout and nothing else, so the failure would arrive as a
     // permission error in the middle of an answer rather than at the door.
-    const at = args.indexOf("--add-dir");
-    assert.notEqual(at, -1, "the vault must be readable by the run it was named to");
-    assert.equal(args[at + 1], "/vault");
+    assert.deepEqual(
+      workingDirsOf(args),
+      ["/vault"],
+      "the vault must be readable by the run it was named to",
+    );
   });
 
   it("carries the vault skill on a resumed cycle, not only the first", () => {
-    // `--plugin-dir` is not restored by `--resume`, and neither is `--add-dir`.
+    // `--plugin-dir` is not restored by `--resume`, and neither is `--settings`.
     // A version of this that delivered the skill on the opening cycle alone
     // would leave cycle 2 onward with a vault it can neither find nor read,
     // silently.
@@ -3183,7 +3188,7 @@ describe("buildArgs", () => {
       vaultSkill: { pluginDir: "/run/uf-skills/uf-usagefoundry-skills", vaultPath: "/vault" },
     });
     assert.equal(args[args.indexOf("--plugin-dir") + 1], "/run/uf-skills/uf-usagefoundry-skills");
-    assert.equal(args[args.indexOf("--add-dir") + 1], "/vault");
+    assert.deepEqual(workingDirsOf(args), ["/vault"]);
     assert.ok(args.includes("--resume"));
   });
 
@@ -3191,6 +3196,7 @@ describe("buildArgs", () => {
     for (const vaultSkill of [undefined, null]) {
       const args = buildArgs({ ...base, isolated: false, vaultSkill });
       assert.equal(args.includes("--add-dir"), false);
+      assert.deepEqual(workingDirsOf(args), []);
       assert.equal(args.includes("--plugin-dir"), false);
       // And no deny for a vault it was never offered: the argv it had before.
       assert.deepEqual(disallowedToolValues(args), ["Bash(pkill:*)", "Bash(killall:*)"]);
@@ -3198,9 +3204,9 @@ describe("buildArgs", () => {
   });
 
   it("takes the vault's write grant back from a run that is not working on it", () => {
-    // `--add-dir` is what makes the vault readable and it grants write as well;
-    // measured on 2.1.310, a run with only that flag created and edited notes
-    // through `Write` and `Edit`. Each of the two denies closes only its own
+    // The working-directory entry is what makes the vault readable and it
+    // grants write as well, as `--add-dir` did; measured on 2.1.310, a run with
+    // only that flag created and edited notes through `Write` and `Edit`. Each of the two denies closes only its own
     // half — the `Edit` rule the file tools, the overlay's `denyWrite` the
     // `Bash` mount — so losing either one is a reader that can write again,
     // and nothing would say so. On a resumed cycle too: `--resume` restores
@@ -3214,7 +3220,7 @@ describe("buildArgs", () => {
         vaultSkill: { pluginDir: "/run/uf-skills/vault", vaultPath },
         writableRoots: ["/w/repo", "/w/repo/.git"],
       });
-      assert.equal(args[args.indexOf("--add-dir") + 1], vaultPath, "still readable");
+      assert.deepEqual(workingDirsOf(args), [vaultPath], "still readable");
       assert.equal(disallowedToolValues(args).at(-1), "Edit(//workspace/notes/Knowledge Vault/**)");
       assert.equal(args.filter((a) => a === "--disallowedTools").length, 1);
       const overlay = JSON.parse(args[args.indexOf("--settings") + 1]);
@@ -3252,12 +3258,40 @@ describe("buildArgs", () => {
       vaultSkill: { pluginDir: "/run/uf-skills/vault", vaultPath: "/vault", writable: true },
       writableRoots: ["/vault/.uf-worktrees/vault-1", "/vault/.git"],
     });
-    assert.equal(args[args.indexOf("--add-dir") + 1], "/vault");
+    assert.deepEqual(workingDirsOf(args), ["/vault"]);
     assert.deepEqual(disallowedToolValues(args), ["Bash(pkill:*)", "Bash(killall:*)"]);
     const overlay = JSON.parse(args[args.indexOf("--settings") + 1]);
     assert.deepEqual(overlay.sandbox.filesystem, {
       allowWrite: ["/vault/.uf-worktrees/vault-1", "/vault/.git"],
     });
+  });
+
+  it("never hands the vault over as --add-dir, which loads its .claude/", () => {
+    // Both spellings make the vault a working directory, but measured on
+    // 2.1.319 `--add-dir` also offered a skill and an agent planted in the
+    // vault's `.claude/` to a reader's first request, and the overlay's
+    // `additionalDirectories` offered neither. Vault writers can commit those
+    // files, so reverting this is one write into the vault becoming a skill in
+    // every reader's context — and every reader would still read and search
+    // exactly as before, which is why nothing else would notice. Readers and
+    // writers alike, first cycle and resumed, sandbox or none.
+    for (const writable of [false, true]) {
+      for (const resumeSessionId of [null, "sess-1"]) {
+        for (const writableRoots of [null, ["/w/repo", "/w/repo/.git"]]) {
+          const args = buildArgs({
+            ...base,
+            isolated: true,
+            resumeSessionId,
+            writableRoots,
+            scratchDir: "/tmp/claude-1000",
+            vaultSkill: { pluginDir: "/run/uf-skills/vault", vaultPath: "/vault", writable },
+          });
+          assert.equal(args.includes("--add-dir"), false, `writable=${writable} resumed=${resumeSessionId !== null}`);
+          assert.deepEqual(workingDirsOf(args), ["/tmp/claude-1000", "/vault"]);
+          assert.equal(args.filter((a) => a === "--settings").length, 1, "a second --settings drops the first");
+        }
+      }
+    }
   });
 
   it("names no plugin flag when none are enabled", () => {
@@ -3292,7 +3326,7 @@ describe("buildArgs", () => {
     assert.ok(args.includes("--resume"));
     // It ships hooks and no skill, so unlike the vault skill it names no
     // directory the run has to be granted.
-    assert.equal(args.filter((a) => a === "--add-dir").length, 1);
+    assert.deepEqual(workingDirsOf(args), ["/vault"]);
   });
 
   it("names no plugin flag for a read guard that is switched off", () => {
@@ -3871,7 +3905,6 @@ describe("the cycle adapter", () => {
       "--plugin-dir",
       "--plugin-dir",
       "--plugin-dir",
-      "--add-dir",
       "--resume",
       "--max-budget-usd",
       // The pins, on a stock install with no write set as on one with.
@@ -4110,21 +4143,25 @@ describe("blockWritesOutsideWorkingDirectories — the file tools' write boundar
 
   it("makes the scratch directory a working directory in the overlay, never an --add-dir", () => {
     const args = buildArgs({ ...base, writableRoots: roots, vaultSkill: reader, scratchDir: "/tmp" });
+    // The vault after it, so an argv without the skill keeps its bytes.
     assert.deepEqual(overlayOf(args).permissions, {
+      blockWritesOutsideWorkingDirectories: true,
+      additionalDirectories: ["/tmp", "/v"],
+    });
+    assert.equal(args.includes("--add-dir"), false);
+    assert.deepEqual(overlayOf(buildArgs({ ...base, scratchDir: "/tmp" })).permissions, {
       blockWritesOutsideWorkingDirectories: true,
       additionalDirectories: ["/tmp"],
     });
-    const addDirs = args.flatMap((arg, i) => (arg === "--add-dir" ? [args[i + 1]] : []));
-    assert.deepEqual(addDirs, ["/v"]);
 
     // Absent, the setting stays on and nothing else is named.
     assert.deepEqual(overlayOf(buildArgs(base)).permissions, { blockWritesOutsideWorkingDirectories: true });
   });
 
   it("leaves a vault reader both of its denies, which the setting does not replace", () => {
-    // `--add-dir` makes the vault a working directory, so the setting lets the
-    // file tools write it: measured, a vault writer's `Write` into the vault
-    // landed with the setting on.
+    // The overlay's entry makes the vault a working directory, so the setting
+    // lets the file tools write it: measured, a vault writer's `Write` into the
+    // vault landed with the setting on.
     const args = buildArgs({ ...base, writableRoots: roots, vaultSkill: reader, scratchDir: "/tmp" });
     assert.equal(args.includes("Edit(//v/**)"), true);
     assert.deepEqual(overlayOf(args).sandbox?.filesystem.denyWrite, ["/v"]);

@@ -109,9 +109,11 @@ vaultSkill.ts   the vault-lookup skill, delivered the same way and for the same
                 only by looking — and it goes to /run/uf-skills rather than
                 DATA_DIR, which is 0700 root and on the CLI's managed denyRead
                 list, so a skill there is unreadable by the agent uid on exactly
-                the hardened install this is for. The vault also needs --add-dir
-                or the skill names a path the run may not read; measurement says
-                that flag grants **write**, so a run whose workspace is not the
+                the hardened install this is for. The vault also needs to be a
+                working directory (permissions.additionalDirectories in the
+                overlay, never --add-dir, which loads the vault's .claude/) or
+                the skill names a path the run may not read; measurement says
+                that grants **write**, so a run whose workspace is not the
                 vault (vaultWritableBy) also gets an Edit deny and a sandbox
                 denyWrite for it — docs/agent/security/vault-write-boundary.md
 vaultPointer.ts the vault's notes named in a run's opening prompt rather than left

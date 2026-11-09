@@ -11,9 +11,17 @@
 //
 // A stub API drives the real CLI through the tool calls a reader that ignored its
 // skill would make, with the vault flags `buildArgs` emits (asserted in
-// `orchestrator.test.ts`): `--add-dir <vault>`, an `Edit(//<vault>/**)` deny on
-// `--disallowedTools`, and `denyWrite: [<vault>]` beside the write set in the
-// `--settings` overlay. The scratch vault's name has a space in it, as the
+// `orchestrator.test.ts`): the vault in `permissions.additionalDirectories`
+// beside `blockWritesOutsideWorkingDirectories` and the temporary directory, an
+// `Edit(//<vault>/**)` deny on `--disallowedTools`, and `denyWrite: [<vault>]`
+// beside the write set, all but the deny in the one `--settings` overlay.
+// PROBE_VAULT_FLAG=add-dir gives the vault as `--add-dir <vault>` instead, the
+// argv before 2026-11-08, as the control for what that flag loaded, and
+// PROBE_VAULT_FLAG=none by neither, the control for what the flag buys: there
+// a reader's `Read` of a note under `acceptEdits` should FAIL. A skill and
+// an agent are planted in the vault's `.claude/`, and every turn says whether
+// their markers reached the model; a reader given the vault through the overlay
+// fails if they did. The scratch vault's name has a space in it, as the
 // operator's does. Four turns: a reader with the argv it had before the deny,
 // whose writes must land; the reader under `acceptEdits`; the same reader under
 // `bypassPermissions`; and a run in a worktree under the vault's own
@@ -50,6 +58,13 @@ const TURN_TIMEOUT_MS = Number(process.env.PROBE_TURN_TIMEOUT_MS ?? 300_000);
 const BASH_ATTEMPTS = Number(process.env.PROBE_BASH_ATTEMPTS ?? 6);
 const ONLY = process.env.PROBE_ONLY ?? "";
 const TURN = process.env.PROBE_TURN ?? "";
+const VAULT_FLAG = process.env.PROBE_VAULT_FLAG ?? "additionalDirectories";
+if (!["additionalDirectories", "add-dir", "none"].includes(VAULT_FLAG)) {
+  throw new Error(`PROBE_VAULT_FLAG must be additionalDirectories, add-dir or none, got ${JSON.stringify(VAULT_FLAG)}`);
+}
+// Planted in the vault's `.claude/`: what a vault writer could leave for every
+// reader, if the flag that hands readers the vault loaded it.
+const MARKERS = ["VAULT-PLANTED-SKILL-MARKER", "VAULT-PLANTED-AGENT-MARKER", "vault-planted-skill", "vault-planted-agent"];
 // What a Bash result says when bwrap itself failed, before the command ran.
 const SANDBOX_DID_NOT_START = /^Exit code \d+\s+bwrap: /;
 
@@ -83,6 +98,11 @@ function plantVault() {
       "from vaultlib import HIT\nprint(json.dumps({'hits': [{'path': HIT}]}))\n",
   );
   fs.rmSync(path.join(vault, "_Meta", "__pycache__"), { recursive: true, force: true });
+  const skill = path.join(vault, ".claude", "skills", "vault-planted-skill");
+  fs.mkdirSync(skill, { recursive: true });
+  fs.writeFileSync(path.join(skill, "SKILL.md"), "---\nname: vault-planted-skill\ndescription: VAULT-PLANTED-SKILL-MARKER\n---\nbody\n");
+  fs.mkdirSync(path.join(vault, ".claude", "agents"), { recursive: true });
+  fs.writeFileSync(path.join(vault, ".claude", "agents", "planted.md"), "---\nname: vault-planted-agent\ndescription: VAULT-PLANTED-AGENT-MARKER\n---\nbody\n");
 }
 
 const q = (p) => `'${p.replaceAll("'", "'\\''")}'`;
@@ -156,7 +176,7 @@ function lastResult(results, i) {
 // Answers the main conversation with the next step's tool call — the first
 // step not yet answered, or a Bash step whose sandbox did not start, again —
 // and every side request with text.
-function startStub(calls, results) {
+function startStub(calls, results, markers) {
   const server = http.createServer((req, res) => {
     const chunks = [];
     req.on("data", (c) => chunks.push(c));
@@ -172,6 +192,10 @@ function startStub(calls, results) {
         return void res.writeHead(400).end();
       }
       const isMain = Array.isArray(body.tools) && body.tools.some((t) => t.name === "Bash");
+      if (isMain) {
+        const raw = JSON.stringify(body);
+        for (const marker of MARKERS) if (raw.includes(marker)) markers.add(marker);
+      }
       const blocks = (body.messages ?? []).flatMap((m) => (Array.isArray(m.content) ? m.content : []));
       for (const b of blocks) {
         if (b.type === "tool_result") results.set(b.tool_use_id, typeof b.content === "string" ? b.content : JSON.stringify(b.content));
@@ -215,14 +239,21 @@ async function turn(label, { cwd, permissionMode, writable, steps: all }) {
   plantVault();
   for (const f of fs.readdirSync(shimDir)) if (f.startsWith("argv.")) fs.rmSync(path.join(shimDir, f));
   const results = new Map();
-  const { server, port } = await startStub(steps, results);
+  const markers = new Set();
+  const { server, port } = await startStub(steps, results, markers);
   const allowWrite = [cwd, configDir, tmp];
+  const viaOverlay = VAULT_FLAG === "additionalDirectories";
+  const overlay = {
+    apiKeyHelper: "",
+    permissions: { blockWritesOutsideWorkingDirectories: true, additionalDirectories: viaOverlay ? [tmp, vault] : [tmp] },
+    sandbox: { filesystem: writable ? { allowWrite } : { allowWrite, denyWrite: [vault] } },
+  };
   const args = [
     "-p", "--output-format", "stream-json", "--verbose",
     "--permission-mode", permissionMode,
     "--disallowedTools", "Bash(pkill:*)", "Bash(killall:*)", ...(writable ? [] : [`Edit(/${vault}/**)`]),
-    "--add-dir", vault,
-    "--settings", JSON.stringify({ sandbox: { filesystem: writable ? { allowWrite } : { allowWrite, denyWrite: [vault] } } }),
+    ...(VAULT_FLAG === "add-dir" ? ["--add-dir", vault] : []),
+    "--settings", JSON.stringify(overlay),
     "--", "go",
   ];
   const code = await new Promise((resolve) => {
@@ -246,7 +277,7 @@ async function turn(label, { cwd, permissionMode, writable, steps: all }) {
     });
   });
   server.close();
-  console.log(`\n${label} (exit ${code})`);
+  console.log(`\n${label}, vault by ${VAULT_FLAG} (exit ${code})`);
   const outcomes = steps.map((s, i) => {
     const { attempts, result: answered } = lastResult(results, i);
     const result = answered ?? "(never answered)";
@@ -261,6 +292,14 @@ async function turn(label, { cwd, permissionMode, writable, steps: all }) {
     return { ...s, held };
   });
   for (const ops of vaultMounts()) console.log(`  bwrap mounts of the vault: ${ops.join(" then ")}`);
+  console.log(`  vault .claude markers seen in the request: ${[...markers].join(", ") || "none"}`);
+  // A reader handed the vault through the overlay must not be offered what the
+  // vault's `.claude/` holds; under `--add-dir` that is the control's to show.
+  if (viaOverlay && !writable) {
+    const held = markers.size === 0;
+    console.log(`  ${held ? "ok  " : "FAIL"} the vault's planted skill and agent kept from the request`);
+    outcomes.push({ label: "vault .claude kept from the request", held });
+  }
   return outcomes;
 }
 
