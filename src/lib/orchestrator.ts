@@ -3642,6 +3642,23 @@ async function ensureWorktree(run: RunRow): Promise<string> {
     );
   });
 
+  // The slot's own leaf, as `prepareWorktreeStore` checks the store's, and
+  // asked here because admission's `lstat` (`allocateSlotPath`) can be long
+  // before this: a queued run, or a resuming one whose checkout was replaced.
+  // Every branch below runs git in `slotPath` or hands it to `worktree add`,
+  // which follows a link to a directory and writes the checkout wherever it
+  // points; a registered slot replaced by a link to the operator's checkout
+  // would get `checkout -b` there (read, not driven). Taken as late as the
+  // registry read allows, and still a check rather than a guarantee: whatever
+  // can write the store can plant one between this and git, which the first
+  // cycle's `resolveWorkspaceFolder` then refuses before an agent is spawned.
+  if (fs.lstatSync(slotPath, { throwIfNoEntry: false })?.isSymbolicLink()) {
+    throw new Error(
+      `Refusing to use ${slotPath}: it is a symbolic link, and a checkout is never made or ` +
+        "reused through one. Remove the link, then start this run again.",
+    );
+  }
+
   if (registered.has(slotPath)) {
     const head = await git(slotPath, ["rev-parse", "--abbrev-ref", "HEAD"]);
     // The checkout already holds this branch. Adopt it exactly as it stands:
@@ -4504,6 +4521,13 @@ export interface SlotCensus {
   /** A checkout of a different repository sharing the store. */
   foreign: number;
   /**
+   * A symbolic link standing at the slot's path, dangling or not.
+   *
+   * Optional for `unexamined`'s reason: absent, or zero, means none was seen,
+   * and every census literal written before links were counted still says so.
+   */
+  linked?: number;
+  /**
    * Existing checkouts this admission never put to git.
    *
    * `MAX_SLOT_PROBES_PER_ADMISSION` bounds what one admission may ask about, so
@@ -4579,6 +4603,7 @@ function allocateSlotPath(repoRoot: string): SlotAllocation {
     heldByRuns: 0,
     dirty: 0,
     foreign: 0,
+    linked: 0,
     unexamined: 0,
     store,
   };
@@ -4607,7 +4632,22 @@ function allocateSlotPath(repoRoot: string): SlotAllocation {
       else census.foreign++;
       continue;
     }
-    if (!fs.existsSync(candidate)) return { slot: candidate };
+    // The leaf itself, not what it resolves to. `existsSync` follows a link, so
+    // a dangling one read as a free slot — every run on the repository then
+    // failing at setup on git's "already exists" — and a link to a directory
+    // read as a checkout to ask git about, where one to an empty directory in
+    // this repository's own tree reads clean and ours, and `worktree add` then
+    // wrote a full checkout into the operator's checkout through it (measured,
+    // board task d90a042d). This app never makes a link here, and whatever can
+    // write the store can plant one, so it is skipped and counted, never
+    // probed. Not memoised: an `lstat` costs no subprocess, and a link removed
+    // by hand is then a free slot at once.
+    const leaf = fs.lstatSync(candidate, { throwIfNoEntry: false });
+    if (!leaf) return { slot: candidate };
+    if (leaf.isSymbolicLink()) {
+      census.linked = (census.linked ?? 0) + 1;
+      continue;
+    }
     if (probes >= MAX_SLOT_PROBES_PER_ADMISSION) {
       // Counted rather than folded into `dirty`: nothing here has looked at it,
       // and a refusal that named it as uncommitted work would send the operator
@@ -4674,6 +4714,11 @@ function slotExhaustionRefusal(repoRoot: string, census: SlotCensus | null): str
         census.dirty > 0 ? `${census.dirty} still holding uncommitted work` : null,
         census.foreign > 0
           ? `${census.foreign} belonging to another repository`
+          : null,
+        // Its own cause, because the remedy is its own: nothing in a link is
+        // anybody's work, and the operator deletes the link, not a checkout.
+        census.linked
+          ? `${census.linked} that ${census.linked === 1 ? "is a symbolic link" : "are symbolic links"}, which this app never uses as a checkout`
           : null,
         // Named as its own cause rather than left out or folded into the three
         // above: "the ones this admission looked at" is the whole of what it can

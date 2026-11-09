@@ -3000,7 +3000,15 @@ export async function resolveCheckout(
   // `repoLock.ts`. The `worktree add` below stays outside it: it is a full
   // checkout and a big repository legitimately takes minutes.
   await withRepoAdmin(repoRoot, async () => {
-    if (fs.existsSync(slot)) {
+    const leaf = fs.lstatSync(slot, { throwIfNoEntry: false });
+    if (leaf?.isSymbolicLink()) {
+      // Never made by this app, and never handed to git: `worktree remove
+      // --force` resolves a link to the checkout it points at and deletes that,
+      // uncommitted work and all (measured, git 2.39.5, board task d90a042d),
+      // and `worktree add` follows one to a directory and checks out there.
+      // `rmSync` unlinks the link and leaves its target alone.
+      fs.rmSync(slot);
+    } else if (leaf) {
       // Left behind by an earlier attempt that could not clean up. Removing it
       // is safe because the path is this run's alone and `resolveConflicts`
       // admits one resolution per run, so nothing live can be standing in it.
@@ -3641,15 +3649,44 @@ async function abortInterruptedResolution(runId: string): Promise<void> {
       checkouts.push({ path: own, temporary: false });
     }
   }
+  let aux: string | null = null;
   try {
-    const aux = auxWorktreePath(repoRoot, `resolve-${short(run.id)}`);
-    if (fs.existsSync(aux)) checkouts.push({ path: aux, temporary: true });
+    aux = auxWorktreePath(repoRoot, `resolve-${short(run.id)}`);
   } catch {
     // The store is not a real directory inside the mount any more, so there is
     // no aux checkout this app could have made there.
   }
+  if (aux && auxCheckoutLeft(aux, run.id)) checkouts.push({ path: aux, temporary: true });
 
   await Promise.all(checkouts.map((checkout) => closeInterruptedMerge(repoRoot, run.id, checkout)));
+}
+
+/**
+ * Whether something other than a symbolic link stands at a resolution's aux
+ * path, for the boot cleanup to close; a link there is unlinked instead.
+ *
+ * A link is not a checkout this app made, and closing it as one would put
+ * `merge --abort` and `worktree remove --force` through it — the second
+ * deletes whichever checkout it points at (see `resolveCheckout`). Unlinked, as
+ * the next resolution would unlink it, with its target left alone. One `lstat`
+ * decides both, so nothing is put to git on a reading of the path taken before
+ * it. Reported rather than thrown: this runs at boot beside reconcilers that
+ * must still run.
+ */
+function auxCheckoutLeft(aux: string, runId: string): boolean {
+  const where = `${aux}, where a conflict resolution of run ${short(runId)} would have its checkout`;
+  try {
+    const leaf = fs.lstatSync(aux, { throwIfNoEntry: false });
+    if (!leaf?.isSymbolicLink()) return leaf !== undefined;
+    fs.rmSync(aux);
+  } catch (err) {
+    console.error(
+      `[usagefoundry] Could not read or remove ${where}, so it was left alone: ${(err as Error).message}`,
+    );
+    return false;
+  }
+  console.warn(`[usagefoundry] Removed a symbolic link at ${where}. Nothing it points at was touched.`);
+  return false;
 }
 
 /** `merge --abort` where a merge is open, then the aux checkout removed. */

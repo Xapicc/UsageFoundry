@@ -1078,6 +1078,25 @@ describe("isolation for the three modes", () => {
     );
   });
 
+  it("names a symbolic link at a slot as its own cause, not as uncommitted work", () => {
+    // `allocateSlotPath` skips a link and counts it apart, because the remedy is
+    // deleting the link rather than committing anything, and folded into the
+    // dirty count the sentence would send the operator to clean a checkout that
+    // does not exist.
+    assert.throws(
+      () =>
+        resolveIsolation({
+          ...args,
+          freeSlot: null,
+          slotCensus: { ...census, dirty: 38, linked: 1 },
+        }),
+      (err: Error) => {
+        assert.match(err.message, /38 still holding uncommitted work, 1 that is a symbolic link/);
+        return true;
+      },
+    );
+  });
+
   it("names the mount rather than the slots when the mount has gone", () => {
     // `worktreeStore` answering null is not exhaustion, and telling the
     // operator to go and clean up a directory that is not configured any more

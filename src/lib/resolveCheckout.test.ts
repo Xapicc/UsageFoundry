@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { after, describe, it } from "node:test";
+import { after, describe, it, type TestContext } from "node:test";
 
 /**
  * Covers which directory a conflict resolution is given, and only that.
@@ -59,7 +59,8 @@ assert.equal(
   "config was already loaded by another test file in this process — refusing to run against the real database",
 );
 
-const { createRun, getRun, reopenRun } = require("./orchestrator") as typeof import("./orchestrator");
+const { auxWorktreePath, createRun, getRun, reopenRun } =
+  require("./orchestrator") as typeof import("./orchestrator");
 const { saveSettings } = require("./settings") as typeof import("./settings");
 const land = require("./land") as typeof import("./land");
 const { resolveCheckout } = land;
@@ -541,4 +542,78 @@ describe("the other link of a chain while one link holds the checkout they share
       );
     });
   }
+});
+
+/**
+ * Another run's live checkout, holding uncommitted work, and a symbolic link to
+ * it planted at the path `resolveCheckout` gives `run`'s resolution — which
+ * anything that can write the store can plant, a chat turn among them.
+ * `worktree remove --force` resolves a link to the checkout it points at and
+ * deletes that (measured, git 2.39.5), so it is the victim, not the link, that
+ * a removal through it would take.
+ */
+function linkAtAuxPath(name: string) {
+  const branch = `uf/${name}`;
+  const repo = makeRepo(name, [branch, `${branch}-other`]);
+  const victim = path.join(ws, ".uf-worktrees", `${name}-victim`);
+  fixtureGit(repo, ["worktree", "add", "-q", victim, `${branch}-other`]);
+  fs.writeFileSync(path.join(victim, "uncommitted.txt"), "another run's work\n");
+  const run = createRun({
+    folder: name,
+    prompt: "resolve a branch whose resolution path holds a link",
+    budget: { maxIterations: 1 },
+    origin: "form",
+  });
+  const aux = auxWorktreePath(repo, `resolve-${run.id.slice(0, 8)}`);
+  fs.symlinkSync(victim, aux);
+  return { repo, branch, run, victim, aux };
+}
+
+/** Every directory `git()` was asked to run in while `body` ran. */
+async function gitCwdsDuring(t: TestContext, body: () => Promise<unknown>): Promise<string[]> {
+  const realGit = gitModule.git;
+  const cwds: string[] = [];
+  t.mock.method(gitModule, "git", async (...call: Parameters<typeof realGit>) => {
+    cwds.push(call[0]);
+    return realGit(...call);
+  });
+  await body();
+  return cwds;
+}
+
+describe("a symbolic link at the path a resolution's checkout is made in", () => {
+  it("is unlinked, and the checkout it points at is left alone", async (t) => {
+    const { repo, branch, run, victim, aux } = linkAtAuxPath("link-at-resolve");
+
+    let checkout = null as Awaited<ReturnType<typeof resolveCheckout>> | null;
+    const cwds = await gitCwdsDuring(t, async () => {
+      checkout = await resolveCheckout(repo, run, branch);
+    });
+
+    assert.ok(
+      fs.existsSync(path.join(victim, "uncommitted.txt")),
+      "another run's checkout was removed through the link, uncommitted work and all",
+    );
+    assert.ok(!cwds.includes(aux) && !cwds.includes(victim), "git was run through the link");
+    assert.deepEqual(checkout, { path: aux, temporary: true });
+    assert.equal(fs.lstatSync(aux).isSymbolicLink(), false, "the resolution was given the link");
+    assert.equal(fixtureGit(aux, ["rev-parse", "--abbrev-ref", "HEAD"]), branch);
+  });
+
+  it("is unlinked by the boot cleanup, with no git run through it", async (t) => {
+    const { run, victim, aux } = linkAtAuxPath("link-at-boot");
+
+    const cwds = await gitCwdsDuring(t, () => land.abortInterruptedResolutions([run.id]));
+
+    assert.ok(
+      fs.existsSync(path.join(victim, "uncommitted.txt")),
+      "another run's checkout was removed through the link, uncommitted work and all",
+    );
+    assert.deepEqual(
+      cwds.filter((cwd) => cwd === aux || cwd === victim),
+      [],
+      "the cleanup ran git through the link",
+    );
+    assert.equal(fs.lstatSync(aux, { throwIfNoEntry: false }), undefined, "the link was left");
+  });
 });
