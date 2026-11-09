@@ -19,7 +19,7 @@ import type { ConflictKey } from "./orchestrator";
  * `/workspace/repo` and `/workspace3/repo` are the same repository with half the
  * money each if identity is the stored string. A run that was not in a git
  * repository has a null `repo_root` and would simply vanish, which is the
- * failure `groupBy()`'s explicit `(main thread)` / `(no skill)` buckets exist to
+ * failure `groupBy()`'s explicit `(main thread)` bucket exists to
  * prevent one table over. And the columns have to add to the total over the same
  * span, or the report cannot be used to apportion anything.
  *

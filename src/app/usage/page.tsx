@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { HoldoutReadbackCard } from "@/components/HoldoutReadbackCard";
-import { RecentBlocksCard } from "@/components/RecentBlocksCard";
 import { RepoReadingCards } from "@/components/RepoReadingCards";
 import { RepoSpendCard } from "@/components/RepoSpendCard";
 import { SourceRegion } from "@/components/SourceRegion";
@@ -41,7 +40,7 @@ import { totalTokens } from "@/lib/pricing";
  */
 
 /** Fixed order, so the picker and the map it indexes cannot disagree. */
-const DIMENSIONS = ["model", "project", "effort", "agent", "skill"] as const;
+const DIMENSIONS = ["model", "project", "agent"] as const;
 type Dimension = (typeof DIMENSIONS)[number];
 
 /**
@@ -56,9 +55,7 @@ type Dimension = (typeof DIMENSIONS)[number];
 const DIMENSION_LABEL: Record<Dimension, string> = {
   model: "Model",
   project: "Project",
-  effort: "Effort",
   agent: "Agent",
-  skill: "Skill",
 };
 
 const DIMENSION_OPTIONS = DIMENSIONS.map((value) => ({
@@ -70,10 +67,10 @@ const DIMENSION_OPTIONS = DIMENSIONS.map((value) => ({
  * One row of the breakdown table, whichever slice is showing.
  *
  * `mark` is optional because only one dimension has anything to mark: an agent
- * bucket can say where its definition lives, and a model or a skill cannot.
+ * bucket can say where its definition lives, and a model or a project cannot.
  * Named rather than inferred because `satisfies` keeps each key's own narrower
  * shape, so a `mark` on one dimension is invisible at the call site that renders
- * all five.
+ * all three.
  */
 interface BreakdownRow {
   label: string;
@@ -87,13 +84,6 @@ interface BreakdownRow {
    */
   tokens: number;
   mark?: { text: string; tone: BadgeTone } | null;
-  /**
-   * The same recorded turns repriced at a cheaper model's rates, or null/absent
-   * where the dimension has no such reading. Only `agent` does: an agent is the
-   * one thing here a model can be set on, which is what makes the comparison a
-   * lever rather than a curiosity.
-   */
-  counterfactual?: number | null;
 }
 
 interface Breakdown {
@@ -260,13 +250,6 @@ export default function UsagePage() {
           tokens: totalTokens(p.agg.tokens),
         })),
       },
-      effort: {
-        rows: s.byEffort.map((r) => ({
-          label: r.effort,
-          cost: r.agg.costUSD,
-          tokens: totalTokens(r.agg.tokens),
-        })),
-      },
       agent: {
         // The bucket is still whatever the CLI recorded on the turn; the chip
         // says where this install found a definition for that name. Nothing
@@ -277,7 +260,6 @@ export default function UsagePage() {
           cost: r.agg.costUSD,
           tokens: totalTokens(r.agg.tokens),
           mark: agentOriginBadge(r.origin),
-          counterfactual: r.counterfactualUSD,
         })),
         // `(main thread)` is the bucket whose meaning moved. It was "not an
         // agent"; it is now "no agent name on the turn", which a run started as
@@ -288,13 +270,6 @@ export default function UsagePage() {
         hint: data.meta.includeSidechains
           ? "Unmarked names have no definition here: a built-in, a repository's own agent, or a deleted one. (main thread) is a turn with no agent name recorded, which may include a run started as one."
           : "Sub-agent turns are excluded in Settings, but a session started as an agent can still record its name here.",
-      },
-      skill: {
-        rows: s.bySkill.map((r) => ({
-          label: r.skill,
-          cost: r.agg.costUSD,
-          tokens: totalTokens(r.agg.tokens),
-        })),
       },
     };
   }, [data]);
@@ -327,13 +302,6 @@ export default function UsagePage() {
     s.weekly.tokens > 0 ? s.weekly.agg.tokens.cacheRead / s.weekly.tokens : null;
   const current = breakdowns[dimension];
   const breakdownOmitted = Math.max(0, current.rows.length - MAX_BREAKDOWN_ROWS);
-  // The column and the sentence under the table are one decision: a second
-  // dollar figure beside the first, with nothing saying it describes a run that
-  // never happened, is a figure a reader will quote as a saving.
-  const counterfactualModel = s.counterfactualModel;
-  const showCounterfactual = dimension === "agent" && counterfactualModel !== null;
-  // The table's key is `claude-sonnet-5`; the column head has one line for it.
-  const counterfactualLabel = (counterfactualModel ?? "").replace("claude-", "");
   const toolsOmitted = Math.max(0, s.byTool.rows.length - MAX_TOOL_ROWS);
 
   return (
@@ -448,25 +416,20 @@ export default function UsagePage() {
                     <Th num className={STICKY_HEAD}>
                       Tokens
                     </Th>
-                    {showCounterfactual && (
-                      <Th num className={STICKY_HEAD}>
-                        On {counterfactualLabel}
-                      </Th>
-                    )}
                     <Th num className={STICKY_HEAD}>
                       Share
                     </Th>
                   </tr>
                 </THead>
                 <TBody>
-                  {/* Every turn lands in some bucket — including explicit
-                      "(main thread)" / "(no skill)" rows — so the column adds to
-                      100% instead of quietly omitting a remainder. */}
+                  {/* Every turn lands in some bucket — including an explicit
+                      "(main thread)" row — so the column adds to 100% instead
+                      of quietly omitting a remainder. */}
                   {current.rows.slice(0, MAX_BREAKDOWN_ROWS).map((r) => (
                     <Tr key={r.label}>
                       {/* No label: the bucket's own name is what the record is,
-                          and the picker above already says which of the five
-                          dimensions is being named. `break-all` below the
+                          and the picker above already says which dimension
+                          is being named. `break-all` below the
                           breakpoint because a project bucket is a path, which has
                           no space to wrap at and would take the pane sideways. */}
                       <Td className="max-md:break-all">
@@ -484,17 +447,6 @@ export default function UsagePage() {
                       <Td num label="Tokens">
                         {fmtTokens(r.tokens)}
                       </Td>
-                      {/* Labelled with the model rather than "Counterfactual":
-                          stacked below `md` this line is read on its own, and
-                          the word the reader needs there is which model it is. */}
-                      {showCounterfactual && (
-                        <Td num label={`On ${counterfactualLabel}`}>
-                          {r.counterfactual === null ||
-                          r.counterfactual === undefined
-                            ? "—"
-                            : fmtUSD(r.counterfactual)}
-                        </Td>
-                      )}
                       <Td num label="Share">
                         {s.weekly.costUSD > 0
                           ? fmtPct(r.cost / s.weekly.costUSD)
@@ -517,25 +469,13 @@ export default function UsagePage() {
               but not listed.
             </div>
           )}
-          {/* Never folded away, and the "counterfactual, not a forecast"
-              caveat is never cut. The column beside Cost is a dollar figure for
-              work that did not happen, and a reader who quotes it as a saving
-              has been misled by this page rather than by their own arithmetic. */}
-          {showCounterfactual && (
-            <div className="mt-2 max-w-[68ch] text-xs text-ink-muted">
-              <strong>On {counterfactualLabel}</strong> is these exact turns
-              repriced at that model&rsquo;s rate on the day each one ran. It is a
-              counterfactual, not a forecast: the same task on a smaller model may
-              take more work cycles, longer conversations or more retries.
-            </div>
-          )}
           {current.hint && (
             <div className="mt-2 text-xs text-ink-muted">{current.hint}</div>
           )}
         </Card>
 
         {/* Sits with the breakdowns because it reads the same transcripts, and
-            it is deliberately *not* a sixth slice of them: every row above is a
+            it is deliberately *not* a fourth slice of them: every row above is a
             share of the money, and every row here is a share of the characters.
             A tool result is not a billable turn — it carries no usage block at
             all — so this card draws no per-tool dollar figure and none can be
@@ -655,8 +595,6 @@ export default function UsagePage() {
             </div>
           )}
         </Card>
-
-        <RecentBlocksCard blocks={s.blocks} />
 
         {/* The half of "Rate and totals" that is not about running out; the
             burn rate and the exhaustion projection stayed on the dashboard,

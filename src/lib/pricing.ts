@@ -289,8 +289,7 @@ function canonicalModelId(model: string): string {
  * cannot know. An unknown rate takes the dearest plausible shape here
  * (`UNKNOWN_MODEL_PRICE`, `guardCostOf`), so all of the 7th keeps the 0.10x it
  * launched at and the cut starts at the UTC midnight after it: at worst a day's
- * cache reads overstated by 2x, never understated. It is also a UTC midnight,
- * which `windows.ts`'s per-day price memo requires of every dated rate.
+ * cache reads overstated by 2x, never understated.
  */
 const SONNET_5_5_CACHE_READ_CUT_AT = Date.UTC(2026, 9, 8);
 
@@ -309,18 +308,15 @@ const SONNET_5_5_BEFORE_CACHE_READ_CUT: ModelPrice = { input: 2, output: 10 };
  * names no instant is pricing a turn happening now and gets the current rate.
  * Every other entry is flat in time: Claude Sonnet 5's introductory $2/$10 was
  * the earlier dated rate, and Anthropic cancelled the rise to $3/$15 rather than
- * letting it land, so that ramp is deleted. `at` is what the callers that
- * reprice turns that already ran pass, because "what did this cost" is a
- * question about the day it happened rather than about today — `metering.md`
- * writes that down as the shape a dated rate takes, and `windows.ts`'s per-day
- * memo key assumes it (a rate turning over anywhere but a UTC midnight would
- * make that memo wrong for the turns either side). A new dated rate branches
- * here.
+ * letting it land, so that ramp is deleted. `at` is what `transcripts.ts`
+ * passes when it prices a turn that already ran, because "what did this cost"
+ * is a question about the day it happened rather than about today —
+ * `metering.md` writes that down as the shape a dated rate takes. A new dated
+ * rate branches here.
  *
  * **Prompt length is not an input here, and that is the design.** Claude Haiku
  * 5.5's rate depends on each request's prompt, but this function is called
- * without a request (the counterfactual in `windows.ts` memoises its answer per
- * speed and UTC day), so it returns the whole schedule — the object carries
+ * without a request, so it returns the whole schedule — the object carries
  * `longPrompt` — and `costOf` chooses the tier from the tokens of the one
  * request it is pricing. A caller that has no single request to hand `costOf`
  * does not get a tier chosen for it: see `PromptBasis`.
@@ -453,7 +449,7 @@ export function promptTokensOf(t: TokenCounts): number {
  *
  * - `"request"` — the tokens are one API request's usage block, so its own
  *   prompt size picks the tier. `transcripts.ts` prices each `UsageEntry` this
- *   way and `windows.ts` reprices each one this way; a sum is never this.
+ *   way; a sum is never this.
  * - `"unknown"` — the tokens are a sum over several requests, or a request
  *   whose prompt was not recorded. No tier can be read from them: a sum of two
  *   60k-token requests is 120k tokens and was never a 120k-token prompt. Priced

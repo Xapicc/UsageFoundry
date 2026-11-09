@@ -10684,7 +10684,7 @@ const globalSnapshot = globalThis as unknown as {
  * **Concurrent callers share one aggregation.** `scanUsage` coalesces the file
  * reads and nothing coalesced what comes after them, which is the expensive
  * half on a large history: a filter and a full allocation per caller, then
- * `buildSessionBlocks` plus two more filters plus five `groupBy` rollups over
+ * `buildSessionBlocks` plus two more filters plus three `groupBy` rollups over
  * everything the process has ever parsed. `liveGuardTick` states that property
  * and works around it by taking one snapshot for every live guard; the pre-cycle
  * guard is the path every run takes and it had no such sharing, so N runs

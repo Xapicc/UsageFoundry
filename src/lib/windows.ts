@@ -1,11 +1,8 @@
 import type { UsageEntry } from "./transcripts";
 import {
-  type ModelPrice,
   type TokenCounts,
   ZERO_TOKENS,
   addTokens,
-  costOf,
-  resolvePrice,
   totalTokens,
 } from "./pricing";
 import {
@@ -672,94 +669,15 @@ function groupBy(
     .sort((a, b) => b.agg.costUSD - a.agg.costUSD);
 }
 
-/* ------------------------------------------------------------------ */
-/* The cheaper-model counterfactual                                    */
-/* ------------------------------------------------------------------ */
-
-/**
- * A day, as the memo key below buckets by.
- *
- * Exact rather than approximate, and only because `pricing.ts` keeps its
- * date-dependent rates in the shape it does: every one of them turns over at a
- * UTC midnight (`SONNET_5_5_CACHE_READ_CUT_AT` is the only one today), so two
- * turns on the same UTC day and at the same speed always resolve to the same
- * price. Flattening a future rate onto some other boundary would silently make
- * this memo wrong for the turns either side of it, which is one more reason that
- * module's note about keeping the shape is worth obeying.
- */
-const PRICE_MEMO_DAY_MS = 86_400_000;
-
-/**
- * What the same recorded turns would have cost at another model's rates.
- *
- * **A counterfactual over the tokens that were actually produced, and not a
- * prediction.** It reprices exactly the turns that happened — the same input,
- * output, cache-read and cache-write counts — as though the session had been on
- * `model`. What it cannot know, and what nothing in a transcript could tell it,
- * is that a smaller model may take more turns, longer conversations or more
- * retries to reach the same place; the figure would then be optimistic by
- * however much that costs. Every surface that renders it has to say so, which
- * is why the copy is part of the change and not a garnish on it.
- *
- * Why it is worth computing at all: this install has 317 runs and every one of
- * them ran on `claude-opus-5`, so the lever has never been pulled and there is
- * nothing on any page that says what pulling it would be worth. The lever
- * itself already exists and needs no new column anywhere — an agent carries a
- * `model`, and selected with `--agent` that is the *session's* model (measured
- * on the pin; see `SavedAgent.model`), and a template names an agent. So what
- * was missing was never a mechanism, only the evidence to use one.
- *
- * Each turn is priced at `model`'s rate **on the day it ran**, not today's,
- * because that is what "these turns would have cost" means. Where the target
- * has introductory pricing that is the introductory rate, which is a real
- * answer to the question asked and *not* a forward-looking rate — a distinction
- * the UI copy has to keep, since a decision about future work is the whole
- * reason anybody reads this.
- *
- * Two artefacts the caller should expect rather than be surprised by. A turn
- * that already ran on something cheaper than `model` reprices *upwards*, which
- * is correct and is why the actual figure stays beside it rather than being
- * replaced. And a turn on a model `pricing.ts` cannot place contributes $0 to
- * the actual — the standing floor rule — while contributing a real number here,
- * so a window full of unpriced turns reads as an increase; the dashboard already
- * banners unpriced models, and that banner is what says why.
- */
-function counterfactualByAgent(
-  entries: UsageEntry[],
-  model: string,
-): Map<string, number> {
-  // Resolving per turn is a `toLowerCase`, three regex replaces and a scan of
-  // every price key, and this runs over the whole weekly window — so the answer
-  // is memoised on the only two things it varies with. `undefined` means absent
-  // here and nothing ever stores it, so a genuine `null` (an unpriceable target)
-  // is cached rather than re-resolved on every turn.
-  //
-  // Prompt length is not a third key, and must not become one: a model priced by
-  // prompt length (Claude Haiku 5.5) resolves to one schedule whatever the
-  // request, and `costOf` picks the tier below from each entry's own tokens.
-  const prices = new Map<string, ModelPrice | null>();
-  const out = new Map<string, number>();
-
-  for (const e of entries) {
-    const memo = `${e.speed ?? ""}|${Math.floor(e.ts / PRICE_MEMO_DAY_MS)}`;
-    let price = prices.get(memo);
-    if (price === undefined) {
-      price = resolvePrice(model, { at: e.ts, speed: e.speed });
-      prices.set(memo, price);
-    }
-    const bucket = e.agent ?? MAIN_THREAD_BUCKET;
-    // `e` is one request, so the target model's tier follows from this turn's
-    // own prompt — as if that same prompt had been sent to it.
-    out.set(bucket, (out.get(bucket) ?? 0) + costOf(e.tokens, price, "request"));
-  }
-  return out;
-}
-
 export interface UsageSnapshot {
   now: number;
   session: WindowState;
   weekly: WindowState;
-  /** All blocks, newest first, for history charts. */
+  /**
+   * The newest 48 blocks, newest first. Read by the orchestrator's
+   * `lastSpendingWindowEnd`, which needs the end of the last block that held
+   * spend; `/api/usage` does not ship it, because no page draws it.
+   */
   blocks: SessionBlock[];
   /** Tokens per hour over the trailing hour of activity. */
   burnTokensPerHour: number;
@@ -788,32 +706,12 @@ export interface UsageSnapshot {
     agent: string;
     agg: Aggregate;
     origin: AgentOrigin | null;
-    /**
-     * What this bucket's turns would have cost at `counterfactualModel`'s
-     * rates, or null when the caller named no model.
-     *
-     * Null is "nobody asked", `origin`'s rule and for its reason: the
-     * orchestrator's guard path names none, and a $0 there would read as "the
-     * same work would have been free". See `counterfactualByAgent` for what
-     * this figure is and, more importantly, what it is not.
-     */
-    counterfactualUSD: number | null;
   }>;
-  /** Cost by skill, with un-skilled turns in their own bucket. */
-  bySkill: Array<{ skill: string; agg: Aggregate }>;
-  /** Cost by reasoning effort — usually the largest single lever. */
-  byEffort: Array<{ effort: string; agg: Aggregate }>;
-  /**
-   * Which model `byAgent`'s `counterfactualUSD` was priced at, or null when
-   * nobody asked. Carried so the UI names it rather than hard-coding a second
-   * copy of a decision made here.
-   */
-  counterfactualModel: string | null;
   /**
    * What filled the contexts this window paid for.
    *
-   * **A composition reading, not a sixth breakdown and not a cost source.** The
-   * five above put every turn in exactly one bucket and reconcile to the window
+   * **A composition reading, not a fourth breakdown and not a cost source.** The
+   * three above put every turn in exactly one bucket and reconcile to the window
    * total; this one counts characters of tool output and reconciles only to
    * itself, because a `tool_result` is not a billable turn and carries no usage
    * at all. Its shape is deliberately unlike theirs — an object with `rows`
@@ -1054,16 +952,6 @@ export function buildSnapshot(
    * which is a true statement about a caller that supplied no calls.
    */
   toolCalls: readonly ToolCall[] = [],
-  /**
-   * The model `byAgent`'s counterfactual is priced at, or null to compute none.
-   *
-   * A caller's decision rather than a constant here, because the only thing
-   * that makes one target right is what an operator would plausibly point an
-   * agent at — which is a product question, not a metering one. Null costs
-   * nothing: no price resolution, no second pass, and every row reads null,
-   * which is "nobody asked".
-   */
-  counterfactualModel: string | null = null,
 ): UsageSnapshot {
   // The provider's own reset instant outranks the operator's, because
   // `sessionResetOverrideAt` exists only as a way to hand-correct a boundary
@@ -1311,35 +1199,19 @@ export function buildSnapshot(
   );
 
   // Attribution Claude Code already records on every turn. Turns with no
-  // sub-agent or skill get an explicit bucket rather than being dropped, so
-  // the rows still add up to the window total and a large "(main thread)"
-  // share reads as the fact it is instead of a gap in the data.
+  // sub-agent get an explicit bucket rather than being dropped, so the rows
+  // still add up to the window total and a large "(main thread)" share reads
+  // as the fact it is instead of a gap in the data.
   // The bucket key stays the name the CLI recorded, always. `origin` says where
   // this install found a definition for that name, which is a fact about the
   // registry rather than about the turn — renaming a saved agent moves no spend
   // between rows, it only stops the annotation matching.
-  // Priced in its own pass rather than inside `groupBy`, which is shared with
-  // four columns that have no counterfactual and must not pay for one.
-  const counterfactual =
-    counterfactualModel === null
-      ? null
-      : counterfactualByAgent(weekEntries, counterfactualModel);
   const byAgent = groupBy(weekEntries, (e) => e.agent ?? MAIN_THREAD_BUCKET).map(
     ({ key, agg }) => ({
       agent: key,
       agg,
       origin: agentOrigin(key, agentNames),
-      // `?? 0` only inside a computed map: a bucket that exists in the rollup
-      // exists in the pass above it, so this cannot fabricate a figure — it is
-      // the compiler's exhaustiveness, not a fallback that hides a miss.
-      counterfactualUSD: counterfactual ? (counterfactual.get(key) ?? 0) : null,
     }),
-  );
-  const bySkill = groupBy(weekEntries, (e) => e.skill ?? "(no skill)").map(
-    ({ key, agg }) => ({ skill: key, agg }),
-  );
-  const byEffort = groupBy(weekEntries, (e) => e.effort ?? "(unspecified)").map(
-    ({ key, agg }) => ({ effort: key, agg }),
   );
 
   return {
@@ -1353,10 +1225,7 @@ export function buildSnapshot(
     byModel,
     byProject,
     byAgent,
-    bySkill,
-    byEffort,
-    counterfactualModel,
-    // The same window the five breakdowns cover, so the two cards on the page
+    // The same window the three breakdowns cover, so the two cards on the page
     // describe one span. The aggregate goes in because the placement rates are
     // the window's own bill over the window's own placed tokens — see
     // `ToolComposition`, which is where the reason they are rates and not

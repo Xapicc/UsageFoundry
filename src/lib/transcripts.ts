@@ -82,19 +82,11 @@ export interface UsageEntry {
   speed?: string;
   serviceTier?: string;
   /**
-   * Reasoning effort the turn ran at (`low` … `max`). Present on essentially
-   * every turn, and a large cost lever — the same task at `xhigh` and at `low`
-   * are different amounts of money.
-   */
-  effort?: string;
-  /**
    * Sub-agent that produced the turn (`Explore`, `workflow-subagent`, …), or
    * undefined for main-thread work. Claude Code records this itself; it is a
    * finer split than `isSidechain`, which only says "not the main thread".
    */
   agent?: string;
-  /** Skill in play when the turn ran (`claude-api`, `init`, …), if any. */
-  skill?: string;
   /**
    * Which Claude Code surface produced the turn (`cli`, `sdk-cli`, …).
    *
@@ -527,17 +519,9 @@ function parseLine(
     serviceTier: internOptional(
       typeof usage.service_tier === "string" ? usage.service_tier : undefined,
     ),
-    effort: internOptional(
-      typeof rec.effort === "string" ? rec.effort : undefined,
-    ),
     agent: internOptional(
       typeof rec.attributionAgent === "string"
         ? rec.attributionAgent
-        : undefined,
-    ),
-    skill: internOptional(
-      typeof rec.attributionSkill === "string"
-        ? rec.attributionSkill
         : undefined,
     ),
     entrypoint: internOptional(

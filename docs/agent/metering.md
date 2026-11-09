@@ -72,7 +72,7 @@ This file is an index. Each line below is the lead claim of one paragraph, and t
 - A cycle no loop came back for is read from its thread's rollout, from where it began.
 - The ending says the count is understated, and the sentence outlives the segment that lost the flag.
 
-## [Attribution by effort, agent and skill](metering/attribution.md)
+## [Attribution by agent](metering/attribution.md)
 
 - Attribution comes from the transcript, not from telemetry.
 - An agent bucket is annotated, never moved, and "nobody checked" is not "no such agent".

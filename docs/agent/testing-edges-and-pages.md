@@ -167,7 +167,6 @@ Units that are about no test file in the tree:
 | `InstallSpendCard.test.tsx` |  |
 | `LiveRunFigures.test.tsx` |  |
 | `OpenTasksChart.test.tsx` |  |
-| `RecentBlocksCard.test.tsx` |  |
 | `RunHandoff.test.tsx` |  |
 | `UsageNotices.test.tsx` |  |
 | `UsagePeriods.test.tsx` | [ui-kit] |
