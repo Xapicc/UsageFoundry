@@ -29,7 +29,7 @@ Twenty are renderings rather than functions — every `*.test.tsx` in the tree, 
 | `diff.test.ts` |  |
 | `land.test.ts` | [landing], [merge-queue], [harnesses], [contention] |
 | `mountRootIsolation.test.ts` |  |
-| `orchestrator.test.ts` | [cycle], [edges], [argv], [samples], [parsers], [codex-cycle], [budgets], [pricing], [landing], [merge-queue], [sandbox], [harnesses], [token-economizer] |
+| `orchestrator.test.ts` | [cycle], [edges], [argv], [functions], [samples], [parsers], [codex-cycle], [budgets], [pricing], [landing], [merge-queue], [sandbox], [harnesses], [token-economizer] |
 | `patch.test.ts` |  |
 | `planUsage.test.ts` |  |
 | `queueOrder.test.ts` |  |
@@ -117,7 +117,7 @@ Its cases are in `orchestrator.test.ts`, `shutdown.test.ts`, `stackWait.test.ts`
 | Test file | Also in |
 |---|---|
 | `pricing.test.ts` |  |
-| `templates.test.ts` | [argv] |
+| `templates.test.ts` | [functions] |
 
 ## [The model catalogue and model discovery](testing/model-catalogue-and-discovery.md)
 
@@ -141,7 +141,7 @@ Its cases are in `orchestrator.test.ts`, `shutdown.test.ts`, `stackWait.test.ts`
 | `transcriptForkDedupe.test.ts` |  |
 | `transcriptDedupe.test.ts` |  |
 | `transcriptPromptTier.test.ts` | [pricing] |
-| `transcripts.test.ts` | [argv] |
+| `transcripts.test.ts` | [functions] |
 | `transcriptScan.test.ts` |  |
 | `transcriptScanMemo.test.ts` |  |
 | `transcriptWalk.test.ts` |  |
@@ -199,7 +199,7 @@ Its cases are in `orchestrator.test.ts`, `shutdown.test.ts`, `stackWait.test.ts`
 |---|---|
 | `loopMergeOwnership.test.ts` |  |
 | `loopSection.test.ts` | [fleet], [loop-endings] |
-| `workflows.test.ts` | [argv], [pricing], [workflows], [decider], [pick-ups], [cycle], [edges], [loop-board], [loop-endings], [schedule-routes] |
+| `workflows.test.ts` | [functions], [pricing], [workflows], [decider], [pick-ups], [cycle], [edges], [loop-board], [loop-endings], [schedule-routes] |
 
 Units that are about no test file in the tree:
 
@@ -220,7 +220,7 @@ Cases in `loopSection.test.ts` and `workflows.test.ts`, each listed under its ow
 | Test file | Also in |
 |---|---|
 | `blockTurnReading.test.ts` |  |
-| `chat.test.ts` | [proposals], [argv], [pricing], [task-deps], [landing] |
+| `chat.test.ts` | [proposals], [functions], [pricing], [task-deps], [landing] |
 | `chatOrder.test.ts` |  |
 | `chatRequest.test.ts` |  |
 | `chatStream.test.ts` | [pricing] |
@@ -248,7 +248,7 @@ Cases in `loopSection.test.ts` and `workflows.test.ts`, each listed under its ow
 
 | Test file | Also in |
 |---|---|
-| `tasks.test.ts` | [argv] |
+| `tasks.test.ts` | [functions] |
 
 ## [Task comments, dependencies and the board's MCP surface](testing/taskboard-comments-deps-and-mcp.md)
 
@@ -330,7 +330,7 @@ Cases in `landAfterVerify.test.ts`, `landUnwind.test.ts`, `land.test.ts` and `me
 
 | Test file | Also in |
 |---|---|
-| `mergeQueue.test.ts` | [argv], [resolution], [contention] |
+| `mergeQueue.test.ts` | [functions], [resolution], [contention] |
 | `mergeQueueDrain.test.ts` | [fleet] |
 | `mergeQueueOrder.test.ts` |  |
 | `mergeQueueView.test.ts` |  |
@@ -356,20 +356,25 @@ Cases in `landAfterVerify.test.ts`, `landUnwind.test.ts`, `land.test.ts` and `me
 | `touchedMap.test.ts` |  |
 | `touchReplay.test.ts` |  |
 
-## [Spawn argv, the child environment and appended notices](testing/spawn-argv-and-child-env.md)
+## [The function list from the merge queue to the chat's proposals, and the agents route](testing/function-list-queue-to-proposals.md)
 
 | Test file | Also in |
 |---|---|
 | `agentRegistry.test.ts` |  |
 | `agents.test.ts` |  |
-| `fileCostNotice.test.ts` |  |
-| `plugins.test.ts` |  |
 | `privsep.test.ts` | [knowledge] |
-| `promptArgv.test.ts` |  |
 | `sandbox.test.ts` |  |
 | `schedules.test.ts` | [proposals] |
 | `serverLock.test.ts` | [data-dir] |
 | `src/app/api/agents/route.test.ts` |  |
+
+## [Spawn argv, the child environment and appended notices](testing/spawn-argv-and-child-env.md)
+
+| Test file | Also in |
+|---|---|
+| `fileCostNotice.test.ts` |  |
+| `plugins.test.ts` |  |
+| `promptArgv.test.ts` |  |
 | `tmpdirNotice.test.ts` |  |
 
 ## [Names a dropped child runs, and what the chat child loads](testing/chat-child-lookups-and-config.md)
@@ -486,6 +491,7 @@ It prints nothing as this is written. Whoever owns a file it names owes that fil
 [resolution]: testing/conflict-resolution.md
 [run-page]: testing/run-page-panels-and-file-maps.md
 [argv]: testing/spawn-argv-and-child-env.md
+[functions]: testing/function-list-queue-to-proposals.md
 [chat-child]: testing/chat-child-lookups-and-config.md
 [sandbox]: testing/sandbox-and-read-guard.md
 [parsers]: testing/stream-parsers-and-webhook.md
