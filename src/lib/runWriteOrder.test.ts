@@ -43,6 +43,7 @@ let land: typeof import("./land");
 let projects: typeof import("./projects");
 let retention: typeof import("./retention");
 let dbMod: typeof import("./db");
+let fleet: typeof import("./fleet");
 
 function git(cwd: string, args: string[]): void {
   execFileSync("git", args, { cwd, env: { ...process.env, ...AUTHOR } });
@@ -87,6 +88,7 @@ before(async () => {
   projects = await import("./projects");
   retention = await import("./retention");
   dbMod = await import("./db");
+  fleet = await import("./fleet");
   const settings = await import("./settings");
   settings.saveSettings({ planUsageFromApi: false, checkoutRetentionDays: 7 });
   // Every case reads the queue as it was written, and a run that started would
@@ -361,5 +363,45 @@ describe("checkout reclaim reads the newest link of a chain written in one milli
     } finally {
       dropCheckout(slot, branch);
     }
+  });
+});
+
+describe("a fleet pick-up reopens a batch written in one millisecond in write order", () => {
+  it("picks independent runs up oldest-written first, whatever order the page names them", () => {
+    // One folder each, so nothing refuses one for another's checkout. Finished
+    // having worked a cycle, so each rejoins the queue rather than going back to
+    // `waiting`.
+    const ids = inOneMillisecond(() =>
+      Array.from({ length: 8 }, (_, i) => create(`pickup-${i}`, `pickup ${i}`).id),
+    );
+    assert.equal(stampsOf(ids), 1, "the batch has to share one created_at");
+    dbMod
+      .db()
+      .prepare(
+        `UPDATE runs SET status = 'failed', iterations = 1, session_id = 'session',
+           finished_at = ? WHERE id IN (${ids.map(() => "?").join(",")})`,
+      )
+      .run(realNow(), ...ids);
+
+    // A clock that moves on every read, so `reopened_at` — written by `reopenRun`
+    // at the moment a run is picked up — records the order of the picks. The
+    // page sends its ids newest first, which is the order the batch is handed in.
+    let tick = realNow();
+    Date.now = () => ++tick;
+    let report: ReturnType<typeof fleet.reopenFleet>;
+    try {
+      report = fleet.reopenFleet([...ids].reverse(), { maxIterations: 5 });
+    } finally {
+      Date.now = realNow;
+    }
+    assert.deepEqual(report.refused, []);
+
+    // `promoteQueued` follows each pick-up, so with a free slot the first run
+    // picked up is the one that starts: this order decides which runs a cap lets
+    // through, and `queueCompare` can only re-order what is already queued.
+    const pickedUp = [...ids].sort(
+      (a, b) => orch.getRun(a)!.reopened_at! - orch.getRun(b)!.reopened_at!,
+    );
+    assert.deepEqual(pickedUp, ids);
   });
 });
