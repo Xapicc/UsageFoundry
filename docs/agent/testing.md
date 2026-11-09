@@ -83,23 +83,28 @@ Its cases are in `orchestrator.test.ts`, `shutdown.test.ts`, `stackWait.test.ts`
 | `retentionSweep.test.ts` | [status] |
 | `schemaMigration.test.ts` |  |
 
-## [Budgets, spend guards and the run form's limits](testing/budgets-and-spend.md)
+## [Budgets and spend guards](testing/budgets-and-spend.md)
 
 | Test file | Also in |
 |---|---|
 | `assistBudget.test.ts` |  |
-| `budgetPayload.test.ts` | [pricing] |
 | `calibration.test.ts` |  |
 | `costBaseline.test.ts` |  |
 | `costOutlierGuard.test.ts` |  |
 | `costSplit.test.ts` |  |
-| `formProblems.test.ts` |  |
-| `formSeed.test.ts` |  |
 | `installSpend.test.ts` | [chat], [harnesses] |
 | `instanceBudget.test.ts` |  |
 | `parksAndRefunds.test.ts` | [cycle] |
 | `resumedCycleSpend.test.ts` |  |
 | `validationGrant.test.ts` | [cycle] |
+
+## [The new-run form's limits, refusals and seed](testing/run-form-limits.md)
+
+| Test file | Also in |
+|---|---|
+| `budgetPayload.test.ts` | [pricing] |
+| `formProblems.test.ts` |  |
+| `formSeed.test.ts` |  |
 
 ## [Codex cycles that end without reporting](testing/codex-killed-cycles.md)
 
@@ -489,3 +494,4 @@ It prints nothing as this is written. Whoever owns a file it names owes that fil
 [chat-thread]: testing/chat-thread-page-readings.md
 [branch-delete]: testing/branch-deletion-and-slot-reuse.md
 [edges]: testing/dependency-edges-and-rivals.md
+[run-form]: testing/run-form-limits.md
