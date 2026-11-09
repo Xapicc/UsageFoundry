@@ -65,6 +65,19 @@ environment's proxy at a closed or logging loopback port with
   guard passes both, being regular files: board task `93f1c142`. Caveat: run as
   the file's owner rather than a second uid; one version, a fake key.
 
+- **Entries a cycle plants at the clock-stamped aside names no longer stop
+  the boot's repair, 2026-11-09.** Board task `d7c19b38`. The entrypoint's
+  `CODEX_HOME` block, extracted and run under `dash` and under `bash` against
+  a scratch home with a directory at `config.toml`, a file at `rules`, and a
+  link and a non-empty directory planted at each `<name>.moved-aside.<epoch>`
+  for the next 120 seconds of the real clock. Before the change both repairs
+  failed, the boot printing the `config.toml` warning and the `rules`
+  refusal. After it both moved, each into a `.moved-aside.XXXXXX` directory
+  `mktemp -d` made at 0700, and nothing went through a planted link. The
+  `deployment.test.ts` cases for each name, with `date` stubbed, failed before
+  and pass after. Caveat: not as root, not in a container, so that the later
+  boots' chown loop skips root's aside directory is read from its `0:*` case.
+
 - **TokenEconomizer's Codex tool pruning, written into a repository's
   `.codex/config.toml`, removes no tool from a Codex work cycle, 2026-11-09.**
   Board task `786dd327`, codex-cli 0.153.4. The keys are
