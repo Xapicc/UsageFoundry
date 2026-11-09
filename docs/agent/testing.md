@@ -5,7 +5,7 @@
 > whose violation is silent — nothing throws, nothing fails to typecheck.
 > **Read before editing any src/**/*.test.ts, or when deciding whether a change needs one.**
 
-This page is the index. The bar every test is held to comes first, each of its paragraphs listed by its lead claim and held in `testing/the-bar.md`; then one section per topic file under `testing/`, each with a table of the test files whose grounds that file holds. Read the bar, then the one topic file your change touches. The sections from auth to the TokenEconomizer are on a second page, [testing-edges-and-pages.md](testing-edges-and-pages.md), because this one outgrew the size every other doc keeps to.
+This page is the index. The bar every test is held to comes first, each of its paragraphs listed by its lead claim and held in `testing/the-bar.md`; then one section per topic file under `testing/`, each with a table of the test files whose grounds that file holds. Read the bar, then the one topic file your change touches. The sections from the stream parsers to the TokenEconomizer are on a second page, [testing-edges-and-pages.md](testing-edges-and-pages.md), because this one outgrew the size every other doc keeps to.
 
 ## [The bar](testing/the-bar.md)
 
@@ -402,48 +402,9 @@ Cases in `landAfterVerify.test.ts`, `landUnwind.test.ts`, `land.test.ts` and `me
 
 Its cases are in `orchestrator.test.ts`; see that file's row above.
 
-## [Stream parsers, assist output and the outbound webhook](testing/stream-parsers-and-webhook.md)
-
-| Test file | Also in |
-|---|---|
-| `codexRollout.test.ts` |  |
-| `mcpStatus.test.ts` |  |
-| `notify.test.ts` |  |
-| `review.test.ts` | [pricing], [landing], [stacks], [argv], [sandbox] |
-| `toolComposition.test.ts` |  |
-
-Units that are about no test file in the tree:
-
-- `rateLimitEvent.test.ts` is gone, with the module it covered: the provider's own utilisation off the `stream-json` stream fed one dashboard card and nothing else, and card and parser were removed …
-
-## [The live page: its stream, tiles and sub-agent roster](testing/live-page-folds.md)
-
-| Test file | Also in |
-|---|---|
-| `liveStream.test.ts` |  |
-| `liveSubagents.test.ts` |  |
-| `liveTiles.test.ts` |  |
-
-## [The model decider](testing/model-decider.md)
-
-| Test file | Also in |
-|---|---|
-| `modelDecider.test.ts` |  |
-
-## [The local provider](testing/local-provider.md)
-
-| Test file | Also in |
-|---|---|
-| `localCertification.test.ts` |  |
-| `localLandGate.test.ts` | [harnesses] |
-| `localProvider.test.ts` |  |
-| `reviewBlock.test.ts` |  |
-| `reviewBlockRun.test.ts` | [workflows], [harnesses] |
-| `src/app/api/runs/[id]/agent-cost/route.test.ts` |  |
-
 ## [The install's edges and its pages](testing-edges-and-pages.md)
 
-Auth, credentials, config and settings, provider sign-in, the status routes, sign-in limits, the container, the knowledge vault, Dreaming, the toolbar readout, the dashboard's "waiting on you" line, the git-directory watch, the components, stacks and the TokenEconomizer: their sections, with their tables, are in [testing-edges-and-pages.md](testing-edges-and-pages.md), which is this page's second half.
+Stream parsers and the outbound webhook, the live page, the model decider, the local provider, auth, credentials, config and settings, provider sign-in, the status routes, sign-in limits, the container, the knowledge vault, Dreaming, the toolbar readout, the dashboard's "waiting on you" line, the git-directory watch, the components, stacks and the TokenEconomizer: their sections, with their tables, are in [testing-edges-and-pages.md](testing-edges-and-pages.md), which is this page's second half.
 
 ## [Test harnesses: which tests open a database, and how this page is checked](testing/test-harnesses.md)
 

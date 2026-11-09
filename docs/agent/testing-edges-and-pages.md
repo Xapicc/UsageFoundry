@@ -4,6 +4,45 @@
 
 This page is the second half of the index at [testing.md](testing.md), which holds the bar every test is held to, the check that the index is complete and the first sections. It is built the same way: one section per topic file under `testing/`, each with a table of the test files whose grounds that file holds. A test file's row is on the page that holds its section, and its "Also in" cell names the other topic files that hold grounds for it, as there.
 
+## [Stream parsers, assist output and the outbound webhook](testing/stream-parsers-and-webhook.md)
+
+| Test file | Also in |
+|---|---|
+| `codexRollout.test.ts` |  |
+| `mcpStatus.test.ts` |  |
+| `notify.test.ts` |  |
+| `review.test.ts` | [pricing], [landing], [stacks], [argv], [sandbox] |
+| `toolComposition.test.ts` |  |
+
+Units that are about no test file in the tree:
+
+- `rateLimitEvent.test.ts` is gone, with the module it covered: the provider's own utilisation off the `stream-json` stream fed one dashboard card and nothing else, and card and parser were removed …
+
+## [The live page: its stream, tiles and sub-agent roster](testing/live-page-folds.md)
+
+| Test file | Also in |
+|---|---|
+| `liveStream.test.ts` |  |
+| `liveSubagents.test.ts` |  |
+| `liveTiles.test.ts` |  |
+
+## [The model decider](testing/model-decider.md)
+
+| Test file | Also in |
+|---|---|
+| `modelDecider.test.ts` |  |
+
+## [The local provider](testing/local-provider.md)
+
+| Test file | Also in |
+|---|---|
+| `localCertification.test.ts` |  |
+| `localLandGate.test.ts` | [harnesses] |
+| `localProvider.test.ts` |  |
+| `reviewBlock.test.ts` |  |
+| `reviewBlockRun.test.ts` | [workflows], [harnesses] |
+| `src/app/api/runs/[id]/agent-cost/route.test.ts` |  |
+
 ## [Auth, credentials, config and the request log](testing/auth-config-and-status-routes.md)
 
 | Test file | Also in |
@@ -171,3 +210,7 @@ This page is the second half of the index at [testing.md](testing.md), which hol
 [bodies]: testing/request-bodies-settings-and-run-streams.md
 [edges]: testing/dependency-edges-and-rivals.md
 [token-economizer]: testing/token-economizer.md
+[pricing]: testing/pricing-and-models.md
+[landing]: testing/landing-and-delivery.md
+[sandbox]: testing/sandbox-and-read-guard.md
+[workflows]: testing/workflow-instances.md
