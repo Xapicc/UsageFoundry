@@ -57,6 +57,11 @@ const git = (cwd: string, ...args: string[]) =>
  * `signalled` records which signal reached it, which is the one direct proof
  * that the Stop did; `answer` is how a failing case lets it go. The
  * thirty-second exit is a backstop for a failing run.
+ *
+ * `started` is written only once the SIGINT handler is installed, because a
+ * case sends its Stop the moment that file appears: a signal that beats the
+ * handler takes Node's default action, the stub dies without writing
+ * `signalled`, and the case fails on a missing file under load.
  */
 function writeStub(dir: string): string {
   const stub = path.join(dir, "claude-stub.js");
@@ -69,7 +74,6 @@ function writeStub(dir: string): string {
     stub,
     `#!/usr/bin/env node
 const fs = require("node:fs");
-fs.writeFileSync(${JSON.stringify(control("started"))}, String(process.pid));
 const answer = () => {
   process.stdout.write(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "\`\`\`json\\n" + ${JSON.stringify(verdict)} + "\\n\`\`\`", total_cost_usd: 0.02 }) + "\\n");
   process.exit(0);
@@ -78,6 +82,7 @@ process.on("SIGINT", () => {
   fs.writeFileSync(${JSON.stringify(control("signalled"))}, "SIGINT");
   answer();
 });
+fs.writeFileSync(${JSON.stringify(control("started"))}, String(process.pid));
 setInterval(() => {
   if (fs.existsSync(${JSON.stringify(control("answer"))})) answer();
 }, 20);
