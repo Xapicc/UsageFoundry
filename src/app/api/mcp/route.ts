@@ -387,7 +387,13 @@ const SHARED_TOOLS = [
     description:
       "How much of the 5-hour and weekly windows is spent, the current burn " +
       "rate, and how many runs are working or queued. Use it to say whether " +
-      "now is a good time to start work, not to decide any run's guards.",
+      "now is a good time to start work, not to decide any run's guards. " +
+      "Each window's projectedExhaustionAt is when that window runs out at " +
+      "the current burn, or null when it lasts until its own reset. The " +
+      "top-level projectedExhaustionAt is only the earlier of the two and " +
+      "does not say which: name the window from session and weekly before " +
+      "telling the operator what to wait for, since a session reset frees " +
+      "nothing when it is the week that runs out.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
@@ -2945,6 +2951,10 @@ async function usageReport() {
   const snapshot = await currentSnapshot();
   const active = activeRuns();
 
+  // Each window carries its own run-out because the one at the top level is the
+  // earlier of the two and cannot say whose it is: a chat told "exhausted at
+  // 02:15" with the session resetting at 02:45 reasonably says "wait for the
+  // session reset", which frees nothing when it was the week that ran out.
   const window = (w: typeof snapshot.session) => ({
     startsAt: new Date(w.startsAt).toISOString(),
     endsAt: new Date(w.endsAt).toISOString(),
@@ -2952,6 +2962,10 @@ async function usageReport() {
     ceiling: w.limit === null ? null : fmtUSD(w.limit),
     fraction: w.fraction,
     guardFraction: w.guardFraction,
+    projectedExhaustionAt:
+      w.projectedExhaustionAt === null
+        ? null
+        : new Date(w.projectedExhaustionAt).toISOString(),
   });
 
   return text(
