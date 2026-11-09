@@ -1201,6 +1201,75 @@ test("list_projects answers what the projects page reads, to a chat and nobody e
   }
 });
 
+test("get_usage puts a run-out under the window that owns it, and the week's is not the session's", async () => {
+  // Two $15 turns (a million Sonnet output tokens each), one three hours ago
+  // and one twenty minutes ago: $30 spent in the week, $15 of it in the
+  // trailing hour, so the burn is $15/h. Only the week has a ceiling, $100, so
+  // $70 of headroom is 4h40m out. The session has none to run out against, and
+  // `planUsageFromApi` is off so no sign-in can move either figure.
+  const projectDir = path.join(root, "claude", "projects", "-usage-fixture");
+  fs.mkdirSync(projectDir, { recursive: true });
+  const nowMs = Date.now();
+  const turns = [3 * 60, 20].map((minutesAgo, turn) =>
+    JSON.stringify({
+      type: "assistant",
+      uuid: `usage-fixture-turn-${turn}`,
+      sessionId: "00000000-0000-4000-8000-00000000b001",
+      cwd: HERE,
+      requestId: `req_usage_fixture_${turn}`,
+      timestamp: new Date(nowMs - minutesAgo * 60_000).toISOString(),
+      isSidechain: false,
+      message: {
+        id: `msg_usage_fixture_${turn}`,
+        model: "claude-sonnet-4-5",
+        usage: { input_tokens: 0, output_tokens: 1_000_000 },
+      },
+    }),
+  );
+  fs.writeFileSync(
+    path.join(projectDir, "00000000-0000-4000-8000-00000000b001.jsonl"),
+    `${turns.join("\n")}\n`,
+  );
+
+  saveSettings({ planUsageFromApi: false, weeklyCostLimit: 100, sessionCostLimit: null });
+  try {
+    const chatToken = chat.mintCapability({ kind: "chat", chatId: randomUUID() });
+    const reported = await callTool(chatToken, "get_usage", {});
+    assert.equal(reported.isError, false, reported.text);
+    const usage = JSON.parse(reported.text);
+
+    // The fixture is read at all: a snapshot over no turns would make every
+    // null below true for the wrong reason.
+    assert.equal(usage.weekly.spent, "$30.00");
+    assert.equal(usage.burnCostPerHour, "$15.00");
+
+    const runsOutAt = Date.parse(usage.now) + (70 / 15) * 3_600_000;
+    assert.ok(
+      Math.abs(Date.parse(usage.weekly.projectedExhaustionAt) - runsOutAt) < 1_000,
+      `the week's own run-out, 4h40m out; got ${usage.weekly.projectedExhaustionAt}`,
+    );
+    assert.equal(
+      usage.session.projectedExhaustionAt,
+      null,
+      "the session has no ceiling to run out against, and is not handed the week's instant",
+    );
+    // Kept as the earlier of the two, which here is the week's.
+    assert.equal(usage.projectedExhaustionAt, usage.weekly.projectedExhaustionAt);
+  } finally {
+    saveSettings({ planUsageFromApi: true, weeklyCostLimit: null, sessionCostLimit: null });
+  }
+
+  // The top-level instant is still offered, so the description is what tells a
+  // model it names no window.
+  const chatToken = chat.mintCapability({ kind: "chat", chatId: randomUUID() });
+  const listedTools = (await rpc(chatToken, "tools/list")) as {
+    tools: { name: string; description: string }[];
+  };
+  const tool = listedTools.tools.find((t) => t.name === "get_usage");
+  assert.ok(tool, "a chat is offered it");
+  assert.match(tool.description, /earlier of the\s+two/);
+});
+
 test("save_template and propose_run refuse a prompt that is not a string and write nothing", async () => {
   const { token, proposals } = proposingChat();
   const templates = () =>
