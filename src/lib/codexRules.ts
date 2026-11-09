@@ -90,7 +90,66 @@ export function codexRulesText(
   ].join("\n");
 }
 
-/** Whether the denial is in place for the cycle about to spawn. */
+/** Codex's own configuration file, which is the agents' and not this app's. */
+export const CODEX_CONFIG_FILE = path.join(CODEX_HOME, "config.toml");
+
+/**
+ * Why `$CODEX_HOME/config.toml` is something other than the regular file Codex
+ * needs there, or null when it is one or is absent.
+ *
+ * Two readers, both measured on codex-cli 0.153.4. Every `workspace-write` or
+ * bypass cycle writes a `trust_level` entry into this file, and one whose write
+ * failed — a directory at the name, or a home it could not create its
+ * temporary file in — loaded its repository's `.codex/config.toml` and started
+ * the MCP servers named there, 15 of 15 runs against 0 of 14, with nothing in
+ * its output. And `login status`, both logins and `logout` exit 1 with `Error
+ * loading configuration: … is not a file` over a directory, a FIFO or a link
+ * to a directory, so the panel had only that to quote. `app-server` logs the
+ * same error and goes on with the defaults and its `-c` pins (measured), so
+ * `codexAccount.ts` does not ask. Absent is a fresh install: the cycle's write
+ * creates the file, and a dangling link read as absent to `login status`.
+ *
+ * The file is the agents' own under a uid split — group-writable sticky home,
+ * their file — so any cycle can `rm` it and put something else at the name,
+ * and **nothing here repairs it**: a rename by root at cycle time races a cycle
+ * still running, `tamperedBecause`'s reason, and making root own the file is
+ * what `docs/agent/security/cycle-settings-env.md` records as widening every
+ * cycle. The entrypoint moves it aside at boot instead. A check here is also
+ * not a lock: a cycle running beside the one about to spawn can still swap the
+ * name in the ~0.1 s before that cycle's write.
+ *
+ * @param followLinks `stat` rather than `lstat`. True for the sign-in children,
+ *   which read through a link as Codex does, and for a cycle without a uid
+ *   split, where a link is an operator's dotfiles; false for a cycle under the
+ *   split, where a link is a name the agents can repoint after the check, so it
+ *   is refused whatever it names.
+ */
+export function codexConfigUnusableBecause(followLinks: boolean): string | null {
+  let stat: fs.Stats;
+  try {
+    stat = followLinks ? fs.statSync(CODEX_CONFIG_FILE) : fs.lstatSync(CODEX_CONFIG_FILE);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    // A reason rather than a throw, so `prepareCodexRules` does not report a
+    // link loop here as the denial failing to write.
+    return `${CODEX_CONFIG_FILE} could not be checked: ${(err as Error).message}`;
+  }
+  if (stat.isFile()) return null;
+  const what = stat.isSymbolicLink()
+    ? "a symbolic link, which a work cycle could repoint"
+    : stat.isDirectory()
+      ? "a directory"
+      : "not a regular file";
+  return (
+    `${CODEX_CONFIG_FILE} is ${what}. A Codex work cycle writes its project trust entry there, ` +
+    `and one that cannot loads its repository's .codex/config.toml, which can start the MCP ` +
+    `servers that file names; Codex's sign-in children fail on a directory there too. ` +
+    `Restarting the container moves it aside (docker-entrypoint.sh, at every boot); without the ` +
+    `container, rename it yourself and Codex makes a new one.`
+  );
+}
+
+/** Whether the cycle about to spawn may: the denial is in place and Codex's own file is usable. */
 export type CodexRulesDelivery =
   | { kind: "ready"; file: string }
   | { kind: "unavailable"; reason: string };
@@ -221,7 +280,7 @@ function tamperedBecause(dir: string, owner: number): string | null {
   }
   if (!reason) return null;
   return (
-    `${reason}, so the denial would not be where only this server can write it. ` +
+    `${reason}, so the process-kill denial would not be where only this server can write it. ` +
     `Restarting the container puts the default CODEX_HOME back: ` +
     `docker-entrypoint.sh makes it root's and sticky, and its rules/ root's alone, at every boot.`
   );
@@ -258,6 +317,12 @@ function makeDirectory(dir: string): void {
  * degrades to a cycle that re-reads files: this degrades to a cycle that can
  * kill the supervisor, and the Claude equivalent is not optional either.
  *
+ * `config.toml` is checked here too (`codexConfigUnusableBecause`), after the
+ * home and its name hold, because this is already the one call every Codex
+ * cycle is refused at, and a cycle that cannot write its trust entry degrades
+ * silently to one that loads its repository's Codex config. So each reason
+ * says which of the two it is about.
+ *
  * @param owner the uid both directories, and `CODEX_HOME`'s parent unless it
  *   is a mount point, must belong to, or null to check nothing; `rulesOwner()`
  *   says which, and the tests pass their own.
@@ -274,6 +339,8 @@ export function prepareCodexRules(
       const tampered = tamperedBecause(dir, owner);
       if (tampered) return { kind: "unavailable", reason: tampered };
     }
+    const config = codexConfigUnusableBecause(owner === null);
+    if (config) return { kind: "unavailable", reason: config };
     fs.writeFileSync(tmp, codexRulesText());
     // World-readable on purpose: the process that writes it is the server, and
     // the process that has to read it is the cycle, under a different uid.
@@ -289,7 +356,7 @@ export function prepareCodexRules(
     }
     return {
       kind: "unavailable",
-      reason: `${CODEX_RULES_FILE} could not be written: ${(err as Error).message}`,
+      reason: `The process-kill denial ${CODEX_RULES_FILE} could not be written: ${(err as Error).message}`,
     };
   }
 }

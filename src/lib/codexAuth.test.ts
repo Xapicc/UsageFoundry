@@ -414,6 +414,39 @@ describe("the config overrides every sign-in child starts with", () => {
   });
 });
 
+/**
+ * Any work cycle can put a directory at `$CODEX_HOME/config.toml`, and on
+ * 0.153.4 every one of these children then exited 1 with `Error loading
+ * configuration: … is not a file`, the sign-out and the device login
+ * included, which is all the panel had to quote. The stub never reads the
+ * file, so what shows the check is that nothing was started and every answer
+ * names the path.
+ */
+describe("a directory at config.toml", () => {
+  it("is named by status, both sign-ins and the sign-out, and none of them starts a child", async () => {
+    const file = path.join(config.CODEX_HOME, "config.toml");
+    fs.mkdirSync(file, { recursive: true });
+    fs.rmSync(argvLog, { force: true });
+    try {
+      const answers = [
+        await readAuthStatus(),
+        await submitApiKey("sk-proj-fakefakefakefake"),
+        await signOut(),
+        await beginLogin(),
+      ];
+      for (const answer of answers) {
+        assert.equal(answer.ok, false, JSON.stringify(answer));
+        const error = answer.ok ? "" : answer.error;
+        assert.equal(error.includes(`${file} is a directory`), true, error);
+      }
+      assert.equal(fs.existsSync(argvLog), false, "a child was started over it");
+    } finally {
+      cancelLogin();
+      fs.rmdirSync(file);
+    }
+  });
+});
+
 /** `PENDING_TIMEOUT_MS` in `codexAuth.ts`. The last assertions below fail if it drifts. */
 const PENDING_TIMEOUT_MS = 16 * 60_000;
 

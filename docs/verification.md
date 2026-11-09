@@ -74,6 +74,7 @@ measurement under *Verified* and cut the item down to what is still open.
 | Security and sandboxing | [security-and-sandboxing-stacks.md](verification/security-and-sandboxing-stacks.md) — a stack's tool grants and permissions |
 | Security and sandboxing | [security-and-sandboxing-sign-in-and-bearer.md](verification/security-and-sandboxing-sign-in-and-bearer.md) — the sign-in limiter, the gate's bearer budget and the `claude auth` children's settings |
 | Security and sandboxing | [security-and-sandboxing-codex-config.md](verification/security-and-sandboxing-codex-config.md) — what `$CODEX_HOME/config.toml` does to the server's Codex children, what writes it, and the root-owned file |
+| Security and sandboxing | [security-and-sandboxing-codex-project-config.md](verification/security-and-sandboxing-codex-project-config.md) — what a Codex cycle loads from its checkout's `.codex/config.toml`, the guard on a `config.toml` that is not a file, and TokenEconomizer's Codex pruning |
 | Security and sandboxing | [security-and-sandboxing-cross-origin.md](verification/security-and-sandboxing-cross-origin.md) — which browser requests the session cookie authorises |
 | Security and sandboxing | [security-and-sandboxing-name-lookup.md](verification/security-and-sandboxing-name-lookup.md) — root's `PATH`, the agents' `PATH` and what a dropped process runs by name |
 | Security and sandboxing | [security-and-sandboxing-chat-config.md](verification/security-and-sandboxing-chat-config.md) — what the chat child loads from files a work cycle writes |

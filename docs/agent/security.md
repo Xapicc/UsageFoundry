@@ -81,6 +81,7 @@ Each paragraph now lives in the topic file its heading links to: find the rule b
 - An assist runs no hooks, because its checkout's hooks speak to its model.
 - An assist runs no `apiKeyHelper` either, because hooks off did not stop a checkout's.
 - A work cycle runs no `apiKeyHelper` either, and neither does the chat.
+- A Codex work cycle does not load its checkout's `.codex/config.toml`, and that holds only while its trust write to `$CODEX_HOME/config.toml` succeeds.
 - What is still open.
 
 ## [What a run left in its repository's git directory](security/run-git-dir-watch.md)

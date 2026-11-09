@@ -2701,4 +2701,54 @@ describe("a work cycle cannot take the Codex denial's directory away from root",
     assert.deepEqual(fs.readdirSync(elsewhere), [], "root moved the planted file through the link");
     assert.equal(fs.lstatSync(path.join(home, "rules")).isDirectory(), true);
   });
+
+  /**
+   * Board task `1eff0ac8`. `config.toml` is the agents' own file, so a cycle
+   * can leave anything at the name, and a Codex cycle that cannot write its
+   * trust entry there loads its repository's `.codex/config.toml` (measured on
+   * 0.153.4). `prepareCodexRules` refuses every Codex cycle over a non-file
+   * there and cannot repair it without racing a running cycle, so this boot
+   * is the only thing that clears it; without it a restart, which the refusal
+   * tells the operator to do, would change nothing.
+   */
+  it("moves aside whatever a work cycle left at config.toml that is not a file, and leaves a file alone", () => {
+    const target = path.join(fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-codex-config-"))), "mine.toml");
+    fs.writeFileSync(target, "x = 1\n");
+    const leftovers: [string, (home: string) => void][] = [
+      ["a directory", (home) => fs.mkdirSync(path.join(home, "config.toml"))],
+      ["a link to a file", (home) => fs.symlinkSync(target, path.join(home, "config.toml"))],
+      ["a dangling link", (home) => fs.symlinkSync("/no/such/file", path.join(home, "config.toml"))],
+      ["a FIFO", (home) => spawnSync("mkfifo", [path.join(home, "config.toml")])],
+    ];
+    for (const [what, plant] of leftovers) {
+      const home = scratchHome(plant);
+      boot(home);
+      // `readdir`, not `existsSync`, which reads a dangling link as absent.
+      assert.equal(fs.readdirSync(home).includes("config.toml"), false, `config.toml is still ${what}`);
+      assert.equal(
+        fs.readdirSync(home).some((name) => name.startsWith("config.toml.moved-aside.")),
+        true,
+        `${what} was deleted rather than moved aside where the operator can see it`,
+      );
+    }
+    assert.equal(fs.readFileSync(target, "utf8"), "x = 1\n", "the boot changed what a link named");
+
+    const home = scratchHome((home) => fs.writeFileSync(path.join(home, "config.toml"), "y = 2\n"));
+    boot(home);
+    assert.equal(fs.readFileSync(path.join(home, "config.toml"), "utf8"), "y = 2\n");
+    assert.equal(fs.readdirSync(home).some((name) => name.startsWith("config.toml.moved-aside.")), false);
+  });
+
+  it("never moves a config.toml leftover into a directory a link at its aside name names", () => {
+    // `rules`' case above, for a directory: `mv -T` refuses to put one over a
+    // link, so the boot leaves it, warns, and the cycle stays refused.
+    const elsewhere = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "uf-codex-elsewhere-")));
+    const home = scratchHome((home) => {
+      fs.mkdirSync(path.join(home, "config.toml"));
+      fs.writeFileSync(path.join(home, "config.toml", "planted"), "");
+      fs.symlinkSync(elsewhere, path.join(home, "config.toml.moved-aside.1234567890"));
+    });
+    boot(home, ["date() { echo 1234567890; }"]);
+    assert.deepEqual(fs.readdirSync(elsewhere), [], "root moved the planted directory through the link");
+  });
 });

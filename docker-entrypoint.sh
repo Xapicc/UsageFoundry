@@ -200,6 +200,28 @@ if [ -n "${UF_AGENT_UID:-}" ] && [ -d "$CODEX_HOME_VOLUME" ]; then
     echo "[usagefoundry] cannot make $codex_rules a directory only root can" \
          "write — every Codex work cycle will be refused until it is one." >&2
   fi
+
+  # `config.toml` is the agents' own file, so a work cycle can put a directory,
+  # a link or a FIFO at the name, and Codex never does: it writes the file
+  # through a temporary file renamed over it. A cycle that cannot write its
+  # trust entry there loads its repository's `.codex/config.toml`, and the
+  # sign-in children fail on all but a link to a file, so `prepareCodexRules`
+  # refuses every Codex cycle over any of them and `codexAuth.ts` names the
+  # thing to the Settings panel instead of starting a child. It is moved
+  # aside here rather than at cycle time, where root's rename would race a
+  # cycle still running, and not replaced: the next cycle's own write creates
+  # the agents' file. `-T` for the `rules` block's reason.
+  codex_config="$CODEX_HOME_VOLUME/config.toml"
+  if [ -L "$codex_config" ] || { [ -e "$codex_config" ] && [ ! -f "$codex_config" ]; }; then
+    codex_config_aside="$codex_config.moved-aside.$(date +%s)"
+    if mv -T -- "$codex_config" "$codex_config_aside" 2>/dev/null; then
+      echo "[usagefoundry] $codex_config was not a file; moved it to" \
+           "$codex_config_aside, and Codex will make a new one." >&2
+    else
+      echo "[usagefoundry] cannot move $codex_config aside — it is not a file, so" \
+           "every Codex work cycle and sign-in will be refused until it is gone." >&2
+    fi
+  fi
   if ! chown "0:${UF_AGENT_GID:-$UF_AGENT_UID}" "$CODEX_HOME_VOLUME" 2>/dev/null ||
      ! chmod 1770 "$CODEX_HOME_VOLUME" 2>/dev/null; then
     echo "[usagefoundry] cannot make $CODEX_HOME_VOLUME root's and sticky — every" \
