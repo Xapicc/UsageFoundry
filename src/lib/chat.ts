@@ -25,6 +25,7 @@ import {
   type RunGuards,
 } from "./settings";
 import { assistRefusal } from "./review";
+import { isJsonObject } from "./http";
 import { dataDirRefusal } from "./serverLock";
 import { installBudgetRefusal } from "./installBudget";
 import { opsLog } from "./ops";
@@ -65,7 +66,14 @@ import {
 } from "./sandboxMountPoints";
 import { getTemplate, type RunTemplate } from "./templates";
 import type { RunProviderDTO } from "./apiTypes";
-import { providerTerminusRefusal } from "./budget";
+import {
+  carriesFractionGuard,
+  fractionGuardRefusal,
+  guardWindowsOf,
+  providerTerminusRefusal,
+  type GuardSnapshots,
+  type GuardWindows,
+} from "./budget";
 import { getLocalSignIn } from "./localProvider";
 import { cycleEnvPins } from "./cycleInvocation";
 import {
@@ -2016,32 +2024,14 @@ function transientRefusal(): string | null {
 }
 
 /**
- * Start the run a proposal asks for.
+ * What a run proposal would start under, as of this click.
  *
- * Synchronous from the plan to the INSERT, which is not an accident: it calls
- * `createRun`, whose folder claim is only atomic because one event-loop turn
- * covers deciding a folder is free and recording that it was taken. Approving a
- * batch is this function in a loop for the same reason — one `await` between
- * two approvals of the same folder would let both decide it was free.
+ * One function for `approveProposal` and for the questions asked about a click
+ * before it, so the budget a refusal judges is the budget `createRun` is handed:
+ * a second derivation is how the card, the check and the run come to disagree.
  */
-export function approveProposal(
-  id: string,
-  dependsOn: readonly RunDependencyInput[] = [],
-): ApprovalOutcome {
-  const proposal = getProposal(id);
-  if (!proposal) return { ok: false, reason: "No such proposal." };
-  if (proposal.kind !== "run") {
-    // Reachable only by calling this directly; the route partitions by kind.
-    // Named rather than silently planned as a run, because a workflow proposal
-    // has no task and would fail with "this proposal has no task text" — a
-    // sentence about the wrong thing entirely.
-    return {
-      ok: false,
-      reason: `This proposal is a ${proposal.kind}, not a run.`,
-    };
-  }
-
-  const plan = planProposal(
+function planFor(proposal: ChatProposalRow): ProposalPlan {
+  return planProposal(
     proposal,
     proposal.template_id ? getTemplate(proposal.template_id) : null,
     // Read at the *proposal* rather than at the click, which is the one of the
@@ -2058,6 +2048,101 @@ export function approveProposal(
     // and one they have since deleted is refused by name a line above.
     proposal.agent_id ? getAgent(proposal.agent_id) : null,
   );
+}
+
+/**
+ * The readings a click's fraction guards will be judged against, by provider.
+ *
+ * `approveProposal` awaits nothing, so the route fetches these first and hands
+ * them in — `fleetGuardWindows`' job for the fleet pick-up. Only the windows a
+ * pending run proposal in `ids` will actually need, so a click whose guards
+ * carry no fraction, which is every one on a stock install, pays for no
+ * transcript scan and no `await`.
+ */
+export function approvalGuardWindows(
+  chatId: string,
+  ids: readonly string[],
+): GuardWindows[] {
+  const wanted = new Set(ids);
+  const needed = new Set<GuardWindows>();
+  for (const proposal of listProposals(chatId)) {
+    if (!wanted.has(proposal.id) || proposal.kind !== "run") continue;
+    const plan = planFor(proposal);
+    if (plan.ok && carriesFractionGuard(planBudget(plan.input))) {
+      needed.add(guardWindowsOf({ provider: plan.input.provider ?? null }));
+    }
+  }
+  return [...needed];
+}
+
+/**
+ * A fraction guard on the run a plan would start, with nothing to read.
+ *
+ * `createRun` does not ask whether a window can be read and the pre-cycle guard
+ * only records that it could not (`RUN_ENFORCEABLE_CODES`), so without this the
+ * approval starts a run whose guard is never evaluated and nothing says so. An
+ * approval is a person with an error channel, which is where
+ * `windowGuardRefusal` belongs, and refusing is a statement about the moment
+ * rather than the proposal: the reading comes back, or the operator sets a
+ * ceiling, and the same card is pressed again. That is why neither caller below
+ * marks the proposal `failed`.
+ */
+function unreadableGuardRefusal(
+  plan: ProposalPlan,
+  snapshots: GuardSnapshots,
+): string | null {
+  if (!plan.ok) return null;
+  return fractionGuardRefusal(
+    { provider: plan.input.provider ?? null },
+    planBudget(plan.input),
+    snapshots,
+  );
+}
+
+/**
+ * The budget `createRun` is handed, as the record the guard helpers read.
+ *
+ * `CreateRunInput.budget` is `unknown` because the doors that build it from a
+ * request body cannot say more; `planProposal` always puts a `BudgetPolicy`
+ * there. A non-object is read as no fields set, which is `normalizePolicy`'s own
+ * reading of it, so this never sees a guard `createRun` would not.
+ */
+function planBudget(input: { budget: unknown }): Record<string, unknown> {
+  return isJsonObject(input.budget) ? input.budget : {};
+}
+
+/**
+ * Start the run a proposal asks for.
+ *
+ * Synchronous from the plan to the INSERT, which is not an accident: it calls
+ * `createRun`, whose folder claim is only atomic because one event-loop turn
+ * covers deciding a folder is free and recording that it was taken. Approving a
+ * batch is this function in a loop for the same reason — one `await` between
+ * two approvals of the same folder would let both decide it was free.
+ *
+ * `snapshots` are the readings a fraction guard on the run is judged against,
+ * fetched by the route for that reason. A caller that passes none gets every
+ * fraction-guarded proposal refused, which is the safe way to be wrong.
+ */
+export function approveProposal(
+  id: string,
+  dependsOn: readonly RunDependencyInput[] = [],
+  snapshots: GuardSnapshots = {},
+): ApprovalOutcome {
+  const proposal = getProposal(id);
+  if (!proposal) return { ok: false, reason: "No such proposal." };
+  if (proposal.kind !== "run") {
+    // Reachable only by calling this directly; the route partitions by kind.
+    // Named rather than silently planned as a run, because a workflow proposal
+    // has no task and would fail with "this proposal has no task text" — a
+    // sentence about the wrong thing entirely.
+    return {
+      ok: false,
+      reason: `This proposal is a ${proposal.kind}, not a run.`,
+    };
+  }
+
+  const plan = planFor(proposal);
   if (!plan.ok) {
     markProposal(id, "failed", { error: plan.reason });
     return { ok: false, reason: plan.reason };
@@ -2070,6 +2155,11 @@ export function approveProposal(
   // burn a proposal on a condition nobody could have acted on either.
   const transient = transientRefusal();
   if (transient) return { ok: false, reason: transient };
+
+  // The same kind of refusal, asked of the plan: a guard that cannot be read is
+  // not a verdict on this proposal, so it stays pending for the next click.
+  const unreadable = unreadableGuardRefusal(plan, snapshots);
+  if (unreadable) return { ok: false, reason: unreadable };
 
   // Read at the click, and refused without burning the proposal, for
   // `transientRefusal`'s reason: a sign-out is something the operator can undo
@@ -2161,10 +2251,16 @@ export interface BatchOutcome {
  * not a fourth validation pass over what a proposal may be: it is the one
  * question on this path whose answer is about the moment rather than the work,
  * and `admitDependencies` is left the sole owner of everything else.
+ *
+ * A fraction guard with nothing to read is the third of them, and the one that
+ * needs the caller's help: reading a window is async and this function is not,
+ * so the route fetches `approvalGuardWindows`' readings first and passes them in
+ * as `snapshots`.
  */
 export function approveRunBatch(
   chatId: string,
   ids: readonly string[],
+  snapshots: GuardSnapshots = {},
 ): BatchOutcome {
   const wanted = new Set(ids);
   const proposals = listProposals(chatId).filter(
@@ -2188,6 +2284,23 @@ export function approveRunBatch(
         refused:
           `${transient} Nothing was decided — every proposal in this click ` +
           "is still waiting.",
+      };
+    }
+  }
+
+  // The fraction guards, asked of the click for `transientRefusal`'s reason and
+  // one more: refusing a single member inside the loop below would fail
+  // whatever depends on it terminally while it stayed pending itself. Named by
+  // title, because the sentence alone does not say which card to deselect.
+  for (const proposal of proposals) {
+    const unreadable = unreadableGuardRefusal(planFor(proposal), snapshots);
+    if (unreadable) {
+      return {
+        started: [],
+        failed: [],
+        refused:
+          `“${proposal.title}”: ${unreadable} Nothing was decided — every ` +
+          "proposal in this click is still waiting.",
       };
     }
   }
@@ -2256,6 +2369,7 @@ export function approveRunBatch(
         edge: d.edge,
         continueBranch: d.continueBranch,
       })),
+      snapshots,
     );
     if (res.ok) {
       minted.set(step.id, res.runId);

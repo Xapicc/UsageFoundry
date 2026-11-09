@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 // Relative, not "@/…", so `jsonObjectBody.test.ts` can load this handler —
 // `../route.ts` gives the reason.
+import type { GuardSnapshots } from "../../../../../lib/budget";
+import { codexGuardSnapshot } from "../../../../../lib/codexAccount";
 import {
   appendMessage,
+  approvalGuardWindows,
   approveRunBatch,
   decisionNote,
   getChat,
@@ -13,7 +16,7 @@ import {
 } from "../../../../../lib/chat";
 import { approveWorkflowProposal } from "../../../../../lib/workflows";
 import { approveScheduleProposal } from "../../../../../lib/schedules";
-import { promoteQueued } from "../../../../../lib/orchestrator";
+import { currentSnapshot, promoteQueued } from "../../../../../lib/orchestrator";
 import { readJsonObject } from "../../../../../lib/http";
 import { chatDTO } from "../../dto";
 import { auditMutation } from "../../../../../lib/requestLog";
@@ -80,6 +83,22 @@ async function postHandler(req: Request, ctx: Ctx) {
   const wanted = Array.isArray(body.ids) ? body.ids.map(String) : [];
   if (wanted.length === 0) {
     return NextResponse.json({ error: "No proposals selected." }, { status: 400 });
+  }
+
+  // The readings a fraction guard on a proposal in this click will be judged
+  // against, fetched **before** `eligible` is read and for that reason: every
+  // line from there to the end of `approveRunBatch` has to stay one event-loop
+  // turn, because `markProposal` does not check what it overwrites and a second
+  // click on the same card that interleaved here would see it still pending and
+  // then fail it over the run the first one started. Asked of `wanted` rather
+  // than `targets` for the same reason, and only the windows some pending run
+  // proposal needs, so the stock install — no fraction in its guards — pays for
+  // no transcript scan, as at `POST /api/fleet`. A reject needs none.
+  const snapshots: GuardSnapshots = {};
+  if (action === "approve") {
+    const windows = approvalGuardWindows(id, wanted);
+    if (windows.includes("claude")) snapshots.claude = await currentSnapshot();
+    if (windows.includes("codex")) snapshots.codex = await codexGuardSnapshot();
   }
 
   const eligible = new Set(pendingProposals(id).map((p) => p.id));
@@ -149,11 +168,12 @@ async function postHandler(req: Request, ctx: Ctx) {
   // turn however they interleave. Runs first: a workflow proposal claims no
   // folder and takes no slot, so nothing it does can change what a run
   // proposal is admitted into.
-  const batch = approveRunBatch(id, targets);
+  const batch = approveRunBatch(id, targets, snapshots);
 
   // The click refused whole, before anything was decided, by a condition that
   // will have cleared by the time the operator looks again — the install
-  // limit's rolling window, or another process holding the data directory.
+  // limit's rolling window, another process holding the data directory, or a
+  // fraction guard whose window has no reading.
   // The same 400 an empty batch gets above and for a stronger version of its
   // reason: nothing here is a verdict on a proposal, so every one of them is
   // still pending and the page must not clear the selection. Answered before
