@@ -174,6 +174,40 @@ const DEFERRAL_REFUSED: Replay = {
   code: 1,
 };
 
+// 2.1.319, plan e8: `$CLAUDE_CONFIG_DIR/.claude.json` is not JSON. The CLI
+// writes a zeroed `error_during_execution` result before exiting 1 — the one
+// startup failure measured that arrives as a `result` — with the failure in
+// `errors` and `startup_failure_reason` set, and the same text on stderr. Its
+// `session_id` is minted for that result: no transcript exists under it, and it
+// is not the id `--resume` was given.
+const STARTUP_RESULT_SESSION = "f8ca75e1-b2cc-462c-a0a4-7edcbc45b4d7";
+const CONFIG_FILE_ERROR =
+  "Configuration error in /scratch/e8/c/.claude.json: JSON Parse error: Expected '}'\n" +
+  "A backup file exists at: /scratch/e8/c/backups/.claude.json.backup.1794187872118\n" +
+  'You can manually restore it by running: cp -f "/scratch/e8/c/backups/.claude.json.backup.1794187872118" "/scratch/e8/c/.claude.json"';
+const CONFIG_FILE_INVALID: Replay = {
+  stdout: jsonLines({
+    type: "result",
+    subtype: "error_during_execution",
+    duration_ms: 0,
+    duration_api_ms: 0,
+    is_error: true,
+    num_turns: 0,
+    stop_reason: null,
+    session_id: STARTUP_RESULT_SESSION,
+    total_cost_usd: 0,
+    permission_denials: [],
+    errors: [CONFIG_FILE_ERROR],
+    startup_failure_reason: "config_file_invalid",
+    result_index: 0,
+  }),
+  stderr:
+    "\nClaude configuration file at /scratch/e8/c/.claude.json is corrupted: JSON Parse error: Expected '}'\n" +
+    "The corrupted file has been backed up to: /scratch/e8/c/backups/.claude.json.corrupted.1794187874864\n\n" +
+    "Configuration error in /scratch/e8/c/.claude.json: JSON Parse error: Expected '}'\n",
+  code: 1,
+};
+
 /** What each child the loop spawns says, in spawn order. */
 let replies: Scripted[] = [];
 /** What each child was asked to `--resume`, and the prompt it was handed. */
@@ -370,6 +404,68 @@ describe("a cycle the CLI would not start", () => {
   });
 });
 
+describe("a startup failure the CLI reports as a result", () => {
+  it("is not called a resume failure on a picked-up run's first cycle", async () => {
+    // A third reply so that a retry, if the loop makes one, is an assertion
+    // failing below rather than the stub running out of script.
+    const run = start(["Still working.", CONFIG_FILE_INVALID, CONFIG_FILE_INVALID], 1);
+    const first = await settled(run.id);
+    assert.equal(first.status, "completed", first.stop_reason ?? "");
+    assert.ok(first.session_id, "the fixture's first cycle must leave a session to resume");
+    keepTranscript(first.session_id);
+
+    pickUp(run.id, 2);
+    const row = await settled(run.id);
+
+    // Zero turns and an error is `cycleDidNoWork`'s second clause, which is the
+    // shape of a refused resume; the reason is the CLI saying it was not.
+    assert.equal(spawns.length, 2, "one cycle before the pick-up and one after it, no retry");
+    assert.equal(spawns[1].resumed, first.session_id);
+    assert.equal(row.status, "failed");
+    assert.equal(row.ending_code, "exit_code");
+    assert.ok(row.stop_reason?.includes("Configuration error in"), row.stop_reason ?? "");
+    assert.ok(row.stop_reason?.includes("JSON Parse error"), row.stop_reason ?? "");
+    assert.ok(!row.stop_reason?.includes("Could not resume"), row.stop_reason ?? "");
+    assert.ok(!row.stop_reason?.includes("claude --resume"), row.stop_reason ?? "");
+  });
+
+  it("leaves the run's session where it was, so repairing the file continues the conversation", async () => {
+    // The result's `session_id` names a session that was never written. Adopted,
+    // it would replace the real one on the row, and the pick-up after the repair
+    // would find no transcript under it and start the task over.
+    const run = start(["Still working.", CONFIG_FILE_INVALID, "Back at it. DONE"], 1);
+    const first = await settled(run.id);
+    assert.ok(first.session_id);
+    keepTranscript(first.session_id);
+
+    pickUp(run.id, 2);
+    const failed = await settled(run.id);
+    assert.equal(failed.ending_code, "exit_code");
+    assert.equal(failed.session_id, first.session_id);
+    assert.equal(failed.session_cost_usd, first.session_cost_usd);
+
+    pickUp(run.id, 3);
+    const done = await settled(run.id);
+    assert.equal(done.status, "completed", done.stop_reason ?? "");
+    assert.equal(spawns[2].resumed, first.session_id, "the repaired pick-up resumes the real session");
+    assert.ok(
+      !spawns[2].prompt.includes("do the thing"),
+      "and does not send the task again as if nothing had happened",
+    );
+  });
+
+  it("ends a fresh run with the sentence and no session", async () => {
+    const run = start([CONFIG_FILE_INVALID], 3);
+    const row = await settled(run.id);
+
+    assert.equal(spawns.length, 1);
+    assert.equal(row.status, "failed");
+    assert.equal(row.ending_code, "exit_code");
+    assert.ok(row.stop_reason?.includes("Configuration error in"), row.stop_reason ?? "");
+    assert.equal(row.session_id, null, "a made-up id is not a session to resume");
+  });
+});
+
 describe("a resume refused for a deferred call whose tool is gone", () => {
   it("ends the run with the CLI's sentence, which names the tool and the two ways out", async () => {
     // The deferring cycle is a success with empty text, so the loop sends its
@@ -453,7 +549,14 @@ describe("a resume refused for a deferred call whose tool is gone", () => {
 });
 
 describe("startupFailureSentence", () => {
-  const base = { exitCode: 1, sawResult: false, stdoutLines: 0, stderrTail: "Error: nope\n" };
+  const base = {
+    exitCode: 1,
+    sawResult: false,
+    stdoutLines: 0,
+    stderrTail: "Error: nope\n",
+    startupFailureReason: null,
+    errorText: null,
+  };
 
   it("flattens the CLI's lines into one sentence", () => {
     assert.equal(
@@ -469,6 +572,33 @@ describe("startupFailureSentence", () => {
     const sentence = startupFailureSentence({ ...base, stderrTail: "x".repeat(5_000) });
     assert.equal(sentence?.length, CLI_SENTENCE_LIMIT);
     assert.ok(sentence?.endsWith("…"));
+  });
+
+  describe("when the result names the startup failure itself", () => {
+    const named = {
+      ...base,
+      sawResult: true,
+      stdoutLines: 1,
+      startupFailureReason: "config_file_invalid",
+      errorText: "Configuration error in /x/.claude.json: JSON Parse error",
+    };
+
+    it("is the sentence the result carried, whatever else the cycle looks like", () => {
+      // Every condition the stderr-only shape needs is the opposite here: a
+      // result arrived, a line reached stdout, and stderr says the same again.
+      assert.equal(startupFailureSentence(named), named.errorText);
+      assert.equal(startupFailureSentence({ ...named, exitCode: 0 }), named.errorText);
+    });
+
+    it("falls back to stderr, then to the reason, rather than to null", () => {
+      // Null would hand the cycle back to the resume retry, which is the
+      // misfiling the reason exists to prevent.
+      assert.equal(startupFailureSentence({ ...named, errorText: null }), "Error: nope");
+      assert.equal(
+        startupFailureSentence({ ...named, errorText: null, stderrTail: "" }),
+        "config_file_invalid",
+      );
+    });
   });
 
   // Each of these is a cycle that is not a refusal to start, and mistaking one

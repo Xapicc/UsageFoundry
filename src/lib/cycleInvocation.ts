@@ -181,6 +181,21 @@ export interface IterationResult {
    */
   errorText: string | null;
   /**
+   * `result.startup_failure_reason` verbatim: the CLI's own statement that it
+   * refused to start and which known cause it was (`config_file_invalid`,
+   * `org_config_refused`, …), null on every other result.
+   *
+   * Kept apart from `stdoutLines` and `sawResult` because a startup failure that
+   * is written as a `result` is invisible to the test they make up. The result
+   * is a zeroed `error_during_execution`, so `cycleDidNoWork` reads it as a
+   * refused `--resume` and the loop retries it and then sends the operator to
+   * `claude --resume` for a session that was fine. Only
+   * `config_file_invalid`, `org_config_required_unavailable` and
+   * `org_config_refused` are written to every stream-json run; the rest only
+   * under `CLAUDE_CODE_STARTUP_FAILURE_RESULTS`, which nothing here sets.
+   */
+  startupFailureReason: string | null;
+  /**
    * Lines the child wrote to stdout, counted before they are interpreted.
    *
    * Kept because a startup failure is told apart from every other non-zero
@@ -235,8 +250,10 @@ export function clipCliSentence(text: string): string {
  * The sentence a Claude Code cycle gave when it refused to start, or null when
  * the cycle is not that.
  *
- * Measured on 2.1.319 (the 2.1.314 changelog's "startup failure now prints the
- * error and exits 1"): a missing or invalid `--mcp-config` and a missing
+ * Two shapes, both measured on 2.1.319.
+ *
+ * **Said on stderr alone** (the 2.1.314 changelog's "startup failure now prints
+ * the error and exits 1"): a missing or invalid `--mcp-config` and a missing
  * `--settings` write nothing to stdout, one sentence to stderr, and exit 1. The
  * loop had no word for that: no result and no text is `cycleDidNoWork`'s first
  * clause, which on a picked-up run's first cycle is the signature of a refused
@@ -246,17 +263,38 @@ export function clipCliSentence(text: string): string {
  * a different shape (`error_during_execution`, zero turns, `errors`), so the
  * clause no longer has to stand for it.
  *
- * All four conditions are load-bearing. A positive exit code, because a child a
- * signal killed has exited with nothing to say. No `result` and no stdout
- * line, because a child that got as far as one line did start, and its stderr
- * is then the agent's own noise rather than the CLI's complaint. And a
+ * All four conditions are load-bearing there. A positive exit code, because a
+ * child a signal killed has exited with nothing to say. No `result` and no
+ * stdout line, because a child that got as far as one line did start, and its
+ * stderr is then the agent's own noise rather than the CLI's complaint. And a
  * stderr tail with something in it, because without a sentence there is nothing
  * to quote and the silent death is still best explained as a resume that went
  * wrong — that case keeps the retry.
+ *
+ * **Said as a `result`** that carries `startup_failure_reason`: a corrupt
+ * `.claude.json` writes the zeroed `error_during_execution` result of a refused
+ * resume, with the failure in `errors`, and exits 1. Every condition above is
+ * the opposite there — a result arrived and a line reached stdout — so none of
+ * them applies, and the reason being set is the whole test: it is the CLI saying
+ * in a field built for the purpose that it did not start, which is what a
+ * refused resume never says. The sentence is the result's own, then stderr's,
+ * then the reason itself, and never null, because null would hand the cycle
+ * back to the resume retry this exists to keep it out of.
  */
 export function startupFailureSentence(
-  res: Pick<IterationResult, "exitCode" | "sawResult" | "stdoutLines" | "stderrTail">,
+  res: Pick<
+    IterationResult,
+    | "exitCode"
+    | "sawResult"
+    | "stdoutLines"
+    | "stderrTail"
+    | "startupFailureReason"
+    | "errorText"
+  >,
 ): string | null {
+  if (res.startupFailureReason !== null) {
+    return res.errorText ?? (clipCliSentence(res.stderrTail) || res.startupFailureReason);
+  }
   if (res.exitCode <= 0 || res.sawResult || res.stdoutLines > 0) return null;
   const sentence = clipCliSentence(res.stderrTail);
   return sentence === "" ? null : sentence;

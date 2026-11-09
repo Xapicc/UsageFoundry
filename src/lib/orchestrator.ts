@@ -8611,6 +8611,7 @@ export function runIteration(
       resultTurns: null,
       apiError: null,
       errorText: null,
+      startupFailureReason: null,
       stdoutLines: 0,
       stderrTail: "",
       subagentNames: new Map(),
@@ -9619,13 +9620,30 @@ function handleStreamLine(
 
   const type = String(ev.type ?? "");
 
+  // The CLI's own word that it refused to start, on a `result`. Read ahead of
+  // the session id below because it decides whether that id is one.
+  const startupFailureReason =
+    type === "result" &&
+    typeof ev.startup_failure_reason === "string" &&
+    ev.startup_failure_reason !== ""
+      ? ev.startup_failure_reason
+      : null;
+
   // Announced on change rather than only latched, so the run's row learns its
   // session id while the cycle is still running. Every event carries the id, so
   // the change guard is what keeps this from being one callback per line; the
   // emptiness guard is load-bearing too, because `nextPrompt` and `--resume`
   // key on *having* a session and an empty string would claim one that is not
   // there.
+  //
+  // Not on a result that names a startup failure. Measured (2.1.319, a corrupt
+  // `.claude.json`): its `session_id` is minted for that result alone — not the
+  // id `--resume` was given, and no transcript is written under it. Adopted, it
+  // replaces the run's real session on the row, so the pick-up after the
+  // operator repairs the file finds no transcript, starts the task over, and
+  // the conversation is gone.
   if (
+    startupFailureReason === null &&
     typeof ev.session_id === "string" &&
     ev.session_id &&
     ev.session_id !== acc.sessionId
@@ -9919,6 +9937,7 @@ function handleStreamLine(
     // know *which* non-success this was.
     if (typeof ev.subtype === "string" && ev.subtype) acc.subtype = ev.subtype;
     if (ev.subtype && ev.subtype !== "success") acc.isError = true;
+    if (startupFailureReason !== null) acc.startupFailureReason = startupFailureReason;
     acc.resultTurns = typeof ev.num_turns === "number" ? ev.num_turns : null;
     if (typeof ev.result === "string" && ev.result) acc.finalText = ev.result;
     // The CLI's sentence for a result that says it failed, kept apart from
@@ -12933,9 +12952,11 @@ export async function startRun(id: string): Promise<void> {
         // excluded the one case an operator is watching.
         // Asked first, and Claude Code only: the shape is measured on that CLI
         // (a Codex startup failure is unmeasured). A cycle the CLI refused to
-        // start did not fail to *resume* — its argv was the problem, which a
-        // second spawn repeats and `claude --resume` does not carry — so it is
-        // the plain exit with the CLI's sentence, retried by nobody.
+        // start did not fail to *resume* — its argv or its configuration was
+        // the problem, which a second spawn repeats and `claude --resume` does
+        // not carry — so it is the plain exit with the CLI's sentence, retried
+        // by nobody. Whether it said so on stderr or in a `result`'s
+        // `startup_failure_reason` is `startupFailureSentence`'s to tell.
         const startupSentence =
           run.provider === "codex" ? null : startupFailureSentence(res);
         const looksLikeResumeFailure =
