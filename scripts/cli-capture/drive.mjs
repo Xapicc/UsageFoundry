@@ -87,6 +87,8 @@ function decide(body) {
       return text("all good\nDONE");
     case "HOLD":
       return text("held, then DONE", { delayMs: 3000 });
+    case "LONGHOLD":
+      return text("held long, then DONE", { delayMs: 15000 });
     default:
       return text("ok " + name + " " + step);
   }
@@ -185,6 +187,51 @@ const server = http.createServer((req, res) => {
   });
 });
 
+// A cycle's `mutate` list damages what an earlier cycle (`of`) left on disk just
+// before this one starts, so that a `--resume` can be driven against a
+// transcript that is still there under its own name but is not what the CLI
+// wrote: the question being which of those the CLI refuses, and how. `undo`
+// runs after the cycle, so a mode taken away is given back before the plan
+// cleans up. A `path` op names its target outright instead of `of`.
+function transcriptOf(c, of) {
+  const sid = fs.readFileSync(path.join(outDir, `cycle${of}.sid`), "utf8").trim();
+  const projects = path.join(c.config, "projects");
+  for (const d of fs.readdirSync(projects)) {
+    const p = path.join(projects, d, `${sid}.jsonl`);
+    if (fs.existsSync(p)) return p;
+  }
+  throw new Error(`no transcript for cycle ${of} (${sid}) under ${projects}`);
+}
+const MUTATORS = {
+  // Cut the file half-way through its last line: what a kill mid-write leaves.
+  tail: (p) => {
+    const s = fs.readFileSync(p, "utf8").replace(/\n$/, "");
+    const last = s.lastIndexOf("\n");
+    fs.writeFileSync(p, s.slice(0, last + 1 + Math.floor((s.length - last - 1) / 2)));
+  },
+  // Drop every line whose `type` is one of `types`.
+  dropTypes: (p, m) => {
+    const lines = fs.readFileSync(p, "utf8").split("\n").filter(Boolean);
+    const kept = lines.filter((l) => { try { return !m.types.includes(JSON.parse(l).type); } catch { return true; } });
+    fs.writeFileSync(p, kept.map((l) => l + "\n").join(""));
+  },
+  replace: (p, m) => fs.writeFileSync(p, m.content),
+  replaceAll: (p, m) => fs.writeFileSync(p, fs.readFileSync(p, "utf8").split(m.from).join(m.to)),
+  // The line the CLI appends when the model ends the conversation
+  // (`markSessionEndedByModel`, read out of the 2.1.319 binary).
+  endedByModel: (p) => fs.appendFileSync(p, JSON.stringify({ type: "ended-by-model", timestamp: new Date().toISOString(), sessionId: path.basename(p, ".jsonl") }) + "\n"),
+  symlink: (p) => { fs.renameSync(p, p + ".real"); fs.symlinkSync(p + ".real", p); },
+  dir: (p) => { fs.rmSync(p); fs.mkdirSync(p); },
+  chmod: (p, m) => fs.chmodSync(p, m.mode),
+};
+function mutate(c, ops) {
+  for (const m of ops ?? []) {
+    const p = m.path ?? transcriptOf(c, m.of);
+    MUTATORS[m.op](p, m);
+    log("mutations.jsonl", { t: new Date().toISOString(), ...m, target: p });
+  }
+}
+
 function runCli(port, c, i) {
   return new Promise((resolve) => {
     const env = {
@@ -234,6 +281,7 @@ function runCli(port, c, i) {
 
 server.listen(0, "127.0.0.1", async () => {
   const port = server.address().port;
+  const detached = [];
   for (let i = 0; i < plan.cycles.length; i++) {
     const c = plan.cycles[i];
     for (const [f, content] of Object.entries(c.files ?? {})) {
@@ -243,10 +291,15 @@ server.listen(0, "127.0.0.1", async () => {
     for (const f of c.remove ?? []) fs.rmSync(f, { force: true });
     fs.mkdirSync(c.home, { recursive: true }); if (!fs.existsSync(c.config)) fs.mkdirSync(c.config, { recursive: true }); fs.mkdirSync(c.cwd, { recursive: true });
     globalThis.__longctxSent = false;
-    const meta = await runCli(port, c, i);
-    console.log(JSON.stringify(meta));
+    mutate(c, c.mutate);
+    // `detach` starts the next cycle `afterMs` into this one rather than after
+    // it, so a second child can meet a session a first one still holds.
+    const running = runCli(port, c, i).then((meta) => { mutate(c, c.undo); console.log(JSON.stringify(meta)); });
+    if (c.detach) detached.push(running);
+    else await running;
     await new Promise((r) => setTimeout(r, c.afterMs ?? 2500)); // let the OTLP batch land
   }
+  await Promise.all(detached);
   server.close();
   process.exit(0);
 });
